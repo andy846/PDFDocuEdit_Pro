@@ -1,5 +1,5 @@
 #define MyAppName "PDFDocuEdit Pro"
-#define MyAppVersion "0.98b"
+#define MyAppVersion "1.0"
 #define MyAppPublisher "PDFDocuEdit"
 #define MyAppExeName "PDFDocuEdit Pro.exe"
 

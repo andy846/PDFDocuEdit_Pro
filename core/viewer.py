@@ -117,7 +117,7 @@ from ui.side_panel import SHORTCUT_HINTS, SidePanel
 from ui.task_bar import TaskBar
 from ui.workspace import DocumentWorkspace
 
-APP_VERSION = "0.98b"
+APP_VERSION = "1.0"
 
 
 class PDFViewer(QMainWindow):

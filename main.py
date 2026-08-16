@@ -172,7 +172,7 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
     app.setApplicationDisplayName(APP_NAME)
     app.setOrganizationName("PDFDocuEdit")
     app.setOrganizationDomain("pdfdocuedit.local")
-    app.setApplicationVersion("0.98b")
+    app.setApplicationVersion("1.0")
     app.setWindowIcon(_application_icon())
     settings = SettingsManager()
     apply_theme(app, ThemeMode(settings.get_theme()))
