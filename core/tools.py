@@ -1027,16 +1027,25 @@ def merge_spreadsheets(
     return target
 
 
+def _barcode_type_key(value: object) -> str:
+    """Normalize pyzbar and zbarimg names (for example QR-Code/QRCODE)."""
+    return "".join(character for character in str(value).upper() if character.isalnum())
+
+
 def scan_barcodes(
     source_path: str | os.PathLike[str],
     pages: Iterable[int] | None = None,
     dpi: int = 180,
     is_cancelled: Callable[[], bool] | None = None,
+    barcode_types: Iterable[str] | None = None,
 ) -> list[dict[str, object]]:
     capability = detect_capabilities()[CapabilityId.BARCODE]
     if not capability.available:
         raise ToolError(capability.reason)
 
+    allowed_types = (
+        None if barcode_types is None else {_barcode_type_key(value) for value in barcode_types}
+    )
     results: list[dict[str, object]] = []
     with fitz.open(source_path) as doc:
         selected = list(pages) if pages is not None else list(range(doc.page_count))
@@ -1066,11 +1075,14 @@ def scan_barcodes(
                     except ET.ParseError as exc:
                         raise ToolError("zbarimg returned invalid barcode data.") from exc
                     for symbol in root.findall(".//{*}symbol"):
+                        type_name = symbol.get("type", "Unknown")
+                        if allowed_types is not None and _barcode_type_key(type_name) not in allowed_types:
+                            continue
                         data = symbol.find("{*}data")
                         results.append(
                             {
                                 "page": index + 1,
-                                "type": symbol.get("type", "Unknown"),
+                                "type": type_name,
                                 "data": "" if data is None else "".join(data.itertext()),
                             }
                         )
@@ -1088,6 +1100,8 @@ def scan_barcodes(
             pixmap = page.get_pixmap(dpi=max(72, min(600, dpi)), alpha=False)
             image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
             for value in decode(image):
+                if allowed_types is not None and _barcode_type_key(value.type) not in allowed_types:
+                    continue
                 results.append(
                     {
                         "page": index + 1,
@@ -1104,6 +1118,7 @@ def scan_barcodes_batch(
     dpi: int = 180,
     progress: ProgressCallback | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    barcode_types: Iterable[str] | None = None,
 ) -> list[dict[str, object]]:
     from .pdf_engine import parse_page_range
 
@@ -1121,7 +1136,7 @@ def scan_barcodes_batch(
                 else list(range(document.page_count))
             )
         matched_pages = matched_pages or bool(pages)
-        for result in scan_barcodes(source, pages, dpi, is_cancelled):
+        for result in scan_barcodes(source, pages, dpi, is_cancelled, barcode_types):
             result["file"] = source.name
             result["path"] = str(source)
             combined.append(result)

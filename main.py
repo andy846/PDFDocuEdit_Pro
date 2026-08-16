@@ -222,6 +222,8 @@ def main() -> int:
     # Qt's HICON mask renders the title-bar icon as a white square; hand
     # Windows a correctly-masked icon once the native window exists.
     QTimer.singleShot(150, lambda: _force_windows_icon(viewer))
+    # The frame theme needs the native window too.
+    QTimer.singleShot(200, viewer._update_title_bar)
     # Ask once (installed builds only) whether to become the default app.
     QTimer.singleShot(600, viewer.offer_default_app)
     return app.exec()

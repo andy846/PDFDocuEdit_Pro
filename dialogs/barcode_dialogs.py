@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialogButtonBox,
     QFileDialog,
@@ -16,12 +17,36 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QTableWidgetItem,
 )
 
 from .base import SortableTableWidget, ToolDialog, remember_save_directory, start_in_save_directory
 from .conversion_dialogs import FileListDialog
+
+BARCODE_TYPES = (
+    "QRCODE",
+    "CODE128",
+    "CODE93",
+    "CODE39",
+    "EAN2",
+    "EAN5",
+    "EAN13",
+    "EAN8",
+    "UPCA",
+    "UPCE",
+    "ISBN13",
+    "ISBN10",
+    "COMPOSITE",
+    "PDF417",
+    "SQCODE",
+    "I25",
+    "CODABAR",
+    "DATABAR",
+    "DATABAR_EXP",
+)
 
 
 class BarcodeScanDialog(FileListDialog):
@@ -45,6 +70,28 @@ class BarcodeScanDialog(FileListDialog):
         self.dpi.setCurrentIndex(1)
         form.addRow("Pages", self.pages)
         form.addRow("Scan resolution", self.dpi)
+        self.barcode_types = QListWidget()
+        self.barcode_types.setSelectionMode(
+            QAbstractItemView.SelectionMode.MultiSelection
+        )
+        self.barcode_types.setMinimumHeight(150)
+        self.barcode_types.setToolTip(
+            "Only selected barcode formats are included in scan results."
+        )
+        for barcode_type in BARCODE_TYPES:
+            item = QListWidgetItem(barcode_type)
+            self.barcode_types.addItem(item)
+            item.setSelected(True)
+        form.addRow("Barcode types to scan", self.barcode_types)
+        type_actions = QHBoxLayout()
+        select_all = QPushButton("Select All")
+        select_all.clicked.connect(lambda: self._select_all_types(True))
+        deselect_all = QPushButton("Deselect All")
+        deselect_all.clicked.connect(lambda: self._select_all_types(False))
+        type_actions.addWidget(select_all)
+        type_actions.addWidget(deselect_all)
+        type_actions.addStretch(1)
+        form.addRow("", type_actions)
         note = QLabel("Higher resolution improves small-code detection but uses more memory and time.")
         note.setWordWrap(True)
         note.setObjectName("secondary")
@@ -72,12 +119,25 @@ class BarcodeScanDialog(FileListDialog):
             except ValueError as exc:
                 self.show_error(str(exc))
                 return
+        selected_types = [
+            self.barcode_types.item(index).text()
+            for index in range(self.barcode_types.count())
+            if self.barcode_types.item(index).isSelected()
+        ]
+        if not selected_types:
+            self.show_error("Select at least one barcode type to scan.")
+            return
         self.details = {
             "paths": list(self.file_paths),
             "page_range": page_range,
             "dpi": [150, 200, 300, 400][self.dpi.currentIndex()],
+            "barcode_types": selected_types,
         }
         self.accept()
+
+    def _select_all_types(self, selected: bool) -> None:
+        for index in range(self.barcode_types.count()):
+            self.barcode_types.item(index).setSelected(selected)
 
 
 class BarcodeResultsDialog(ToolDialog):

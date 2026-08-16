@@ -38,6 +38,28 @@ from .base import (
 class BatchFileTable(QTableWidget):
     filesDropped = pyqtSignal(list)
 
+    def _local_paths(self, event) -> list[Path]:
+        return [
+            Path(url.toLocalFile())
+            for url in event.mimeData().urls()
+            if url.isLocalFile()
+        ]
+
+    def _can_drop(self, event) -> bool:
+        return any(
+            path.is_dir() or path.suffix.casefold() in self.extensions
+            for path in self._local_paths(event)
+        )
+
+    def _dropped_paths(self, event) -> list[str]:
+        paths: list[str] = []
+        for path in self._local_paths(event):
+            if path.is_dir():
+                paths.extend(str(item) for item in path.iterdir() if item.is_file() and item.suffix.casefold() in self.extensions)
+            elif path.suffix.casefold() in self.extensions:
+                paths.append(str(path))
+        return paths
+
     def __init__(self, extensions: set[str], parent=None):
         super().__init__(0, 4, parent)
         self.extensions = extensions
@@ -58,11 +80,19 @@ class BatchFileTable(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
 
     def dragEnterEvent(self, event) -> None:
-        if event.mimeData().hasUrls():
+        if self._can_drop(event):
             self.setProperty("dragActive", True)
             self.style().unpolish(self)
             self.style().polish(self)
             event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        # QAbstractItemView otherwise asks its model about the hovered cell;
+        # its model rejects external file URLs and cancels the final drop.
+        if self._can_drop(event):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
 
     def dragLeaveEvent(self, event) -> None:
         self.setProperty("dragActive", False)
@@ -74,7 +104,7 @@ class BatchFileTable(QTableWidget):
         self.setProperty("dragActive", False)
         self.style().unpolish(self)
         self.style().polish(self)
-        values = [url.toLocalFile() for url in event.mimeData().urls()]
+        values = self._dropped_paths(event)
         paths: list[str] = []
         for value in values:
             path = Path(value)

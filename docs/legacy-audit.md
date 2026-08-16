@@ -18,7 +18,7 @@
 | 側欄綠色 (#02F78E) | hover/選中 + 區標題用 legacy green（light 主題標題用深綠保可讀性）；pressed #FF6347 | ✅ |
 | **渲染與視覺（2026-08-15）** | Continuous 快速滾動白畫面修復：可見頁**高優先**渲染 + 預取**限流**（MAX_PENDING_RENDERS=8），快速滾動不再被離屏頁積壓；所有彈出選單（QMenu + 下拉列表）**圓角 12px/10px + 微透明**（代理樣式設 WA_TranslucentBackground，主題色 rgba 246/255） | ✅ |
 | 工具列快捷鍵 | Ctrl+L/R/E + Delete（WindowShortcut；Delete 喺輸入框聚焦時不觸發） | ✅ |
-| **macOS 打包（2026-08-15）** | `dist/PDFDocuEdit Pro.app`（301MB，arm64，含 Ghostscript + Letterhead_Manager + 全依賴）+ `release/PDFDocuEdit-Pro-0.98b-macOS-arm64.zip`（131MB，含 sha256）；offscreen 啟動煙測零錯誤 | ✅ | 完整打包準備：spec 捆綁 **完整 Ghostscript**（bin/lib/Resource/iccprofiles）、pyzbar zbar DLL、Letterhead_Manager（**已遷移 PyQt6**）+ jinja2、comtypes（Windows 限定）；`_bundled_ghostscript()` 優先偵測捆綁版；`requirements-windows.txt`、`scripts/build_windows.bat`、`docs/windows-build.md`；macOS 實機 PyInstaller 驗證 build 成功（301MB，含全部內容，警告檔只有預期嘅 comtypes） | ✅ |
+| **macOS 打包（2026-08-15）** | `dist/PDFDocuEdit Pro.app`（301MB，arm64，含 Ghostscript + 全依賴）+ `release/PDFDocuEdit-Pro-0.98b-macOS-arm64.zip`（131MB，含 sha256）；offscreen 啟動煙測零錯誤 | ✅ | 完整打包準備：spec 捆綁 **完整 Ghostscript**（bin/lib/Resource/iccprofiles）、pyzbar zbar DLL、comtypes（Windows 限定）；`_bundled_ghostscript()` 優先偵測捆綁版；`requirements-windows.txt`、`scripts/build_windows.bat`、`docs/windows-build.md`；macOS 實機 PyInstaller 驗證 build 成功（301MB，含全部內容，警告檔只有預期嘅 comtypes） | ✅ |
 | **Deep Search 完整移植**（2026-08-15） | 舊版介面分佈 + 功能全數復刻：folder 列／選項列（Include Subfolder、**Include barcode content**、**Open 方式下拉**：新視窗=新分頁／目前視窗／系統預設）／搜尋列（**逗號多關鍵詞**、Enter 觸發）／狀態列（狀態 + **目前處理檔案** + **進度條**）／三個分頁（**Search Result** 4 欄可排序、**Preview** HTML 關鍵詞黃底高亮、**Error Message** 獨立錯誤表）／按鈕列（Clear all results、Export **HTML/TXT/CSV**、Open Selected Document、Auto column width）+ 表頭右鍵自動調寬；非模態、DeleteOnClose；`core/tools.deep_search` 支援多關鍵詞 + 條碼內容 + 進度回報。**第二輪打磨**：搜尋列置頂、主題 token 一致、結果列分離錯誤表 + item 存原始索引（**修復排序/錯誤交錯時開錯 PDF**）、搜尋中防重入、空資料夾提示、dialog 重用、關閉時停止動畫防 crash | ✅ |
 
 ## 已涵蓋（無需變更）
@@ -39,7 +39,6 @@
 | 加密/解密（AES-256、權限） | `EncryptDialog`/`DecryptDialog` ✓ |
 | PDF Info（中繼資料/字型含嵌入狀態/圖片/頁面統計） | `DocumentInfoDialog`（General/Fonts/Images/Text 分頁）✓ |
 | 文字區域提取（畫矩形→跨頁→Excel） | `TextExtractorDialog` ✓ |
-| PDF Version Control（Letterhead Manager） | 能力偵測 + 啟動 ✓ |
 | 多視窗 → 新版分頁取代（P4） | 分頁 + Ctrl+Tab ✓（舊 Window Management 對話框由分頁列取代） |
 
 ## 本輪補齊的缺口
@@ -58,7 +57,6 @@
 |---|---|---|
 | Compress PDFs | `compress.png` | ✅ 已切換（原 SVG） |
 | PostScript to PDF | `postscript.png` | ✅ 已切換（原 File.png） |
-| PDF version control | `version.png` | ✅ 已切換（原 SVG layers） |
 | Barcode / QR code | `qrcode.png` | ✅ 已切換（原 SVG scan） |
 | Batch Read Barcode | `batch_qrcode.png` | ✅ 新工具 |
 | Organize pages | `visual_organize.png` | ✅ 已切換（原 sorting.png） |

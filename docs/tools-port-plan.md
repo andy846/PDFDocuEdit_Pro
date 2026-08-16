@@ -19,7 +19,7 @@ Open、Save、Save As、Save All ｜ Rotate Left (Ctrl+L)、Rotate Right (Ctrl+R
 ### 1.3 左側工具塢（QGroupBox 分組，圓角 20px，標題綠色）
 - **Page Operations**：Search Pages、Insert Pages、Delete Pages、Extract Pages、Ordering Pages、Split PDF、Visual Organizer
 - **Conversion**：Pdf to Word、Batch Convert MS Office to PDF、Batch Convert TXT to PDF、Batch Convert PostScript to PDF
-- **Utilities**：PDF Version Control、Statistical Page Count、Extract Text By Position、Merge Multiple PDF Files、PDF Form Overlay、Batch Print PDF Files、Deep Search PDFs、Merge CSV/Excel Files、Compress PDF SIZE、Read Barcode/QR Code、Batch Read Barcode/QR Code
+- **Utilities**：Statistical Page Count、Extract Text By Position、Merge Multiple PDF Files、PDF Form Overlay、Batch Print PDF Files、Deep Search PDFs、Merge CSV/Excel Files、Compress PDF SIZE、Read Barcode/QR Code、Batch Read Barcode/QR Code
 - **Security**：Encrypt PDF、Decrypt PDF
 
 ### 1.4 底部資訊列

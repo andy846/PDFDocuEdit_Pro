@@ -178,6 +178,7 @@ def global_style() -> str:
             margin-top: {S.XS}px;
             font-weight: {F.MEDIUM};
             min-width: 110px;
+            max-width: 220px;
         }}
         QTabWidget#documentTabs QTabBar::tab:hover:!selected {{
             background: {_rgba(c['primary_soft'], 210)};
@@ -196,6 +197,51 @@ def global_style() -> str:
         QTabWidget#documentTabs QTabBar::close-button:hover {{
             background: {c['error_soft']};
         }}
+        QToolButton#tabCloseButton {{
+            min-height: 24px;
+            max-height: 24px;
+            min-width: 24px;
+            max-width: 24px;
+            padding: 0;
+            margin-left: {S.SM}px;
+            border-radius: 12px;
+        }}
+        QToolButton#tabCloseButton:hover {{
+            background: {c['error_soft']};
+            color: {c['error']};
+        }}
+
+        QTabWidget#documentTabs QTabBar::scroller {{
+            width: 58px;
+        }}
+        QTabWidget#documentTabs QToolButton#ScrollLeftButton,
+        QTabWidget#documentTabs QToolButton#ScrollRightButton,
+        QToolButton#documentTabListButton {{
+            background: {_rgba(c['bg_elevated'], 245)};
+            color: {c['text_secondary']};
+            border: 1px solid {c['border']};
+            border-radius: {R.SM}px;
+            padding: 0;
+        }}
+        QTabWidget#documentTabs QToolButton#ScrollLeftButton,
+        QTabWidget#documentTabs QToolButton#ScrollRightButton {{
+            min-width: 27px;
+            max-width: 27px;
+            min-height: 28px;
+            max-height: 28px;
+        }}
+        QTabWidget#documentTabs QToolButton#ScrollLeftButton:hover,
+        QTabWidget#documentTabs QToolButton#ScrollRightButton:hover,
+        QToolButton#documentTabListButton:hover {{
+            background: {c['primary_soft']};
+            border-color: {c['primary']};
+            color: {c['primary']};
+        }}
+        QToolButton#documentTabListButton::menu-indicator {{
+            image: none;
+            width: 0;
+        }}
+
         QFrame#leftPanel, QFrame#contextPanel {{
             background: {_rgba(c['bg_sidebar'], 225)};
             border: none;

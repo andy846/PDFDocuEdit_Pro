@@ -247,18 +247,37 @@ def insert_image(
 
 
 def list_annotations(page: fitz.Page) -> list[dict]:
-    """Return lightweight descriptions of all annotations on a page."""
-    return [
-        {"kind": str(annot.type[1]), "rect": annot.rect, "index": index}
-        for index, annot in enumerate(page.annots())
-    ]
+    """Return lightweight descriptions of all annotations on a page.
+
+    Page operations (delete/insert/reorder) rebuild page objects, which can
+    leave stale annotation xrefs behind; such entries are skipped instead of
+    crashing the UI.
+    """
+    results: list[dict] = []
+    try:
+        for index, annot in enumerate(page.annots()):
+            try:
+                kind = str(annot.type[1])
+                rect = annot.rect
+            except Exception:
+                continue  # stale xref after a page rebuild
+            results.append({"kind": kind, "rect": rect, "index": index})
+    except Exception:
+        pass  # the annotation list itself is stale
+    return results
 
 
 def remove_annotation(page: fitz.Page, index: int) -> None:
     with DOCUMENT_LOCK:
-        annots = list(page.annots())
+        try:
+            annots = list(page.annots())
+        except Exception:
+            return  # stale annotation list after a page rebuild
         if 0 <= index < len(annots):
-            page.delete_annot(annots[index])
+            try:
+                page.delete_annot(annots[index])
+            except Exception:
+                pass  # the xref vanished mid-operation
 
 
 def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:

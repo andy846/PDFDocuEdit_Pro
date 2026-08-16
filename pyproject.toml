@@ -24,7 +24,6 @@ dependencies = [
     "pdf2docx==0.5.8",
     "Pillow==10.4.0",
     "pyzbar==0.1.9",
-    "jinja2==3.1.6",
 ]
 
 [project.gui-scripts]
@@ -44,7 +43,7 @@ addopts = "-ra"
 [tool.ruff]
 target-version = "py312"
 line-length = 110
-exclude = ["backup", "PDFdocuEdit_Pro_backup", ".venv", ".venv-pyqt6", "dist", "build", "Ghostscript", "Letterhead_Manager.py"]
+exclude = ["backup", "PDFdocuEdit_Pro_backup", ".venv", ".venv-pyqt6", "dist", "build", "Ghostscript"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

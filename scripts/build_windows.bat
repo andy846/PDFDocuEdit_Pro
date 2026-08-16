@@ -13,7 +13,6 @@ if errorlevel 1 (
 echo === 0/5 Preflight: required files present ===
 if not exist "PDFDocuEdit Pro.spec" (echo [ERROR] Missing "PDFDocuEdit Pro.spec" & exit /b 1)
 if not exist "Ghostscript\bin\gswin64c.exe" (echo [ERROR] Missing Ghostscript\bin\gswin64c.exe & exit /b 1)
-if not exist "Letterhead_Manager.py" (echo [ERROR] Missing Letterhead_Manager.py & exit /b 1)
 
 echo === 1/5 Install dependencies (base + dev + Windows COM) ===
 python -m pip install --upgrade pip || exit /b 1

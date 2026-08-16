@@ -19,10 +19,9 @@
 
 | 項目 | 狀態 |
 |---|---|
-| PyQt6 / PyMuPDF / numpy / opencv / pdf2docx / openpyxl / PIL / pyzbar / jinja2 等 | ✅ 由 `requirements-base.txt` 安裝並打包 |
+| PyQt6 / PyMuPDF / numpy / opencv / pdf2docx / openpyxl / PIL / pyzbar 等 | ✅ 由 `requirements-base.txt` 安裝並打包 |
 | **Ghostscript（Windows 版，含 bin/lib/Resource/iccprofiles）** | ✅ 倉庫 `Ghostscript/` 已齊，spec 自動打包入 `ghostscript/` 資料夾；App 會優先搵捆綁版（`core/capabilities.py::_bundled_ghostscript`） |
 | **MS Office 轉 PDF（免 LibreOffice）** | ✅ Windows + comtypes：Word/Excel/PowerPoint 經 COM 轉 PDF（`core/tools.convert_office_files` 已內建） |
-| Letterhead_Manager（PDF Version Control） | ✅ 已遷移 PyQt6 + 打包入 bundle（`Letterhead_Manager` hiddenimport） |
 | pyzbar 嘅 zbar DLL | ✅ spec 自動將 pyzbar 套件內嘅 DLL 收集為 binaries |
 | 圖示/App_icon/splash | ✅ spec datas |
 
@@ -61,7 +60,6 @@ dist\PDFDocuEdit Pro\
 - [ ] 開 PDF / PostScript（PostScript 轉 PDF 用捆綁 Ghostscript，唔使裝）
 - [ ] Office → PDF（Word/Excel/PPT，經 COM 用測試機嘅 MS Office）
 - [ ] Deep Search、條碼/QR（zbar DLL 已捆綁）
-- [ ] PDF Version Control（Letterhead Manager）
 - [ ] 加密/解密、批次列印、合併/壓縮等全 Tools
 
 ## 進階：單一 Setup EXE

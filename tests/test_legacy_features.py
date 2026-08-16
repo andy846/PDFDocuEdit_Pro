@@ -118,7 +118,6 @@ def test_sidebar_icons_follow_old_assets(tmp_path: Path, monkeypatch) -> None:
     expected = {
         "compress": "compress.png",
         "postscript": "postscript.png",
-        "version_control": "version.png",
         "barcode": "qrcode.png",
         "barcode_batch": "batch_qrcode.png",
         "sort": "visual_organize.png",
@@ -127,6 +126,7 @@ def test_sidebar_icons_follow_old_assets(tmp_path: Path, monkeypatch) -> None:
     for _section_key, _title, items in SidePanel.SECTIONS:
         for item in items:
             found[item.key] = item.asset_name or ""
+    assert "version_control" not in found
     for key, asset in expected.items():
         assert found.get(key) == asset, (key, found.get(key))
 

@@ -15,6 +15,7 @@ from PyQt6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QColor,
     QGuiApplication,
     QImage,
     QKeySequence,
@@ -34,6 +35,7 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSplitter,
     QTextEdit,
@@ -48,7 +50,7 @@ from core.annotations import (
     apply_annotation,
     remove_annotation,
 )
-from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
+from core.capabilities import detect_capabilities, refresh_capabilities
 from core.commands import Command
 from core.file_association import (
     is_default_app,
@@ -464,6 +466,9 @@ class PDFViewer(QMainWindow):
             lambda ratio, s=session: self._session_zoom_changed(s, ratio)
         )
         canvas.textCopied.connect(self._copy_text_to_clipboard)
+        canvas.contextMenuRequested.connect(
+            lambda pos, s=session: self._show_canvas_menu(pos, s)
+        )
         canvas.annotationRequested.connect(
             lambda op, s=session: self._handle_annotation(op, s)
         )
@@ -677,6 +682,64 @@ class PDFViewer(QMainWindow):
         self.info_bar.refresh_icons()
         self.context_panel.refresh_icons()
         self.workspace.refresh_icons()
+        self._update_title_bar()
+
+    def _update_title_bar(self) -> None:
+        """Match the Windows title bar (non-client frame) to the theme."""
+        import sys as _sys
+
+        if _sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            from styles.theme import get_colors
+
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+            base = get_colors().get("bg_base", "#1c1c1e")
+            dark = QColor(base).lightness() < 128
+            value = ctypes.c_int(1 if dark else 0)
+            dwmapi = ctypes.windll.dwmapi
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (1903+), 19 (1809 fallback)
+            for attribute in (20, 19):
+                result = dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    attribute,
+                    ctypes.byref(value),
+                    ctypes.sizeof(value),
+                )
+                if result == 0:
+                    break
+
+            def set_color(attribute: int, color: QColor) -> None:
+                color_ref = (
+                    (color.blue() << 16) | (color.green() << 8) | color.red()
+                )
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd, attribute, ctypes.byref(ctypes.c_int(color_ref)), 4
+                )
+
+            background = QColor(base)
+            if dark:
+                # Windows 11 "show accent colour on title bars" overrides the
+                # dark flag with the accent colour (blue), so pin the caption,
+                # text and border colours explicitly to the app palette.
+                # DWMWA_BORDER_COLOR = 34, CAPTION_COLOR = 35, TEXT_COLOR = 36.
+                set_color(34, background)
+                set_color(35, background)
+                set_color(
+                    36, QColor(get_colors().get("text_primary", "#f2f2f4"))
+                )
+            else:
+                none = 0xFFFFFFFE  # DWMWA_COLOR_NONE
+                for attribute in (34, 35, 36):
+                    dwmapi.DwmSetWindowAttribute(
+                        hwnd, attribute, ctypes.byref(ctypes.c_int(none)), 4
+                    )
+        except Exception:
+            pass
 
     def _theme_changed(self, value: str) -> None:
         self.settings.set_theme(value)
@@ -794,6 +857,106 @@ class PDFViewer(QMainWindow):
 
     def _copy_text_to_clipboard(self, text: str) -> None:
         QApplication.clipboard().setText(text)
+
+    def _show_canvas_menu(self, global_pos, session: DocumentSession) -> None:
+        """Right-click menu for the PDF canvas."""
+        menu = QMenu(self)
+        loaded = session.engine.is_loaded()
+
+        def activate() -> None:
+            self.workspace.set_current_session(session)
+            self._session = session
+
+        copy_action = menu.addAction("Copy Text", session.canvas.copy_selection)
+        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.setEnabled(loaded and bool(session.canvas.selected_text()))
+        menu.addSeparator()
+
+        def activate_then(handler):
+            def run() -> None:
+                activate()
+                handler()
+
+            return run
+
+        previous = menu.addAction("Previous Page", activate_then(self.previous_page))
+        previous.setShortcut("Ctrl+Left")
+        previous.setEnabled(loaded)
+        next_page = menu.addAction("Next Page", activate_then(self.next_page))
+        next_page.setShortcut("Ctrl+Right")
+        next_page.setEnabled(loaded)
+        first = menu.addAction("First Page", activate_then(self._goto_first_page))
+        first.setShortcut("Home")
+        first.setEnabled(loaded)
+        last = menu.addAction("Last Page", activate_then(self._goto_last_page))
+        last.setShortcut("End")
+        last.setEnabled(loaded)
+        menu.addSeparator()
+
+        zoom_in = menu.addAction("Zoom In", activate_then(self._canvas_call("zoom_in")))
+        zoom_in.setShortcut("Ctrl+=")
+        zoom_in.setEnabled(loaded)
+        zoom_out = menu.addAction("Zoom Out", activate_then(self._canvas_call("zoom_out")))
+        zoom_out.setShortcut("Ctrl+-")
+        zoom_out.setEnabled(loaded)
+        fit_width = menu.addAction("Fit Page Width", activate_then(self._canvas_call("fit_width")))
+        fit_width.setShortcut("Ctrl+0")
+        fit_width.setEnabled(loaded)
+        fit_page = menu.addAction("Fit Whole Page", activate_then(self._canvas_call("fit_page")))
+        fit_page.setShortcut("Ctrl+9")
+        fit_page.setEnabled(loaded)
+        actual = menu.addAction("Actual Size", activate_then(self._canvas_call("actual_size")))
+        actual.setShortcut("Ctrl+8")
+        actual.setEnabled(loaded)
+
+        layout_menu = menu.addMenu("Page Layout")
+        layout_menu.setEnabled(loaded)
+        for label, mode in (
+            ("Single Page", "single"),
+            ("Continuous Pages", "continuous"),
+            ("Facing Pages", "facing"),
+        ):
+            action = layout_menu.addAction(
+                label, activate_then(lambda v=mode: self._set_layout_mode(v))
+            )
+            action.setCheckable(True)
+            action.setChecked(session.canvas.layout_mode.value == mode)
+        menu.addSeparator()
+
+        rotate_left = menu.addAction("Rotate Left", activate_then(lambda: self._rotate_current(-90)))
+        rotate_left.setShortcut("Ctrl+L")
+        rotate_left.setEnabled(loaded)
+        rotate_right = menu.addAction("Rotate Right", activate_then(lambda: self._rotate_current(90)))
+        rotate_right.setShortcut("Ctrl+R")
+        rotate_right.setEnabled(loaded)
+        extract = menu.addAction(
+            "Extract Current Page…",
+            lambda: self._handle_thumbnail_action(session, "extract_current"),
+        )
+        extract.setEnabled(loaded)
+        insert = menu.addAction("Insert Pages…", activate_then(self._insert_pages_dialog))
+        insert.setShortcut("F7")
+        insert.setEnabled(loaded)
+        delete = menu.addAction("Delete Pages…", activate_then(self._delete_pages_dialog))
+        delete.setShortcut("F8")
+        delete.setEnabled(loaded)
+        menu.addSeparator()
+
+        bookmark = menu.addAction("Add Bookmark", lambda: self._add_bookmark(session))
+        bookmark.setShortcut("Ctrl+D")
+        bookmark.setEnabled(loaded)
+        print_action = menu.addAction("Print…", activate_then(self.print_pdf))
+        print_action.setShortcut("Ctrl+P")
+        print_action.setEnabled(loaded)
+        info = menu.addAction(
+            "Document Info",
+            lambda: DocumentInfoDialog(
+                session.engine.document, session.engine.original_path, self
+            ).exec(),
+        )
+        info.setEnabled(loaded)
+
+        menu.exec(global_pos)
 
     # --- Document lifecycle ---------------------------------------------
     def _open_dialog(self) -> None:
@@ -1624,7 +1787,6 @@ class PDFViewer(QMainWindow):
             "merge_sheet": self._merge_sheets,
             "barcode": self._scan_barcodes,
             "barcode_batch": self._scan_barcodes_batch,
-            "version_control": self._version_control,
             "encrypt": self._encrypt_pdf,
             "decrypt": self._decrypt_pdf,
             "diagnostics": lambda: DiagnosticsDialog(self).exec(),
@@ -2799,6 +2961,7 @@ class PDFViewer(QMainWindow):
             details["page_range"],
             details["dpi"],
             on_result=lambda results: self._show_barcode_results(results, remap),
+            barcode_types=details["barcode_types"],
             progress_argument="progress",
             cancel_argument="is_cancelled",
             on_finished=self._safe_cleanup(snapshot) if snapshot else None,
@@ -2814,19 +2977,6 @@ class PDFViewer(QMainWindow):
             if remap and value in remap:
                 result["path"] = str(remap[value])
         BarcodeResultsDialog(results, self).exec()
-
-    def _version_control(self) -> None:
-        capability = detect_capabilities()[CapabilityId.VERSION_CONTROL]
-        if not capability.available:
-            self.info_bar.show_message(capability.reason, "warning", 0)
-            return
-        try:
-            import Letterhead_Manager
-
-            self._version_window = Letterhead_Manager.MainWindow()
-            self._version_window.show()
-        except Exception as exc:
-            self._error("Version Control failed", str(exc))
 
     def _encrypt_pdf(self) -> None:
         source = self._require_source()
@@ -3226,6 +3376,7 @@ class PDFViewer(QMainWindow):
             "About PDFDocuEdit Pro",
             f"<h3>PDFDocuEdit Pro {APP_VERSION}</h3>"
             "<p>A cross-platform PDF workspace built with Python, PyQt6 and PyMuPDF.</p>"
+            "<p><b>Developer:</b> Andy Leung</p>"
             "<p>Interface icons are provided by Lucide under the ISC License.</p>",
         )
 

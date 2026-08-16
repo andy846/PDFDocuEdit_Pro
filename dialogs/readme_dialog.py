@@ -97,8 +97,6 @@ security management.
   master file.
 * **PDF Compression:** Reduce file sizes with several compression levels.
 * **Page Count Report:** Generate an Excel report for all PDFs in a folder.
-* **PDF Version Control:** Launch the Letterhead Manager to track document
-  versions (when the optional module is installed).
 
 ### 7. Security
 * **Encrypt PDF:** Protect files with AES-256 password encryption and

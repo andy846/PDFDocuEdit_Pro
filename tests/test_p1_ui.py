@@ -29,6 +29,21 @@ def _window(tmp_path: Path, monkeypatch):
     return viewer_module.PDFViewer(), app
 
 
+def test_about_identifies_developer(tmp_path: Path, monkeypatch) -> None:
+    window, _app = _window(tmp_path, monkeypatch)
+    captured: dict[str, str] = {}
+
+    def capture_about(_parent, title: str, text: str) -> None:
+        captured.update(title=title, text=text)
+
+    monkeypatch.setattr(viewer_module.QMessageBox, "about", capture_about)
+    window.show_about()
+
+    assert captured["title"] == "About PDFDocuEdit Pro"
+    assert "<p><b>Developer:</b> Andy Leung</p>" in captured["text"]
+    window.close()
+
+
 def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "nav.pdf")

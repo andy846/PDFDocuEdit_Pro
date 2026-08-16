@@ -359,6 +359,8 @@ def test_barcode_cli_fallback_parses_zbar_xml(tmp_path: Path, monkeypatch) -> No
     assert scan_barcodes(source) == [
         {"page": 1, "type": "QR-Code", "data": "PDFDocuEdit"}
     ]
+    assert scan_barcodes(source, barcode_types=["QRCODE"])[0]["data"] == "PDFDocuEdit"
+    assert scan_barcodes(source, barcode_types=["CODE128"]) == []
 
 
 # --- encryption round trips ------------------------------------------------

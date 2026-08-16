@@ -4,7 +4,9 @@ import time
 from pathlib import Path
 
 import fitz
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QMessageBox, QTabBar
 
 import core.viewer as viewer_module
 from core.settings import SettingsManager
@@ -100,6 +102,33 @@ def test_close_tab_and_last_tab_returns_empty_state(tmp_path: Path, monkeypatch)
     assert window._session is None
     assert not window.engine.is_loaded()
     assert not window.bottom_bar._zoom_in.isEnabled()
+    window.close()
+
+
+def test_clicking_tab_x_closes_document_in_real_viewer(tmp_path: Path, monkeypatch) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    first = make_pdf(tmp_path / "first.pdf")
+    second = make_pdf(tmp_path / "second.pdf")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Discard),
+    )
+    window.load_file(str(first))
+    window.open_in_new_tab(str(second))
+    _wait_renders(app, window.workspace.canvas)
+    assert window.workspace.session_count() == 2
+
+    bar = window.workspace._tabs.tabBar()
+    button = bar.tabButton(1, QTabBar.ButtonPosition.RightSide)
+    assert button is not None and not button.icon().isNull()
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    app.processEvents()
+
+    assert window.workspace.session_count() == 1
+    assert not button.isVisible()
+    assert window._session is not None
+    assert window._session.document_name == "first.pdf"
     window.close()
 
 

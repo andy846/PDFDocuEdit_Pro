@@ -25,7 +25,13 @@ build_assets/
 
 # Local user state and test artifacts
 config.json
+VC_config.json
 recent_files.json
 secret
 *.tmp
 extracted_hicon.png
+
+# Local debug/probe scripts and their output
+probe_*.py
+probe_*.txt
+pytest_out*.txt

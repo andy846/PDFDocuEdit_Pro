@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
     QSize,
     Qt,
     QThreadPool,
+    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import QIcon, QImage, QPixmap
@@ -27,7 +28,9 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QStackedWidget,
+    QTabBar,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +41,7 @@ from styles.tokens import D, S
 
 from .document_session import DocumentSession
 from .icons import icon
+from .motion import MotionIconButton
 from .pdf_canvas import PdfCanvas
 
 RECENT_THUMB_SCALE = 0.08
@@ -233,6 +237,71 @@ class EmptyState(QWidget):
             self._image_opacity.setOpacity(1.0)
 
 
+class TabCloseButton(MotionIconButton):
+    """Tab close button that tolerates the drift of a real mouse click.
+
+    A real click on a 24 px target almost always drifts a few pixels. Qt
+    cancels the press as soon as the cursor leaves the widget rect, and the
+    release event is then delivered to whatever widget sits under the cursor
+    (the tab bar), so the button never even sees it. This subclass grabs the
+    mouse on press, routing every move/release back to the button, and
+    widens the hit area by HIT_MARGIN so a normal tremor still counts.
+    Dragging well away cancels the click.
+    """
+
+    _HIT_MARGIN = 10
+
+    def __init__(self, parent=None):
+        super().__init__("x", "Close tab", D.ICON_SM, parent=parent)
+        self.setObjectName("tabCloseButton")
+        self._press_inside = False
+
+    def _hit_rect(self):
+        return self.rect().adjusted(
+            -self._HIT_MARGIN,
+            -self._HIT_MARGIN,
+            self._HIT_MARGIN,
+            self._HIT_MARGIN,
+        )
+
+    def mousePressEvent(self, event) -> None:
+        self._press_inside = (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        )
+        super().mousePressEvent(event)
+        if self._press_inside:
+            # Keep every move/release coming to this button even when the
+            # cursor slides off it mid-press.
+            self.grabMouse()
+
+    def mouseReleaseEvent(self, event) -> None:
+        press_inside = self._press_inside
+        self._press_inside = False
+        self.releaseMouse()
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and press_inside
+            and self._hit_rect().contains(event.position().toPoint())
+        ):
+            will_click = self.isDown() and self.rect().contains(
+                event.position().toPoint()
+            )
+            if not will_click:
+                # The pointer drifted outside the widget during the press, so
+                # Qt cancelled the click. The release is still inside the
+                # forgiving hit area, so complete the click ourselves.
+                self.setDown(False)
+                self._animate(
+                    self._base_size + 4 if self._hovered else self._base_size, 150
+                )
+                self.released.emit()
+                self.clicked.emit()
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+
 class DocumentWorkspace(QFrame):
     """Tabbed document area. Compatibility properties ``canvas`` and
     ``nav_panel`` resolve to the current tab's widgets."""
@@ -260,15 +329,38 @@ class DocumentWorkspace(QFrame):
 
         self._tabs = QTabWidget()
         self._tabs.setObjectName("documentTabs")
-        self._tabs.setTabsClosable(True)
+        # Use an explicit icon button: Windows may not paint QTabBar's native
+        # close primitive under the dark stylesheet.
+        self._tabs.setTabsClosable(False)
         self._tabs.setMovable(True)
         self._tabs.setDocumentMode(True)
         self._tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self._tabs.currentChanged.connect(self._on_current_changed)
         tab_bar = self._tabs.tabBar()
+        tab_bar.setUsesScrollButtons(True)
+        tab_bar.setExpanding(False)
+        tab_bar.setElideMode(Qt.TextElideMode.ElideMiddle)
         tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         tab_bar.customContextMenuRequested.connect(self._on_tab_context_menu)
         tab_bar.installEventFilter(self)
+
+        self._tab_list_menu = QMenu(self._tabs)
+        self._tab_list_menu.aboutToShow.connect(self._rebuild_tab_list_menu)
+        self._tab_list_button = QToolButton(self._tabs)
+        self._tab_list_button.setObjectName("documentTabListButton")
+        self._tab_list_button.setAutoRaise(True)
+        self._tab_list_button.setFixedSize(D.CONTROL_H, D.CONTROL_H)
+        self._tab_list_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._tab_list_button.setMenu(self._tab_list_menu)
+        self._tab_list_button.setToolTip("Show all open documents")
+        self._tab_list_button.setAccessibleName("All open document tabs")
+        self._tab_list_button.setVisible(False)
+        self._tabs.setCornerWidget(
+            self._tab_list_button, Qt.Corner.TopRightCorner
+        )
+        self._refresh_tab_navigation_icons()
 
         self._stack.addWidget(self._empty)
         self._stack.addWidget(self._tabs)
@@ -279,14 +371,32 @@ class DocumentWorkspace(QFrame):
     # --- tab management --------------------------------------------------
     def create_tab(self, session: DocumentSession) -> None:
         index = self._tabs.addTab(session.tab_widget, session.tab_title)
+        close_button = TabCloseButton()
+        close_button.set_animations_enabled(self._animations_enabled)
+        close_button.installEventFilter(self)
+        self._tabs.tabBar().setTabButton(
+            index, QTabBar.ButtonPosition.RightSide, close_button
+        )
         self._sessions[index] = session
         self._stack.setCurrentWidget(self._tabs)
         self._tabs.setCurrentIndex(index)
         self._empty.set_active(False)
+        self._update_tab_navigation()
 
     def close_tab(self, session: DocumentSession) -> None:
         for index, candidate in list(self._sessions.items()):
             if candidate is session:
+                bar = self._tabs.tabBar()
+                close_button = bar.tabButton(
+                    index, QTabBar.ButtonPosition.RightSide
+                )
+                if close_button is not None:
+                    # QTabBar can leave a custom button alive after
+                    # removeTab(), producing a visible but inert ghost X.
+                    close_button.removeEventFilter(self)
+                    close_button.hide()
+                    bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
+                    close_button.deleteLater()
                 self._tabs.removeTab(index)
                 del self._sessions[index]
                 # Rebuild the index mapping after removal.
@@ -302,6 +412,9 @@ class DocumentWorkspace(QFrame):
         if not self._sessions:
             self._stack.setCurrentWidget(self._empty)
             self._empty.set_active(True)
+        self._update_tab_navigation()
+        self._tabs.tabBar().update()
+        self._stack.update()
 
     def session_at(self, index: int) -> DocumentSession | None:
         return self._sessions.get(index)
@@ -327,6 +440,50 @@ class DocumentWorkspace(QFrame):
                     str(session.display_path) if session.display_path else session.document_name,
                 )
                 return
+
+    def _update_tab_navigation(self) -> None:
+        self._tab_list_button.setVisible(self._tabs.count() > 1)
+        # Scroll buttons are owned by QTabBar and can be created lazily.
+        QTimer.singleShot(0, self._refresh_tab_navigation_icons)
+
+    def _refresh_tab_navigation_icons(self) -> None:
+        colour = get_color("text_secondary")
+        for object_name, icon_name, tooltip in (
+            ("ScrollLeftButton", "chevron-left", "Show previous tabs"),
+            ("ScrollRightButton", "chevron-right", "Show next tabs"),
+        ):
+            button = self._tabs.tabBar().findChild(QToolButton, object_name)
+            if button is None:
+                continue
+            button.setIcon(icon(icon_name, D.ICON_SM, colour))
+            button.setAutoRaise(True)
+            button.setToolTip(tooltip)
+
+        self._tab_list_button.setIcon(
+            icon("list-tree", D.ICON_SM, colour)
+        )
+        self._tab_list_button.setIconSize(QSize(D.ICON_SM, D.ICON_SM))
+
+    def _rebuild_tab_list_menu(self) -> None:
+        self._tab_list_menu.clear()
+        current_index = self._tabs.currentIndex()
+        for index in range(self._tabs.count()):
+            session = self.session_at(index)
+            if session is None:
+                continue
+            action = self._tab_list_menu.addAction(
+                icon("file-text", D.ICON_SM),
+                session.tab_title,
+            )
+            action.setCheckable(True)
+            action.setChecked(index == current_index)
+            path = session.display_path or session.document_name
+            action.setToolTip(str(path))
+            action.triggered.connect(
+                lambda checked=False, tab_index=index: self._tabs.setCurrentIndex(
+                    tab_index
+                )
+            )
 
     def _on_tab_close_requested(self, index: int) -> None:
         session = self.session_at(index)
@@ -361,6 +518,45 @@ class DocumentWorkspace(QFrame):
 
     def eventFilter(self, obj, event) -> bool:
         bar = self._tabs.tabBar()
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            close_index = -1
+            # PyQt can occasionally wrap the same C++ close button as a plain
+            # QToolButton on Windows.  The Qt object name and its position are
+            # stable across wrappers; a Python isinstance/identity check is not.
+            object_name = obj.objectName() if hasattr(obj, "objectName") else ""
+            if object_name == "tabCloseButton":
+                try:
+                    point = obj.mapTo(bar, event.position().toPoint())
+                    close_index = bar.tabAt(point)
+                except (AttributeError, RuntimeError):
+                    close_index = -1
+
+                if close_index < 0:
+                    for index in range(self._tabs.count()):
+                        button = bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+                        if button is not None and button == obj:
+                            close_index = index
+                            break
+            elif obj is bar:
+                point = event.position().toPoint()
+                for index in range(self._tabs.count()):
+                    button = bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+                    if button is not None and button.geometry().contains(point):
+                        close_index = index
+                        break
+            if close_index >= 0:
+                session = self.session_at(close_index)
+                if session is not None:
+                    # Defer removal until Qt has returned from dispatching
+                    # this event to either the button or movable tab bar.
+                    QTimer.singleShot(
+                        0, lambda session=session: self.tabCloseRequested.emit(session)
+                    )
+                event.accept()
+                return True
         if obj is bar and event.type() == QEvent.Type.MouseButtonRelease:
             if event.button() == Qt.MouseButton.MiddleButton:
                 index = bar.tabAt(event.position().toPoint())
@@ -432,6 +628,13 @@ class DocumentWorkspace(QFrame):
         self._empty.refresh_icons()
         for session in set(self._sessions.values()):
             session.refresh_icons()
+        for index in range(self._tabs.count()):
+            button = self._tabs.tabBar().tabButton(
+                index, QTabBar.ButtonPosition.RightSide
+            )
+            if button is not None and hasattr(button, "refresh_icon"):
+                button.refresh_icon()
+        self._refresh_tab_navigation_icons()
 
     def set_animations_enabled(self, enabled: bool) -> None:
         self._animations_enabled = enabled

@@ -136,6 +136,7 @@ class PdfCanvas(QScrollArea):
     textCopied = pyqtSignal(str)
     annotationRequested = pyqtSignal(object)  # AnnotationOp
     noteRequested = pyqtSignal(int, object)  # (page, fitz.Point)
+    contextMenuRequested = pyqtSignal(object)  # global QPoint
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -169,6 +170,17 @@ class PdfCanvas(QScrollArea):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Right-click menus: the context menu event lands on the widget under
+        # the cursor (viewport or a page overlay), so forward each layer to
+        # the contextMenuRequested signal.
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(
+            lambda pos: self.contextMenuRequested.emit(self.mapToGlobal(pos))
+        )
+        self.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.viewport().customContextMenuRequested.connect(
+            lambda pos: self.contextMenuRequested.emit(self.viewport().mapToGlobal(pos))
+        )
 
         self._pager = QWidget()
         self._pager.setObjectName("canvasPager")
@@ -517,6 +529,20 @@ class PdfCanvas(QScrollArea):
         for view in self._page_views.values():
             view.overlay.set_selection_rects([])
 
+    def selected_text(self) -> str:
+        """The currently selected text (empty when nothing is selected)."""
+        return self._selection[1] if self._selection else ""
+
+    def copy_selection(self) -> None:
+        """Copy the selected text to the clipboard (same as Ctrl+C)."""
+        if self._selection:
+            self.textCopied.emit(self._selection[1])
+
+    def contextMenuEvent(self, event) -> None:
+        self.contextMenuRequested.emit(event.globalPos())
+        event.accept()
+        super().contextMenuEvent(event)
+
     # --- layout engine ---------------------------------------------------
     def _teardown_views(self) -> None:
         for view in self._page_views.values():
@@ -635,6 +661,14 @@ class PdfCanvas(QScrollArea):
             page = self._doc.load_page(page_num)
             view = PageView(page_num, page, self._pager)
             view.set_show_caption(self._show_captions)
+            view.overlay.setContextMenuPolicy(
+                Qt.ContextMenuPolicy.CustomContextMenu
+            )
+            view.overlay.customContextMenuRequested.connect(
+                lambda pos, overlay=view.overlay: self.contextMenuRequested.emit(
+                    overlay.mapToGlobal(pos)
+                )
+            )
             rect = self._page_rect_in_layout(page_num)
             view.setGeometry(
                 int(rect.x()),

@@ -273,13 +273,6 @@ class SidePanel(QFrame):
                 ),
                 ToolItem("barcode", "Barcode / QR code", "scan", "qrcode.png", CapabilityId.BARCODE),
                 ToolItem("barcode_batch", "Batch Read Barcode/QR Code", "scan", "batch_qrcode.png", CapabilityId.BARCODE),
-                ToolItem(
-                    "version_control",
-                    "PDF version control",
-                    "layers",
-                    "version.png",
-                    CapabilityId.VERSION_CONTROL,
-                ),
             ),
         ),
         (

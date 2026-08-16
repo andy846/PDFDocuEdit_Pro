@@ -54,8 +54,6 @@ _hiddenimports = [
     "openpyxl",
     "PIL",
     "pyzbar.pyzbar",
-    "Letterhead_Manager",
-    "jinja2",
     "docx",
     "lxml",
     "cv2",

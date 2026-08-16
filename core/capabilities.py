@@ -22,7 +22,6 @@ class CapabilityId(StrEnum):
     BARCODE = "barcode"
     PDF_TO_WORD = "pdf_to_word"
     SPREADSHEET = "spreadsheet"
-    VERSION_CONTROL = "version_control"
 
 
 @dataclass(frozen=True)
@@ -200,12 +199,6 @@ def detect_capabilities() -> dict[CapabilityId, Capability]:
             "Spreadsheet export",
             ("openpyxl",),
             "Install openpyxl.",
-        ),
-        _module_capability(
-            CapabilityId.VERSION_CONTROL,
-            "PDF Version Control",
-            ("Letterhead_Manager",),
-            "Add the optional Letterhead_Manager module to the application bundle.",
         ),
     ]
     return {value.id: value for value in values}

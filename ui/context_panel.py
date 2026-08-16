@@ -317,7 +317,11 @@ class ContextPanel(QFrame):
         self._annot_list.clear()
         if page is None:
             return
-        for entry in list_annotations(page):
+        try:
+            entries = list_annotations(page)
+        except Exception:
+            entries = []  # never let a stale page crash the panel
+        for entry in entries:
             item = QListWidgetItem(f"{entry['kind']}  ·  page area")
             item.setData(Qt.ItemDataRole.UserRole, entry["index"])
             self._annot_list.addItem(item)
