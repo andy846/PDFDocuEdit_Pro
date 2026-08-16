@@ -319,6 +319,12 @@ class DocumentWorkspace(QFrame):
         self.setAcceptDrops(True)
         self._animations_enabled = animations_enabled
         self._sessions: dict[int, DocumentSession] = {}
+        # The tab close buttons are Python subclasses (TabCloseButton). The
+        # C++ QTabBar owns the underlying QToolButton, but nothing else keeps
+        # the Python wrapper alive — without this reference the wrapper gets
+        # garbage-collected and reverts to a plain QToolButton, silently
+        # dropping the overridden mouse handlers and the clicked connection.
+        self._close_buttons: dict[int, TabCloseButton] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -377,6 +383,9 @@ class DocumentWorkspace(QFrame):
         self._tabs.tabBar().setTabButton(
             index, QTabBar.ButtonPosition.RightSide, close_button
         )
+        # Keep the Python wrapper alive so the subclass mouse handlers and
+        # any clicked connection survive (see the _close_buttons comment).
+        self._close_buttons[index] = close_button
         self._sessions[index] = session
         self._stack.setCurrentWidget(self._tabs)
         self._tabs.setCurrentIndex(index)
@@ -397,17 +406,25 @@ class DocumentWorkspace(QFrame):
                     close_button.hide()
                     bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
                     close_button.deleteLater()
+                self._close_buttons.pop(index, None)
                 self._tabs.removeTab(index)
                 del self._sessions[index]
                 # Rebuild the index mapping after removal.
                 rebuilt: dict[int, DocumentSession] = {}
+                rebuilt_buttons: dict[int, TabCloseButton] = {}
                 for tab_index in range(self._tabs.count()):
                     widget = self._tabs.widget(tab_index)
                     for candidate_session in self._sessions.values():
                         if candidate_session.tab_widget is widget:
                             rebuilt[tab_index] = candidate_session
+                            button = bar.tabButton(
+                                tab_index, QTabBar.ButtonPosition.RightSide
+                            )
+                            if isinstance(button, TabCloseButton):
+                                rebuilt_buttons[tab_index] = button
                             break
                 self._sessions = rebuilt
+                self._close_buttons = rebuilt_buttons
                 break
         if not self._sessions:
             self._stack.setCurrentWidget(self._empty)
