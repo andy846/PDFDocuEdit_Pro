@@ -1,0 +1,31 @@
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.benchmarks/
+*.log
+launch_log.txt
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+.venv-*/
+
+# Local build products and vendored binaries
+build/
+dist/
+release/
+wheels/
+Ghostscript/
+PDFdocuEdit_Pro_backup/
+build_assets/
+
+# Local user state and test artifacts
+config.json
+recent_files.json
+secret
+*.tmp
+extracted_hicon.png

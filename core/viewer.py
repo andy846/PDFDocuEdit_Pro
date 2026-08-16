@@ -1,0 +1,3293 @@
+"""Modern PyQt6 main window for PDFDocuEdit Pro."""
+
+from __future__ import annotations
+
+import os
+import tempfile
+from collections.abc import Callable
+from contextlib import ExitStack
+from dataclasses import replace
+from pathlib import Path
+
+import fitz
+from PyQt6.QtCore import QPoint, QSizeF, Qt, QThreadPool
+from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QGuiApplication,
+    QImage,
+    QKeySequence,
+    QPageLayout,
+    QPageSize,
+    QPainter,
+    QShortcut,
+    QTransform,
+)
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrinterInfo
+from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QInputDialog,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.annotations import (
+    AnnotationOp,
+    add_watermark_image,
+    add_watermark_text,
+    apply_annotation,
+    remove_annotation,
+)
+from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
+from core.commands import Command
+from core.file_association import (
+    is_default_app,
+    is_installed,
+    open_default_apps_settings,
+    register_default_app,
+)
+from core.pdf_engine import (
+    PdfEngine,
+    PdfInvalidPassword,
+    PdfPasswordRequired,
+    SearchHit,
+    parse_page_range,
+    search_pdf_file,
+)
+from core.settings import SettingsManager
+from core.tasks import FunctionTask
+from core.tools import (
+    compress_pdfs,
+    convert_office_files,
+    convert_pdf_to_word,
+    convert_postscript,
+    convert_postscript_files,
+    create_page_count_report,
+    decrypt_pdf_file,
+    encrypt_pdf_file,
+    extract_region_text,
+    merge_pdfs,
+    merge_spreadsheets,
+    overlay_pdfs,
+    scan_barcodes_batch,
+    text_files_to_pdfs,
+)
+from core.undo import UndoStack
+from dialogs.annotation_dialogs import WatermarkDialog
+from dialogs.barcode_dialogs import BarcodeResultsDialog, BarcodeScanDialog
+from dialogs.base import ask_password, remember_save_directory, start_in_save_directory
+from dialogs.batch_print_dialog import BatchPrintDialog
+from dialogs.batch_tools import CompressionDialog, MergePDFDialog, OverlayDialog
+from dialogs.conversion_dialogs import (
+    OfficeConversionDialog,
+    PostScriptConversionDialog,
+    TextConversionDialog,
+)
+from dialogs.data_dialogs import PageCountReportDialog, SpreadsheetMergeDialog
+from dialogs.document_dialogs import DocumentInfoDialog, PrintOptionsDialog, VisualOrganizerDialog
+from dialogs.page_operations import InsertPagesDialog, PageSelectionDialog, SplitDialog
+from dialogs.readme_dialog import ReadmeDialog
+from dialogs.search_open_dialog import SearchOpenDialog
+from dialogs.security_dialogs import DecryptDialog, EncryptDialog
+from dialogs.shortcuts_dialog import ShortcutsDialog
+from dialogs.text_extractor_dialog import TextExtractorDialog
+from dialogs.undo_history_dialog import UndoHistoryDialog
+from styles.components import global_style
+from styles.theme import ThemeMode, apply_theme
+from ui.bottom_bar import BottomBar
+from ui.command_bar import CommandBar
+from ui.command_palette import CommandPalette
+from ui.context_panel import ContextPanel
+from ui.deep_search_dialog import OPEN_CURRENT, OPEN_NEW_TAB, DeepSearchDialog
+from ui.diagnostics_dialog import DiagnosticsDialog, PreferencesDialog
+from ui.document_session import DocumentSession
+from ui.icons import clear_icon_cache
+from ui.infobar import InfoBar
+from ui.side_panel import SHORTCUT_HINTS, SidePanel
+from ui.task_bar import TaskBar
+from ui.workspace import DocumentWorkspace
+
+APP_VERSION = "0.98b"
+
+
+class PDFViewer(QMainWindow):
+    def __init__(self, initial_path: str | None = None):
+        super().__init__()
+        self.settings = SettingsManager()
+        self._sessions: list[DocumentSession] = []
+        self._session: DocumentSession | None = None
+        self._idle_engine = PdfEngine()
+        self._last_context_key: str | None = None
+        self._tasks: set[FunctionTask] = set()
+        self._child_windows: list[PDFViewer] = []
+        self._task_had_error = False
+        self._closing = False
+        self._printing = False
+        self._thread_pool = QThreadPool.globalInstance()
+        self._init_ui()
+        self._restore_window_state()
+        self._apply_theme(self.settings.get_theme())
+        if initial_path:
+            self.load_file(initial_path)
+
+    # --- compatibility accessors (current session) ----------------------
+    @property
+    def engine(self) -> PdfEngine:
+        """The current session's engine, or an idle engine when none is open."""
+        return self._session.engine if self._session else self._idle_engine
+
+    @property
+    def _display_path(self) -> Path | None:
+        return self._session.display_path if self._session else None
+
+    @_display_path.setter
+    def _display_path(self, value: Path | None) -> None:
+        if self._session:
+            self._session.display_path = value
+
+    @property
+    def _page(self) -> int:
+        return self._session.page if self._session else 0
+
+    @_page.setter
+    def _page(self, value: int) -> None:
+        if self._session:
+            self._session.page = value
+
+    @property
+    def _undo_stack(self) -> UndoStack | None:
+        return self._session.undo_stack if self._session else None
+
+    # --- UI construction -------------------------------------------------
+    def _init_ui(self) -> None:
+        self.setWindowTitle("PDFDocuEdit Pro")
+        app = QApplication.instance()
+        if isinstance(app, QApplication) and not app.windowIcon().isNull():
+            self.setWindowIcon(app.windowIcon())
+        self.setMinimumSize(960, 640)
+        self.setAcceptDrops(True)
+
+        root = QWidget()
+        self.setCentralWidget(root)
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.command_bar = CommandBar(self.settings.get_theme())
+        layout.addWidget(self.command_bar)
+        self.info_bar = InfoBar()
+        layout.addWidget(self.info_bar)
+        self.task_bar = TaskBar()
+        layout.addWidget(self.task_bar)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setHandleWidth(1)
+        self.side_panel = SidePanel(
+            bool(self.settings.get("left_panel_collapsed", False)),
+            bool(self.settings.get("animations_enabled", True)),
+        )
+        self.workspace = DocumentWorkspace(
+            self.settings.recent_files(),
+            animations_enabled=bool(self.settings.get("animations_enabled", True)),
+        )
+        self.context_panel = ContextPanel()
+        self.context_panel.hide()
+        self.splitter.addWidget(self.side_panel)
+        self.splitter.addWidget(self.workspace)
+        self.splitter.addWidget(self.context_panel)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setCollapsible(1, False)
+        self.side_panel.set_collapsed(self.side_panel.is_collapsed(), animate=False)
+        layout.addWidget(self.splitter, 1)
+
+        self.bottom_bar = BottomBar()
+        layout.addWidget(self.bottom_bar)
+        self._build_menu_bar()
+        self._connect_signals()
+        self._commands: list[Command] = []
+        self._build_command_registry()
+        self._install_shortcuts()
+        self._set_motion_enabled(bool(self.settings.get("animations_enabled", True)))
+        self._set_document_available(False)
+
+    def _build_menu_bar(self) -> None:
+        menu = self.menuBar()
+        menu.setNativeMenuBar(True)
+        file_menu = menu.addMenu("&File")
+        self.open_action = self._action("Open…", QKeySequence.StandardKey.Open, self._open_dialog)
+        self.search_open_action = self._action("Search and Open PDF…", "Ctrl+Shift+O", self._search_and_open)
+        self.save_action = self._action("Save", QKeySequence.StandardKey.Save, self.save_file)
+        self.save_as_action = self._action("Save As…", QKeySequence.StandardKey.SaveAs, self.save_as_file)
+        self.print_action = self._action("Print…", QKeySequence.StandardKey.Print, self.print_pdf)
+        self.close_action = self._action("Close Document", "Ctrl+W", self.close_document)
+        file_menu.addAction(self.open_action)
+        self.open_postscript_action = self._action(
+            "Open PostScript…", None, self._open_postscript
+        )
+        file_menu.addAction(self.open_postscript_action)
+        file_menu.addAction(self.search_open_action)
+        file_menu.addSeparator()
+        self.save_all_action = self._action("Save All", None, self.save_all_files)
+        for action in (self.save_action, self.save_as_action, self.save_all_action):
+            file_menu.addAction(action)
+        file_menu.addSeparator()
+        self.encrypt_action = self._action("Encrypt PDF…", None, self._encrypt_pdf)
+        self.decrypt_action = self._action("Decrypt PDF…", None, self._decrypt_pdf)
+        file_menu.addAction(self.encrypt_action)
+        file_menu.addAction(self.decrypt_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.print_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.close_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self._action("Quit", "Ctrl+Q", self.close))
+
+        edit_menu = menu.addMenu("&Edit")
+        self.undo_action = self._action("Undo", "Ctrl+Z", self._undo)
+        self.redo_action = self._action("Redo", "Ctrl+Y", self._redo)
+        self.redo_action.setShortcuts(
+            [QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")]
+        )
+        self.undo_action.setEnabled(False)
+        self.redo_action.setEnabled(False)
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+        edit_menu.addSeparator()
+        self.find_action = self._action("Search…", QKeySequence.StandardKey.Find, self.search_document)
+        edit_menu.addAction(self.find_action)
+        edit_menu.addSeparator()
+        self.rotate_action = self._action("Rotate Pages…", "F6", lambda: self._show_context("rotate"))
+        self.insert_action = self._action("Insert Pages…", "F7", self._insert_pages_dialog)
+        self.delete_action = self._action("Delete Pages…", "F8", self._delete_pages_dialog)
+        self.extract_action = self._action("Extract Pages…", "F9", self._extract_pages_dialog)
+        self.split_pages_action = self._action("Split PDF…", "F10", self._split_dialog)
+        edit_menu.addAction(self.rotate_action)
+        edit_menu.addAction(self.insert_action)
+        edit_menu.addAction(self.delete_action)
+        edit_menu.addAction(self.extract_action)
+        edit_menu.addAction(self.split_pages_action)
+        edit_menu.addSeparator()
+        self.undo_history_action = self._action("Undo History…", None, self._show_undo_history)
+        edit_menu.addAction(self.undo_history_action)
+
+        tools_menu = menu.addMenu("&Tools")
+        for label, key in (
+            ("Merge PDFs…", "merge"), ("Compress PDF…", "compress"),
+            ("Deep Search…", "deep_search"), ("Page Count Report…", "page_report"),
+            ("External Tools & Diagnostics…", "diagnostics"),
+        ):
+            tools_menu.addAction(self._action(label, None, lambda _checked=False, value=key: self._tool_requested(value)))
+
+        view_menu = menu.addMenu("&View")
+        view_menu.addAction(self._action("Toggle Tools Panel", "Ctrl+\\", self._toggle_side_panel))
+        view_menu.addAction(self._action("Toggle Context Panel", "Ctrl+.", self._toggle_context_panel))
+        view_menu.addAction(self._action("Toggle Page Thumbnails", "Ctrl+T", self._toggle_thumbnails))
+        view_menu.addSeparator()
+        view_menu.addAction(self._action("Show Outline Panel", None, lambda: self._show_nav_tab("outline")))
+        view_menu.addAction(self._action("Show Bookmarks Panel", None, lambda: self._show_nav_tab("bookmarks")))
+        view_menu.addAction(self._action("Show Search Panel", None, lambda: self._show_nav_tab("search")))
+        view_menu.addSeparator()
+
+        layout_menu = view_menu.addMenu("Page Layout")
+        self.layout_group = QActionGroup(self)
+        self.layout_group.setExclusive(True)
+        self._layout_actions: list[QAction] = []
+        for label, shortcut, mode in (
+            ("Single Page", "Ctrl+1", "single"),
+            ("Continuous Pages", "Ctrl+2", "continuous"),
+            ("Facing Pages", "Ctrl+3", "facing"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setShortcut(shortcut)
+            action.setData(mode)
+            action.triggered.connect(lambda _checked=False, value=mode: self._set_layout_mode(value))
+            self.layout_group.addAction(action)
+            self._layout_actions.append(action)
+            layout_menu.addAction(action)
+        self._layout_actions[0].setChecked(True)
+
+        self.fit_width_action = self._action("Fit Page Width", "Ctrl+0", self._canvas_call("fit_width"))
+        self.fit_page_action = self._action("Fit Whole Page", "Ctrl+9", self._canvas_call("fit_page"))
+        self.actual_size_action = self._action("Actual Size", "Ctrl+8", self._canvas_call("actual_size"))
+        view_menu.addAction(self.fit_width_action)
+        view_menu.addAction(self.fit_page_action)
+        view_menu.addAction(self.actual_size_action)
+        view_menu.addSeparator()
+
+        tool_menu = view_menu.addMenu("Canvas Tool")
+        self.tool_group = QActionGroup(self)
+        self.tool_group.setExclusive(True)
+        self._tool_actions: list[QAction] = []
+        for label, mode in (
+            ("Browse", "browse"),
+            ("Hand (drag to pan)", "hand"),
+            ("Select Text", "select"),
+            ("Magnifier", "magnifier"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(mode)
+            action.triggered.connect(lambda _checked=False, value=mode: self._set_canvas_tool(value))
+            self.tool_group.addAction(action)
+            self._tool_actions.append(action)
+            tool_menu.addAction(action)
+        self._tool_actions[0].setChecked(True)
+
+        self.show_labels_action = QAction("Show Page Labels", self)
+        self.show_labels_action.setCheckable(True)
+        self.show_labels_action.setChecked(True)
+        self.show_labels_action.triggered.connect(
+            lambda checked: self._set_captions(checked)
+        )
+        view_menu.addAction(self.show_labels_action)
+
+        self.split_action = QAction("Split View (two panes)", self)
+        self.split_action.setCheckable(True)
+        self.split_action.triggered.connect(self._toggle_split_view)
+        view_menu.addAction(self.split_action)
+
+        self.zoom_in_action = self._action("Zoom In", "Ctrl+=", self._canvas_call("zoom_in"))
+        self.zoom_out_action = self._action("Zoom Out", "Ctrl+-", self._canvas_call("zoom_out"))
+        view_menu.addAction(self.zoom_in_action)
+        view_menu.addAction(self.zoom_out_action)
+        view_menu.addSeparator()
+        view_menu.addAction(self._action("Toggle Full Screen", "F11", self._toggle_fullscreen))
+
+        navigate_menu = menu.addMenu("&Navigate")
+        navigate_menu.addAction(self._action("Previous Page", "Ctrl+Left", self.previous_page))
+        navigate_menu.addAction(self._action("Next Page", "Ctrl+Right", self.next_page))
+        navigate_menu.addAction(self._action("First Page", "Home", self._goto_first_page))
+        navigate_menu.addAction(self._action("Last Page", "End", self._goto_last_page))
+
+        help_menu = menu.addMenu("&Help")
+        help_menu.addAction(self._action("README", None, self._show_readme))
+        help_menu.addAction(self._action("Command Palette…", "Ctrl+K", self._show_command_palette))
+        help_menu.addAction(self._action("Keyboard Shortcuts", "Ctrl+/", self._show_shortcuts))
+        help_menu.addSeparator()
+        help_menu.addAction(self._action("Set as Default App…", None, self._set_default_app))
+        help_menu.addSeparator()
+        help_menu.addAction(self._action("About PDFDocuEdit Pro", None, self.show_about))
+
+    def _action(self, label: str, shortcut, callback: Callable) -> QAction:
+        action = QAction(label, self)
+        if shortcut:
+            action.setShortcut(shortcut)
+        action.triggered.connect(callback)
+        return action
+
+    def _connect_signals(self) -> None:
+        command = self.command_bar
+        command.panelToggled.connect(self._toggle_side_panel)
+        command.openClicked.connect(self._open_dialog)
+        command.saveClicked.connect(self.save_file)
+        command.saveAsClicked.connect(self.save_as_file)
+        command.searchClicked.connect(self.search_document)
+        command.printClicked.connect(self.print_pdf)
+        command.undoClicked.connect(self._undo)
+        command.redoClicked.connect(self._redo)
+        command.diagnosticsClicked.connect(lambda: self._tool_requested("diagnostics"))
+        command.preferencesClicked.connect(self.show_preferences)
+        command.aboutClicked.connect(self.show_about)
+        command.themeChanged.connect(self._theme_changed)
+        self.side_panel.toolRequested.connect(self._tool_requested)
+        self.side_panel.collapsedChanged.connect(
+            lambda value: self.settings.set("left_panel_collapsed", value)
+        )
+        self.workspace.openRequested.connect(self._open_dialog)
+        self.workspace.fileDropped.connect(self._file_dropped)
+        self.workspace.extraFilesDropped.connect(self._add_extra_dropped_files)
+        self.workspace.tabCloseRequested.connect(self._on_tab_close_requested)
+        self.workspace.tabCloseOthersRequested.connect(self._close_other_tabs)
+        self.workspace.tabCloseAllRequested.connect(self._close_all_tabs)
+        self.workspace.tabChanged.connect(self._on_tab_changed)
+        self.bottom_bar.prevClicked.connect(self.previous_page)
+        self.bottom_bar.nextClicked.connect(self.next_page)
+        self.bottom_bar.gotoClicked.connect(self.goto_page)
+        self.bottom_bar.zoomInClicked.connect(self._canvas_call("zoom_in"))
+        self.bottom_bar.zoomOutClicked.connect(self._canvas_call("zoom_out"))
+        self.bottom_bar.fitWidthClicked.connect(self._canvas_call("fit_width"))
+        self.bottom_bar.fitPageClicked.connect(self._canvas_call("fit_page"))
+        self.bottom_bar.actualSizeClicked.connect(self._canvas_call("actual_size"))
+        self.bottom_bar.layoutChanged.connect(self._set_layout_mode)
+        self.bottom_bar.rotateCurrentRequested.connect(self._rotate_current)
+        self.bottom_bar.rotatePagesRequested.connect(lambda: self._show_context("rotate"))
+        self.bottom_bar.rotateBoxRequested.connect(self._rotate_box_pages)
+        self.bottom_bar.zoomSet.connect(self._canvas_zoom_set)
+        self.bottom_bar.zoomSliderChanged.connect(self._zoom_slider_set)
+        self.context_panel.annotationColorChanged.connect(self._set_annot_color)
+        self.context_panel.annotationWidthChanged.connect(self._set_annot_width)
+        self.context_panel.stampKindChanged.connect(self._set_stamp_kind)
+        self.context_panel.imagePathChanged.connect(self._set_annot_image)
+        self.context_panel.removeAnnotationRequested.connect(self._handle_remove_annotation)
+        self.context_panel.annotateRefreshRequested.connect(self._refresh_annotate_list)
+        self.context_panel.closed.connect(self._hide_context)
+        self.context_panel.rotateRequested.connect(self._rotate_pages)
+        self.context_panel.deleteRequested.connect(self._delete_pages)
+        self.context_panel.extractRequested.connect(self._extract_pages)
+        self.context_panel.splitRequested.connect(self._split_pdf)
+        self.context_panel.insertRequested.connect(self._insert_pages)
+        self.context_panel.orderRequested.connect(self._order_pages)
+        self.task_bar.cancelRequested.connect(self._cancel_tasks)
+
+    # --- Sessions and tabs ------------------------------------------------
+    def _create_session(self) -> DocumentSession:
+        session = DocumentSession(
+            animations_enabled=bool(self.settings.get("animations_enabled", True)),
+            parent=self,
+        )
+        self._sessions.append(session)
+        self.workspace.create_tab(session)
+        self._wire_session(session)
+        self._session = session
+        return session
+
+    def _wire_session(self, session: DocumentSession) -> None:
+        canvas = session.canvas
+        nav = session.nav_panel
+        canvas.pageChanged.connect(
+            lambda page, s=session: self._session_page_changed(s, page)
+        )
+        canvas.zoomChanged.connect(
+            lambda ratio, s=session: self._session_zoom_changed(s, ratio)
+        )
+        canvas.textCopied.connect(self._copy_text_to_clipboard)
+        canvas.annotationRequested.connect(
+            lambda op, s=session: self._handle_annotation(op, s)
+        )
+        canvas.noteRequested.connect(
+            lambda page, point, s=session: self._handle_note_request(page, point, s)
+        )
+        nav.thumbnails.pageSelected.connect(
+            lambda page, s=session: self._session_goto(s, page)
+        )
+        nav.thumbnails.reorderRequested.connect(
+            lambda order, s=session: self._handle_thumbnail_reorder(s, order)
+        )
+        nav.thumbnails.contextActionRequested.connect(
+            lambda key, s=session: self._handle_thumbnail_action(s, key)
+        )
+        nav.closed.connect(lambda s=session: self._session_hide_nav(s))
+        nav.outline.jumpRequested.connect(
+            lambda page, s=session: self._session_goto(s, page)
+        )
+        nav.bookmarks.jumpRequested.connect(
+            lambda page, s=session: self._session_goto(s, page)
+        )
+        nav.bookmarks.addRequested.connect(lambda s=session: self._add_bookmark(s))
+        nav.bookmarks.removeRequested.connect(
+            lambda row, s=session: self._remove_bookmark(row, s)
+        )
+        nav.search.searchRequested.connect(
+            lambda query, pages, s=session: self._run_search(query, s, pages)
+        )
+        nav.search.jumpRequested.connect(
+            lambda page, rects, s=session: self._goto_search_hit(page, rects, s)
+        )
+
+    def _canvas_call(self, method: str):
+        def call() -> None:
+            canvas = self.workspace.canvas
+            if canvas is not None:
+                getattr(canvas, method)()
+
+        return call
+
+    def _canvas_zoom_set(self, ratio: float) -> None:
+        canvas = self.workspace.canvas
+        if canvas is not None:
+            canvas.set_zoom(ratio)
+
+    def _zoom_slider_set(self, percent: int) -> None:
+        self._canvas_zoom_set(percent / 100.0)
+
+    def _session_page_changed(self, session: DocumentSession, page: int) -> None:
+        if session is not self._session:
+            return
+        session.page = page
+        self._update_page_state()
+        session.nav_panel.thumbnails.set_current_page(page)
+        session.nav_panel.bookmarks.set_current_page(page)
+        self._refresh_annotate_list()
+
+    def _session_zoom_changed(self, session: DocumentSession, ratio: float) -> None:
+        if session is not self._session:
+            return
+        self.settings.set_zoom_ratio(ratio)
+        self.bottom_bar.set_zoom_percent(round(ratio * 100))
+
+    def _session_goto(self, session: DocumentSession, page: int) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        self.goto_page(page)
+
+    def _session_hide_nav(self, session: DocumentSession) -> None:
+        if session is self._session:
+            self.workspace.show_thumbnails(False)
+
+    def _handle_thumbnail_reorder(self, session: DocumentSession, order: list[int]) -> None:
+        self._session = session
+        if not session.engine.is_loaded():
+            return
+        if order == list(range(session.engine.page_count)) or sorted(order) != list(
+            range(session.engine.page_count)
+        ):
+            self._reload_thumbnails(session)
+            return
+        self._snapshot_before("Reorder Pages")
+        try:
+            session.engine.reorder_pages(order)
+        except Exception as exc:
+            self.info_bar.show_message(f"Reorder failed: {exc}", "error", 0)
+            self._reload_thumbnails(session)
+            return
+        session.canvas.refresh()
+        self._reload_thumbnails(session)
+        self._after_page_count_change()
+        self.info_bar.show_message(
+            "🔀 Pages reordered. Save the document to keep the change.", "success"
+        )
+
+    def _reload_thumbnails(self, session: DocumentSession) -> None:
+        # The open-time temp copy never reflects in-memory edits, so snapshot
+        # the live document into a fresh file the render tasks can read. The
+        # previous snapshot is deleted after loading: stale render tasks then
+        # fail silently and are dropped by the thumbnail panel's generation
+        # guard.
+        handle, temp_name = tempfile.mkstemp(prefix="thumbnails-", suffix=".pdf")
+        os.close(handle)
+        Path(temp_name).unlink(missing_ok=True)
+        try:
+            session.engine.snapshot(temp_name)
+        except Exception:
+            fallback = session.engine.temp_path
+            if fallback:
+                temp_name = str(fallback)
+            else:
+                return
+        previous = getattr(session, "_thumbnail_snapshot", None)
+        session.nav_panel.thumbnails.load_document(
+            temp_name, session.engine.page_count, session.engine.password
+        )
+        session.nav_panel.thumbnails.set_current_page(session.page)
+        session._thumbnail_snapshot = temp_name
+        if previous and previous != temp_name:
+            Path(previous).unlink(missing_ok=True)
+
+    def _on_tab_changed(self, session: DocumentSession) -> None:
+        self._session = session
+        self._last_context_key = None
+        self.split_action.setChecked(session.has_split)
+        for action in self._layout_actions:
+            if action.data() == session.canvas.layout_mode.value:
+                action.setChecked(True)
+                break
+        if not session.engine.is_loaded():
+            return
+        self._update_undo_actions()
+        self._sync_modified_state()
+        session_path = session.display_path or session.engine.original_path
+        self.bottom_bar.set_document_info(
+            session.document_name,
+            session.engine.page_count,
+            str(session_path) if session_path else "",
+        )
+        self.bottom_bar.set_current_page(session.page)
+        self.bottom_bar.set_zoom_percent(round(session.canvas.zoom_ratio * 100))
+        self.bottom_bar.set_layout_mode(str(session.canvas.layout_mode.value))
+        self.context_panel.set_page_count(session.engine.page_count)
+        session.nav_panel.search.set_page_count(session.engine.page_count)
+        session.nav_panel.search.set_current_page(session.page)
+        self._set_document_available(True)
+        self._refresh_annotate_list()
+
+    def _on_tab_close_requested(self, session: DocumentSession) -> None:
+        self.close_document(session)
+
+    def open_in_new_tab(self, path: str) -> None:
+        session = self._create_session()
+        try:
+            loaded = self._load_path(session, path)
+        except Exception as exc:
+            loaded = False
+            self._error("Open failed", str(exc))
+        if not loaded and not session.engine.is_loaded():
+            # Remove the placeholder tab a failed open left behind.
+            self.close_document(session)
+
+    def open_files(self, paths: list[str]) -> None:
+        """Open several documents at once, each in its own tab.
+
+        The first document reuses the current tab when it is an untouched
+        placeholder (a tab that exists but has nothing loaded); otherwise
+        every document opens in a fresh tab, matching drag-and-drop
+        behaviour.
+        """
+        paths = [path for path in paths if path]
+        if not paths:
+            return
+        first, rest = paths[0], paths[1:]
+        current = self._session
+        if (
+            current is not None
+            and not current.engine.is_loaded()
+            and not current.engine.is_modified
+        ):
+            self.load_file(first)
+        else:
+            self.open_in_new_tab(first)
+        for path in rest:
+            self.open_in_new_tab(path)
+
+    def _toggle_split_view(self) -> None:
+        session = self._session
+        if not session or not session.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before splitting the view.", "warning")
+            return
+        session.set_split(not session.has_split)
+        self.split_action.setChecked(session.has_split)
+        self.info_bar.show_message(
+            "Split view enabled." if session.has_split else "Split view closed.",
+            "success",
+        )
+
+    # --- Theme and window state -----------------------------------------
+    def _apply_theme(self, value: str) -> None:
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        apply_theme(app, ThemeMode(value))
+        app.setStyleSheet(global_style())
+        clear_icon_cache()
+        self.command_bar.refresh_icons()
+        self.side_panel.refresh_icons()
+        self.bottom_bar.refresh_icons()
+        self.info_bar.refresh_icons()
+        self.context_panel.refresh_icons()
+        self.workspace.refresh_icons()
+
+    def _theme_changed(self, value: str) -> None:
+        self.settings.set_theme(value)
+        self._apply_theme(value)
+
+    def _set_motion_enabled(self, enabled: bool) -> None:
+        self.command_bar.set_animations_enabled(enabled)
+        self.side_panel.set_animations_enabled(enabled)
+        self.bottom_bar.set_animations_enabled(enabled)
+        self.context_panel.set_animations_enabled(enabled)
+        self.info_bar.set_animations_enabled(enabled)
+        self.workspace.set_animations_enabled(enabled)
+
+    def _restore_window_state(self) -> None:
+        width, height = self.settings.get_window_size()
+        position = self.settings.get_window_position()
+        screen = QGuiApplication.screenAt(QPoint(*position)) if position else None
+        screen = screen or QGuiApplication.primaryScreen()
+        if screen:
+            area = screen.availableGeometry()
+            self.resize(min(width, area.width()), min(height, area.height()))
+            if position:
+                x = max(area.left(), min(position[0], area.right() - self.width() + 1))
+                y = max(area.top(), min(position[1], area.bottom() - self.height() + 1))
+                self.move(x, y)
+            else:
+                self.move(area.center() - self.rect().center())
+        else:
+            self.resize(width, height)
+        if self.settings.get("window_maximized", False):
+            self.showMaximized()
+
+    def _toggle_side_panel(self) -> None:
+        self.side_panel.set_collapsed(not self.side_panel.is_collapsed())
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _close_other_tabs(self, session: DocumentSession) -> None:
+        for candidate in list(self._sessions):
+            if candidate is not session:
+                self.close_document(candidate)
+
+    def _close_all_tabs(self) -> None:
+        for candidate in list(self._sessions):
+            self.close_document(candidate)
+
+    def _file_dropped(self, path: str) -> None:
+        """A dropped file opens in a new tab when a document is already open.
+
+        Replacing the current document on drop was legacy behaviour; with
+        tabs available, drops must never destroy the open work.
+        """
+        if self._session is None or not self._session.engine.is_loaded():
+            self.load_file(path)
+        else:
+            self.open_in_new_tab(path)
+
+    def _add_extra_dropped_files(self, paths: list) -> None:
+        for raw in paths:
+            self.open_in_new_tab(raw)
+
+    def _toggle_context_panel(self) -> None:
+        if self.context_panel.isVisible():
+            self._hide_context()
+        elif self._last_context_key:
+            self._show_context(self._last_context_key)
+
+    def _toggle_thumbnails(self) -> None:
+        self.workspace.toggle_thumbnails()
+
+    def _goto_first_page(self) -> None:
+        self.goto_page(0)
+
+    def _goto_last_page(self) -> None:
+        engine = self.engine
+        if engine is not None:
+            self.goto_page(engine.page_count - 1)
+
+    def _set_layout_mode(self, mode: str) -> None:
+        canvas = self.workspace.canvas
+        if canvas is not None:
+            canvas.set_layout_mode(mode)
+        self.bottom_bar.set_layout_mode(mode)
+
+    def _set_canvas_tool(self, mode: str) -> None:
+        canvas = self.workspace.canvas
+        if canvas is not None:
+            canvas.set_tool_mode(mode)
+
+    def _set_captions(self, checked: bool) -> None:
+        session = self._session
+        if session is None:
+            return
+        session.canvas.set_show_captions(bool(checked))
+        if session.split_canvas is not None:
+            session.split_canvas.set_show_captions(bool(checked))
+
+    def _toggle_page_labels(self) -> None:
+        session = self._session
+        if session is None:
+            return
+        show = not session.canvas.show_captions
+        self._set_captions(show)
+        self.show_labels_action.setChecked(show)
+
+    def _next_tab(self) -> None:
+        self.workspace.activate_next()
+
+    def _previous_tab(self) -> None:
+        self.workspace.activate_previous()
+
+    def _copy_text_to_clipboard(self, text: str) -> None:
+        QApplication.clipboard().setText(text)
+
+    # --- Document lifecycle ---------------------------------------------
+    def _open_dialog(self) -> None:
+        # Multi-select: every chosen file opens in its own tab.
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Open documents",
+            self.settings.get_last_directory(),
+            "Supported documents (*.pdf *.ps *.eps);;PDF (*.pdf);;PostScript (*.ps *.eps)",
+        )
+        if paths:
+            self.open_files(paths)
+
+    def _open_postscript(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open PostScript",
+            self.settings.get_last_directory(),
+            "PostScript (*.ps *.eps)",
+        )
+        if path:
+            self.load_file(path)
+
+    def _search_and_open(self) -> None:
+        dialog = SearchOpenDialog(self.settings.get_last_directory(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.selected_path:
+            return
+        if dialog.open_in_new_tab:
+            self.open_in_new_tab(dialog.selected_path)
+        else:
+            self.load_file(dialog.selected_path)
+
+    def load_file(self, path: str) -> None:
+        if self._session is not None and self._session.engine.is_loaded():
+            if not self._confirm_discard_changes():
+                return
+        created = self._session is None
+        session = self._session or self._create_session()
+        try:
+            loaded = self._load_path(session, path)
+        except Exception as exc:
+            # Never let an unexpected open failure escape the slot (qFatal).
+            loaded = False
+            self._error("Open failed", str(exc))
+        if not loaded and created and not session.engine.is_loaded():
+            # Remove the placeholder tab a failed open left behind so the
+            # user is not stuck with an unclosable empty tab.
+            self.close_document(session)
+
+    def _load_path(self, session: DocumentSession, path: str) -> bool:
+        source = Path(path).expanduser().resolve()
+        if not source.is_file():
+            self._error("Open failed", f"The file does not exist:\n{source}")
+            return False
+        if source.suffix.casefold() not in {".pdf", ".ps", ".eps"}:
+            self._error("Open failed", "Choose a PDF, PostScript, or EPS file.")
+            return False
+        self.workspace.set_current_session(session)
+        self._session = session
+        if source.suffix.lower() in {".ps", ".eps"}:
+            handle, temp_name = tempfile.mkstemp(suffix=".pdf")
+            os.close(handle)
+            try:
+                convert_postscript(source, temp_name)
+                return self._open_pdf(session, temp_name, display_path=source)
+            except Exception as exc:
+                self._error("PostScript conversion failed", str(exc))
+                return False
+            finally:
+                Path(temp_name).unlink(missing_ok=True)
+        return self._open_pdf(session, str(source), display_path=source)
+
+    def _open_pdf(
+        self,
+        session: DocumentSession,
+        path: str,
+        display_path: Path,
+        *,
+        reset_history: bool = True,
+        announce: bool = True,
+    ) -> bool:
+        # Background canvas renders hold the live document; wait for them
+        # before replacing it.
+        session.canvas.wait_for_renders()
+        password: str | None = None
+        while True:
+            try:
+                self.engine.open(path, password)
+                break
+            except PdfPasswordRequired:
+                password, accepted = ask_password(
+                    self,
+                    "Encrypted PDF",
+                    "Password (ASCII characters only)",
+                )
+                if not accepted:
+                    return False
+            except PdfInvalidPassword:
+                self.info_bar.show_message("The password is not valid.", "error")
+                password = None
+            except Exception as exc:
+                self._error("Open failed", str(exc))
+                return False
+        # Keep the user-facing source path when a PostScript temp PDF was used.
+        if display_path.suffix.lower() == ".pdf":
+            self.settings.add_recent_file(display_path)
+        else:
+            self.engine.detach_save_target()
+        self._display_path = display_path
+        self.settings.set_last_directory(display_path.parent)
+        if reset_history:
+            self._undo_stack.clear()
+        self._update_undo_actions()
+        self.workspace.set_recent_files(self.settings.recent_files())
+        self.workspace.canvas.load_doc(self.engine.document, self.settings.get_zoom_ratio())
+        temp_path = self.engine.temp_path
+        if temp_path:
+            self.workspace.nav_panel.load_document(
+                str(temp_path), self.engine.page_count, self.engine.password
+            )
+        self._load_navigation()
+        self.workspace.show_document(True)
+        self._page = 0
+        self._set_document_available(True)
+        self._sync_modified_state()
+        self.bottom_bar.set_document_info(
+            display_path.name, self.engine.page_count, str(display_path)
+        )
+        self.context_panel.set_page_count(self.engine.page_count)
+        self._update_page_state()
+        if announce:
+            self.info_bar.show_message(f"✅ Loaded: {display_path.name}", "success", 2500)
+        return True
+
+    def save_file(self) -> None:
+        if not self.engine.is_loaded():
+            return
+        if not self.engine.original_path:
+            self.save_as_file()
+            return
+        try:
+            target = self.engine.save()
+            self._display_path = target
+            self._sync_modified_state()
+            self.info_bar.show_message(f"💾 Saved: {target.name}", "success")
+        except Exception as exc:
+            self._error("Save failed", str(exc))
+
+    def save_as_file(self) -> None:
+        if not self.engine.is_loaded():
+            return
+        original = self.engine.original_path
+        initial = start_in_save_directory(
+            self,
+            original.name if original else "document.pdf",
+            original.parent if original else None,
+        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save PDF As", initial, "PDF (*.pdf)")
+        if not path:
+            return
+        remember_save_directory(self, path)
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        try:
+            target = self.engine.save_as(path)
+            self.settings.add_recent_file(target)
+            self.bottom_bar.set_document_info(
+                target.name, self.engine.page_count, str(target)
+            )
+            self._display_path = target
+            self._sync_modified_state()
+            self.info_bar.show_message(f"💾 Saved as: {target.name}", "success")
+        except Exception as exc:
+            self._error("Save failed", str(exc))
+
+    def close_document(self, session: DocumentSession | None = None) -> None:
+        target = session or self._session
+        if target is None:
+            return
+        previous = self._session
+        self._session = target
+        if not self._confirm_discard_changes():
+            # A cancelled background-tab close must not leave the active
+            # session pointing at a tab that is not the visible one.
+            self._session = previous
+            return
+        self._sessions = [item for item in self._sessions if item is not target]
+        self.workspace.close_tab(target)
+        thumbnail_snapshot = getattr(target, "_thumbnail_snapshot", None)
+        if thumbnail_snapshot:
+            Path(thumbnail_snapshot).unlink(missing_ok=True)
+        target.close()
+        remaining = self.workspace.current_session()
+        if remaining is not None:
+            self._session = remaining
+            self._on_tab_changed(remaining)
+        else:
+            self._session = None
+            self._hide_context()
+            self._set_document_available(False)
+            self.bottom_bar.set_document_info("No document", 0)
+            self.bottom_bar.set_page_size(0, 0)
+            self._sync_modified_state()
+        self._update_undo_actions()
+
+    def _confirm_discard_changes(self) -> bool:
+        if not self.engine.is_modified:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "Save changes before closing this document?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            self.save_file()
+            return not self.engine.is_modified
+        return answer == QMessageBox.StandardButton.Discard
+
+    def _set_document_available(self, available: bool) -> None:
+        self.command_bar.set_document_available(available)
+        engine = self.engine
+        encrypted = engine.is_encrypted() if available and engine else False
+        self.side_panel.set_document_available(
+            available,
+            encrypted=encrypted,
+        )
+        nav = self.workspace.nav_panel
+        if nav is not None:
+            nav.set_document_available(available)
+        for action in (
+            self.save_action,
+            self.save_as_action,
+            self.save_all_action,
+            self.print_action,
+            self.close_action,
+            self.encrypt_action,
+            self.find_action,
+            self.rotate_action,
+            self.insert_action,
+            self.delete_action,
+            self.extract_action,
+            self.split_pages_action,
+            self.undo_history_action,
+            self.show_labels_action,
+            self.split_action,
+            self.fit_width_action,
+            self.fit_page_action,
+            self.actual_size_action,
+            self.zoom_in_action,
+            self.zoom_out_action,
+            *self._layout_actions,
+            *self._tool_actions,
+        ):
+            action.setEnabled(available)
+        self.decrypt_action.setEnabled(available and encrypted)
+        if not available:
+            self.split_action.setChecked(False)
+
+    def _sync_modified_state(self) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            self.setWindowModified(False)
+            self.setWindowTitle("PDFDocuEdit Pro")
+            return
+        modified = session.engine.is_modified
+        self.setWindowModified(modified)
+        path = session.display_path or session.engine.original_path
+        title = f"PDFDocuEdit Pro — {path.name}" if path else "PDFDocuEdit Pro"
+        self.setWindowTitle(f"{title}[*]")
+        self.workspace.update_tab_title(session)
+
+    # --- Navigation and page operations ---------------------------------
+    def previous_page(self) -> None:
+        self.goto_page(self._page - 1)
+
+    def next_page(self) -> None:
+        self.goto_page(self._page + 1)
+
+    def goto_page(self, page: int) -> None:
+        engine = self.engine
+        canvas = self.workspace.canvas
+        if engine is not None and canvas is not None and 0 <= page < engine.page_count:
+            canvas.set_page(page)
+
+    def _update_page_state(self) -> None:
+        engine = self.engine
+        canvas = self.workspace.canvas
+        if engine is None or not engine.is_loaded() or canvas is None:
+            return
+        self.bottom_bar.set_current_page(self._page)
+        width, height = engine.get_page_size(self._page)
+        self.bottom_bar.set_page_size(width, height)
+        panel = self.workspace.nav_panel
+        if panel is not None:
+            panel.search.set_page_count(engine.page_count)
+            panel.search.set_current_page(self._page)
+        self.bottom_bar.set_zoom_percent(round(canvas.zoom_ratio * 100))
+
+    def _show_context(self, key: str) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before using page tools.", "warning")
+            return
+        titles = {
+            "rotate": "Rotate Pages", "insert": "Insert Pages", "delete": "Delete Pages",
+            "extract": "Extract Pages", "sort": "Order Pages", "split": "Split PDF",
+            "annotate": "Annotation Options",
+        }
+        if self.context_panel.show_tool(key, titles.get(key, "Options")):
+            self._last_context_key = key
+            self.side_panel.set_active_tool(key)
+            self.settings.set("right_panel_visible", True)
+            if key == "annotate":
+                self._refresh_annotate_list()
+
+    def _hide_context(self) -> None:
+        self.context_panel.close_animated()
+        self.side_panel.set_active_tool(None)
+        self.settings.set("right_panel_visible", False)
+
+    def _pages_from_text(self, value: str) -> list[int]:
+        normalized = value.strip().casefold()
+        if normalized in {"", "current"}:
+            return [self._page]
+        if normalized == "all":
+            return list(range(self.engine.page_count))
+        return parse_page_range(value, self.engine.page_count)
+
+    def _snapshot_before(self, description: str) -> None:
+        """Save a snapshot of the current *in-memory* document before a change.
+
+        The engine's temp file only reflects the last saved state, so the live
+        document must be serialized for undo to capture every pending edit.
+        """
+        if self.engine is None or not self.engine.is_loaded():
+            return
+        stack = self._undo_stack
+        if stack is None:
+            return
+        handle, temp_name = tempfile.mkstemp(prefix=".snapshot-", suffix=".pdf")
+        os.close(handle)
+        try:
+            self.engine.snapshot(temp_name)
+            stack.push(temp_name, description)
+        finally:
+            Path(temp_name).unlink(missing_ok=True)
+        self._update_undo_actions()
+
+    def _update_undo_actions(self) -> None:
+        stack = self._undo_stack
+        if stack is None:
+            self.undo_action.setEnabled(False)
+            self.redo_action.setEnabled(False)
+            self.undo_action.setText("Undo")
+            self.redo_action.setText("Redo")
+            self.command_bar.set_undo_redo_enabled(False, False)
+            return
+        can_undo = stack.can_undo
+        can_redo = stack.can_redo
+        self.undo_action.setEnabled(can_undo)
+        self.redo_action.setEnabled(can_redo)
+        self.undo_action.setText(
+            f"Undo {stack.undo_description}"
+            if can_undo
+            else "Undo"
+        )
+        self.redo_action.setText(
+            f"Redo {stack.redo_description}"
+            if can_redo
+            else "Redo"
+        )
+        self.command_bar.set_undo_redo_enabled(can_undo, can_redo)
+
+    def _undo(self) -> None:
+        stack = self._undo_stack
+        if stack is None or self.engine is None:
+            return
+        temp = self.engine.temp_path
+        if not temp or not temp.is_file():
+            return
+        snapshot_path = self._pop_undo()
+        if snapshot_path:
+            self._reopen_from_snapshot(snapshot_path)
+
+    def _redo(self) -> None:
+        stack = self._undo_stack
+        if stack is None or self.engine is None:
+            return
+        temp = self.engine.temp_path
+        if not temp or not temp.is_file():
+            return
+        snapshot_path = self._pop_redo()
+        if snapshot_path:
+            self._reopen_from_snapshot(snapshot_path)
+
+    def _pop_undo(self) -> Path | None:
+        stack = self._undo_stack
+        if stack is None or self.engine is None:
+            return None
+        temp = self.engine.temp_path
+        if not temp or not temp.is_file():
+            return None
+        stack.push_redo(str(temp), stack.undo_description)
+        path = stack.pop_undo()
+        if path:
+            self._update_undo_actions()
+        return path
+
+    def _pop_redo(self) -> Path | None:
+        stack = self._undo_stack
+        if stack is None or self.engine is None:
+            return None
+        temp = self.engine.temp_path
+        if not temp or not temp.is_file():
+            return None
+        stack.push_undo(str(temp), stack.redo_description)
+        path = stack.pop_redo()
+        if path:
+            self._update_undo_actions()
+        return path
+
+    def _reopen_from_snapshot(self, snapshot_path: Path) -> None:
+        """Re-open the document from a snapshot file."""
+        session = self._session
+        if session is None:
+            return
+        try:
+            session.canvas.wait_for_renders()
+            session.engine.close()
+            self._open_pdf(
+                session,
+                str(snapshot_path),
+                display_path=session.display_path or snapshot_path,
+                reset_history=False,
+                announce=False,
+            )
+            self.info_bar.show_message("Undo applied.", "success")
+        except Exception as exc:
+            self._error("Undo failed", str(exc))
+
+    def _rotate_pages(self, pages: str, angle: int) -> None:
+        try:
+            selected = self._pages_from_text(pages)
+            self._snapshot_before("Rotate Pages")
+            self.engine.rotate_pages(selected, angle)
+            self.workspace.canvas.refresh()
+            self._sync_modified_state()
+            self.info_bar.show_message(
+                f"🔄 Rotated {len(selected)} page(s). Save the document to keep the change.",
+                "success",
+            )
+            self._hide_context()
+        except Exception as exc:
+            self._error("Rotate failed", str(exc))
+
+    def _delete_pages(self, value: str) -> None:
+        try:
+            pages = self._pages_from_text(value)
+            if not pages:
+                raise ValueError("Enter at least one valid page.")
+            answer = QMessageBox.question(
+                self, "Delete pages", f"Delete {len(pages)} selected page(s)?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._snapshot_before("Delete Pages")
+            self.engine.delete_pages(pages)
+            self._after_page_count_change()
+            self.info_bar.show_message(
+                f"🗑 Deleted {len(pages)} page(s). Save the document to keep the change.",
+                "success",
+            )
+            self._hide_context()
+        except Exception as exc:
+            self._error("Delete failed", str(exc))
+
+    def _extract_pages(self, value: str) -> None:
+        try:
+            pages = self._pages_from_text(value)
+            if not pages:
+                raise ValueError("Enter at least one valid page.")
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Extract Pages",
+                start_in_save_directory(
+                    self,
+                    "extracted-pages.pdf",
+                    self.engine.original_path.parent if self.engine.original_path else None,
+                ),
+                "PDF (*.pdf)",
+            )
+            if path:
+                remember_save_directory(self, path)
+                if not path.casefold().endswith(".pdf"):
+                    path += ".pdf"
+                if self.engine.original_path and Path(path).resolve() == self.engine.original_path:
+                    raise ValueError("Choose a new output file instead of the open PDF.")
+                target = self.engine.extract_pages(pages, path)
+                self.info_bar.show_message(f"📄 Created {target.name}", "success")
+                self._hide_context()
+        except Exception as exc:
+            self._error("Extract failed", str(exc))
+
+    def _split_pdf(self, every: int) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Split PDF output folder",
+            self.settings.get_last_save_directory(self.settings.get_last_directory()),
+        )
+        if not folder:
+            return
+        ranges = [
+            (start, min(start + every - 1, self.engine.page_count - 1))
+            for start in range(0, self.engine.page_count, every)
+        ]
+        try:
+            outputs = self.engine.split_pdf(ranges, folder)
+            self.settings.set_last_save_directory(folder)
+            self.info_bar.show_message(f"Created {len(outputs)} PDF files.", "success")
+            self._hide_context()
+        except Exception as exc:
+            self._error("Split failed", str(exc))
+
+    def _insert_pages(self, mode: str, source: str, position: int) -> None:
+        if mode == "browse":
+            path, _ = QFileDialog.getOpenFileName(self, "Insert pages from PDF", self.settings.get_last_directory(), "PDF (*.pdf)")
+            if path:
+                self.context_panel.set_insert_source(path)
+            return
+        if not source:
+            self.info_bar.show_message("Choose a source PDF first.", "warning")
+            return
+        try:
+            with fitz.open(source) as document:
+                pages = list(range(document.page_count))
+            self._snapshot_before("Insert Pages")
+            self.engine.insert_pages(source, pages, position - 1)
+            self._after_page_count_change()
+            self.info_bar.show_message("Pages inserted. Save the document to keep the change.", "success")
+            self._hide_context()
+        except Exception as exc:
+            self._error("Insert failed", str(exc))
+
+    def _order_pages(self, value: str) -> None:
+        try:
+            if value == "reverse":
+                order = list(reversed(range(self.engine.page_count)))
+            else:
+                order = [int(part.strip()) - 1 for part in value.split(",") if part.strip()]
+            self._snapshot_before("Reorder Pages")
+            self.engine.reorder_pages(order)
+            self.workspace.canvas.set_page(0)
+            self._reload_thumbnails(self._session)
+            self._sync_modified_state()
+            self.info_bar.show_message(
+                "🔀 Page order changed. Save the document to keep the change.", "success"
+            )
+            self._hide_context()
+        except Exception as exc:
+            self._error("Reorder failed", str(exc))
+
+    def _after_page_count_change(self) -> None:
+        self._page = min(self._page, self.engine.page_count - 1)
+        canvas = self.workspace.canvas
+        # The cached page renders are keyed by page index, which is now
+        # stale, so the canvas must re-render before scrolling.
+        canvas.refresh()
+        canvas.set_page(max(0, self._page))
+        name = self.engine.original_path.name if self.engine.original_path else "Document"
+        path = self._display_path or self.engine.original_path
+        self.bottom_bar.set_document_info(
+            name, self.engine.page_count, str(path) if path else ""
+        )
+        self.context_panel.set_page_count(self.engine.page_count)
+        nav = self.workspace.nav_panel
+        if nav is not None:
+            nav.search.set_page_count(self.engine.page_count)
+        if self._session is not None:
+            self._reload_thumbnails(self._session)
+        self._sync_modified_state()
+
+    # --- Search, information and printing -------------------------------
+    def search_document(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before searching.", "warning")
+            return
+        self._show_nav_tab("search")
+        self.workspace.nav_panel.search.focus_query()
+
+    def show_document_info(self) -> None:
+        document = self.engine.document
+        if not document:
+            return
+        DocumentInfoDialog(document, self.engine.original_path, self).exec()
+
+    def print_pdf(self) -> None:
+        doc = self.engine.document
+        if not doc:
+            return
+        options = PrintOptionsDialog(doc.page_count, self._page, self)
+        if options.exec() != QDialog.DialogCode.Accepted or not options.details:
+            return
+        details = options.details
+        printer = self._create_printer(details)
+        # Name the print job after the document (visible in the print queue),
+        # matching the legacy version.
+        printer.setDocName(Path(doc.name).name)
+        first_page = doc.load_page(list(details["pages"])[0])
+        self._configure_print_layout(printer, first_page, details)
+        if details.get("confirm_system_dialog"):
+            native_dialog = QPrintDialog(printer, self)
+            native_dialog.setWindowTitle("System Print")
+            if native_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+        if self._printing:
+            self.info_bar.show_message("A print job is already in progress.", "warning")
+            return
+        self._printing = True
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            def progress(_document_index, page, total):
+                self.bottom_bar.set_status(f"Printing page {page + 1} of {total}…")
+                QApplication.processEvents()
+
+            self._paint_documents(
+                printer,
+                [(doc, list(details["pages"]), Path(doc.name).name)],
+                details,
+                progress=progress,
+            )
+            self.info_bar.show_message("The document was sent to the printer.", "success")
+        except Exception as exc:
+            self._error("Print failed", str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.bottom_bar.set_status("Ready")
+            self._printing = False
+
+    @staticmethod
+    def _create_printer(details: dict[str, object]) -> QPrinter:
+        name = str(details.get("printer", ""))
+        info = QPrinterInfo.printerInfo(name) if name else QPrinterInfo()
+        printer = (
+            QPrinter(info, QPrinter.PrinterMode.HighResolution)
+            if not info.isNull()
+            else QPrinter(QPrinter.PrinterMode.HighResolution)
+        )
+        printer.setCopyCount(int(details["copies"]))
+        printer.setCollateCopies(bool(details["collate"]))
+        printer.setColorMode(
+            QPrinter.ColorMode.Color
+            if int(details["colour"]) == 0
+            else QPrinter.ColorMode.GrayScale
+        )
+        duplex_modes = {
+            1: QPrinter.DuplexMode.DuplexNone,
+            2: QPrinter.DuplexMode.DuplexLongSide,
+            3: QPrinter.DuplexMode.DuplexShortSide,
+        }
+        if int(details["duplex"]) in duplex_modes:
+            printer.setDuplex(duplex_modes[int(details["duplex"])])
+        return printer
+
+    def _paint_documents(
+        self,
+        printer: QPrinter,
+        documents: list[tuple[fitz.Document, list[int], str]],
+        details: dict[str, object],
+        log=None,
+        progress=None,
+        should_cancel=None,
+    ) -> None:
+        """Paint each page of each document onto the printer.
+
+        ``log`` receives progress lines. ``progress`` receives
+        ``(document_index, page_number, page_count)`` before each page is
+        drawn. ``should_cancel`` is polled between pages; returning True
+        stops the job after the current page.
+        """
+        painter = QPainter(printer)
+        if not painter.isActive():
+            raise RuntimeError("The selected printer could not start a print job.")
+        try:
+            output_index = 0
+            for document_index, (document, pages, name) in enumerate(documents):
+                if log:
+                    log(f"Printing {name} ({len(pages)} page(s))…")
+                for page_number in pages:
+                    page = document.load_page(page_number)
+                    if progress:
+                        progress(document_index, page_number, len(pages))
+                    # Qt applies one page layout per print job; the caller
+                    # configures it before the first page, so mid-job changes
+                    # would be ignored anyway.
+                    if output_index and not printer.newPage():
+                        raise RuntimeError("The printer could not create the next page.")
+                    self._draw_print_page(painter, printer, page, details)
+                    output_index += 1
+                    if should_cancel is not None and should_cancel():
+                        return
+        finally:
+            painter.end()
+
+    @staticmethod
+    def _draw_print_page(
+        painter: QPainter,
+        printer: QPrinter,
+        page: fitz.Page,
+        details: dict[str, object],
+    ) -> None:
+        rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+        render_dpi = min(300, max(96, printer.resolution()))
+        pix = page.get_pixmap(dpi=render_dpi, alpha=False)
+        image = QImage(
+            pix.samples,
+            pix.width,
+            pix.height,
+            pix.stride,
+            QImage.Format.Format_RGB888,
+        ).copy()
+        mode = int(details["scale_mode"])
+        if mode == 0:
+            # Qt applies one page layout per print job, so pages whose
+            # orientation differs from the job's are rotated: their content
+            # still fills the paper upright instead of being squashed.
+            # (An A4 page rotated 90 degrees is physically an A4 page, so
+            # mixed landscape/portrait documents print correctly.)
+            job_landscape = rect.width() > rect.height()
+            page_landscape = page.rect.width > page.rect.height
+            if page_landscape != job_landscape:
+                image = image.transformed(
+                    QTransform().rotate(90),
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            scaled = image.scaled(
+                rect.size().toSize(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        else:
+            factor = 1.0 if mode == 1 else float(details["scale"]) / 100.0
+            target_width = max(1, int(page.rect.width / 72 * printer.resolution() * factor))
+            target_height = max(1, int(page.rect.height / 72 * printer.resolution() * factor))
+            scaled = image.scaled(
+                target_width,
+                target_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        if bool(details["center"]):
+            x = rect.x() + (rect.width() - scaled.width()) / 2
+            y = rect.y() + (rect.height() - scaled.height()) / 2
+        else:
+            x, y = rect.x(), rect.y()
+        x += float(details["offset_x"]) / 25.4 * printer.resolution()
+        y += float(details["offset_y"]) / 25.4 * printer.resolution()
+        painter.drawImage(int(x), int(y), scaled)
+
+    @staticmethod
+    def _configure_print_layout(printer: QPrinter, page: fitz.Page, details: dict[str, object]) -> None:
+        paper = str(details["paper"])
+        sizes = {
+            "A4": QPageSize.PageSizeId.A4,
+            "A3": QPageSize.PageSizeId.A3,
+            "A5": QPageSize.PageSizeId.A5,
+            "Letter": QPageSize.PageSizeId.Letter,
+        }
+        if paper == "PDF page size":
+            # QPageSize stores sizes in portrait convention, so the shorter
+            # side must be the width; the orientation below then produces
+            # the correct full-page rectangle for landscape pages.
+            width, height = page.rect.width, page.rect.height
+            if width > height:
+                width, height = height, width
+            printer.setPageSize(
+                QPageSize(
+                    QSizeF(width, height),
+                    QPageSize.Unit.Point,
+                    "PDF page",
+                )
+            )
+        else:
+            printer.setPageSize(QPageSize(sizes[paper]))
+        orientation = int(details["orientation"])
+        if orientation == 0:
+            landscape = page.rect.width > page.rect.height
+        else:
+            landscape = orientation == 2
+        printer.setPageOrientation(
+            QPageLayout.Orientation.Landscape if landscape else QPageLayout.Orientation.Portrait
+        )
+
+    # --- Tools -----------------------------------------------------------
+    ANNOTATION_TOOL_KEYS = {
+        "highlight", "underline", "strikeout", "note", "ink", "rect",
+        "redact", "stamp", "signature", "image", "watermark",
+    }
+
+    def _tool_requested(self, key: str) -> None:
+        if key in self.ANNOTATION_TOOL_KEYS:
+            self._activate_annotation_tool(key)
+            return
+        handlers = {
+            "search": self.search_document,
+            "rotate": lambda: self._show_context("rotate"),
+            "insert": self._insert_pages_dialog,
+            "delete": self._delete_pages_dialog,
+            "extract": self._extract_pages_dialog,
+            "order": lambda: self._show_context("sort"),
+            "sort": self._organize_pages,
+            "split": self._split_dialog,
+            "info": self.show_document_info,
+            "pdf_to_word": self._pdf_to_word,
+            "office_to_pdf": self._office_to_pdf,
+            "txt_to_pdf": self._txt_to_pdf,
+            "postscript": self._postscript_to_pdf,
+            "page_report": self._page_report,
+            "extract_text": self._extract_text,
+            "merge": self._merge_pdfs,
+            "overlay": self._overlay_pdf,
+            "compress": self._compress_pdf,
+            "deep_search": self._deep_search,
+            "merge_sheet": self._merge_sheets,
+            "barcode": self._scan_barcodes,
+            "barcode_batch": self._scan_barcodes_batch,
+            "version_control": self._version_control,
+            "encrypt": self._encrypt_pdf,
+            "decrypt": self._decrypt_pdf,
+            "diagnostics": lambda: DiagnosticsDialog(self).exec(),
+            "find_file": self._search_and_open,
+            "batch_print": self._batch_print,
+        }
+        handler = handlers.get(key)
+        if handler:
+            try:
+                handler()
+            finally:
+                if key != "rotate":
+                    self.side_panel.set_active_tool(None)
+
+    # --- P3: annotations and content editing -----------------------------
+    def _activate_annotation_tool(self, key: str) -> None:
+        if key == "watermark":
+            self.side_panel.set_active_tool(None)
+            self._show_watermark_dialog()
+            return
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before annotating.", "warning")
+            return
+        self.workspace.canvas.set_tool_mode(key)
+        self._show_context("annotate")
+        self.side_panel.set_active_tool(key)
+
+    def _set_annot_color(self, value: str) -> None:
+        self.workspace.canvas.set_annotation_options(color=value)
+
+    def _set_annot_width(self, value: int) -> None:
+        self.workspace.canvas.set_annotation_options(width=float(value))
+
+    def _set_stamp_kind(self, value: str) -> None:
+        self.workspace.canvas.set_annotation_options(stamp_kind=value)
+
+    def _set_annot_image(self, value: str) -> None:
+        self.workspace.canvas.set_annotation_options(image_path=value)
+
+    def _handle_annotation(
+        self, op: AnnotationOp, session: DocumentSession | None = None
+    ) -> None:
+        target = session or self._session
+        if target is None:
+            return
+        session = target
+        self._session = target
+        if not session.engine.is_loaded():
+            return
+        if op.kind == "redact":
+            answer = QMessageBox.question(
+                self,
+                "Redact content",
+                "Redaction permanently removes the selected content from the document.\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        if op.kind in {"signature", "image"} and not op.image_path:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Choose image", "", "Images (*.png *.jpg *.jpeg)"
+            )
+            if not path:
+                return
+            self._set_annot_image(path)
+            self.context_panel.set_annotate_image(path)
+            op = replace(op, image_path=path)
+        self._snapshot_before(op.description())
+        try:
+            apply_annotation(session.engine.document, op)
+            session.engine.mark_modified()
+        except Exception as exc:
+            self.info_bar.show_message(f"{op.description()} failed: {exc}", "error", 0)
+            return
+        session.canvas.refresh()
+        self._sync_modified_state()
+        self._refresh_annotate_list()
+        self.info_bar.show_message(
+            f"{op.description()} added. Save the document to keep the change.", "success"
+        )
+
+    def _handle_note_request(
+        self, page: int, point, session: DocumentSession | None = None
+    ) -> None:
+        target = session or self._session
+        if target is None:
+            return
+        session = target
+        self._session = target
+        if not session.engine.is_loaded():
+            return
+        text, accepted = QInputDialog.getText(self, "Sticky Note", "Note text:")
+        if not accepted:
+            return
+        op = AnnotationOp(
+            kind="note",
+            page=page,
+            points=((point.x, point.y),),
+            text=text.strip() or "Note",
+        )
+        self._handle_annotation(op, session)
+
+    def _handle_remove_annotation(self, index: int) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        self._snapshot_before("Remove Annotation")
+        try:
+            remove_annotation(session.engine.document.load_page(session.page), index)
+            session.engine.mark_modified()
+        except Exception as exc:
+            self.info_bar.show_message(f"Remove annotation failed: {exc}", "error", 0)
+            return
+        session.canvas.refresh()
+        self._sync_modified_state()
+        self._refresh_annotate_list()
+
+    def _refresh_annotate_list(self) -> None:
+        session = self._session
+        page = (
+            session.engine.document.load_page(session.page)
+            if session is not None and session.engine.is_loaded()
+            else None
+        )
+        self.context_panel.refresh_annotation_list(page)
+
+    def _show_watermark_dialog(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before adding a watermark.", "warning")
+            return
+        dialog = WatermarkDialog(self.engine.page_count, self._page, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        pages = self._pages_from_text(str(details["pages"]))
+        if not pages:
+            self.info_bar.show_message("Choose a valid page range.", "warning")
+            return
+        self._snapshot_before("Watermark")
+        try:
+            if details["mode"] == "text":
+                add_watermark_text(
+                    self.engine.document,
+                    pages,
+                    str(details["text"]),
+                    fontsize=int(details["fontsize"]),
+                    opacity=float(details["opacity"]),
+                    rotation=float(details["rotation"]),
+                )
+            else:
+                add_watermark_image(
+                    self.engine.document,
+                    pages,
+                    str(details["image"]),
+                    opacity=float(details["opacity"]),
+                )
+            self.engine.mark_modified()
+        except Exception as exc:
+            self._error("Watermark failed", str(exc))
+            return
+        self.workspace.canvas.refresh()
+        self._sync_modified_state()
+        self.info_bar.show_message("Watermark applied. Save to keep the change.", "success")
+
+    # --- P1: navigation panels, bookmarks and search --------------------
+    def _show_nav_tab(self, key: str) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF first.", "warning")
+            return
+        self.workspace.show_nav_tab(key)
+
+    def _load_navigation(self) -> None:
+        session = self._session
+        if session is None:
+            return
+        nav = session.nav_panel
+        nav.outline.load_toc(session.engine.get_toc())
+        key = self._bookmark_key(session)
+        nav.bookmarks.load_bookmarks(self.settings.get_bookmarks(key) if key else [])
+        nav.bookmarks.set_current_page(session.page)
+        nav.search.reset_query()
+
+    def _clear_navigation(self) -> None:
+        self.workspace.nav_panel.clear_document()
+
+    def _bookmark_key(self, session: DocumentSession) -> str | None:
+        path = session.engine.original_path or session.display_path
+        return str(path) if path else None
+
+    def _add_bookmark(self, session: DocumentSession | None = None) -> None:
+        session = session or self._session
+        if session is None:
+            return
+        if not session.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before adding bookmarks.", "warning")
+            return
+        key = self._bookmark_key(session)
+        if not key:
+            self.info_bar.show_message("Save the PDF before adding bookmarks.", "warning")
+            return
+        default = f"Page {session.page + 1}"
+        title, accepted = QInputDialog.getText(self, "Add Bookmark", "Bookmark title:", text=default)
+        if not accepted:
+            return
+        items = self.settings.get_bookmarks(key)
+        items.append({"page": session.page, "title": title.strip() or default})
+        self.settings.set_bookmarks(key, items)
+        session.nav_panel.bookmarks.load_bookmarks(items)
+        self.info_bar.show_message("Bookmark added.", "success")
+
+    def _remove_bookmark(self, row: int, session: DocumentSession | None = None) -> None:
+        session = session or self._session
+        if session is None:
+            return
+        key = self._bookmark_key(session)
+        if not key:
+            return
+        items = self.settings.get_bookmarks(key)
+        if 0 <= row < len(items):
+            del items[row]
+            self.settings.set_bookmarks(key, items)
+            session.nav_panel.bookmarks.load_bookmarks(items)
+            self.info_bar.show_message("Bookmark removed.", "info")
+
+    def _run_search(
+        self,
+        query: str,
+        session: DocumentSession | None = None,
+        pages: list[int] | None = None,
+    ) -> None:
+        target = session or self._session
+        if target is None:
+            return
+        session = target
+        panel = session.nav_panel.search
+        if not session.engine.is_loaded():
+            return
+        temp = session.engine.temp_path
+        if not temp or not temp.is_file():
+            return
+        panel.show_searching()
+        case_sensitive = panel.case_sensitive()
+        whole_word = panel.whole_word()
+        allowed = set(pages) if pages is not None else None
+
+        def filtered(hits) -> list[SearchHit]:
+            results = list(hits or [])
+            if allowed is not None:
+                results = [hit for hit in results if hit.page in allowed]
+            return results
+
+        if session.engine.page_count <= 50:
+            try:
+                hits = session.engine.search_text_detailed(
+                    query, case_sensitive=case_sensitive, whole_word=whole_word
+                )
+                self._finish_search(filtered(hits), session)
+            except Exception as exc:
+                panel.show_error(str(exc))
+            return
+        if self._tasks:
+            panel.show_error("Wait for the current background operation to finish.")
+            return
+        self._run_task(
+            "Searching document",
+            search_pdf_file,
+            str(temp),
+            query,
+            case_sensitive=case_sensitive,
+            whole_word=whole_word,
+            password=session.engine.password,
+            on_result=lambda hits: self._finish_search(filtered(hits), session),
+        )
+
+    def _finish_search(self, hits, session: DocumentSession | None = None) -> None:
+        if session is None:
+            return
+        results = list(hits or [])
+        total = sum(len(hit.rects) for hit in results)
+        session.nav_panel.search.set_results(results, total)
+
+    def _goto_search_hit(
+        self, page: int, rects, session: DocumentSession | None = None
+    ) -> None:
+        session = session or self._session
+        if session is None:
+            return
+        self.workspace.set_current_session(session)
+        self._session = session
+        self.goto_page(page)
+        session.canvas.show_search_hits(page, list(rects or []))
+
+    # --- P1: command registry, palette, shortcuts and undo history -------
+    def _tool_available(self, key: str) -> bool:
+        loaded = self._session is not None and self._session.engine.is_loaded()
+        if key in SidePanel.DOCUMENT_TOOLS and not loaded:
+            return False
+        if key == "decrypt" and not (loaded and self._session.engine.is_encrypted()):
+            return False
+        capabilities = detect_capabilities()
+        for _section_key, _title, items in SidePanel.SECTIONS:
+            for item in items:
+                if item.key == key and item.capability is not None:
+                    return capabilities[item.capability].available
+        return True
+
+    def _build_command_registry(self) -> None:
+        commands: list[Command] = []
+
+        def document() -> bool:
+            return self._session is not None and self._session.engine.is_loaded()
+
+        def make(
+            key: str,
+            label: str,
+            shortcut: str,
+            section: str,
+            handler,
+            enabled=None,
+        ) -> None:
+            commands.append(Command(key, label, shortcut, section, handler, enabled))
+
+        make("open", "Open…", "Ctrl+O", "File", self._open_dialog)
+        make("search_open", "Search and Open PDF…", "Ctrl+Shift+O", "File", self._search_and_open)
+        make("save", "Save", "Ctrl+S", "File", self.save_file, document)
+        make("save_as", "Save As…", "Ctrl+Shift+S", "File", self.save_as_file, document)
+        make("print", "Print…", "Ctrl+P", "File", self.print_pdf, document)
+        make("close", "Close Document", "Ctrl+W", "File", self.close_document, document)
+        make("open_postscript", "Open PostScript…", "", "File", self._open_postscript)
+
+        make("undo", "Undo", "Ctrl+Z", "Edit", self._undo, lambda: self._session is not None and self._session.undo_stack.can_undo)
+        make("redo", "Redo", "Ctrl+Y", "Edit", self._redo, lambda: self._session is not None and self._session.undo_stack.can_redo)
+        make(
+            "undo_history",
+            "Undo History…",
+            "",
+            "Edit",
+            self._show_undo_history,
+            lambda: self._session is not None
+            and (self._session.undo_stack.can_undo or self._session.undo_stack.can_redo),
+        )
+
+        tool_shortcuts = {"search": "Ctrl+F", **SHORTCUT_HINTS}
+        for _section_key, _title, items in SidePanel.SECTIONS:
+            for item in items:
+                make(
+                    item.key,
+                    item.label,
+                    tool_shortcuts.get(item.key, ""),
+                    "Tools",
+                    lambda key=item.key: self._tool_requested(key),
+                    lambda key=item.key: self._tool_available(key),
+                )
+        make(
+            "diagnostics",
+            "External Tools & Diagnostics…",
+            "",
+            "Tools",
+            lambda: self._tool_requested("diagnostics"),
+        )
+        for key, label in (
+            ("highlight", "Highlight Text"),
+            ("underline", "Underline Text"),
+            ("strikeout", "Strikethrough Text"),
+            ("note", "Sticky Note"),
+            ("ink", "Freehand Drawing"),
+            ("rect", "Rectangle Annotation"),
+            ("redact", "Redact Content"),
+            ("stamp", "Rubber Stamp"),
+            ("signature", "Signature Image"),
+            ("image", "Insert Image"),
+            ("watermark", "Add Watermark"),
+        ):
+            make(
+                f"annot_{key}",
+                label,
+                "",
+                "Annotate",
+                lambda value=key: self._activate_annotation_tool(value),
+                document,
+            )
+
+        make("toggle_tools", "Toggle Tools Panel", "Ctrl+\\", "View", self._toggle_side_panel)
+        make(
+            "toggle_context",
+            "Toggle Context Panel",
+            "Ctrl+.",
+            "View",
+            self._toggle_context_panel,
+            document,
+        )
+        make(
+            "toggle_thumbnails",
+            "Toggle Page Thumbnails",
+            "Ctrl+T",
+            "View",
+            self._toggle_thumbnails,
+            document,
+        )
+        make(
+            "nav_outline",
+            "Show Outline Panel",
+            "",
+            "View",
+            lambda: self._show_nav_tab("outline"),
+            document,
+        )
+        make(
+            "nav_bookmarks",
+            "Show Bookmarks Panel",
+            "",
+            "View",
+            lambda: self._show_nav_tab("bookmarks"),
+            document,
+        )
+        make(
+            "nav_search",
+            "Show Search Panel",
+            "",
+            "View",
+            lambda: self._show_nav_tab("search"),
+            document,
+        )
+        make("add_bookmark", "Add Bookmark", "Ctrl+D", "View", self._add_bookmark, document)
+        make("view_single", "Single Page Layout", "Ctrl+1", "View", lambda: self._set_layout_mode("single"), document)
+        make("view_continuous", "Continuous Page Layout", "Ctrl+2", "View", lambda: self._set_layout_mode("continuous"), document)
+        make("view_facing", "Facing Page Layout", "Ctrl+3", "View", lambda: self._set_layout_mode("facing"), document)
+        make("fit_width", "Fit Page Width", "Ctrl+0", "View", self._canvas_call("fit_width"), document)
+        make("fit_page", "Fit Whole Page", "Ctrl+9", "View", self._canvas_call("fit_page"), document)
+        make("actual_size", "Actual Size", "Ctrl+8", "View", self._canvas_call("actual_size"), document)
+        make("tool_browse", "Browse Tool", "", "View", lambda: self._set_canvas_tool("browse"), document)
+        make("tool_hand", "Hand Tool (pan)", "", "View", lambda: self._set_canvas_tool("hand"), document)
+        make("tool_select", "Select Text Tool", "", "View", lambda: self._set_canvas_tool("select"), document)
+        make("tool_magnifier", "Magnifier Tool", "", "View", lambda: self._set_canvas_tool("magnifier"), document)
+        make("toggle_page_labels", "Show Page Labels", "", "View", self._toggle_page_labels, document)
+        make("zoom_in", "Zoom In", "Ctrl+=", "View", self._canvas_call("zoom_in"), document)
+        make("zoom_out", "Zoom Out", "Ctrl+-", "View", self._canvas_call("zoom_out"), document)
+
+        make("tab_next", "Next Tab", "Ctrl+Tab", "View", self._next_tab)
+        make("tab_prev", "Previous Tab", "Ctrl+Shift+Tab", "View", self._previous_tab)
+        make("view_split", "Toggle Split View", "", "View", self._toggle_split_view, document)
+        make("prev_page", "Previous Page", "Ctrl+Left", "Navigate", self.previous_page, document)
+        make("next_page", "Next Page", "Ctrl+Right", "Navigate", self.next_page, document)
+        make("first_page", "First Page", "Home", "Navigate", self._goto_first_page, document)
+        make("last_page", "Last Page", "End", "Navigate", self._goto_last_page, document)
+
+        make("readme", "README", "", "Help", self._show_readme)
+        make("preferences", "Preferences…", "", "Help", self.show_preferences)
+        make("save_all", "Save All", "", "File", self.save_all_files, document)
+        make("about", "About PDFDocuEdit Pro", "", "Help", self.show_about)
+        make("command_palette", "Command Palette…", "Ctrl+K", "Help", self._show_command_palette)
+        make("shortcuts", "Keyboard Shortcuts", "Ctrl+/", "Help", self._show_shortcuts)
+
+        self._commands = commands
+
+    def _install_shortcuts(self) -> None:
+        # Ctrl+K and Ctrl+/ are bound once, by their menu actions.
+
+        def window_shortcut(sequence: str, handler: Callable) -> QShortcut:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(handler)
+            return shortcut
+
+        def guarded_window_shortcut(sequence: str, handler: Callable) -> QShortcut:
+            """Window-level shortcut that ignores presses while typing in
+            an input field (same guard as the Delete key)."""
+
+            def run() -> None:
+                if not self._editing_focused():
+                    handler()
+
+            return window_shortcut(sequence, run)
+
+        self._shortcut_bookmark = guarded_window_shortcut(
+            "Ctrl+D",
+            lambda: self._add_bookmark(self._session) if self._session else None,
+        )
+        self._shortcut_next_tab = QShortcut(QKeySequence("Ctrl+Tab"), self)
+        self._shortcut_next_tab.activated.connect(self._next_tab)
+        self._shortcut_prev_tab = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
+        self._shortcut_prev_tab.activated.connect(self._previous_tab)
+
+        # Legacy main-toolbar shortcuts (Ctrl+L/R/E, Delete).
+        self._shortcut_rotate_left = guarded_window_shortcut(
+            "Ctrl+L", lambda: self._rotate_current(-90)
+        )
+        self._shortcut_rotate_right = guarded_window_shortcut(
+            "Ctrl+R", lambda: self._rotate_current(90)
+        )
+        self._shortcut_extract = guarded_window_shortcut(
+            "Ctrl+E", self._extract_pages_dialog
+        )
+        self._shortcut_delete = window_shortcut("Delete", self._delete_pages_shortcut)
+
+    def _editing_focused(self) -> bool:
+        widget = QApplication.focusWidget()
+        return isinstance(
+            widget, (QLineEdit, QAbstractSpinBox, QComboBox, QTextEdit)
+        )
+
+    def _delete_pages_shortcut(self) -> None:
+        """Delete-key shortcut that ignores presses while typing in an input."""
+        if self._editing_focused():
+            return
+        self._delete_pages_dialog()
+
+    def _show_command_palette(self) -> None:
+        existing = getattr(self, "_command_palette", None)
+        if existing is not None:
+            existing.refresh()
+            existing.move(self.mapToGlobal(self.rect().center() - existing.rect().center()))
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
+        palette = CommandPalette(self._commands, self)
+        palette.commandTriggered.connect(self._run_command)
+        offset = self.rect().center() - palette.rect().center()
+        palette.move(self.mapToGlobal(offset))
+        self._command_palette = palette
+        palette.destroyed.connect(lambda: setattr(self, "_command_palette", None))
+        palette.show()
+        palette.raise_()
+        palette.activateWindow()
+
+    def _run_command(self, command_id: str) -> None:
+        for command in self._commands:
+            if command.id == command_id:
+                command.handler()
+                return
+
+    def _show_shortcuts(self) -> None:
+        ShortcutsDialog(self._commands, self).exec()
+
+    def _show_undo_history(self) -> None:
+        stack = self._undo_stack
+        if stack is None:
+            return
+        dialog = UndoHistoryDialog(
+            stack.undo_descriptions(),
+            stack.redo_descriptions(),
+            self,
+        )
+        dialog.undoToRequested.connect(self._undo_to)
+        dialog.redoToRequested.connect(self._redo_to)
+        dialog.exec()
+
+    def _undo_to(self, steps: int) -> None:
+        stack = self._undo_stack
+        for _ in range(steps):
+            if stack is None or not stack.can_undo:
+                break
+            self._undo()
+
+    def _redo_to(self, steps: int) -> None:
+        stack = self._undo_stack
+        for _ in range(steps):
+            if stack is None or not stack.can_redo:
+                break
+            self._redo()
+
+    def _batch_print(self) -> None:
+        existing = getattr(self, "_batch_print_dialog", None)
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
+        dialog = BatchPrintDialog(self)
+        dialog.printRequested.connect(
+            lambda details: self._run_batch_print(dialog, details)
+        )
+        dialog.destroyed.connect(lambda: setattr(self, "_batch_print_dialog", None))
+        self._batch_print_dialog = dialog
+        dialog.show()
+
+    def _run_batch_print(self, dialog: BatchPrintDialog, details: dict[str, object]) -> None:
+        dialog.set_printing(True)
+        try:
+            printer = self._create_printer(details)
+            paths: list[str] = list(details["paths"])
+            with ExitStack() as stack:
+                # Open each file individually so one unreadable PDF skips
+                # instead of aborting the whole batch (legacy behaviour).
+                documents: list[fitz.Document] = []
+                printed_paths: list[str] = []
+                for path in paths:
+                    try:
+                        documents.append(stack.enter_context(fitz.open(path)))
+                        printed_paths.append(path)
+                    except Exception as exc:
+                        dialog.mark_file_error(str(path))
+                        dialog.log_message(f"Skipped {Path(path).name}: could not open it ({exc}).")
+                if not documents:
+                    dialog.log_message("No documents to print.")
+                    return
+                first_page = documents[0].load_page(0)
+                self._configure_print_layout(printer, first_page, details)
+                if details.get("confirm_system_dialog"):
+                    native_dialog = QPrintDialog(printer, self)
+                    native_dialog.setWindowTitle("Confirm Batch Print")
+                    if native_dialog.exec() != QDialog.DialogCode.Accepted:
+                        dialog.log_message("Print job cancelled.")
+                        return
+                # One print job per file (legacy behaviour): each job gets
+                # its own paper size and orientation from that file's first
+                # page and is named after the file in the print queue.
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                try:
+                    for path, document in zip(printed_paths, documents, strict=True):
+                        if dialog.cancel_requested():
+                            break
+                        job = self._create_printer(details)
+                        job.setDocName(Path(path).name)
+                        self._configure_print_layout(job, document.load_page(0), details)
+                        self._paint_documents(
+                            job,
+                            [(document, list(range(document.page_count)), Path(path).name)],
+                            details,
+                            log=dialog.log_message,
+                            progress=lambda i, page, total, p=path: (
+                                dialog.set_file_status(
+                                    p, f"Printing page {page + 1} of {total}"
+                                ),
+                                self.bottom_bar.set_status(
+                                    f"Printing {Path(p).name}: page {page + 1} of {total}…"
+                                ),
+                                QApplication.processEvents(),
+                            ),
+                            should_cancel=dialog.cancel_requested,
+                        )
+                        if dialog.cancel_requested():
+                            dialog.set_file_status(str(path), "Cancelled")
+                            dialog.log_message("Batch print cancelled.")
+                            break
+                        dialog.mark_file_printed(str(path))
+                    else:
+                        dialog.log_message(f"Sent {len(documents)} PDF file(s) to the printer.")
+                        self.info_bar.show_message(
+                            f"Sent {len(documents)} PDF file(s) to the printer.", "success"
+                        )
+                finally:
+                    QApplication.restoreOverrideCursor()
+                    self.bottom_bar.set_status("Ready")
+        except Exception as exc:
+            dialog.log_message(f"Batch print failed: {exc}")
+            dialog.mark_printing_as_error()
+            self._error("Batch print failed", str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.bottom_bar.set_status("Ready")
+            dialog.set_printing(False)
+
+    def _extract_pages_dialog(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before extracting pages.", "warning")
+            return
+        dialog = PageSelectionDialog("Extract", self.engine.page_count, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        source = self.engine.original_path
+        suggested = f"{source.stem}_extracted.pdf" if source else "extracted-pages.pdf"
+        output, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Extracted Pages",
+            start_in_save_directory(self, suggested, source.parent if source else None),
+            "PDF (*.pdf)",
+        )
+        if output:
+            remember_save_directory(self, output)
+            if not output.casefold().endswith(".pdf"):
+                output += ".pdf"
+            try:
+                if (
+                    self.engine.original_path
+                    and Path(output).resolve() == self.engine.original_path
+                ):
+                    raise ValueError("Choose a new output file instead of the open PDF.")
+                target = self.engine.extract_pages(dialog.selected_pages, output)
+                self.info_bar.show_message(
+                    f"📄 Created {target.name} with {len(dialog.selected_pages)} selected page(s).",
+                    "success",
+                )
+            except Exception as exc:
+                self._error("Extract failed", str(exc))
+
+    def _delete_pages_dialog(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before deleting pages.", "warning")
+            return
+        dialog = PageSelectionDialog("Delete", self.engine.page_count, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        pages = dialog.selected_pages
+        answer = QMessageBox.question(
+            self,
+            "Delete pages",
+            f"Delete {len(pages)} selected page(s)? This change is applied when you save the PDF.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._snapshot_before("Delete Pages")
+            self.engine.delete_pages(pages)
+            self._after_page_count_change()
+            self.info_bar.show_message(
+                f"🗑 Deleted {len(pages)} page(s). Save the document to keep the change.",
+                "success",
+            )
+        except Exception as exc:
+            self._error("Delete failed", str(exc))
+
+    def _insert_pages_dialog(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before inserting pages.", "warning")
+            return
+        dialog = InsertPagesDialog(self.engine.page_count, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        try:
+            self._snapshot_before("Insert Pages")
+            if details["mode"] == "single":
+                self.engine.insert_pages(
+                    str(details["source"]),
+                    list(details["pages"]),
+                    int(details["position"]),
+                )
+            elif details["mode"] == "repeat":
+                self.engine.repeat_insert_pages(
+                    str(details["source"]),
+                    list(details["pages"]),
+                    int(details["interval"]),
+                )
+            else:
+                sizes = {
+                    "A4": (595.0, 842.0),
+                    "A3": (842.0, 1191.0),
+                    "Letter": (612.0, 792.0),
+                }
+                if details["size"] == "Same as current page":
+                    width, height = self.engine.get_page_size(self._page)
+                else:
+                    width, height = sizes[str(details["size"])]
+                if details["orientation"] == "Landscape" and width < height:
+                    width, height = height, width
+                elif details["orientation"] == "Portrait" and width > height:
+                    width, height = height, width
+                self.engine.insert_blank_pages(
+                    int(details["count"]),
+                    int(details["position"]),
+                    width,
+                    height,
+                )
+            self._after_page_count_change()
+            self.info_bar.show_message("Pages inserted. Save to keep the change.", "success")
+        except Exception as exc:
+            self._error("Insert failed", str(exc))
+
+    def _split_dialog(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before splitting it.", "warning")
+            return
+        source = self.engine.original_path
+        dialog = SplitDialog(self.engine.page_count, source.stem if source else "document", self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        try:
+            outputs = self.engine.split_pdf(
+                list(details["ranges"]),
+                str(details["folder"]),
+                str(details["prefix"]),
+                bool(details["overwrite"]),
+            )
+            self.info_bar.show_message(f"Created {len(outputs)} PDF file(s).", "success")
+        except Exception as exc:
+            self._error("Split failed", str(exc))
+
+    def _organize_pages(self) -> None:
+        document = self.engine.document
+        if not document:
+            self.info_bar.show_message("Open a PDF before organizing pages.", "warning")
+            return
+        dialog = VisualOrganizerDialog(document, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self._snapshot_before("Organize Pages")
+            self.engine.organize_pages(dialog.order, dialog.rotations)
+            self._after_page_count_change()
+            self.info_bar.show_message(
+                "Page order, rotations, and removals were applied. Save to keep the changes.",
+                "success",
+            )
+        except Exception as exc:
+            self._error("Organize pages failed", str(exc))
+
+    def _require_source(self) -> Path | None:
+        if not self.engine.is_loaded() or not self.engine.original_path:
+            self.info_bar.show_message("Open a PDF before using this tool.", "warning")
+            return None
+        return self.engine.original_path
+
+    @staticmethod
+    def _safe_cleanup(directory: tempfile.TemporaryDirectory[str]) -> Callable[[], None]:
+        """Wrap TemporaryDirectory.cleanup so a failed cleanup never escapes
+        into the Qt slot that calls it."""
+
+        def cleanup() -> None:
+            try:
+                directory.cleanup()
+            except Exception:
+                pass
+
+        return cleanup
+
+    def _working_snapshot(
+        self, source: Path
+    ) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        directory = tempfile.TemporaryDirectory(prefix="pdfdocuedit-working-")
+        path = Path(directory.name) / source.name
+        try:
+            self.engine.snapshot(path)
+        except Exception:
+            directory.cleanup()
+            raise
+        return directory, path
+
+    def _reload_session_if_replaced(
+        self, session: DocumentSession, values: list[Path]
+    ) -> None:
+        """Reload the session that started the task if its file was rewritten.
+
+        The task may finish after the user switched tabs; the completion must
+        target the originating session, not whichever one is now active.
+        """
+        if session is None or session not in self._sessions:
+            return
+        current = session.engine.original_path
+        if current and any(Path(value).resolve() == current for value in values):
+            self.workspace.set_current_session(session)
+            self._session = session
+            self.load_file(str(current))
+
+    def _batch_completed(
+        self, session: DocumentSession, values: list[Path], message: str
+    ) -> None:
+        self._reload_session_if_replaced(session, values)
+        self.info_bar.show_message(message.format(count=len(values)), "success")
+
+    def _pdf_to_word(self) -> None:
+        source = self._require_source()
+        if not source:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Convert PDF to Word",
+            start_in_save_directory(self, f"{source.stem}.docx", source.parent),
+            "Word (*.docx)",
+        )
+        if path:
+            remember_save_directory(self, path)
+            if not path.casefold().endswith(".docx"):
+                path += ".docx"
+            snapshot = None
+            input_source = source
+            if self.engine.is_modified:
+                try:
+                    snapshot, input_source = self._working_snapshot(source)
+                except Exception as exc:
+                    self._error("PDF to Word failed", str(exc))
+                    return
+            self._run_task(
+                "Converting to Word",
+                convert_pdf_to_word,
+                input_source,
+                path,
+                on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+            )
+
+    def _office_to_pdf(self) -> None:
+        dialog = OfficeConversionDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        self._run_task(
+            "Converting Office documents",
+            convert_office_files,
+            details["paths"],
+            details["output_folder"],
+            details["overwrite"],
+            details["source_folder"],
+            details["keep_structure"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_result=lambda values: self.info_bar.show_message(
+                f"Created {len(values)} PDF file(s).", "success"
+            ),
+        )
+
+    def _txt_to_pdf(self) -> None:
+        dialog = TextConversionDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        self._run_task(
+            "Creating PDF from text",
+            text_files_to_pdfs,
+            details["paths"],
+            details["output_folder"],
+            details["filename"],
+            details["single"],
+            details["encoding"],
+            details["overwrite"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_result=lambda values: self.info_bar.show_message(
+                f"Created {len(values)} PDF file(s).", "success"
+            ),
+        )
+
+    def _postscript_to_pdf(self) -> None:
+        dialog = PostScriptConversionDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        self._run_task(
+            "Converting PostScript",
+            convert_postscript_files,
+            details["paths"],
+            details["output_folder"],
+            details["prefix"],
+            details["overwrite"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_result=lambda values: self.info_bar.show_message(
+                f"Created {len(values)} PDF file(s).", "success"
+            ),
+        )
+
+    def _page_report(self) -> None:
+        dialog = PageCountReportDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        self._run_task(
+            "Creating page report",
+            create_page_count_report,
+            details["folder"],
+            details["output"],
+            details["recursive"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+        )
+
+    def _extract_text(self) -> None:
+        source = self._require_source()
+        document = self.engine.document
+        if not source or not document:
+            return
+        dialog = TextExtractorDialog(
+            document,
+            self._page,
+            str(source.with_name(f"{source.stem}_extracted.xlsx")),
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        snapshot_directory = tempfile.TemporaryDirectory(prefix="pdfdocuedit-extract-")
+        extraction_source = Path(snapshot_directory.name) / "working-copy.pdf"
+        try:
+            self.engine.snapshot(extraction_source)
+        except Exception as exc:
+            snapshot_directory.cleanup()
+            self._error("Text extraction failed", str(exc))
+            return
+        self._run_task(
+            "Extracting selected text region",
+            extract_region_text,
+            extraction_source,
+            details["pages"],
+            details["rect"],
+            details["output"],
+            details["excel"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_finished=self._safe_cleanup(snapshot_directory),
+        )
+
+    def _merge_pdfs(self) -> None:
+        dialog = MergePDFDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.output_path:
+            current = self.engine.original_path
+            if current and Path(dialog.output_path).resolve() == current:
+                self.info_bar.show_message(
+                    "Choose an output other than the PDF currently open in this window.",
+                    "error",
+                    0,
+                )
+                return
+            self._run_task(
+                "Merging PDFs",
+                merge_pdfs,
+                dialog.file_paths,
+                dialog.output_path,
+                progress_argument="progress",
+                cancel_argument="is_cancelled",
+                on_result=lambda value: self.info_bar.show_message(
+                    f"🔗 Merged PDF saved: {Path(value).name}", "success"
+                ),
+            )
+
+    def _overlay_pdf(self) -> None:
+        dialog = OverlayDialog(self.engine.original_path, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        session = self._session
+        targets = [Path(value).resolve() for value in details["targets"]]
+        current = self.engine.original_path
+        snapshot = None
+        if current and self.engine.is_modified and current in targets:
+            if not details["suffix"] and details["overwrite"]:
+                self.info_bar.show_message(
+                    "Save the current PDF before applying an in-place overlay.",
+                    "warning",
+                    0,
+                )
+                return
+            try:
+                snapshot, working = self._working_snapshot(current)
+            except Exception as exc:
+                self._error("PDF overlay failed", str(exc))
+                return
+            targets = [working if value == current else value for value in targets]
+        self._run_task(
+            "Applying PDF overlay",
+            overlay_pdfs,
+            details["template"],
+            targets,
+            details["output_folder"],
+            details["suffix"],
+            details["overwrite"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_result=lambda values: self._batch_completed(
+                session, values, "Overlay completed for {count} PDF file(s)."
+            ),
+            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+        )
+
+    def _compress_pdf(self) -> None:
+        dialog = CompressionDialog(self.engine.original_path, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        paths = [Path(value).resolve() for value in details["paths"]]
+        output_folder = details["output_folder"]
+        current = self.engine.original_path
+        session = self._session
+        snapshot = None
+        if current and self.engine.is_modified and current in paths:
+            if not details["suffix"] and details["overwrite"]:
+                self.info_bar.show_message(
+                    "Save the current PDF before compressing it in place.",
+                    "warning",
+                    0,
+                )
+                return
+            try:
+                snapshot, working = self._working_snapshot(current)
+            except Exception as exc:
+                self._error("Compression failed", str(exc))
+                return
+            paths = [working if value == current else value for value in paths]
+            # Only the single-current-file case needs the fallback folder
+            # (the working snapshot lives in a temp dir); folder batches
+            # must keep "use each source folder" semantics.
+            if output_folder is None and len(paths) == 1:
+                output_folder = str(current.parent)
+        self._run_task(
+            "Compressing PDF files",
+            compress_pdfs,
+            paths,
+            output_folder,
+            details["suffix"],
+            details["overwrite"],
+            details["garbage"],
+            details["clean"],
+            details["deflate"],
+            details["deflate_images"],
+            details["deflate_fonts"],
+            details["linear"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_result=lambda values: self._batch_completed(
+                session, values, "Compressed {count} PDF file(s)."
+            ),
+            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+        )
+
+    def _deep_search(self) -> None:
+        existing = getattr(self, "_deep_search_dialog", None)
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
+        dialog = DeepSearchDialog(self.settings.get_last_directory(), self)
+        dialog.openRequested.connect(self._open_deep_search_result)
+        dialog.destroyed.connect(lambda: setattr(self, "_deep_search_dialog", None))
+        self._deep_search_dialog = dialog
+        dialog.show()
+
+    def _open_deep_search_result(self, path: str, method: str) -> None:
+        if method == OPEN_NEW_TAB:
+            self.open_in_new_tab(path)
+        elif method == OPEN_CURRENT:
+            self.load_file(path)
+        else:
+            from core.platform_service import PlatformService
+
+            PlatformService.open_path(path)
+
+    def _merge_sheets(self) -> None:
+        dialog = SpreadsheetMergeDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        self._run_task(
+            "Merging spreadsheets",
+            merge_spreadsheets,
+            details["paths"],
+            details["output"],
+            details["skip_rows"],
+            details["exclude_keywords"],
+            details["first_cell_only"],
+            details["encoding"],
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+        )
+
+    def _scan_barcodes(self, *, preload_current: bool = True) -> None:
+        dialog = BarcodeScanDialog(
+            self.engine.original_path if preload_current else None, self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        paths = [Path(value).resolve() for value in details["paths"]]
+        current = self.engine.original_path
+        snapshot = None
+        remap: dict[Path, Path] = {}
+        if current and self.engine.is_modified and current in paths:
+            try:
+                snapshot, working = self._working_snapshot(current)
+            except Exception as exc:
+                self._error("Barcode scan failed", str(exc))
+                return
+            paths = [working if value == current else value for value in paths]
+            remap[working] = current
+        self._run_task(
+            "Scanning barcodes",
+            scan_barcodes_batch,
+            paths,
+            details["page_range"],
+            details["dpi"],
+            on_result=lambda results: self._show_barcode_results(results, remap),
+            progress_argument="progress",
+            cancel_argument="is_cancelled",
+            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+        )
+
+    def _show_barcode_results(
+        self,
+        results: list[dict[str, object]],
+        remap: dict[Path, Path] | None = None,
+    ) -> None:
+        for result in results:
+            value = Path(str(result.get("path", ""))).resolve()
+            if remap and value in remap:
+                result["path"] = str(remap[value])
+        BarcodeResultsDialog(results, self).exec()
+
+    def _version_control(self) -> None:
+        capability = detect_capabilities()[CapabilityId.VERSION_CONTROL]
+        if not capability.available:
+            self.info_bar.show_message(capability.reason, "warning", 0)
+            return
+        try:
+            import Letterhead_Manager
+
+            self._version_window = Letterhead_Manager.MainWindow()
+            self._version_window.show()
+        except Exception as exc:
+            self._error("Version Control failed", str(exc))
+
+    def _encrypt_pdf(self) -> None:
+        source = self._require_source()
+        if not source:
+            return
+        dialog = EncryptDialog(source, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            return
+        details = dialog.details
+        if Path(str(details["output"])).resolve() == source:
+            self.info_bar.show_message(
+                "Choose a new output file instead of the open PDF.", "error", 0
+            )
+            return
+        input_source = source
+        snapshot = None
+        if self.engine.is_modified:
+            try:
+                snapshot, input_source = self._working_snapshot(source)
+            except Exception as exc:
+                self._error("Encryption failed", str(exc))
+                return
+        self._run_task(
+            "Encrypting PDF",
+            encrypt_pdf_file,
+            input_source,
+            str(details["output"]),
+            user_password=str(details["user_password"]),
+            owner_password=str(details["owner_password"]),
+            encryption=int(details["algorithm"]),
+            permissions=int(details["permissions"]),
+            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+        )
+
+    def _decrypt_pdf(self) -> None:
+        source = self._require_source()
+        if not source:
+            return
+        dialog = DecryptDialog(source, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.output_path:
+            return
+        if Path(dialog.output_path).resolve() == source:
+            self.info_bar.show_message(
+                "Choose a new output file instead of the open PDF.", "error", 0
+            )
+            return
+        input_source = source
+        snapshot = None
+        if self.engine.is_modified:
+            try:
+                snapshot, input_source = self._working_snapshot(source)
+            except Exception as exc:
+                self._error("Decryption failed", str(exc))
+                return
+        self._run_task(
+            "Decrypting PDF",
+            decrypt_pdf_file,
+            input_source,
+            dialog.output_path,
+            password=self.engine.password,
+            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+        )
+
+    def _run_task(
+        self,
+        label: str,
+        function: Callable,
+        *args,
+        on_result: Callable | None = None,
+        progress_argument: str | None = None,
+        cancel_argument: str | None = None,
+        on_finished: Callable[[], None] | None = None,
+        **kwargs,
+    ) -> None:
+        if self._tasks:
+            self.info_bar.show_message(
+                "Wait for the current background operation to finish or cancel it first.",
+                "warning",
+            )
+            if on_finished:
+                try:
+                    on_finished()
+                except OSError:
+                    pass
+            return
+        self._task_had_error = False
+        task = FunctionTask(
+            function,
+            *args,
+            progress_argument=progress_argument,
+            cancel_argument=cancel_argument,
+            **kwargs,
+        )
+        self._tasks.add(task)
+        self.task_bar.start(label, cancellable=bool(cancel_argument))
+        self.command_bar.set_work_status(label)
+        self.bottom_bar.set_status(label)
+
+        def progress(current: int, total: int, message: str) -> None:
+            if self._closing:
+                return
+            self.task_bar.update_progress(current, total, message)
+            self.command_bar.set_work_status(message)
+
+        def result(value) -> None:
+            if self._closing:
+                return
+            if on_result:
+                on_result(value)
+            else:
+                name = Path(value).name if isinstance(value, (str, os.PathLike, Path)) else "Operation complete"
+                self.info_bar.show_message(f"Completed: {name}", "success")
+
+        def finished() -> None:
+            self._tasks.discard(task)
+            if on_finished:
+                try:
+                    on_finished()
+                except OSError:
+                    pass
+            if self._closing:
+                return  # the window is gone: never touch its widgets again
+            if not self._tasks:
+                self.task_bar.clear()
+                self.command_bar.set_work_status("Ready")
+                if not self._task_had_error:
+                    self.bottom_bar.set_status("Ready")
+
+        task.signals.progress.connect(progress)
+        task.signals.result.connect(result)
+        task.signals.cancelled.connect(
+            lambda: (
+                None
+                if self._closing
+                else self.info_bar.show_message(f"Cancelled: {label}", "info")
+            )
+        )
+        task.signals.error.connect(
+            lambda message: None if self._closing else self._task_failed(label, message)
+        )
+        task.signals.finished.connect(finished)
+        self._thread_pool.start(task)
+
+    def _cancel_tasks(self) -> None:
+        if not self._tasks:
+            return
+        for task in list(self._tasks):
+            task.cancel()
+        self.task_bar.set_cancelling()
+        self.command_bar.set_work_status("Cancelling…")
+        self.bottom_bar.set_status("Cancelling…")
+
+    def _task_failed(self, label: str, message: str) -> None:
+        self._task_had_error = True
+        self.info_bar.show_message(f"{label} failed: {message}", "error", 0)
+        self.command_bar.set_work_status("Ready")
+        self.bottom_bar.set_status("Error")
+
+    # --- Preferences/help/errors ----------------------------------------
+    def show_preferences(self) -> None:
+        dialog = PreferencesDialog(self.settings, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            refresh_capabilities()
+            self.side_panel.refresh_capabilities()
+            self._set_motion_enabled(bool(self.settings.get("animations_enabled", True)))
+            self._apply_theme(self.settings.get_theme())
+
+    def _show_readme(self) -> None:
+        ReadmeDialog(self).exec()
+
+    def save_all_files(self) -> None:
+        sessions = [
+            session
+            for session in self._sessions
+            if session.engine.is_loaded() and session.engine.is_modified
+        ]
+        if not sessions:
+            self.info_bar.show_message("No files need to be saved.", "info")
+            return
+        saved = 0
+        skipped = 0
+        for session in sessions:
+            if session.engine.original_path is None:
+                # Never-saved documents need a file name: prompt Save As
+                # instead of silently dropping their changes.
+                initial = start_in_save_directory(
+                    self,
+                    f"{session.document_name}.pdf"
+                    if not session.document_name.casefold().endswith(".pdf")
+                    else session.document_name,
+                )
+                path, _ = QFileDialog.getSaveFileName(
+                    self, f"Save {session.document_name} As", initial, "PDF (*.pdf)"
+                )
+                if not path:
+                    skipped += 1
+                    continue
+                if not path.casefold().endswith(".pdf"):
+                    path += ".pdf"
+                try:
+                    target = session.engine.save_as(path)
+                except Exception as exc:
+                    self._error("Save failed", f"{session.document_name}: {exc}")
+                    continue
+                remember_save_directory(self, target)
+                session.display_path = target
+                self.workspace.update_tab_title(session)
+                saved += 1
+                continue
+            try:
+                target = session.engine.save()
+                session.display_path = target
+                self.workspace.update_tab_title(session)
+                saved += 1
+            except Exception as exc:
+                self._error("Save failed", f"{session.document_name}: {exc}")
+        if saved:
+            self.info_bar.show_message(f"💾 Saved {saved} file(s).", "success")
+        if skipped:
+            self.info_bar.show_message(
+                f"⚠ {skipped} file(s) were not saved because no file name was chosen.",
+                "warning",
+                0,
+            )
+        self._sync_modified_state()
+
+    def _rotate_current(self, angle: int) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        self._snapshot_before("Rotate Page")
+        try:
+            session.engine.rotate_pages([session.page], angle)
+        except Exception as exc:
+            self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
+            return
+        session.canvas.refresh()
+        self._sync_modified_state()
+        self.info_bar.show_message(
+            "🔄 Page rotated. Save the document to keep the change.", "success"
+        )
+
+    def _rotate_box_pages(self, angle: int) -> None:
+        """Rotate the pages entered in the bottom page box (legacy ROTATE row)."""
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        raw = self.bottom_bar.page_box_text()
+        try:
+            pages = parse_page_range(raw, session.engine.page_count)
+        except ValueError as exc:
+            self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
+            return
+        if not pages:
+            self.info_bar.show_message(
+                "Enter a page number (or a range like 1-3,5) in the page box first.",
+                "warning",
+                0,
+            )
+            return
+        self._snapshot_before("Rotate Pages")
+        try:
+            session.engine.rotate_pages(pages, angle)
+        except Exception as exc:
+            self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
+            return
+        session.canvas.refresh()
+        self._sync_modified_state()
+        self.info_bar.show_message(
+            f"🔄 Rotated {len(pages)} page(s). Save the document to keep the change.",
+            "success",
+        )
+
+    def _handle_thumbnail_action(self, session: DocumentSession, key: str) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        if not session.engine.is_loaded():
+            return
+        if key == "insert":
+            self._insert_pages_dialog()
+        elif key == "delete_current":
+            answer = QMessageBox.question(
+                self,
+                "Delete page",
+                f"Delete page {session.page + 1}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._snapshot_before("Delete Page")
+            page_number = session.page + 1
+            try:
+                session.engine.delete_page(session.page)
+            except Exception as exc:
+                self.info_bar.show_message(f"Delete failed: {exc}", "error", 0)
+                return
+            self._after_page_count_change()
+            self._reload_thumbnails(session)
+            self.info_bar.show_message(
+                f"🗑 Deleted page {page_number}. Save the document to keep the change.",
+                "success",
+            )
+        elif key == "extract_current":
+            suggested = (
+                f"{session.engine.original_path.stem}_page_{session.page + 1}.pdf"
+                if session.engine.original_path
+                else f"page_{session.page + 1}.pdf"
+            )
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Extract Current Page",
+                start_in_save_directory(
+                    self,
+                    suggested,
+                    session.engine.original_path.parent
+                    if session.engine.original_path
+                    else None,
+                ),
+                "PDF (*.pdf)",
+            )
+            if path:
+                remember_save_directory(self, path)
+                if not path.casefold().endswith(".pdf"):
+                    path += ".pdf"
+                if (
+                    session.engine.original_path
+                    and Path(path).resolve() == session.engine.original_path
+                ):
+                    self.info_bar.show_message(
+                        "Choose a new output file instead of the open PDF.", "error", 0
+                    )
+                    return
+                try:
+                    target = session.engine.extract_pages([session.page], path)
+                    self.info_bar.show_message(f"📄 Created {target.name}", "success")
+                except Exception as exc:
+                    self.info_bar.show_message(f"Extract failed: {exc}", "error", 0)
+        elif key == "rotate":
+            self._show_context("rotate")
+        elif key == "search":
+            self._show_nav_tab("search")
+            session.nav_panel.search.focus_query()
+        elif key == "info":
+            DocumentInfoDialog(
+                session.engine.document, session.engine.original_path, self
+            ).exec()
+
+    def _scan_barcodes_batch(self) -> None:
+        self._scan_barcodes(preload_current=False)
+
+    def _set_default_app(self) -> None:
+        """Register the app as the default handler for PDF/PS/EPS files."""
+        if not is_installed():
+            self.info_bar.show_message(
+                "Default-app registration is available in the installed version.",
+                "info",
+            )
+            return
+        if register_default_app():
+            self.info_bar.show_message(
+                "PDFDocuEdit Pro is now the default app for PDF, PS and EPS files.",
+                "success",
+            )
+        else:
+            self.info_bar.show_message(
+                "Windows keeps its own file association. Choose PDFDocuEdit Pro "
+                "in the Settings window that just opened.",
+                "warning",
+                0,
+            )
+            open_default_apps_settings()
+
+    def offer_default_app(self) -> None:
+        """One-time prompt when the installed app is not the default handler."""
+        if not is_installed():
+            return
+        if self.settings.get("default_app_prompt_shown", False):
+            return
+        self.settings.set("default_app_prompt_shown", True)
+        if is_default_app():
+            return
+        answer = QMessageBox.question(
+            self,
+            "Set as default app",
+            "PDFDocuEdit Pro is not the default app for PDF/PS files.\n"
+            "Set it as the default now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._set_default_app()
+
+    def show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About PDFDocuEdit Pro",
+            f"<h3>PDFDocuEdit Pro {APP_VERSION}</h3>"
+            "<p>A cross-platform PDF workspace built with Python, PyQt6 and PyMuPDF.</p>"
+            "<p>Interface icons are provided by Lucide under the ISC License.</p>",
+        )
+
+    def _error(self, title: str, message: str) -> None:
+        """Non-blocking error report: persistent info bar + status text.
+
+        Operation failures must never freeze the UI behind a modal dialog
+        (a failed background job would otherwise interrupt unrelated work).
+        """
+        self.command_bar.set_work_status("Ready")
+        self.bottom_bar.set_status("Error")
+        self.info_bar.show_message(message, "error", 0)
+
+    # --- Qt events -------------------------------------------------------
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls() and any(
+            url.toLocalFile().lower().endswith((".pdf", ".ps", ".eps"))
+            for url in event.mimeData().urls()
+        ):
+            if not self.engine.is_loaded():
+                self.workspace.set_drag_active(True)
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:
+        self.workspace.set_drag_active(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        self.workspace.set_drag_active(False)
+        paths = [
+            url.toLocalFile()
+            for url in event.mimeData().urls()
+            if url.toLocalFile().lower().endswith((".pdf", ".ps", ".eps"))
+        ]
+        if not paths:
+            return
+        self.load_file(paths[0])
+        for extra in paths[1:]:
+            self.open_in_new_tab(extra)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._closing = True
+        for session in list(self._sessions):
+            self._session = session
+            if not self._confirm_discard_changes():
+                event.ignore()
+                self._closing = False
+                self._session = self.workspace.current_session()
+                return
+        self.settings.update(
+            {
+                "window_size": [self.width(), self.height()],
+                "window_position": [self.x(), self.y()],
+                "window_maximized": self.isMaximized(),
+                "left_panel_collapsed": self.side_panel.is_collapsed(),
+            }
+        )
+        for task in list(self._tasks):
+            task.cancel()
+        for session in list(self._sessions):
+            thumbnail_snapshot = getattr(session, "_thumbnail_snapshot", None)
+            if thumbnail_snapshot:
+                Path(thumbnail_snapshot).unlink(missing_ok=True)
+            session.close()
+        event.accept()

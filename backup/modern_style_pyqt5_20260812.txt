@@ -1,0 +1,1415 @@
+"""
+Modern Style System for PDFDocuEdit Pro
+Morandi Color Palette with Modern UI Design
+"""
+
+from PyQt5.QtWidgets import QGraphicsDropShadowEffect, QWidget, QPushButton, QLabel, QGroupBox, QLineEdit, QComboBox, QTextEdit, QTabWidget, QProgressBar, QScrollArea, QMenu, QToolBar, QToolButton, QDockWidget, QTableWidget, QCheckBox, QRadioButton, QSpinBox, QDoubleSpinBox, QDialog
+from PyQt5.QtGui import QColor, QPalette, QFont
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QSize
+import platform
+
+
+class ModernColors:
+    PRIMARY = '#7B9E87'
+    PRIMARY_HOVER = '#6B8E77'
+    PRIMARY_LIGHT = '#8BAE97'
+    ACCENT_SECONDARY = '#9EB8A8'
+    
+    SECONDARY = '#A89F91'
+    SECONDARY_HOVER = '#988F81'
+    
+    ACCENT = '#B8A99A'
+    ACCENT_HOVER = '#A8998A'
+    
+    BACKGROUND_DARK = '#1E1E1E'
+    BACKGROUND_MAIN = '#2D2D2D'
+    BACKGROUND_CARD = '#3A3A3A'
+    BACKGROUND_INPUT = '#333333'
+    BACKGROUND_HOVER = '#404040'
+    BACKGROUND_ACTIVE = '#4A4A4A'
+    BACKGROUND_LIGHT = '#454545'
+    
+    TEXT_PRIMARY = '#E8E8E8'
+    TEXT_SECONDARY = '#B0B0B0'
+    TEXT_DISABLED = '#707070'
+    TEXT_ON_PRIMARY = '#FFFFFF'
+    
+    SUCCESS = '#7B9E87'
+    SUCCESS_LIGHT = '#8BAE97'
+    ERROR = '#C4786A'
+    ERROR_LIGHT = '#D4887A'
+    WARNING = '#D4A574'
+    INFO = '#7A9EB8'
+    
+    BORDER = '#4A4A4A'
+    BORDER_COLOR = '#4A4A4A'
+    BORDER_LIGHT = '#5A5A5A'
+    BORDER_FOCUS = '#7B9E87'
+    
+    SHADOW = QColor(0, 0, 0, 60)
+    SHADOW_LIGHT = QColor(0, 0, 0, 30)
+
+
+class ModernFonts:
+    FAMILY = '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'
+    
+    SIZE_TITLE = 18
+    SIZE_SUBTITLE = 14
+    SIZE_BODY = 12
+    SIZE_SMALL = 10
+    SIZE_BUTTON = 13
+    
+    WEIGHT_NORMAL = 'normal'
+    WEIGHT_BOLD = 'bold'
+    WEIGHT_LIGHT = '300'
+
+
+class ModernDimensions:
+    BORDER_RADIUS_SMALL = 6
+    BORDER_RADIUS_MEDIUM = 10
+    BORDER_RADIUS_LARGE = 14
+    BORDER_RADIUS_XLARGE = 18
+    
+    PADDING_SMALL = 8
+    PADDING_MEDIUM = 12
+    PADDING_LARGE = 16
+    PADDING_XLARGE = 24
+    
+    MARGIN_SMALL = 8
+    MARGIN_MEDIUM = 12
+    MARGIN_LARGE = 16
+    
+    BUTTON_HEIGHT = 36
+    BUTTON_HEIGHT_LARGE = 44
+    INPUT_HEIGHT = 32
+    INPUT_HEIGHT_LARGE = 40
+    
+    SHADOW_OFFSET_X = 0
+    SHADOW_OFFSET_Y = 2
+    SHADOW_RADIUS = 8
+
+
+class ModernStyle:
+    
+    @staticmethod
+    def is_macos():
+        return platform.system() == "Darwin"
+    
+    @staticmethod
+    def get_global_style():
+        return f"""
+            * {{
+                font-family: '{ModernFonts.FAMILY}';
+                font-size: {ModernFonts.SIZE_BODY}px;
+            }}
+            
+            QWidget {{
+                background-color: {ModernColors.BACKGROUND_MAIN};
+                color: {ModernColors.TEXT_PRIMARY};
+            }}
+            
+            QMainWindow {{
+                background-color: {ModernColors.BACKGROUND_DARK};
+            }}
+        """
+    
+    @staticmethod
+    def get_button_style(primary=True, size='medium'):
+        height = ModernDimensions.BUTTON_HEIGHT if size == 'medium' else ModernDimensions.BUTTON_HEIGHT_LARGE
+        padding = ModernDimensions.PADDING_MEDIUM if size == 'medium' else ModernDimensions.PADDING_LARGE
+        
+        if ModernStyle.is_macos():
+            # macOS 風格按鈕樣式
+            if primary:
+                return f"""
+                    QPushButton {{
+                        background-color: {ModernColors.PRIMARY};
+                        color: {ModernColors.TEXT_ON_PRIMARY};
+                        border: 1px solid transparent;
+                        border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                        padding: {padding}px {padding * 2}px;
+                        min-height: {height}px;
+                        font-weight: {ModernFonts.WEIGHT_NORMAL};
+                        font-size: {ModernFonts.SIZE_BUTTON}px;
+                        outline: none;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {ModernColors.PRIMARY_HOVER};
+                        border: 1px solid {ModernColors.BORDER_LIGHT};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {ModernColors.PRIMARY_LIGHT};
+                        border: 1px solid {ModernColors.BORDER_LIGHT};
+                        padding: {padding + 1}px {padding * 2 + 1}px;
+                    }}
+                    QPushButton:disabled {{
+                        background-color: {ModernColors.BACKGROUND_CARD};
+                        color: {ModernColors.TEXT_DISABLED};
+                        border: 1px solid {ModernColors.BORDER};
+                    }}
+                """
+            else:
+                return f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        color: {ModernColors.TEXT_PRIMARY};
+                        border: 1px solid {ModernColors.BORDER};
+                        border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                        padding: {padding}px {padding * 2}px;
+                        min-height: {height}px;
+                        font-weight: {ModernFonts.WEIGHT_NORMAL};
+                        font-size: {ModernFonts.SIZE_BUTTON}px;
+                        outline: none;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {ModernColors.BACKGROUND_HOVER};
+                        border: 1px solid {ModernColors.BORDER_LIGHT};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {ModernColors.BACKGROUND_CARD};
+                        border: 1px solid {ModernColors.BORDER_LIGHT};
+                        padding: {padding + 1}px {padding * 2 + 1}px;
+                    }}
+                    QPushButton:disabled {{
+                        background-color: transparent;
+                        color: {ModernColors.TEXT_DISABLED};
+                        border: 1px solid {ModernColors.BORDER};
+                    }}
+                """
+        else:
+            # 非 macOS 風格按鈕樣式
+            if primary:
+                return f"""
+                    QPushButton {{
+                        background-color: {ModernColors.PRIMARY};
+                        color: {ModernColors.TEXT_ON_PRIMARY};
+                        border: none;
+                        border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                        padding: {padding}px {padding * 2}px;
+                        min-height: {height}px;
+                        font-weight: {ModernFonts.WEIGHT_BOLD};
+                        font-size: {ModernFonts.SIZE_BUTTON}px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {ModernColors.PRIMARY_HOVER};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {ModernColors.PRIMARY_LIGHT};
+                    }}
+                    QPushButton:disabled {{
+                        background-color: {ModernColors.BACKGROUND_CARD};
+                        color: {ModernColors.TEXT_DISABLED};
+                    }}
+                """
+            else:
+                return f"""
+                    QPushButton {{
+                        background-color: {ModernColors.BACKGROUND_CARD};
+                        color: {ModernColors.TEXT_PRIMARY};
+                        border: 1px solid {ModernColors.BORDER};
+                        border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                        padding: {padding}px {padding * 2}px;
+                        min-height: {height}px;
+                        font-weight: {ModernFonts.WEIGHT_NORMAL};
+                        font-size: {ModernFonts.SIZE_BUTTON}px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {ModernColors.BACKGROUND_HOVER};
+                        border-color: {ModernColors.BORDER_LIGHT};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {ModernColors.PRIMARY};
+                        color: {ModernColors.TEXT_ON_PRIMARY};
+                        border-color: {ModernColors.PRIMARY};
+                    }}
+                    QPushButton:disabled {{
+                        background-color: {ModernColors.BACKGROUND_INPUT};
+                        color: {ModernColors.TEXT_DISABLED};
+                        border-color: {ModernColors.BORDER};
+                    }}
+                """
+    
+    @staticmethod
+    def get_menu_button_style():
+        if ModernStyle.is_macos():
+            # macOS 風格選單按鈕樣式
+            return f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px {ModernDimensions.PADDING_LARGE}px;
+                    min-width: 140px;
+                    text-align: left;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+            """
+        else:
+            return f"""
+                QPushButton {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px {ModernDimensions.PADDING_LARGE}px;
+                    min-width: 140px;
+                    text-align: left;
+                    font-weight: {ModernFonts.WEIGHT_BOLD};
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ModernColors.PRIMARY_HOVER};
+                }}
+            """
+    
+    @staticmethod
+    def get_input_style():
+        if ModernStyle.is_macos():
+            # macOS 風格輸入框樣式
+            return f"""
+                QLineEdit {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                    min-height: {ModernDimensions.INPUT_HEIGHT}px;
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QLineEdit:hover {{
+                    border-color: {ModernColors.BORDER_LIGHT};
+                }}
+                QLineEdit:focus {{
+                    border-color: {ModernColors.BORDER_FOCUS};
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                }}
+                QLineEdit:disabled {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    color: {ModernColors.TEXT_DISABLED};
+                }}
+            """
+        else:
+            return f"""
+                QLineEdit {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                    min-height: {ModernDimensions.INPUT_HEIGHT}px;
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QLineEdit:hover {{
+                    border-color: {ModernColors.BORDER_LIGHT};
+                }}
+                QLineEdit:focus {{
+                    border-color: {ModernColors.BORDER_FOCUS};
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                }}
+                QLineEdit:disabled {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    color: {ModernColors.TEXT_DISABLED};
+                }}
+            """
+    
+    @staticmethod
+    def get_combobox_style():
+        if ModernStyle.is_macos():
+            # macOS 風格下拉選單樣式
+            return f"""
+                QComboBox {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                    min-height: {ModernDimensions.INPUT_HEIGHT}px;
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QComboBox:hover {{
+                    border-color: {ModernColors.BORDER_LIGHT};
+                }}
+                QComboBox:focus {{
+                    border-color: {ModernColors.BORDER_FOCUS};
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 30px;
+                    padding-right: 10px;
+                }}
+                QComboBox::down-arrow {{
+                    image: none;
+                    border-left: 5px solid transparent;
+                    border-right: 5px solid transparent;
+                    border-top: 6px solid {ModernColors.TEXT_SECONDARY};
+                    margin-right: 10px;
+                }}
+                QComboBox QAbstractItemView {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    selection-background-color: {ModernColors.PRIMARY};
+                    selection-color: {ModernColors.TEXT_ON_PRIMARY};
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+            """
+        else:
+            return f"""
+                QComboBox {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                    min-height: {ModernDimensions.INPUT_HEIGHT}px;
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QComboBox:hover {{
+                    border-color: {ModernColors.BORDER_LIGHT};
+                }}
+                QComboBox:focus {{
+                    border-color: {ModernColors.BORDER_FOCUS};
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 30px;
+                    padding-right: 10px;
+                }}
+                QComboBox::down-arrow {{
+                    image: none;
+                    border-left: 5px solid transparent;
+                    border-right: 5px solid transparent;
+                    border-top: 6px solid {ModernColors.TEXT_SECONDARY};
+                    margin-right: 10px;
+                }}
+                QComboBox QAbstractItemView {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    selection-background-color: {ModernColors.PRIMARY};
+                    selection-color: {ModernColors.TEXT_ON_PRIMARY};
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+            """
+    
+    @staticmethod
+    def get_textedit_style():
+        return f"""
+            QTextEdit {{
+                background-color: {ModernColors.BACKGROUND_INPUT};
+                color: {ModernColors.TEXT_PRIMARY};
+                border: 1px solid {ModernColors.BORDER};
+                border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                padding: {ModernDimensions.PADDING_MEDIUM}px;
+                font-size: {ModernFonts.SIZE_BODY}px;
+            }}
+            QTextEdit:hover {{
+                border-color: {ModernColors.BORDER_LIGHT};
+            }}
+            QTextEdit:focus {{
+                border-color: {ModernColors.BORDER_FOCUS};
+            }}
+        """
+    
+    @staticmethod
+    def get_groupbox_style():
+        return f"""
+            QGroupBox {{
+                background-color: {ModernColors.BACKGROUND_CARD};
+                color: {ModernColors.TEXT_PRIMARY};
+                border: 1px solid {ModernColors.BORDER};
+                border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                margin-top: {ModernDimensions.MARGIN_LARGE}px;
+                padding: {ModernDimensions.PADDING_LARGE}px;
+                padding-top: {ModernDimensions.PADDING_XLARGE}px;
+                font-weight: {ModernFonts.WEIGHT_BOLD};
+                font-size: {ModernFonts.SIZE_SUBTITLE}px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: {ModernDimensions.PADDING_LARGE}px;
+                padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                background-color: {ModernColors.PRIMARY};
+                color: {ModernColors.TEXT_ON_PRIMARY};
+                border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+            }}
+        """
+    
+    @staticmethod
+    def get_tabwidget_style():
+        if ModernStyle.is_macos():
+            # macOS 風格標籤頁樣式
+            return f"""
+                QTabWidget {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                }}
+                QTabWidget::pane {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                }}
+                QTabBar {{
+                    background-color: transparent;
+                    border-bottom: 1px solid {ModernColors.BORDER};
+                    padding: 0px;
+                }}
+                QTabBar::tab {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_SECONDARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                    margin-right: {ModernDimensions.MARGIN_SMALL}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QTabBar::tab:selected {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QTabBar::tab:hover:!selected {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                    color: {ModernColors.TEXT_PRIMARY};
+                }}
+            """
+        else:
+            return f"""
+                QTabWidget {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                }}
+                QTabWidget::pane {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                }}
+                QTabBar {{
+                    background-color: transparent;
+                }}
+                QTabBar::tab {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_SECONDARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px {ModernDimensions.PADDING_LARGE}px;
+                    margin-right: {ModernDimensions.MARGIN_SMALL}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QTabBar::tab:selected {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                    font-weight: {ModernFonts.WEIGHT_BOLD};
+                }}
+                QTabBar::tab:hover:!selected {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                    color: {ModernColors.TEXT_PRIMARY};
+                }}
+            """
+    
+    @staticmethod
+    def get_progressbar_style():
+        if ModernStyle.is_macos():
+            # macOS 風格進度條樣式
+            return f"""
+                QProgressBar {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    min-height: 12px;
+                    text-align: center;
+                    font-size: {ModernFonts.SIZE_SMALL}px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {ModernColors.PRIMARY};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                }}
+            """
+        else:
+            return f"""
+                QProgressBar {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    min-height: 8px;
+                    text-align: center;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {ModernColors.PRIMARY};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                }}
+            """
+    
+    @staticmethod
+    def get_scrollarea_style():
+        if ModernStyle.is_macos():
+            # macOS 風格滾動區域樣式
+            return f"""
+                QScrollArea {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    border: none;
+                }}
+                QScrollBar:vertical {{
+                    background-color: transparent;
+                    width: 15px;
+                    border-radius: 7px;
+                    margin: 0px;
+                }}
+                QScrollBar::handle:vertical {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border-radius: 7px;
+                    min-height: 30px;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0px;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background-color: transparent;
+                }}
+                QScrollBar:horizontal {{
+                    background-color: transparent;
+                    height: 15px;
+                    border-radius: 7px;
+                    margin: 0px;
+                }}
+                QScrollBar::handle:horizontal {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border-radius: 7px;
+                    min-width: 30px;
+                }}
+                QScrollBar::handle:horizontal:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                }}
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                    width: 0px;
+                }}
+                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+                    background-color: transparent;
+                }}
+            """
+        else:
+            return f"""
+                QScrollArea {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    border: none;
+                }}
+                QScrollBar:vertical {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    width: 12px;
+                    border-radius: 6px;
+                    margin: 2px;
+                }}
+                QScrollBar::handle:vertical {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border-radius: 6px;
+                    min-height: 30px;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0px;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background-color: transparent;
+                }}
+                QScrollBar:horizontal {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    height: 12px;
+                    border-radius: 6px;
+                    margin: 2px;
+                }}
+                QScrollBar::handle:horizontal {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border-radius: 6px;
+                    min-width: 30px;
+                }}
+                QScrollBar::handle:horizontal:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                }}
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                    width: 0px;
+                }}
+                QScrollBar::sub-page:horizontal, QScrollBar::add-page:horizontal {{
+                    background-color: transparent;
+                }}
+            """
+    
+    @staticmethod
+    def get_menu_style():
+        if ModernStyle.is_macos():
+            # macOS 風格選單樣式
+            return f"""
+                QMenu {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QMenu::item {{
+                    background-color: transparent;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px {ModernDimensions.PADDING_LARGE}px;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                }}
+                QMenu::item:selected {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QMenu::separator {{
+                    height: 1px;
+                    background-color: {ModernColors.BORDER};
+                    margin: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_LARGE}px;
+                }}
+            """
+        else:
+            return f"""
+                QMenu {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+                QMenu::item {{
+                    background-color: transparent;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px {ModernDimensions.PADDING_LARGE}px;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                }}
+                QMenu::item:selected {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QMenu::separator {{
+                    height: 1px;
+                    background-color: {ModernColors.BORDER};
+                    margin: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_LARGE}px;
+                }}
+            """
+    
+    @staticmethod
+    def get_toolbar_style():
+        if ModernStyle.is_macos():
+            # macOS 風格工具列樣式
+            return f"""
+                QToolBar {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    border: none;
+                    spacing: {ModernDimensions.MARGIN_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+                QToolButton {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QToolButton:hover {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                    color: {ModernColors.TEXT_PRIMARY};
+                }}
+                QToolButton:pressed {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QToolButton:checked {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QToolButton::menu-indicator {{
+                    image: none;
+                }}
+            """
+        else:
+            return f"""
+                QToolBar {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    border: none;
+                    spacing: {ModernDimensions.MARGIN_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+                QToolButton {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-weight: {ModernFonts.WEIGHT_BOLD};
+                }}
+                QToolButton:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QToolButton:pressed {{
+                    background-color: {ModernColors.PRIMARY_HOVER};
+                }}
+                QToolButton::menu-indicator {{
+                    image: none;
+                }}
+            """
+    
+    @staticmethod
+    def get_dockwidget_style():
+        if ModernStyle.is_macos():
+            # macOS 風格停靠窗口樣式
+            return f"""
+                QDockWidget {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    titlebar-close-icon: none;
+                    titlebar-normal-icon: none;
+                }}
+                QDockWidget::title {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                    text-align: left;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QDockWidget QWidget {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                }}
+            """
+        else:
+            return f"""
+                QDockWidget {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    titlebar-close-icon: none;
+                    titlebar-normal-icon: none;
+                }}
+                QDockWidget::title {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_MEDIUM}px;
+                }}
+                QDockWidget QWidget {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                }}
+            """
+    
+    @staticmethod
+    def get_table_style():
+        if ModernStyle.is_macos():
+            # macOS 風格表格樣式
+            return f"""
+                QTableWidget {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                    gridline-color: {ModernColors.BORDER};
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QTableWidget::item {{
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    border-bottom: 1px solid {ModernColors.BORDER};
+                }}
+                QTableWidget::item:selected {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QTableWidget::item:hover {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QHeaderView::section {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    border: none;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+            """
+        else:
+            return f"""
+                QTableWidget {{
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                    gridline-color: {ModernColors.BORDER};
+                }}
+                QTableWidget::item {{
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    border-bottom: 1px solid {ModernColors.BORDER};
+                }}
+                QTableWidget::item:selected {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+                QTableWidget::item:hover {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QHeaderView::section {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: none;
+                    border-bottom: 1px solid {ModernColors.BORDER};
+                    padding: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-weight: {ModernFonts.WEIGHT_BOLD};
+                }}
+                QHeaderView::section:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                    color: {ModernColors.TEXT_ON_PRIMARY};
+                }}
+            """
+    
+    @staticmethod
+    def get_checkbox_style():
+        if ModernStyle.is_macos():
+            # macOS 風格複選框樣式
+            return f"""
+                QCheckBox {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    spacing: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QCheckBox::indicator {{
+                    width: 16px;
+                    height: 16px;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    border: 1px solid {ModernColors.BORDER};
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                }}
+                QCheckBox::indicator:hover {{
+                    border-color: {ModernColors.PRIMARY};
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {ModernColors.PRIMARY};
+                    border-color: {ModernColors.PRIMARY};
+                }}
+                QCheckBox::indicator:checked::hover {{
+                    background-color: {ModernColors.PRIMARY_HOVER};
+                    border-color: {ModernColors.PRIMARY_HOVER};
+                }}
+                QCheckBox::indicator:disabled {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    border-color: {ModernColors.BORDER};
+                }}
+            """
+        else:
+            return f"""
+                QCheckBox {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    spacing: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QCheckBox::indicator {{
+                    width: 18px;
+                    height: 18px;
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    border: 2px solid {ModernColors.BORDER};
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                }}
+                QCheckBox::indicator:hover {{
+                    border-color: {ModernColors.PRIMARY};
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {ModernColors.PRIMARY};
+                    border-color: {ModernColors.PRIMARY};
+                }}
+                QCheckBox::indicator:disabled {{
+                    background-color: {ModernColors.BACKGROUND_DARK};
+                    border-color: {ModernColors.BORDER};
+                }}
+            """
+    
+    @staticmethod
+    def get_radiobutton_style():
+        if ModernStyle.is_macos():
+            # macOS 風格單選按鈕樣式
+            return f"""
+                QRadioButton {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    spacing: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QRadioButton::indicator {{
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    border: 1px solid {ModernColors.BORDER};
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                }}
+                QRadioButton::indicator:hover {{
+                    border-color: {ModernColors.PRIMARY};
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: {ModernColors.PRIMARY};
+                    border-color: {ModernColors.PRIMARY};
+                }}
+                QRadioButton::indicator:checked::hover {{
+                    background-color: {ModernColors.PRIMARY_HOVER};
+                    border-color: {ModernColors.PRIMARY_HOVER};
+                }}
+            """
+        else:
+            return f"""
+                QRadioButton {{
+                    background-color: transparent;
+                    color: {ModernColors.TEXT_PRIMARY};
+                    spacing: {ModernDimensions.PADDING_MEDIUM}px;
+                    font-size: {ModernFonts.SIZE_BODY}px;
+                }}
+                QRadioButton::indicator {{
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 9px;
+                    border: 2px solid {ModernColors.BORDER};
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                }}
+                QRadioButton::indicator:hover {{
+                    border-color: {ModernColors.PRIMARY};
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: {ModernColors.PRIMARY};
+                    border-color: {ModernColors.PRIMARY};
+                }}
+            """
+    
+    @staticmethod
+    def get_spinbox_style():
+        if ModernStyle.is_macos():
+            # macOS 風格數值調節器樣式
+            return f"""
+                QSpinBox, QDoubleSpinBox {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px {ModernDimensions.PADDING_MEDIUM}px;
+                    min-height: {ModernDimensions.INPUT_HEIGHT}px;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                }}
+                QSpinBox:hover, QDoubleSpinBox:hover {{
+                    border-color: {ModernColors.BORDER_LIGHT};
+                }}
+                QSpinBox:focus, QDoubleSpinBox:focus {{
+                    border-color: {ModernColors.BORDER_FOCUS};
+                }}
+                QSpinBox::up-button, QDoubleSpinBox::up-button {{
+                    subcontrol-origin: border;
+                    subcontrol-position: right top;
+                    width: 18px;
+                    height: 16px;
+                    border: none;
+                    border-left: 1px solid {ModernColors.BORDER};
+                    background-color: transparent;
+                    border-top-right-radius: {ModernDimensions.BORDER_RADIUS_SMALL - 1}px;
+                }}
+                QSpinBox::down-button, QDoubleSpinBox::down-button {{
+                    subcontrol-origin: border;
+                    subcontrol-position: right bottom;
+                    width: 18px;
+                    height: 16px;
+                    border: none;
+                    border-left: 1px solid {ModernColors.BORDER};
+                    border-bottom-right-radius: {ModernDimensions.BORDER_RADIUS_SMALL - 1}px;
+                    background-color: transparent;
+                }}
+                QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+                    background-color: {ModernColors.BACKGROUND_HOVER};
+                }}
+                QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+                    image: none;
+                    width: 8px;
+                    height: 8px;
+                    border-left: 3px solid transparent;
+                    border-right: 3px solid transparent;
+                    border-bottom: 3px solid {ModernColors.TEXT_SECONDARY};
+                }}
+                QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+                    image: none;
+                    width: 8px;
+                    height: 8px;
+                    border-left: 3px solid transparent;
+                    border-right: 3px solid transparent;
+                    border-top: 3px solid {ModernColors.TEXT_SECONDARY};
+                }}
+            """
+        else:
+            return f"""
+                QSpinBox, QDoubleSpinBox {{
+                    background-color: {ModernColors.BACKGROUND_INPUT};
+                    color: {ModernColors.TEXT_PRIMARY};
+                    border: 1px solid {ModernColors.BORDER};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                    min-height: {ModernDimensions.INPUT_HEIGHT}px;
+                }}
+                QSpinBox:hover, QDoubleSpinBox:hover {{
+                    border-color: {ModernColors.BORDER_LIGHT};
+                }}
+                QSpinBox:focus, QDoubleSpinBox:focus {{
+                    border-color: {ModernColors.BORDER_FOCUS};
+                }}
+                QSpinBox::up-button, QDoubleSpinBox::up-button {{
+                    subcontrol-origin: border;
+                    subcontrol-position: right;
+                    width: 20px;
+                    border: none;
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                }}
+                QSpinBox::down-button, QDoubleSpinBox::down-button {{
+                    subcontrol-origin: border;
+                    subcontrol-position: left;
+                    width: 20px;
+                    border: none;
+                    background-color: {ModernColors.BACKGROUND_CARD};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                }}
+                QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                }}
+                QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+                    background-color: {ModernColors.PRIMARY};
+                }}
+            """
+    
+    @staticmethod
+    def get_dialog_style():
+        if ModernStyle.is_macos():
+            # macOS 風格對話框樣式
+            return f"""
+                QDialog {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                    border-radius: {ModernDimensions.BORDER_RADIUS_LARGE}px;
+                }}
+            """
+        else:
+            return f"""
+                QDialog {{
+                    background-color: {ModernColors.BACKGROUND_MAIN};
+                }}
+            """
+    
+    @staticmethod
+    def get_label_style(title=False):
+        if ModernStyle.is_macos():
+            # macOS 風格標籤樣式
+            if title:
+                return f"""
+                    QLabel {{
+                        color: {ModernColors.TEXT_PRIMARY};
+                        font-weight: {ModernFonts.WEIGHT_BOLD};
+                        font-size: {ModernFonts.SIZE_SUBTITLE}px;
+                        padding: {ModernDimensions.PADDING_SMALL}px;
+                    }}
+                """
+            else:
+                return f"""
+                    QLabel {{
+                        color: {ModernColors.TEXT_PRIMARY};
+                        font-weight: {ModernFonts.WEIGHT_NORMAL};
+                        font-size: {ModernFonts.SIZE_BODY}px;
+                        padding: {ModernDimensions.PADDING_SMALL}px;
+                    }}
+                """
+        else:
+            if title:
+                return f"""
+                    QLabel {{
+                        color: {ModernColors.TEXT_PRIMARY};
+                        font-weight: {ModernFonts.WEIGHT_BOLD};
+                        font-size: {ModernFonts.SIZE_SUBTITLE}px;
+                        padding: {ModernDimensions.PADDING_SMALL}px;
+                    }}
+                """
+            else:
+                return f"""
+                    QLabel {{
+                        color: {ModernColors.TEXT_PRIMARY};
+                        font-size: {ModernFonts.SIZE_BODY}px;
+                    }}
+                """
+    
+    @staticmethod
+    def get_status_label_style(success=True):
+        color = ModernColors.SUCCESS if success else ModernColors.ERROR
+        if ModernStyle.is_macos():
+            # macOS 風格狀態標籤樣式
+            return f"""
+                QLabel {{
+                    color: {color};
+                    font-style: italic;
+                    font-weight: {ModernFonts.WEIGHT_NORMAL};
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+            """
+        else:
+            return f"""
+                QLabel {{
+                    color: {color};
+                    font-style: italic;
+                    padding: {ModernDimensions.PADDING_SMALL}px;
+                }}
+            """
+
+    @staticmethod
+    def get_action_button_style():
+        """操作按鈕樣式（用於底部控制區域）"""
+        return f"""
+            QPushButton {{
+                background-color: {ModernColors.PRIMARY};
+                color: {ModernColors.TEXT_ON_PRIMARY};
+                border: none;
+                border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif;
+            }}
+            QPushButton:hover {{
+                background-color: {ModernColors.PRIMARY_HOVER};
+            }}
+            QPushButton:pressed {{
+                background-color: {ModernColors.PRIMARY_LIGHT};
+            }}
+            QPushButton:disabled {{
+                background-color: {ModernColors.BACKGROUND_CARD};
+                color: {ModernColors.TEXT_DISABLED};
+            }}
+        """
+
+    @staticmethod
+    def get_icon_button_style():
+        """圖標按鈕樣式（用於導航箭頭等）"""
+        return f"""
+            QPushButton {{
+                background-color: {ModernColors.BACKGROUND_LIGHT};
+                color: {ModernColors.TEXT_PRIMARY};
+                border: 1px solid {ModernColors.BORDER};
+                border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                font-size: 14px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {ModernColors.BACKGROUND_HOVER};
+                border-color: {ModernColors.BORDER_LIGHT};
+            }}
+            QPushButton:pressed {{
+                background-color: {ModernColors.PRIMARY};
+                color: {ModernColors.TEXT_ON_PRIMARY};
+                border-color: {ModernColors.PRIMARY};
+            }}
+            QPushButton:disabled {{
+                background-color: {ModernColors.BACKGROUND_DARK};
+                color: {ModernColors.TEXT_DISABLED};
+                border-color: {ModernColors.BORDER};
+            }}
+        """
+
+    @staticmethod
+    def get_combo_style():
+        """下拉選單樣式（簡化版）"""
+        return f"""
+            QComboBox {{
+                background-color: {ModernColors.BACKGROUND_INPUT};
+                color: {ModernColors.TEXT_PRIMARY};
+                border: 1px solid {ModernColors.BORDER};
+                border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }}
+            QComboBox:hover {{
+                border-color: {ModernColors.BORDER_LIGHT};
+            }}
+            QComboBox:focus {{
+                border-color: {ModernColors.BORDER_FOCUS};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {ModernColors.TEXT_SECONDARY};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {ModernColors.BACKGROUND_CARD};
+                color: {ModernColors.TEXT_PRIMARY};
+                border: 1px solid {ModernColors.BORDER};
+                border-radius: {ModernDimensions.BORDER_RADIUS_SMALL}px;
+                selection-background-color: {ModernColors.PRIMARY};
+                selection-color: {ModernColors.TEXT_ON_PRIMARY};
+            }}
+        """
+
+
+class ModernEffects:
+    
+    @staticmethod
+    def add_shadow(widget, offset_x=0, offset_y=2, radius=8, color=None):
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setOffset(offset_x, offset_y)
+        shadow.setBlurRadius(radius)
+        shadow.setColor(color if color else ModernColors.SHADOW)
+        widget.setGraphicsEffect(shadow)
+        return shadow
+    
+    @staticmethod
+    def add_light_shadow(widget):
+        return ModernEffects.add_shadow(
+            widget,
+            offset_x=ModernDimensions.SHADOW_OFFSET_X,
+            offset_y=ModernDimensions.SHADOW_OFFSET_Y,
+            radius=4,
+            color=ModernColors.SHADOW_LIGHT
+        )
+    
+    @staticmethod
+    def add_card_shadow(widget):
+        return ModernEffects.add_shadow(
+            widget,
+            offset_x=0,
+            offset_y=4,
+            radius=12,
+            color=QColor(0, 0, 0, 80)
+        )
+
+
+class ModernAnimations:
+    
+    @staticmethod
+    def create_hover_animation(widget, property_name='geometry', duration=150):
+        animation = QPropertyAnimation(widget, property_name.encode())
+        animation.setDuration(duration)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        return animation
+    
+    @staticmethod
+    def create_fade_in(widget, duration=200):
+        animation = QPropertyAnimation(widget, b'windowOpacity')
+        animation.setDuration(duration)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        return animation
+
+
+def apply_modern_style(widget):
+    if isinstance(widget, QPushButton):
+        widget.setStyleSheet(ModernStyle.get_button_style(primary=True))
+        if not ModernStyle.is_macos():  # macOS 不需要額外陰影
+            ModernEffects.add_light_shadow(widget)
+    elif isinstance(widget, QLineEdit):
+        widget.setStyleSheet(ModernStyle.get_input_style())
+    elif isinstance(widget, QComboBox):
+        widget.setStyleSheet(ModernStyle.get_combobox_style())
+    elif isinstance(widget, QTextEdit):
+        widget.setStyleSheet(ModernStyle.get_textedit_style())
+    elif isinstance(widget, QGroupBox):
+        widget.setStyleSheet(ModernStyle.get_groupbox_style())
+        if not ModernStyle.is_macos():  # macOS 不需要額外陰影
+            ModernEffects.add_card_shadow(widget)
+    elif isinstance(widget, QTabWidget):
+        widget.setStyleSheet(ModernStyle.get_tabwidget_style())
+    elif isinstance(widget, QProgressBar):
+        widget.setStyleSheet(ModernStyle.get_progressbar_style())
+    elif isinstance(widget, QScrollArea):
+        widget.setStyleSheet(ModernStyle.get_scrollarea_style())
+    elif isinstance(widget, QMenu):
+        widget.setStyleSheet(ModernStyle.get_menu_style())
+    elif isinstance(widget, QToolBar):
+        widget.setStyleSheet(ModernStyle.get_toolbar_style())
+    elif isinstance(widget, QToolButton):
+        widget.setStyleSheet(ModernStyle.get_toolbar_style())
+    elif isinstance(widget, QDockWidget):
+        widget.setStyleSheet(ModernStyle.get_dockwidget_style())
+    elif isinstance(widget, QTableWidget):
+        widget.setStyleSheet(ModernStyle.get_table_style())
+    elif isinstance(widget, QCheckBox):
+        widget.setStyleSheet(ModernStyle.get_checkbox_style())
+    elif isinstance(widget, QRadioButton):
+        widget.setStyleSheet(ModernStyle.get_radiobutton_style())
+    elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+        widget.setStyleSheet(ModernStyle.get_spinbox_style())
+    elif isinstance(widget, QDialog):
+        widget.setStyleSheet(ModernStyle.get_dialog_style())
+    elif isinstance(widget, QLabel):
+        widget.setStyleSheet(ModernStyle.get_label_style())
+
+
+def get_modern_palette():
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(ModernColors.BACKGROUND_MAIN))
+    palette.setColor(QPalette.WindowText, QColor(ModernColors.TEXT_PRIMARY))
+    palette.setColor(QPalette.Base, QColor(ModernColors.BACKGROUND_DARK))
+    palette.setColor(QPalette.AlternateBase, QColor(ModernColors.BACKGROUND_CARD))
+    palette.setColor(QPalette.ToolTipBase, QColor(ModernColors.BACKGROUND_CARD))
+    palette.setColor(QPalette.ToolTipText, QColor(ModernColors.TEXT_PRIMARY))
+    palette.setColor(QPalette.Text, QColor(ModernColors.TEXT_PRIMARY))
+    palette.setColor(QPalette.Button, QColor(ModernColors.BACKGROUND_CARD))
+    palette.setColor(QPalette.ButtonText, QColor(ModernColors.TEXT_PRIMARY))
+    palette.setColor(QPalette.BrightText, QColor(ModernColors.ERROR))
+    palette.setColor(QPalette.Link, QColor(ModernColors.PRIMARY))
+    palette.setColor(QPalette.Highlight, QColor(ModernColors.PRIMARY))
+    palette.setColor(QPalette.HighlightedText, QColor(ModernColors.TEXT_ON_PRIMARY))
+    return palette
+
+
+def apply_global_modern_style(app):
+    app.setStyle('Fusion')
+    app.setPalette(get_modern_palette())
+    app.setStyleSheet(ModernStyle.get_global_style())
+    
+    # 如果是 macOS，則進一步優化樣式
+    if ModernStyle.is_macos():
+        # macOS 特定的全局樣式調整
+        macos_styles = """
+        QMenuBar {
+            background-color: transparent;
+            spacing: 3px;
+        }
+        QMenuBar::item {
+            background: transparent;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        QMenuBar::item:selected {
+            background: #404040;
+        }
+        QMenuBar::item:pressed {
+            background: #7B9E87;
+        }
+        QStatusBar {
+            background-color: #2D2D2D;
+            border-top: 1px solid #4A4A4A;
+        }
+        """
+        app.setStyleSheet(app.styleSheet() + macos_styles)
