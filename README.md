@@ -3,6 +3,17 @@
 PDFDocuEdit Pro is a PyQt6 and PyMuPDF desktop workspace for viewing, editing,
 converting and processing PDF documents on Windows and macOS.
 
+## Downloads
+
+The latest Windows build is published on the
+[Releases page](https://github.com/andy846/PDFDocuEdit_Pro/releases):
+
+- **Installer (安裝版):** `PDFDocuEdit-Pro-1.0-Windows-x64-Setup.exe` —
+  Inno Setup installer with Start-menu and desktop shortcuts.
+- **Portable (免安裝版):** `PDFDocuEdit-Pro-1.0-Windows-x64-Portable.zip` —
+  extract anywhere and run `PDFDocuEdit Pro\PDFDocuEdit Pro.exe`; no installation
+  required and settings stay next to the executable.
+
 ## Development
 
 Use Python 3.11–3.13 (3.12 recommended). Platform-specific Qt and native packages must be installed in
