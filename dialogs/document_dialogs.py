@@ -719,6 +719,21 @@ class PrintOptionsDialog(ToolDialog):
         self.colour.addItems(["Colour", "Grayscale"])
         self.duplex = QComboBox()
         self.duplex.addItems(["Printer default", "Single-sided", "Duplex — long edge", "Duplex — short edge"])
+        self.quality = QComboBox()
+        self.quality.addItem("Draft — 150 DPI", 150)
+        self.quality.addItem("Standard — 300 DPI", 300)
+        self.quality.addItem("High — 600 DPI", 600)
+        self.quality.addItem("Custom DPI", None)
+        self.quality.setCurrentIndex(1)
+        self.quality_dpi = QSpinBox()
+        self.quality_dpi.setRange(72, 600)
+        self.quality_dpi.setValue(300)
+        self.quality_dpi.setSuffix(" DPI")
+        self.quality_dpi.setToolTip(
+            "Higher DPI produces sharper output but uses more memory and takes longer."
+        )
+        self.quality.currentIndexChanged.connect(self._quality_changed)
+        self._quality_changed(self.quality.currentIndex())
         self.confirm_system = QCheckBox("Confirm with the system dialog")
         self.confirm_system.setToolTip(
             "When unchecked, the document prints directly with the options above."
@@ -729,6 +744,8 @@ class PrintOptionsDialog(ToolDialog):
         printer_form.addRow("", self.collate)
         printer_form.addRow("Output", self.colour)
         printer_form.addRow("Two-sided", self.duplex)
+        printer_form.addRow("Print quality", self.quality)
+        printer_form.addRow("Custom quality", self.quality_dpi)
         printer_form.addRow("", self.confirm_system)
         self._root.addWidget(printer_group)
 
@@ -790,6 +807,7 @@ class PrintOptionsDialog(ToolDialog):
         layout_form.addRow("", paper_note)
         content.addWidget(layout_group)
         self._root.addLayout(content, 1)
+        self._restore_profile()
         self.add_validation()
 
         buttons = QDialogButtonBox(
@@ -815,6 +833,63 @@ class PrintOptionsDialog(ToolDialog):
             return settings.get_print_offsets()
         return (0.0, 0.0, 0.0, 0.0)
 
+    def _default_profile(self) -> dict[str, object]:
+        settings = getattr(self.parent(), "settings", None)
+        if settings is not None:
+            return settings.get_print_profile()
+        return {}
+
+    def _quality_changed(self, _index: int) -> None:
+        dpi = self.quality.currentData()
+        custom = dpi is None
+        self.quality_dpi.setEnabled(custom)
+        if not custom:
+            self.quality_dpi.setValue(int(dpi))
+
+    def _selected_quality_dpi(self) -> int:
+        dpi = self.quality.currentData()
+        return self.quality_dpi.value() if dpi is None else int(dpi)
+
+    def _restore_profile(self) -> None:
+        profile = self._default_profile()
+        if not profile:
+            return
+        printer_name = str(profile.get("printer", ""))
+        printer_index = self.printer.findText(printer_name)
+        if printer_index >= 0:
+            self.printer.setCurrentIndex(printer_index)
+        self.copies.setValue(int(profile.get("copies", 1)))
+        self.collate.setChecked(bool(profile.get("collate", True)))
+        self.colour.setCurrentIndex(int(profile.get("colour", 0)))
+        self.duplex.setCurrentIndex(int(profile.get("duplex", 0)))
+        dpi = int(profile.get("dpi", 300))
+        quality_index = self.quality.findData(dpi)
+        if quality_index >= 0:
+            self.quality.setCurrentIndex(quality_index)
+        else:
+            self.quality.setCurrentIndex(self.quality.count() - 1)
+            self.quality_dpi.setValue(dpi)
+        self.confirm_system.setChecked(
+            bool(profile.get("confirm_system_dialog", False))
+        )
+        mode = str(profile.get("page_mode", "all"))
+        if mode == "current":
+            self.current.setChecked(True)
+        elif mode == "custom":
+            self.custom.setChecked(True)
+        else:
+            self.all_pages.setChecked(True)
+        self.range.setPlainText(str(profile.get("page_range", "")))
+        paper_index = self.paper.findText(
+            str(profile.get("paper", "PDF page size"))
+        )
+        if paper_index >= 0:
+            self.paper.setCurrentIndex(paper_index)
+        self.orientation.setCurrentIndex(int(profile.get("orientation", 0)))
+        self.scale_mode.setCurrentIndex(int(profile.get("scale_mode", 0)))
+        self.scale.setValue(int(profile.get("scale", 100)))
+        self.center.setChecked(bool(profile.get("center", True)))
+
     def _validate(self) -> None:
         if not self.printer.currentText():
             self.show_error("No printer is available on this system.")
@@ -839,11 +914,24 @@ class PrintOptionsDialog(ToolDialog):
             "collate": self.collate.isChecked(),
             "colour": self.colour.currentIndex(),
             "duplex": self.duplex.currentIndex(),
+            "dpi": self._selected_quality_dpi(),
             "paper": self.paper.currentText(),
             "orientation": self.orientation.currentIndex(),
             "scale_mode": self.scale_mode.currentIndex(),
             "scale": self.scale.value(),
             "center": self.center.isChecked(),
+            "page_mode": (
+                "all"
+                if self.all_pages.isChecked()
+                else "current"
+                if self.current.isChecked()
+                else "custom"
+            ),
+            "page_range": self.range.toPlainText(),
+            "offset_left": self.offset_left.value(),
+            "offset_right": self.offset_right.value(),
+            "offset_top": self.offset_top.value(),
+            "offset_bottom": self.offset_bottom.value(),
             "offset_x": self.offset_left.value() - self.offset_right.value(),
             "offset_y": self.offset_top.value() - self.offset_bottom.value(),
             "confirm_system_dialog": self.confirm_system.isChecked(),

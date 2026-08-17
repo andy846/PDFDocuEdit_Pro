@@ -32,6 +32,10 @@ class SettingsManager:
         "print_offset_right_mm": 0.0,
         "print_offset_top_mm": 0.0,
         "print_offset_bottom_mm": 0.0,
+        "print_profile": {},
+        "split_orientation": "horizontal",
+        "split_sync_page": False,
+        "split_sync_zoom": False,
         "default_app_prompt_shown": False,
     }
 
@@ -247,6 +251,83 @@ class SettingsManager:
                 "print_offset_right_mm": clamp(right),
                 "print_offset_top_mm": clamp(top),
                 "print_offset_bottom_mm": clamp(bottom),
+            }
+        )
+
+    @staticmethod
+    def _normalise_print_profile(value: Any) -> dict[str, Any]:
+        defaults: dict[str, Any] = {
+            "printer": "",
+            "copies": 1,
+            "collate": True,
+            "colour": 0,
+            "duplex": 0,
+            "dpi": 300,
+            "paper": "PDF page size",
+            "orientation": 0,
+            "scale_mode": 0,
+            "scale": 100,
+            "center": True,
+            "confirm_system_dialog": False,
+            "page_mode": "all",
+            "page_range": "",
+        }
+        raw = value if isinstance(value, dict) else {}
+
+        def integer(key: str, minimum: int, maximum: int) -> int:
+            try:
+                return min(maximum, max(minimum, int(raw.get(key, defaults[key]))))
+            except (TypeError, ValueError):
+                return int(defaults[key])
+
+        paper = str(raw.get("paper", defaults["paper"]))
+        if paper not in {"PDF page size", "A4", "A3", "A5", "Letter"}:
+            paper = str(defaults["paper"])
+        page_mode = str(raw.get("page_mode", defaults["page_mode"]))
+        if page_mode not in {"all", "current", "custom"}:
+            page_mode = str(defaults["page_mode"])
+        return {
+            "printer": str(raw.get("printer", ""))[:500],
+            "copies": integer("copies", 1, 999),
+            "collate": bool(raw.get("collate", defaults["collate"])),
+            "colour": integer("colour", 0, 1),
+            "duplex": integer("duplex", 0, 3),
+            "dpi": integer("dpi", 72, 600),
+            "paper": paper,
+            "orientation": integer("orientation", 0, 2),
+            "scale_mode": integer("scale_mode", 0, 2),
+            "scale": integer("scale", 10, 400),
+            "center": bool(raw.get("center", defaults["center"])),
+            "confirm_system_dialog": bool(
+                raw.get(
+                    "confirm_system_dialog",
+                    defaults["confirm_system_dialog"],
+                )
+            ),
+            "page_mode": page_mode,
+            "page_range": str(raw.get("page_range", ""))[:1000],
+        }
+
+    def get_print_profile(self) -> dict[str, Any]:
+        """Return the last accepted single-document print choices."""
+        return self._normalise_print_profile(self.get("print_profile", {}))
+
+    def set_print_profile(self, details: dict[str, Any]) -> None:
+        profile = self._normalise_print_profile(details)
+
+        def offset(key: str) -> float:
+            try:
+                return min(100.0, max(-100.0, float(details.get(key, 0.0))))
+            except (TypeError, ValueError):
+                return 0.0
+
+        self.update(
+            {
+                "print_profile": profile,
+                "print_offset_left_mm": offset("offset_left"),
+                "print_offset_right_mm": offset("offset_right"),
+                "print_offset_top_mm": offset("offset_top"),
+                "print_offset_bottom_mm": offset("offset_bottom"),
             }
         )
 

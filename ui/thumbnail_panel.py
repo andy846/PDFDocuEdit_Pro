@@ -7,10 +7,12 @@ from collections import OrderedDict
 import fitz
 from PyQt6.QtCore import (
     QObject,
+    QPoint,
     QRunnable,
     QSize,
     Qt,
     QThreadPool,
+    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import QImage, QPixmap
@@ -52,6 +54,7 @@ class ReorderListWidget(QListWidget):
 
 class _RenderSignals(QObject):
     finished = pyqtSignal(int, object, int)
+    failed = pyqtSignal(int, int)
 
 
 class _RenderTask(QRunnable):
@@ -66,7 +69,9 @@ class _RenderTask(QRunnable):
         generation: int,
     ):
         super().__init__()
-        self.setAutoDelete(True)
+        # The panel retains tasks until their completion signal so queued
+        # off-screen renders can be safely removed with QThreadPool.tryTake().
+        self.setAutoDelete(False)
         self._doc_path = doc_path
         self._page_num = page_num
         self._scale = scale
@@ -95,10 +100,7 @@ class _RenderTask(QRunnable):
         except BaseException:
             # Never let an exception escape QRunnable.run(): PyQt6 aborts the
             # process, and a thumbnail task failing must not kill the app.
-            return
-
-
-from PyQt6.QtCore import QObject  # noqa: E402 (already imported above, re-import for clarity)
+            self.signals.failed.emit(self._page_num, self._generation)
 
 
 class ThumbnailPanel(QFrame):
@@ -117,9 +119,14 @@ class ThumbnailPanel(QFrame):
         self._password: str | None = None
         self._page_count = 0
         self._pending: set[int] = set()
+        self._tasks: dict[int, _RenderTask] = {}
+        self._failures: dict[int, int] = {}
         self._cache: OrderedDict[int, QPixmap] = OrderedDict()
         self._generation = 0
-        self._pool = QThreadPool.globalInstance()
+        # A panel-owned pool lets a document wait for only its own thumbnail
+        # readers before deleting the editable temporary PDF on Windows.
+        self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(4)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(S.XS, S.XS, S.XS, S.SM)
@@ -140,6 +147,10 @@ class ThumbnailPanel(QFrame):
         self._list.setIconSize(QSize(THUMBNAIL_WIDTH, int(THUMBNAIL_WIDTH * 1.414)))
         self._list.setSpacing(S.XS)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # _visible_range uses viewport pixels. QListWidget otherwise defaults
+        # to per-item scrollbar units on Windows, so a jump to page 70 could
+        # still be misread as only a few pixels from page 1.
+        self._list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self._list.setDragEnabled(True)
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
@@ -178,12 +189,14 @@ class ThumbnailPanel(QFrame):
 
     def load_document(self, doc_path: str, page_count: int, password: str | None = None) -> None:
         """Load thumbnails for a document."""
-        self._generation += 1
+        self._stop_renders()
         self._doc_path = doc_path
         self._password = password
         self._page_count = page_count
         self._cache.clear()
         self._pending.clear()
+        self._tasks.clear()
+        self._failures.clear()
         self._list.clear()
 
         for page_num in range(page_count):
@@ -232,12 +245,23 @@ class ThumbnailPanel(QFrame):
             self._render_visible_thumbnails()
 
     def clear(self) -> None:
-        self._generation += 1
-        self._doc_path = None
+        self._stop_renders()
         self._page_count = 0
         self._cache.clear()
-        self._pending.clear()
         self._list.clear()
+
+    def _stop_renders(self) -> None:
+        """Invalidate queued renders and wait until their PDF handles close."""
+        self._doc_path = None
+        self.quiesce_renders()
+
+    def quiesce_renders(self) -> None:
+        """Release file handles while keeping the current thumbnail source."""
+        self._generation += 1
+        self._pool.waitForDone()
+        self._pending.clear()
+        self._tasks.clear()
+        self._failures.clear()
 
     def _render_visible_thumbnails(self) -> None:
         """Schedule rendering only for pages near the visible window.
@@ -249,6 +273,15 @@ class ThumbnailPanel(QFrame):
         if not self._doc_path or self._list.count() == 0:
             return
         first, last = self._visible_range()
+        wanted = set(range(first, last + 1))
+        # Rapid scrolling should not wait behind pages that have not started
+        # rendering for the old viewport. Running workers finish normally;
+        # queued stale workers are removed and their slots reused at once.
+        for page_num in list(self._pending - wanted):
+            task = self._tasks.get(page_num)
+            if task is not None and self._pool.tryTake(task):
+                self._tasks.pop(page_num, None)
+                self._pending.discard(page_num)
         for index in range(first, last + 1):
             if len(self._pending) >= MAX_PENDING_RENDERS:
                 return
@@ -260,12 +293,25 @@ class ThumbnailPanel(QFrame):
         if first_item is None:
             return (0, 0)
         item_height = first_item.sizeHint().height() + self._list.spacing()
-        scroll = self._list.verticalScrollBar().value()
         viewport_height = self._list.viewport().height()
-        first = max(0, scroll // item_height - OVERSCAN)
+        top_index = self._list.indexAt(QPoint(2, 2))
+        bottom_index = self._list.indexAt(
+            QPoint(2, max(2, viewport_height - 2))
+        )
+        first_visible = (
+            top_index.row()
+            if top_index.isValid()
+            else self._list.verticalScrollBar().value() // max(1, item_height)
+        )
+        last_visible = (
+            bottom_index.row()
+            if bottom_index.isValid()
+            else first_visible + max(1, viewport_height // max(1, item_height))
+        )
+        first = max(0, first_visible - OVERSCAN)
         last = min(
             self._list.count() - 1,
-            (scroll + viewport_height) // item_height + OVERSCAN,
+            last_visible + OVERSCAN,
         )
         return first, last
 
@@ -277,14 +323,18 @@ class ThumbnailPanel(QFrame):
             self._doc_path, page_num, THUMBNAIL_SCALE, self._password, self._generation
         )
         task.signals.finished.connect(self._on_thumbnail_rendered)
-        self._pool.start(task)
+        task.signals.failed.connect(self._on_thumbnail_failed)
+        self._tasks[page_num] = task
+        self._pool.start(task, 5)
 
     def _on_thumbnail_rendered(self, page_num: int, image: QImage, generation: int) -> None:
         if generation != self._generation:
             return  # stale render from a previous document
+        self._tasks.pop(page_num, None)
         self._pending.discard(page_num)
         if page_num >= self._list.count():
             return
+        self._failures.pop(page_num, None)
         pixmap = QPixmap.fromImage(image)
         self._cache[page_num] = pixmap
         if len(self._cache) > CACHE_SIZE:
@@ -303,3 +353,29 @@ class ThumbnailPanel(QFrame):
             label.setProperty("placeholder", False)
             label.style().unpolish(label)
             label.style().polish(label)
+
+        # A scroll event can initially fill the pending-task cap with pages
+        # from the old viewport. Keep refilling from the *current* visible
+        # range as tasks finish; otherwise later thumbnails remain blank until
+        # the user nudges the scrollbar again.
+        self._render_visible_thumbnails()
+
+    def _on_thumbnail_failed(self, page_num: int, generation: int) -> None:
+        if generation != self._generation:
+            return
+        self._tasks.pop(page_num, None)
+        self._pending.discard(page_num)
+        attempts = self._failures.get(page_num, 0) + 1
+        self._failures[page_num] = attempts
+        if attempts < 2:
+            # Retry once after the worker has released its file handle. The
+            # generation guard prevents a retry from leaking into a new file.
+            QTimer.singleShot(
+                150,
+                lambda page=page_num, token=generation: (
+                    self._schedule_render(page)
+                    if token == self._generation
+                    else None
+                ),
+            )
+        self._render_visible_thumbnails()

@@ -125,7 +125,11 @@ def render_page_pixmap_quick(
         QImage.Format.Format_RGB888,
     ).copy()
     result = QPixmap.fromImage(image)
-    result.setDevicePixelRatio(dpr)
+    # The placeholder has fewer backing pixels, but it must keep the same
+    # device-independent size as the final render. Using only dpr here made it
+    # appear at scale of the page size (a small-page ghost) until the
+    # full-quality task completed.
+    result.setDevicePixelRatio(max(0.01, dpr * scale))
     return result
 
 

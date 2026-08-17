@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfdocuedit-pro"
-version = "0.98.0"
+version = "1.1.0"
 description = "Cross-platform PDF editing and document workflow desktop application"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -20,6 +20,7 @@ dependencies = [
     "fire==0.7.0",
     "termcolor==3.1.0",
     "openpyxl==3.1.5",
+    "xlrd==2.0.1",
     "et-xmlfile==2.0.0",
     "pdf2docx==0.5.8",
     "Pillow==10.4.0",

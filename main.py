@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 
-from core.resources import APP_NAME, resource_path
+from core.resources import APP_NAME, APP_SLUG, APP_VERSION, resource_path
 from core.settings import SettingsManager
 from core.viewer import PDFViewer
 from styles.components import global_style
@@ -40,6 +42,100 @@ class PDFDocuEditApplication(QApplication):
         pending, self._pending_file_opens = self._pending_file_opens, []
         for path in pending:
             self.fileOpenRequested.emit(path)
+
+
+SINGLE_INSTANCE_KEY = f"{APP_SLUG}-v1-1-single-instance"
+
+
+class SingleInstanceRouter(QObject):
+    """Forward later Windows launches to the first running application."""
+
+    pathsReceived = pyqtSignal(list)
+
+    def __init__(self, server_name: str = SINGLE_INSTANCE_KEY, parent=None):
+        super().__init__(parent)
+        self.server_name = server_name
+        self._server = QLocalServer(self)
+        self._server.newConnection.connect(self._accept_connections)
+        self._buffers: dict[QLocalSocket, bytearray] = {}
+
+    @staticmethod
+    def _message(paths: list[Path] | list[str]) -> bytes:
+        payload = {
+            "activate": True,
+            "paths": [str(Path(path).expanduser().resolve()) for path in paths],
+        }
+        return (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+
+    @classmethod
+    def forward_to_primary(
+        cls,
+        paths: list[Path] | list[str],
+        server_name: str = SINGLE_INSTANCE_KEY,
+        timeout_ms: int = 700,
+    ) -> bool:
+        socket = QLocalSocket()
+        socket.connectToServer(server_name)
+        if not socket.waitForConnected(timeout_ms):
+            socket.abort()
+            return False
+        message = cls._message(paths)
+        queued = socket.write(message) == len(message)
+        socket.flush()
+        deadline = timeout_ms
+        while queued and socket.bytesToWrite() > 0 and deadline > 0:
+            application = QCoreApplication.instance()
+            if application is not None:
+                application.processEvents()
+            step = min(50, deadline)
+            socket.waitForBytesWritten(step)
+            deadline -= step
+        written = queued and socket.bytesToWrite() == 0
+        socket.disconnectFromServer()
+        return bool(written)
+
+    def listen(self) -> bool:
+        if self._server.listen(self.server_name):
+            return True
+        # A crashed process can leave a stale local-server endpoint. Only the
+        # elected primary reaches here after a connection attempt failed.
+        QLocalServer.removeServer(self.server_name)
+        return self._server.listen(self.server_name)
+
+    def _accept_connections(self) -> None:
+        while self._server.hasPendingConnections():
+            socket = self._server.nextPendingConnection()
+            if socket is None:
+                continue
+            self._buffers[socket] = bytearray()
+            socket.readyRead.connect(
+                lambda current=socket: self._read_socket(current)
+            )
+            socket.disconnected.connect(
+                lambda current=socket: self._drop_socket(current)
+            )
+            self._read_socket(socket)
+
+    def _read_socket(self, socket: QLocalSocket) -> None:
+        if socket not in self._buffers:
+            return
+        self._buffers[socket].extend(bytes(socket.readAll()))
+        buffer = self._buffers[socket]
+        while b"\n" in buffer:
+            raw, remainder = buffer.split(b"\n", 1)
+            self._buffers[socket] = buffer = bytearray(remainder)
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            paths = payload.get("paths", []) if isinstance(payload, dict) else []
+            if isinstance(paths, list):
+                self.pathsReceived.emit([str(path) for path in paths if path])
+
+    def _drop_socket(self, socket: QLocalSocket) -> None:
+        self._read_socket(socket)
+        self._buffers.pop(socket, None)
+        socket.deleteLater()
 
 
 def _create_splash() -> QSplashScreen:
@@ -102,7 +198,7 @@ def _application_icon() -> QIcon:
     base = QPixmap(str(source))
     if base.isNull():
         return icon
-    for size in (16, 24, 32, 48, 64, 128, 256):
+    for size in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256):
         icon.addPixmap(
             base.scaled(
                 size,
@@ -152,7 +248,20 @@ def _force_windows_icon(window) -> None:
         with Image.open(icon_source).convert("RGBA") as master:
             with tempfile.TemporaryDirectory(prefix="pdfdocuedit-icon-") as folder:
                 hwnd = int(window.winId())
-                for size, message in ((16, 0), (32, 1)):  # ICON_SMALL, ICON_BIG
+                try:
+                    user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+                    user32.GetDpiForWindow.restype = ctypes.c_uint
+                    dpi = max(96, int(user32.GetDpiForWindow(hwnd)))
+                except Exception:
+                    dpi = 96
+                # WM_SETICON uses physical pixels. Generate the actual monitor
+                # sizes from the 256 px master so 125–300% Windows scaling does
+                # not enlarge a low-resolution 16/32 px bitmap.
+                icon_sizes = (
+                    (min(256, round(16 * dpi / 96)), 0),
+                    (min(256, round(32 * dpi / 96)), 1),
+                )
+                for size, message in icon_sizes:  # ICON_SMALL, ICON_BIG
                     frame = master.resize((size, size), Image.LANCZOS)
                     path = f"{folder}\\icon-{size}.bmp"
                     frame.save(path, "BMP")
@@ -172,7 +281,7 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
     app.setApplicationDisplayName(APP_NAME)
     app.setOrganizationName("PDFDocuEdit")
     app.setOrganizationDomain("pdfdocuedit.local")
-    app.setApplicationVersion("1.0")
+    app.setApplicationVersion(APP_VERSION)
     app.setWindowIcon(_application_icon())
     settings = SettingsManager()
     apply_theme(app, ThemeMode(settings.get_theme()))
@@ -192,22 +301,37 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
 
 def main() -> int:
     app = create_application()
+    # A file association starts the executable again. Forward those paths to
+    # the existing process before creating a splash or a second main window.
+    paths = pdf_arguments(sys.argv[1:])
+    if SingleInstanceRouter.forward_to_primary(paths):
+        return 0
+    instance_router = SingleInstanceRouter(parent=app)
+    if not instance_router.listen():
+        # Cover the narrow race where two processes start at the same time.
+        if SingleInstanceRouter.forward_to_primary(paths):
+            return 0
+
     splash = _create_splash()
     splash.show()
     app.processEvents()
 
-    # Windows passes "open with" files (single or several at once) as
-    # command-line arguments; macOS delivers FileOpen events instead.
-    paths = pdf_arguments(sys.argv[1:])
-    initial_path = str(paths[0]) if paths else None
-    viewer = PDFViewer(initial_path)
-    if len(paths) > 1:
-        # The first file is already open; the rest each get their own tab.
-        viewer.open_files([str(path) for path in paths[1:]])
+    viewer = PDFViewer()
     # macOS FileOpen events each open in their own tab instead of replacing
     # the current document.
-    app.fileOpenRequested.connect(lambda path: viewer.open_files([path]))
+    app.fileOpenRequested.connect(lambda path: viewer.queue_open_files([path]))
     app.activate_file_open_handler()
+
+    def accept_forwarded_paths(forwarded: list[str]) -> None:
+        if viewer.isMinimized():
+            viewer.showNormal()
+        viewer.show()
+        viewer.raise_()
+        viewer.activateWindow()
+        if forwarded:
+            viewer.queue_open_files(forwarded)
+
+    instance_router.pathsReceived.connect(accept_forwarded_paths)
     try:
         app.styleHints().colorSchemeChanged.connect(
             lambda _scheme: viewer._apply_theme("system")
@@ -219,6 +343,8 @@ def main() -> int:
 
     viewer.show()
     splash.finish(viewer)
+    if paths:
+        viewer.queue_open_files([str(path) for path in paths])
     # Qt's HICON mask renders the title-bar icon as a white square; hand
     # Windows a correctly-masked icon once the native window exists.
     QTimer.singleShot(150, lambda: _force_windows_icon(viewer))

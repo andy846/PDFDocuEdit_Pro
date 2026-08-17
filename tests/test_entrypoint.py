@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 
 
@@ -66,3 +68,95 @@ assert received == ['/tmp/finder-open.pdf']
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_initial_pdf_open_waits_until_window_event_loop(
+    tmp_path, monkeypatch
+) -> None:
+    import fitz
+    from PyQt6.QtWidgets import QApplication
+
+    from core.viewer import PDFViewer
+
+    app = QApplication.instance() or QApplication(
+        ["pdfdocuedit-deferred-open-test"]
+    )
+    source = tmp_path / "large-shell-open.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(source)
+
+    opened: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        PDFViewer,
+        "_start_queued_pdf_open",
+        lambda self, _session, path, password: (
+            opened.append((path, password)),
+            self._queued_open_finished(),
+        ),
+    )
+    viewer = PDFViewer(str(source))
+    assert opened == []
+    assert viewer._open_queue_scheduled
+
+    app.processEvents()
+    assert opened == [(str(source.resolve()), None)]
+    assert not viewer._open_queue_scheduled
+    viewer.close()
+
+
+def test_queued_pdf_open_completes_in_background(tmp_path) -> None:
+    import fitz
+    from PyQt6.QtWidgets import QApplication
+
+    from core.viewer import PDFViewer
+
+    app = QApplication.instance() or QApplication(
+        ["pdfdocuedit-background-open-test"]
+    )
+    source = tmp_path / "associated.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(source)
+
+    viewer = PDFViewer()
+    viewer.queue_open_files([str(source)])
+    deadline = time.monotonic() + 5
+    while viewer._open_queue_scheduled and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert viewer.engine.is_loaded()
+    assert viewer._display_path == source.resolve()
+    viewer.close()
+
+
+def test_single_instance_router_forwards_pdf_paths(tmp_path) -> None:
+    from PyQt6.QtNetwork import QLocalServer
+    from PyQt6.QtWidgets import QApplication
+
+    from main import SingleInstanceRouter
+
+    app = QApplication.instance() or QApplication(
+        ["pdfdocuedit-single-instance-test"]
+    )
+    server_name = f"PDFDocuEditPro-test-{uuid.uuid4().hex}"
+    router = SingleInstanceRouter(server_name)
+    assert router.listen()
+    received: list[list[str]] = []
+    router.pathsReceived.connect(received.append)
+    source = tmp_path / "forwarded.pdf"
+    source.write_bytes(b"%PDF-1.4 test")
+
+    assert SingleInstanceRouter.forward_to_primary(
+        [source],
+        server_name=server_name,
+    )
+    deadline = time.monotonic() + 3
+    while not received and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert received == [[str(source.resolve())]]
+    router._server.close()
+    QLocalServer.removeServer(server_name)

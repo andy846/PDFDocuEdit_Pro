@@ -47,6 +47,7 @@ class BottomBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(S.MD, 0, S.MD, 0)
         layout.setSpacing(S.XS)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         def separator() -> QFrame:
             line = QFrame()
@@ -84,7 +85,12 @@ class BottomBar(QWidget):
         layout.addSpacing(S.XS)
 
         # --- zoom cluster ---
-        self._zoom_out = self._button("minus", "Zoom out (Ctrl+-)", self.zoomOutClicked)
+        self._zoom_out = self._button(
+            "minus",
+            "Zoom out (Ctrl+-)",
+            self.zoomOutClicked,
+            D.ICON_MD,
+        )
         layout.addWidget(self._zoom_out)
         self._zoom = QLineEdit("100%")
         self._zoom.setObjectName("zoomInput")
@@ -106,7 +112,12 @@ class BottomBar(QWidget):
         self._slider.setAccessibleName("Zoom slider")
         self._slider.valueChanged.connect(self._slider_changed)
         layout.addWidget(self._slider)
-        self._zoom_in = self._button("plus", "Zoom in (Ctrl+=)", self.zoomInClicked)
+        self._zoom_in = self._button(
+            "plus",
+            "Zoom in (Ctrl+=)",
+            self.zoomInClicked,
+            D.ICON_MD,
+        )
         layout.addWidget(self._zoom_in)
 
         self._fit = QToolButton()
@@ -194,10 +205,22 @@ class BottomBar(QWidget):
         self._status.setObjectName("pageInfo")
         self._status.setMinimumWidth(56)
         layout.addWidget(self._status)
+        # Explicit per-item alignment avoids style-dependent vertical fill;
+        # separators, 28 px fields and 32 px icon buttons share one centre.
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            if item.widget() is not None:
+                item.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.set_document_available(False)
 
-    def _button(self, name: str, tooltip: str, signal) -> MotionIconButton:
-        button = MotionIconButton(name, tooltip, D.ICON_SM)
+    def _button(
+        self,
+        name: str,
+        tooltip: str,
+        signal,
+        icon_size: int = D.ICON_SM,
+    ) -> MotionIconButton:
+        button = MotionIconButton(name, tooltip, icon_size)
         button.clicked.connect(signal.emit)
         return button
 
@@ -293,7 +316,12 @@ class BottomBar(QWidget):
         self.zoomSet.emit(value / 100.0)
 
     def set_page_size(self, width: float, height: float) -> None:
-        self._size.setText(f"{width:.0f} × {height:.0f} pt" if width and height else "")
+        if width and height:
+            width_mm = width * 25.4 / 72.0
+            height_mm = height * 25.4 / 72.0
+            self._size.setText(f"{width_mm:.1f} × {height_mm:.1f} mm")
+        else:
+            self._size.clear()
 
     def set_status(self, text: str) -> None:
         self._status.setText(text)

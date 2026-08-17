@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "1.0"
+VERSION = "1.1"
 
 
 def run(*args: str, env: dict[str, str] | None = None) -> None:

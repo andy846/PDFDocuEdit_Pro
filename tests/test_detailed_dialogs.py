@@ -73,6 +73,29 @@ def test_detailed_tool_dialogs_construct(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_spreadsheet_merge_uses_legacy_defaults() -> None:
+    app = QApplication.instance() or QApplication(
+        ["pdfdocuedit-merge-defaults-test"]
+    )
+    dialog = SpreadsheetMergeDialog()
+    assert dialog.skip_rows.value() == 2
+    assert dialog.csv.isChecked()
+    assert not dialog.xlsx.isChecked()
+    assert dialog.xls.isEnabled()
+    assert not dialog.xls.isChecked()
+    assert [dialog.encoding.itemData(index) for index in range(dialog.encoding.count())] == [
+        "auto",
+        "utf-8",
+        "big5",
+        "gb18030",
+        "iso-8859-1",
+        "windows-1252",
+        "ascii",
+    ]
+    dialog.deleteLater()
+    app.processEvents()
+
+
 def test_security_dialogs_normalize_extensions_and_block_open_source(
     tmp_path: Path,
 ) -> None:
@@ -247,6 +270,82 @@ def test_print_dialogs_prefill_offsets_from_preferences(tmp_path: Path) -> None:
     assert batch.bottom.value() == 6.0
     batch.close()
     parent.deleteLater()
+    app.processEvents()
+
+
+def test_print_options_restore_last_profile(tmp_path: Path) -> None:
+    from PyQt6.QtWidgets import QWidget
+
+    from core.settings import SettingsManager
+    from dialogs.document_dialogs import PrintOptionsDialog
+
+    app = QApplication.instance() or QApplication(["pdfdocuedit-print-profile-test"])
+    settings = SettingsManager(tmp_path / "settings.json")
+    settings.set_print_profile(
+        {
+            "copies": 4,
+            "collate": False,
+            "colour": 1,
+            "duplex": 3,
+            "dpi": 420,
+            "paper": "Letter",
+            "orientation": 2,
+            "scale_mode": 2,
+            "scale": 135,
+            "center": False,
+            "confirm_system_dialog": True,
+            "page_mode": "custom",
+            "page_range": "2-3",
+            "offset_left": 1.5,
+            "offset_right": 2.5,
+            "offset_top": 3.5,
+            "offset_bottom": 4.5,
+        }
+    )
+    parent = QWidget()
+    parent.settings = settings  # type: ignore[attr-defined]
+    dialog = PrintOptionsDialog(page_count=5, current_page=0, parent=parent)
+    assert dialog.copies.value() == 4
+    assert not dialog.collate.isChecked()
+    assert dialog.colour.currentIndex() == 1
+    assert dialog.duplex.currentIndex() == 3
+    assert dialog.quality.currentText() == "Custom DPI"
+    assert dialog.quality_dpi.isEnabled()
+    assert dialog.quality_dpi.value() == 420
+    assert dialog.paper.currentText() == "Letter"
+    assert dialog.orientation.currentIndex() == 2
+    assert dialog.scale_mode.currentIndex() == 2
+    assert dialog.scale.value() == 135
+    assert not dialog.center.isChecked()
+    assert dialog.confirm_system.isChecked()
+    assert dialog.custom.isChecked()
+    assert dialog.range.toPlainText() == "2-3"
+    assert dialog.offset_left.value() == 1.5
+    assert dialog.offset_bottom.value() == 4.5
+    dialog.close()
+    parent.deleteLater()
+    app.processEvents()
+
+
+def test_print_options_quality_presets_and_custom_dpi(tmp_path: Path) -> None:
+    from dialogs.document_dialogs import PrintOptionsDialog
+
+    app = QApplication.instance() or QApplication(["pdfdocuedit-quality-test"])
+    dialog = PrintOptionsDialog(page_count=2, current_page=0)
+    dialog.printer.addItem("Fake Printer")
+    dialog.printer.setCurrentText("Fake Printer")
+
+    dialog.quality.setCurrentIndex(0)
+    assert not dialog.quality_dpi.isEnabled()
+    assert dialog._selected_quality_dpi() == 150
+
+    dialog.quality.setCurrentIndex(dialog.quality.count() - 1)
+    dialog.quality_dpi.setValue(475)
+    assert dialog.quality_dpi.isEnabled()
+    dialog._validate()
+    assert dialog.details is not None
+    assert dialog.details["dpi"] == 475
+    dialog.close()
     app.processEvents()
 
 

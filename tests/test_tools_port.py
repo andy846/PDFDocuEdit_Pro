@@ -3,9 +3,11 @@ zoom slider, file info tooltip, status messages and shortcuts."""
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import fitz
+from PIL import Image
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QLineEdit
 
@@ -194,6 +196,21 @@ def test_print_pdf_prints_directly_without_system_dialog(tmp_path, monkeypatch):
     )
     window.print_pdf()
     assert painted and painted[0][0][2] == "direct.pdf"
+    window.close()
+
+
+def test_create_printer_applies_custom_print_quality(tmp_path, monkeypatch):
+    window = _window(tmp_path, monkeypatch)
+    details = {
+        "printer": "",
+        "copies": 1,
+        "collate": True,
+        "colour": 0,
+        "duplex": 0,
+        "dpi": 475,
+    }
+    printer = window._create_printer(details)
+    assert printer.resolution() == 475
     window.close()
 
 
@@ -496,9 +513,6 @@ def test_mixed_orientation_pages_print_upright(tmp_path, monkeypatch):
         page = result[1]
         images = page.get_images(full=True)
         assert images, "the second page must contain its rendered image"
-        from PIL import Image
-        import io
-
         data = result.extract_image(images[0][0])["image"]
         with Image.open(io.BytesIO(data)).convert("L") as img:
             pixels = img.load()
@@ -613,6 +627,7 @@ def test_cancelled_background_tab_close_keeps_active_session(tmp_path, monkeypat
     assert window.workspace.session_count() == 2
     assert window._session is window.workspace.current_session()
     assert window._session is not background
+    monkeypatch.setattr(window, "_confirm_discard_changes", lambda: True)
     window.close()
 
 
@@ -694,6 +709,87 @@ def test_thumbnail_panel_renders_only_visible_window(tmp_path):
     app.processEvents()
 
 
+def test_thumbnail_panel_refills_current_view_after_fast_scroll(tmp_path, monkeypatch):
+    from PyQt6.QtGui import QImage
+
+    from ui.thumbnail_panel import MAX_PENDING_RENDERS, ThumbnailPanel
+
+    app = _app()
+    source = make_pdf(tmp_path / "fast-thumbnails.pdf", pages=80)
+    panel = ThumbnailPanel(animations_enabled=False)
+    panel.resize(220, 420)
+    panel.show()
+
+    started = []
+    monkeypatch.setattr(
+        panel._pool,
+        "start",
+        lambda task, _priority=0: started.append(task),
+    )
+    panel.load_document(str(source), 80)
+    app.processEvents()
+    # Fill any remaining pending slots to reproduce an old viewport owning
+    # every slot while the user jumps directly to the end.
+    for page in range(80):
+        panel._schedule_render(page)
+        if len(panel._pending) == MAX_PENDING_RENDERS:
+            break
+    assert len(panel._pending) == MAX_PENDING_RENDERS
+    initial = list(started)
+
+    # Use the real QListWidget scrollbar. Its default units used to be items
+    # while _visible_range treated them as pixels and incorrectly returned
+    # pages near the top after this jump.
+    scrollbar = panel._list.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
+    app.processEvents()
+    first, last = panel._visible_range()
+    assert first >= 60
+    assert last == 79
+
+    image = QImage(8, 8, QImage.Format.Format_RGB888)
+    image.fill(0xFFFFFFFF)
+    old_task = initial[0]
+    panel._on_thumbnail_rendered(
+        old_task._page_num,
+        image,
+        panel._generation,
+    )
+
+    assert len(started) == MAX_PENDING_RENDERS + 1
+    assert first <= started[-1]._page_num <= last
+    panel.clear()
+    panel.deleteLater()
+    app.processEvents()
+
+
+def test_thumbnail_panel_really_renders_last_pages_after_fast_scroll(tmp_path):
+    import time
+
+    from ui.thumbnail_panel import ThumbnailPanel
+
+    app = _app()
+    source = make_pdf(tmp_path / "real-fast-thumbnails.pdf", pages=80)
+    panel = ThumbnailPanel(animations_enabled=False)
+    panel.resize(220, 420)
+    panel.show()
+    panel.load_document(str(source), 80)
+    app.processEvents()
+
+    scrollbar = panel._list.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
+    deadline = time.monotonic() + 8
+    while not any(page >= 70 for page in panel._cache) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert any(page >= 70 for page in panel._cache)
+    panel.clear()
+    panel.hide()
+    panel.deleteLater()
+    app.processEvents()
+
+
 def test_sidebar_sections_use_legacy_names(tmp_path, monkeypatch):
     _app()
     panel = SidePanel(animations_enabled=False)
@@ -730,6 +826,43 @@ def test_viewer_order_tool_opens_order_context(tmp_path, monkeypatch):
 
 
 # --- P1: bottom bar rotate box (G4) --------------------------------------
+
+def test_bottom_bar_displays_page_size_in_millimetres():
+    _app()
+    bar = BottomBar()
+    bar.set_page_size(595.2756, 841.8898)
+    assert bar._size.text() == "210.0 × 297.0 mm"
+    bar.set_page_size(0, 0)
+    assert bar._size.text() == ""
+    bar.deleteLater()
+
+
+def test_bottom_bar_step_buttons_are_large_and_vertically_centered():
+    from styles.components import global_style
+    from styles.tokens import D
+
+    app = _app()
+    app.setStyleSheet(global_style())
+    bar = BottomBar()
+    bar.resize(1200, D.STATUSBAR_H)
+    bar.show()
+    app.processEvents()
+    assert bar.height() == D.STATUSBAR_H == 48
+    assert bar._zoom_out.iconSize().width() == D.ICON_MD
+    assert bar._zoom_in.iconSize().width() == D.ICON_MD
+    assert bar._zoom_out.width() >= 32
+    assert bar._zoom_in.width() >= 32
+    center_y = bar.rect().center().y()
+    assert abs(bar._zoom_out.geometry().center().y() - center_y) <= 1
+    assert abs(bar._zoom_in.geometry().center().y() - center_y) <= 1
+    for index in range(bar.layout().count()):
+        widget = bar.layout().itemAt(index).widget()
+        if widget is not None:
+            assert abs(widget.geometry().center().y() - center_y) <= 1
+    bar.hide()
+    bar.deleteLater()
+    app.processEvents()
+
 
 def test_bottom_bar_rotate_box_submenu(tmp_path, monkeypatch):
     _app()
@@ -843,6 +976,100 @@ def test_legacy_status_messages_on_load_and_save(tmp_path, monkeypatch):
 
 
 # --- P3: shortcuts (G10) --------------------------------------------------
+
+def test_shortcut_guide_has_readable_resizable_viewport():
+    from core.commands import Command
+    from dialogs.shortcuts_dialog import ShortcutsDialog
+
+    app = _app()
+    commands = [
+        Command(
+            f"command-{index}",
+            f"Command {index}",
+            f"Ctrl+{index % 10}",
+            "Tools",
+            lambda: None,
+        )
+        for index in range(60)
+    ]
+    dialog = ShortcutsDialog(commands)
+    dialog.show()
+    app.processEvents()
+    available = app.primaryScreen().availableGeometry()
+    assert dialog.width() >= min(
+        1100,
+        available.width() - 24,
+        round(available.width() * 0.9),
+    )
+    assert dialog.height() >= min(
+        780,
+        available.height() - 24,
+        round(available.height() * 0.9),
+    )
+    assert dialog.windowFlags() & Qt.WindowType.WindowMaximizeButtonHint
+    assert dialog.table.rowCount() == 60
+    assert dialog.table.verticalScrollBar().maximum() > 0
+    dialog.close()
+    app.processEvents()
+
+
+def test_spinbox_proxy_style_draws_visible_plus_and_minus():
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QImage, QPainter
+    from PyQt6.QtWidgets import QStyle, QStyleOption
+
+    from styles.theme import _RoundMenuStyle
+
+    app = _app()
+    style = _RoundMenuStyle()
+
+    def ink_count(element) -> int:
+        image = QImage(24, 24, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        option = QStyleOption()
+        option.rect = QRect(0, 0, 24, 24)
+        option.state = QStyle.StateFlag.State_Enabled
+        option.palette = app.palette()
+        painter = QPainter(image)
+        style.drawPrimitive(element, option, painter)
+        painter.end()
+        return sum(
+            image.pixelColor(x, y).alpha() > 0
+            for y in range(image.height())
+            for x in range(image.width())
+        )
+
+    minus = ink_count(QStyle.PrimitiveElement.PE_IndicatorSpinDown)
+    plus = ink_count(QStyle.PrimitiveElement.PE_IndicatorSpinUp)
+    assert minus > 0
+    assert plus > minus
+
+
+def test_command_bar_more_menu_is_grouped_and_routes_page_tools(
+    tmp_path, monkeypatch
+):
+    window = _window(tmp_path, monkeypatch)
+    menu = window.command_bar._more.menu()
+    groups = [action.text() for action in menu.actions() if action.menu()]
+    assert groups == ["File", "View", "Page", "Tools"]
+
+    page_menu = next(
+        action.menu() for action in menu.actions() if action.text() == "Page"
+    )
+    assert [action.text() for action in page_menu.actions()] == [
+        "Insert Pages…",
+        "Delete Pages…",
+        "Extract Pages…",
+        "Reorder Pages…",
+        "Split PDF…",
+        "Rotate Pages…",
+    ]
+    routed: list[str] = []
+    monkeypatch.setattr(window, "_tool_requested", routed.append)
+    page_menu.actions()[0].trigger()
+    assert routed == ["insert"]
+    window.close()
+
 
 def test_legacy_shortcuts_installed_with_window_context(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
@@ -1112,6 +1339,60 @@ def test_bundled_ghostscript_detection(tmp_path, monkeypatch):
 
 # --- fast-scroll rendering: visible pages render first ---------------------
 
+def test_quick_render_keeps_full_logical_page_size(tmp_path):
+    from ui.page_view import render_page_pixmap, render_page_pixmap_quick
+
+    _app()
+    source = make_pdf(tmp_path / "quick-render-size.pdf")
+    with fitz.open(source) as document:
+        full = render_page_pixmap(document, 0, zoom=1.25, dpr=2.0)
+        quick = render_page_pixmap_quick(
+            document,
+            0,
+            zoom=1.25,
+            dpr=2.0,
+            scale=0.5,
+        )
+
+    full_size = full.deviceIndependentSize()
+    quick_size = quick.deviceIndependentSize()
+    assert abs(full_size.width() - quick_size.width()) <= 1
+    assert abs(full_size.height() - quick_size.height()) <= 1
+
+
+def test_single_canvas_recenters_existing_page_after_resize(tmp_path):
+    import time
+
+    from ui.pdf_canvas import PdfCanvas
+
+    app = _app()
+    source = make_pdf(tmp_path / "single-resize.pdf")
+    document = fitz.open(source)
+    canvas = PdfCanvas()
+    canvas.resize(700, 600)
+    canvas.show()
+    canvas.load_doc(document)
+
+    deadline = time.monotonic() + 10
+    while canvas._pending and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    old_x = canvas._page_views[0].geometry().x()
+
+    canvas.resize(1000, 600)
+    app.processEvents()
+    canvas._apply_pending_relayout()
+    expected_x = int(canvas._page_rect_in_layout(0).x())
+    assert canvas._page_views[0].geometry().x() == expected_x
+    assert expected_x > old_x
+
+    canvas.clear()
+    canvas.hide()
+    canvas.deleteLater()
+    document.close()
+    app.processEvents()
+
+
 def test_canvas_renders_visible_pages_first(tmp_path, monkeypatch):
     import time
 
@@ -1177,3 +1458,21 @@ def test_menus_are_rounded_and_translucent(tmp_path, monkeypatch):
     assert "QMenu" in css and "border-radius: 12px" in css
     assert "QComboBox QAbstractItemView" in css and "border-radius: 10px" in css
     menu.deleteLater()
+
+
+def test_spinbox_stylesheet_supplies_visible_plus_minus_svg_assets():
+    from core.resources import resource_path
+    from styles.components import global_style
+    from styles.theme import apply_theme
+
+    app = _app()
+    for mode in ("light", "dark"):
+        apply_theme(app, mode)
+        css = global_style()
+        for glyph in ("plus", "minus"):
+            asset = resource_path("App_icon", f"spin_{glyph}_{mode}.svg")
+            assert asset.exists()
+            assert asset.as_posix() in css
+        assert 'QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {' in css
+        assert 'QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {' in css
+        assert css.count('image: url("') >= 2

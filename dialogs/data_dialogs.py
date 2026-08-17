@@ -148,10 +148,8 @@ class SpreadsheetMergeDialog(ToolDialog):
         self.csv = QCheckBox("CSV (.csv)")
         self.xlsx = QCheckBox("Excel (.xlsx)")
         self.xls = QCheckBox("Legacy Excel (.xls)")
-        self.xls.setEnabled(False)
-        self.xls.setToolTip("Save legacy .xls workbooks as .xlsx before merging.")
+        self.xls.setToolTip("Read legacy Excel 97-2003 workbooks.")
         self.csv.setChecked(True)
-        self.xlsx.setChecked(True)
         format_row.addWidget(self.csv)
         format_row.addWidget(self.xlsx)
         format_row.addWidget(self.xls)
@@ -161,7 +159,7 @@ class SpreadsheetMergeDialog(ToolDialog):
         options_form = QFormLayout(options)
         self.skip_rows = QSpinBox()
         self.skip_rows.setRange(0, 100000)
-        self.skip_rows.setValue(0)  # keep every row by default
+        self.skip_rows.setValue(2)  # legacy PDFDocuEdit Pro default
         self.keywords = QLineEdit()
         self.keywords.setPlaceholderText("e.g. Total, Subtotal, Summary")
         self.first_cell = QRadioButton("Check only the first cell")
@@ -174,10 +172,12 @@ class SpreadsheetMergeDialog(ToolDialog):
         check_layout.addWidget(self.entire_row)
         self.encoding = QComboBox()
         self.encoding.addItem("Auto detect", "auto")
-        self.encoding.addItem("UTF-8", "utf-8-sig")
+        self.encoding.addItem("UTF-8", "utf-8")
         self.encoding.addItem("Traditional Chinese (Big5)", "big5")
         self.encoding.addItem("Simplified Chinese (GB18030)", "gb18030")
+        self.encoding.addItem("Western (ISO-8859-1)", "iso-8859-1")
         self.encoding.addItem("Western (Windows-1252)", "windows-1252")
+        self.encoding.addItem("ASCII", "ascii")
         options_form.addRow("Skip leading rows", self.skip_rows)
         options_form.addRow("Exclude rows starting with", self.keywords)
         options_form.addRow("Exclusion scope", check_row)
@@ -204,6 +204,8 @@ class SpreadsheetMergeDialog(ToolDialog):
             extensions.add(".csv")
         if self.xlsx.isChecked():
             extensions.add(".xlsx")
+        if self.xls.isChecked():
+            extensions.add(".xls")
         if not extensions:
             self.show_error("Select at least one file format.")
             return

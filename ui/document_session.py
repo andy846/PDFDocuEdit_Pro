@@ -23,6 +23,10 @@ class DocumentSession(QObject):
         self.undo_stack = UndoStack(self)
         self.display_path: Path | None = None
         self.page = 0
+        self.split_orientation = "horizontal"
+        self.split_sync_page = False
+        self.split_sync_zoom = False
+        self._split_syncing = False
 
         self.canvas = PdfCanvas()
         self.split_canvas: PdfCanvas | None = None
@@ -30,6 +34,8 @@ class DocumentSession(QObject):
 
         self.canvas_area = QSplitter(Qt.Orientation.Horizontal)
         self.canvas_area.addWidget(self.canvas)
+        self.canvas.pageChanged.connect(self._sync_page_from_primary)
+        self.canvas.zoomChanged.connect(self._sync_zoom_from_primary)
 
         self.tab_widget = QSplitter(Qt.Orientation.Horizontal)
         self.nav_panel.hide()
@@ -43,7 +49,10 @@ class DocumentSession(QObject):
     def set_split(self, enabled: bool) -> None:
         if enabled and self.split_canvas is None:
             self.split_canvas = PdfCanvas()
+            self.split_canvas.pageChanged.connect(self._sync_page_from_secondary)
+            self.split_canvas.zoomChanged.connect(self._sync_zoom_from_secondary)
             self.canvas_area.addWidget(self.split_canvas)
+            self.set_split_orientation(self.split_orientation)
             self.canvas_area.setStretchFactor(0, 1)
             self.canvas_area.setStretchFactor(1, 1)
             if self.engine.document is not None:
@@ -51,12 +60,96 @@ class DocumentSession(QObject):
                     self.engine.document, self.canvas.zoom_ratio
                 )
                 self.split_canvas.set_page(self.page, emit=False)
+            self.reset_split_sizes()
         elif not enabled and self.split_canvas is not None:
             canvas = self.split_canvas
             self.split_canvas = None
             canvas.clear()
             canvas.setParent(None)
             canvas.deleteLater()
+
+    def set_split_orientation(self, orientation: str) -> None:
+        self.split_orientation = (
+            "vertical" if orientation == "vertical" else "horizontal"
+        )
+        qt_orientation = (
+            Qt.Orientation.Vertical
+            if self.split_orientation == "vertical"
+            else Qt.Orientation.Horizontal
+        )
+        self.canvas_area.setOrientation(qt_orientation)
+        if self.split_canvas is not None:
+            self.reset_split_sizes()
+
+    def set_split_sync(
+        self,
+        *,
+        page: bool | None = None,
+        zoom: bool | None = None,
+    ) -> None:
+        if page is not None:
+            self.split_sync_page = bool(page)
+            if self.split_sync_page and self.split_canvas is not None:
+                self.split_canvas.set_page(self.canvas.current_page, emit=False)
+        if zoom is not None:
+            self.split_sync_zoom = bool(zoom)
+            if self.split_sync_zoom and self.split_canvas is not None:
+                self.split_canvas.set_zoom(self.canvas.zoom_ratio, emit=False)
+
+    def reset_split_sizes(self) -> None:
+        if self.split_canvas is None:
+            return
+        extent = (
+            self.canvas_area.height()
+            if self.canvas_area.orientation() == Qt.Orientation.Vertical
+            else self.canvas_area.width()
+        )
+        half = max(1, extent // 2)
+        self.canvas_area.setSizes([half, half])
+
+    def _sync_page_from_primary(self, page: int) -> None:
+        if (
+            self._split_syncing
+            or not self.split_sync_page
+            or self.split_canvas is None
+        ):
+            return
+        self._split_syncing = True
+        try:
+            self.split_canvas.set_page(page, emit=False)
+        finally:
+            self._split_syncing = False
+
+    def _sync_page_from_secondary(self, page: int) -> None:
+        if self._split_syncing or not self.split_sync_page:
+            return
+        self._split_syncing = True
+        try:
+            self.canvas.set_page(page)
+        finally:
+            self._split_syncing = False
+
+    def _sync_zoom_from_primary(self, ratio: float) -> None:
+        if (
+            self._split_syncing
+            or not self.split_sync_zoom
+            or self.split_canvas is None
+        ):
+            return
+        self._split_syncing = True
+        try:
+            self.split_canvas.set_zoom(ratio, emit=False)
+        finally:
+            self._split_syncing = False
+
+    def _sync_zoom_from_secondary(self, ratio: float) -> None:
+        if self._split_syncing or not self.split_sync_zoom:
+            return
+        self._split_syncing = True
+        try:
+            self.canvas.set_zoom(ratio)
+        finally:
+            self._split_syncing = False
 
     @property
     def has_split(self) -> bool:
@@ -83,7 +176,8 @@ class DocumentSession(QObject):
 
     def close(self) -> None:
         """Quiesce background renders and release the document."""
-        self.canvas.wait_for_renders()
+        self.canvas.clear()
         if self.split_canvas is not None:
-            self.split_canvas.wait_for_renders()
+            self.split_canvas.clear()
+        self.nav_panel.clear_document()
         self.engine.close()

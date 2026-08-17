@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QColor, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QMenu,
     QProxyStyle,
+    QStyle,
     QStyleFactory,
 )
 
@@ -52,6 +53,39 @@ class _RoundMenuStyle(QProxyStyle):
             widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             widget.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         return result
+
+    def drawPrimitive(self, element, option, painter, widget=None) -> None:
+        """Draw visible +/- glyphs for all integer and decimal spin boxes."""
+        if element in {
+            QStyle.PrimitiveElement.PE_IndicatorSpinUp,
+            QStyle.PrimitiveElement.PE_IndicatorSpinDown,
+        }:
+            enabled = bool(option.state & QStyle.StateFlag.State_Enabled)
+            group = (
+                QPalette.ColorGroup.Active
+                if enabled
+                else QPalette.ColorGroup.Disabled
+            )
+            color = option.palette.color(group, QPalette.ColorRole.ButtonText)
+            painter.save()
+            pen = QPen(color)
+            pen.setWidthF(1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            center = option.rect.center()
+            radius = max(3.0, min(option.rect.width(), option.rect.height()) * 0.28)
+            painter.drawLine(
+                QPointF(center.x() - radius, center.y()),
+                QPointF(center.x() + radius, center.y()),
+            )
+            if element == QStyle.PrimitiveElement.PE_IndicatorSpinUp:
+                painter.drawLine(
+                    QPointF(center.x(), center.y() - radius),
+                    QPointF(center.x(), center.y() + radius),
+                )
+            painter.restore()
+            return
+        super().drawPrimitive(element, option, painter, widget)
 
 
 # Owned platform style used as the proxy base: the style QApplication currently

@@ -91,6 +91,60 @@ def test_print_offsets_roundtrip_and_clamp(tmp_path: Path) -> None:
     assert settings.get_print_offsets() == (100.0, -100.0, 3.0, 4.0)
 
 
+def test_print_profile_roundtrip_and_validation(tmp_path: Path) -> None:
+    settings = SettingsManager(tmp_path / "settings.json")
+    settings.set_print_profile(
+        {
+            "printer": "Office Printer",
+            "copies": 3,
+            "collate": False,
+            "colour": 1,
+            "duplex": 2,
+            "dpi": 420,
+            "paper": "A4",
+            "orientation": 2,
+            "scale_mode": 2,
+            "scale": 125,
+            "center": False,
+            "confirm_system_dialog": True,
+            "page_mode": "custom",
+            "page_range": "2-4",
+            "offset_left": 1.0,
+            "offset_right": 5.0,
+            "offset_top": 2.0,
+            "offset_bottom": 6.0,
+        }
+    )
+    reloaded = SettingsManager(tmp_path / "settings.json")
+    profile = reloaded.get_print_profile()
+    assert profile["printer"] == "Office Printer"
+    assert profile["copies"] == 3
+    assert profile["duplex"] == 2
+    assert profile["dpi"] == 420
+    assert profile["paper"] == "A4"
+    assert profile["scale"] == 125
+    assert profile["page_mode"] == "custom"
+    assert profile["page_range"] == "2-4"
+    assert reloaded.get_print_offsets() == (1.0, 5.0, 2.0, 6.0)
+
+    reloaded.set(
+        "print_profile",
+        {
+            "copies": 5000,
+            "scale": -1,
+            "duplex": 99,
+            "dpi": 5000,
+            "page_mode": "bad",
+        },
+    )
+    safe = reloaded.get_print_profile()
+    assert safe["copies"] == 999
+    assert safe["scale"] == 10
+    assert safe["duplex"] == 3
+    assert safe["dpi"] == 600
+    assert safe["page_mode"] == "all"
+
+
 def test_non_object_legacy_config_is_ignored(tmp_path: Path, monkeypatch) -> None:
     legacy = tmp_path / "config.json"
     legacy.write_text('["not", "settings"]', encoding="utf-8")

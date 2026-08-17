@@ -9,6 +9,7 @@ APP_NAME = "PDFDocuEdit Pro"
 MAC_ICON = ROOT / "build_assets" / "icon.icns"
 _win_icon_alt = ROOT / "icon_2.ico"
 WIN_ICON = _win_icon_alt if _win_icon_alt.exists() else ROOT / "icon.ico"
+WIN_VERSION = ROOT / "installer" / "PDFDocuEditPro.version.txt"
 
 datas = [
     (str(ROOT / "splash.png"), "."),
@@ -20,7 +21,8 @@ if _win_icon_alt.exists():
     datas.append((str(_win_icon_alt), "."))
 datas.extend(
     (str(path), "App_icon")
-    for path in sorted((ROOT / "App_icon").glob("*.png"))
+    for path in sorted(ROOT.joinpath("App_icon").iterdir())
+    if path.suffix.casefold() in {".png", ".svg"}
 )
 
 # Bundle the complete Ghostscript distribution (Windows binaries ship in the
@@ -52,6 +54,7 @@ _hiddenimports = [
     "fitz",
     "pdf2docx",
     "openpyxl",
+    "xlrd",
     "PIL",
     "pyzbar.pyzbar",
     "docx",
@@ -140,6 +143,11 @@ exe = EXE(
     codesign_identity=os.environ.get("PDFDOCUEDIT_CODESIGN_IDENTITY") or None,
     entitlements_file=None,
     icon=str(WIN_ICON) if sys.platform == "win32" and WIN_ICON.exists() else None,
+    version=(
+        str(WIN_VERSION)
+        if sys.platform == "win32" and WIN_VERSION.exists()
+        else None
+    ),
 )
 
 coll = COLLECT(
@@ -157,11 +165,11 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="0.98.0",
+        version="1.1.0",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "0.98b",
-            "CFBundleVersion": "98",
+            "CFBundleShortVersionString": "1.1",
+            "CFBundleVersion": "110",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

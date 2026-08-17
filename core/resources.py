@@ -14,6 +14,13 @@ from PyQt6.QtCore import QStandardPaths
 
 APP_NAME = "PDFDocuEdit Pro"
 APP_SLUG = "PDFDocuEditPro"
+APP_VERSION = "1.1"
+COPYRIGHT_NOTICE = (
+    "Copyright © 2026 Andy Leung. All rights reserved. "
+    "PDFDocuEdit Pro is proprietary software. Unauthorized copying, "
+    "modification, distribution, or commercial use of this software "
+    "or its source code is prohibited."
+)
 
 
 def bundle_root() -> Path:

@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QFrame, QLabel, QScrollArea, QWidget
 
 from core.annotations import AnnotationOp
@@ -148,7 +148,9 @@ class PdfCanvas(QScrollArea):
         self._layout_mode = LayoutMode.SINGLE
         self._tool_mode = ToolMode.BROWSE
         self._generation = 0
-        self._pending: set[int] = set()
+        # (generation, page) tokens keep stale tasks from an earlier zoom or
+        # rapid page change from clearing/replacing a newer render.
+        self._pending: set[tuple[int, int]] = set()
         self._page_views: dict[int, PageView] = {}
         self._rows: list[tuple[int, list[int]]] = []
         self._cache = PageRenderCache()
@@ -218,7 +220,6 @@ class PdfCanvas(QScrollArea):
         self._zoom = min(self._max_zoom, max(self._min_zoom, zoom))
         self._generation += 1
         self._cache.clear()
-        self._pending.clear()
         self._clear_search_hits()
         self._selection = None
         self._teardown_views()
@@ -230,7 +231,6 @@ class PdfCanvas(QScrollArea):
         self._page = 0
         self._zoom = 1.0
         self._generation += 1
-        self._pending.clear()
         self._cache.clear()
         self._selection = None
         self._clear_search_hits()
@@ -262,7 +262,6 @@ class PdfCanvas(QScrollArea):
         """Re-render everything after the document content changed."""
         self._generation += 1
         self._cache.clear()
-        self._pending.clear()
         self._teardown_views()
         if self._doc:
             self._relayout()
@@ -333,11 +332,22 @@ class PdfCanvas(QScrollArea):
         else:
             cursor = Qt.CursorShape.ArrowCursor
         self.viewport().setCursor(cursor)
-        select, note, ink = self._overlay_modes()
+        select, note, ink = (
+            (False, False, False) if hand else self._overlay_modes()
+        )
         for view in self._page_views.values():
             view.overlay.set_select_mode(select)
             view.overlay.set_note_mode(note)
             view.overlay.set_ink_mode(ink)
+            # The PDF image is a child widget and owns the cursor while the
+            # pointer is over the page. Make it transparent during panning so
+            # viewport drag events and the open/closed hand cursor both apply
+            # inside the PDF, not only on the surrounding canvas.
+            view.overlay.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                hand,
+            )
+            view.overlay.setCursor(cursor)
 
     # --- navigation ------------------------------------------------------
     @property
@@ -354,6 +364,9 @@ class PdfCanvas(QScrollArea):
         self._page = page
         self._selection = None
         if self._layout_mode == LayoutMode.SINGLE:
+            # Only the latest page change may publish a render. Old tasks can
+            # finish safely, but their generation no longer matches.
+            self._generation += 1
             self._teardown_views()
             self._relayout()
         else:
@@ -376,7 +389,6 @@ class PdfCanvas(QScrollArea):
             return
         self._zoom = value
         self._generation += 1
-        self._pending.clear()
         self._teardown_views()
         if self._doc:
             self._relayout()
@@ -657,6 +669,13 @@ class PdfCanvas(QScrollArea):
                 view.deleteLater()
         for page_num in needed:
             if page_num in self._page_views:
+                rect = self._page_rect_in_layout(page_num)
+                self._page_views[page_num].setGeometry(
+                    int(rect.x()),
+                    int(rect.y()),
+                    max(1, int(rect.width())),
+                    int(rect.height()) + CAPTION_H,
+                )
                 continue
             page = self._doc.load_page(page_num)
             view = PageView(page_num, page, self._pager)
@@ -690,7 +709,8 @@ class PdfCanvas(QScrollArea):
         self._apply_search_hits()
 
     def _request_render(self, page_num: int, high: bool = False) -> None:
-        if not self._doc or page_num in self._pending:
+        token = (self._generation, page_num)
+        if not self._doc or token in self._pending:
             return
         dpr = self.devicePixelRatioF()
         key = (id(self._doc), page_num, round(self._zoom * dpr, 3), round(dpr, 3))
@@ -736,7 +756,7 @@ class PdfCanvas(QScrollArea):
             if view is not None:
                 view.set_pixmap(pixmap, self._doc.load_page(page_num))
             return
-        self._pending.add(page_num)
+        self._pending.add(token)
         task = _RenderTask(
             self._doc, page_num, self._zoom, dpr, key, self._generation
         )
@@ -751,7 +771,7 @@ class PdfCanvas(QScrollArea):
         key: tuple,
         pixmap: QPixmap,
     ) -> None:
-        self._pending.discard(page_num)
+        self._pending.discard((generation, page_num))
         if generation != self._generation or not self._doc:
             return
         self._cache.put(key, pixmap)
@@ -789,14 +809,13 @@ class PdfCanvas(QScrollArea):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._doc and self._layout_mode != LayoutMode.SINGLE:
+        if self._doc:
             # Coalesce continuous window-drag resizes into one relayout.
             self._resize_timer.start()
 
     def _apply_pending_relayout(self) -> None:
-        if not self._doc or self._layout_mode == LayoutMode.SINGLE:
+        if not self._doc:
             return
-        self._teardown_views()
         self._relayout()
 
     def wheelEvent(self, event) -> None:
@@ -934,34 +953,48 @@ class PdfCanvas(QScrollArea):
                     return page_num
         return None
 
-    def _update_magnifier(self, position: QPoint) -> None:
+    def _magnifier_target(
+        self, position: QPoint
+    ) -> tuple[int, QPoint, fitz.Point] | None:
+        """Map a viewport cursor position to the exact PDF sample point."""
         pager_pos = self._to_pager(position)
         if pager_pos is None:
-            return
+            return None
         page_num = self._page_at(pager_pos)
-        if page_num is None or not self._doc:
+        if page_num is None or page_num not in self._page_views:
+            return None
+        overlay = self._page_views[page_num].overlay
+        # Map directly from viewport to overlay. This includes the scroll-area
+        # offset, centred page margin and PageView layout in one Qt transform.
+        local = overlay.mapFrom(self.viewport(), position)
+        return page_num, pager_pos, overlay.widget_to_pdf(local)
+
+    def _update_magnifier(self, position: QPoint) -> None:
+        target = self._magnifier_target(position)
+        if target is None or not self._doc:
             if self._magnifier_popup:
                 self._magnifier_popup.hide()
             self._last_magnifier = None
             return
+        page_num, pager_pos, pdf_point = target
         last = self._last_magnifier
         if last is not None and last[0] == page_num:
             delta = pager_pos - last[1]
             if abs(delta.x()) < 4 and abs(delta.y()) < 4:
                 return  # cursor barely moved: reuse the current sample
         self._last_magnifier = (page_num, pager_pos)
-        overlay = self._page_views[page_num].overlay
-        local = overlay.mapFrom(self._pager, pager_pos)
-        pdf_point = overlay.widget_to_pdf(local)
         page = self._doc.load_page(page_num)
         dpr = self.devicePixelRatioF()
         half = MAGNIFIER_SIZE / (2 * MAGNIFIER_ZOOM * self._zoom)
-        clip = fitz.Rect(
+        desired_clip = fitz.Rect(
             pdf_point.x - half,
             pdf_point.y - half,
             pdf_point.x + half,
             pdf_point.y + half,
         )
+        clip = desired_clip & page.rect
+        if clip.is_empty:
+            return
         matrix = fitz.Matrix(
             MAGNIFIER_ZOOM * self._zoom * dpr,
             MAGNIFIER_ZOOM * self._zoom * dpr,
@@ -977,20 +1010,48 @@ class PdfCanvas(QScrollArea):
             pix.stride,
             QImage.Format.Format_RGB888,
         ).copy()
+        # Always build a fixed-size sample and place a clipped edge render at
+        # its true offset. Without this padding, Qt enlarged an edge sample
+        # and the cursor target visibly drifted away from the popup centre.
+        target_pixels = max(1, round(MAGNIFIER_SIZE * dpr))
+        sample = QImage(
+            target_pixels,
+            target_pixels,
+            QImage.Format.Format_RGB888,
+        )
+        sample.fill(QColor(get_colors()["page"]))
+        sample_painter = QPainter(sample)
+        offset_x = round((clip.x0 - desired_clip.x0) * matrix.a)
+        offset_y = round((clip.y0 - desired_clip.y0) * matrix.d)
+        sample_painter.drawImage(offset_x, offset_y, image)
+        crosshair = max(4, round(6 * dpr))
+        centre = target_pixels // 2
+        sample_painter.setPen(
+            QPen(QColor(get_colors()["primary"]), max(1.0, dpr))
+        )
+        sample_painter.drawLine(
+            centre - crosshair,
+            centre,
+            centre + crosshair,
+            centre,
+        )
+        sample_painter.drawLine(
+            centre,
+            centre - crosshair,
+            centre,
+            centre + crosshair,
+        )
+        sample_painter.end()
         popup = self._magnifier_popup
         if popup is None:
             popup = QLabel(self)
             popup.setObjectName("magnifierPopup")
             popup.setWindowFlags(Qt.WindowType.ToolTip)
             popup.setFixedSize(MAGNIFIER_SIZE, MAGNIFIER_SIZE)
+            popup.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._magnifier_popup = popup
-        popup.setPixmap(
-            QPixmap.fromImage(image).scaled(
-                MAGNIFIER_SIZE,
-                MAGNIFIER_SIZE,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        sample_pixmap = QPixmap.fromImage(sample)
+        sample_pixmap.setDevicePixelRatio(dpr)
+        popup.setPixmap(sample_pixmap)
         popup.move(self.viewport().mapToGlobal(position) + QPoint(16, 16))
         popup.show()

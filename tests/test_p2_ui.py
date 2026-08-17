@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QRectF
+from PyQt6.QtCore import QPoint, QRectF
 from PyQt6.QtWidgets import QApplication
 
 import core.viewer as viewer_module
@@ -129,6 +129,90 @@ def test_selection_and_search_highlight(tmp_path: Path, monkeypatch) -> None:
     view = canvas._page_views.get(0)
     assert view is not None
     assert view.overlay._search_rects == [pdf_rect]
+    window.close()
+
+
+def test_magnifier_tracks_cursor_and_keeps_edge_sample_centered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    source = make_pdf(tmp_path / "magnifier.pdf")
+    window.load_file(str(source))
+    canvas = window.workspace.canvas
+    _wait_renders(app, canvas)
+
+    canvas.set_tool_mode(ToolMode.MAGNIFIER)
+    overlay = canvas._page_views[0].overlay
+    local = QPoint(overlay.width() // 2, overlay.height() // 2)
+    viewport_position = overlay.mapTo(canvas.viewport(), local)
+    target = canvas._magnifier_target(viewport_position)
+    assert target is not None
+    page_num, _pager_position, pdf_point = target
+    expected = overlay.widget_to_pdf(local)
+    assert page_num == 0
+    assert abs(pdf_point.x - expected.x) < 0.01
+    assert abs(pdf_point.y - expected.y) < 0.01
+
+    canvas._update_magnifier(viewport_position)
+    assert canvas._magnifier_popup is not None
+    pixmap = canvas._magnifier_popup.pixmap()
+    assert pixmap is not None
+    assert abs(pixmap.deviceIndependentSize().width() - 200) <= 1
+    assert abs(pixmap.deviceIndependentSize().height() - 200) <= 1
+
+    # A sample next to the page edge remains the same size instead of being
+    # stretched, which keeps its target under the popup centre crosshair.
+    canvas._update_magnifier(
+        overlay.mapTo(canvas.viewport(), QPoint(1, 1))
+    )
+    edge_pixmap = canvas._magnifier_popup.pixmap()
+    assert edge_pixmap is not None
+    assert abs(edge_pixmap.deviceIndependentSize().width() - 200) <= 1
+    assert abs(edge_pixmap.deviceIndependentSize().height() - 200) <= 1
+    window.close()
+
+
+def test_command_bar_canvas_buttons_switch_and_sync_modes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from PyQt6.QtCore import Qt
+
+    window, app = _window(tmp_path, monkeypatch)
+    buttons = window.command_bar._canvas_buttons
+    assert list(buttons) == ["browse", "hand", "select", "magnifier"]
+    assert all(not button.isEnabled() for button in buttons.values())
+
+    source = make_pdf(tmp_path / "canvas-buttons.pdf")
+    window.load_file(str(source))
+    app.processEvents()
+    assert all(button.isEnabled() for button in buttons.values())
+    assert buttons["browse"].isChecked()
+
+    buttons["hand"].click()
+    assert window.workspace.canvas.tool_mode == ToolMode.HAND
+    assert buttons["hand"].isChecked()
+    overlay = window.workspace.canvas._page_views[0].overlay
+    assert overlay.cursor().shape() == Qt.CursorShape.OpenHandCursor
+    assert overlay.testAttribute(
+        Qt.WidgetAttribute.WA_TransparentForMouseEvents
+    )
+    window.workspace.canvas._hand_anchor = QPoint(10, 10)
+    window.workspace.canvas._refresh_cursors()
+    assert overlay.cursor().shape() == Qt.CursorShape.ClosedHandCursor
+    window.workspace.canvas._hand_anchor = None
+    window.workspace.canvas._refresh_cursors()
+    hand_action = next(
+        action for action in window._tool_actions if action.data() == "hand"
+    )
+    assert hand_action.isChecked()
+
+    window._set_canvas_tool("magnifier")
+    assert window.workspace.canvas.tool_mode == ToolMode.MAGNIFIER
+    assert buttons["magnifier"].isChecked()
+    assert sum(button.isChecked() for button in buttons.values()) == 1
+    assert not overlay.testAttribute(
+        Qt.WidgetAttribute.WA_TransparentForMouseEvents
+    )
     window.close()
 
 

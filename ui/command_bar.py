@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QToolButton, QWidget
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QToolButton,
+    QWidget,
+)
 
 from styles.tokens import D, S
 
@@ -25,6 +34,8 @@ class CommandBar(QWidget):
     preferencesClicked = pyqtSignal()
     aboutClicked = pyqtSignal()
     themeChanged = pyqtSignal(str)
+    canvasToolChanged = pyqtSignal(str)
+    commandRequested = pyqtSignal(str)
 
     def __init__(self, theme: str = "system", parent=None):
         super().__init__(parent)
@@ -70,6 +81,33 @@ class CommandBar(QWidget):
         layout.addWidget(self._undo)
         layout.addWidget(self._redo)
 
+        canvas_divider = QFrame()
+        canvas_divider.setObjectName("commandDivider")
+        canvas_divider.setFrameShape(QFrame.Shape.VLine)
+        layout.addWidget(canvas_divider)
+        self._canvas_group = QButtonGroup(self)
+        self._canvas_group.setExclusive(True)
+        self._canvas_buttons: dict[str, MotionIconButton] = {}
+        for mode, icon_name, tooltip in (
+            ("browse", "mouse-pointer", "Browse canvas"),
+            ("hand", "hand", "Hand tool — drag to pan"),
+            ("select", "text-cursor", "Select text"),
+            ("magnifier", "search", "Magnifier"),
+        ):
+            button = self._button(
+                icon_name,
+                tooltip,
+                lambda _checked=False, value=mode: (
+                    self.canvasToolChanged.emit(value)
+                ),
+            )
+            button.setCheckable(True)
+            button.setProperty("canvasTool", mode)
+            self._canvas_group.addButton(button)
+            self._canvas_buttons[mode] = button
+            layout.addWidget(button)
+        self._canvas_buttons["browse"].setChecked(True)
+
         layout.addStretch(1)
         self._work = QLabel("●  Ready")
         self._work.setObjectName("workStatus")
@@ -99,6 +137,79 @@ class CommandBar(QWidget):
 
         self._more = MotionIconButton("more", "More commands", D.ICON_MD)
         menu = QMenu(self._more)
+
+        def add_action(target: QMenu, label: str, callback) -> QAction:
+            action = QAction(label, self)
+            action.triggered.connect(callback)
+            target.addAction(action)
+            return action
+
+        file_menu = menu.addMenu("File")
+        add_action(file_menu, "Open…", self.openClicked.emit)
+        add_action(file_menu, "Save", self.saveClicked.emit)
+        add_action(file_menu, "Save As…", self.saveAsClicked.emit)
+        add_action(file_menu, "Print…", self.printClicked.emit)
+
+        view_menu = menu.addMenu("View")
+        add_action(
+            view_menu,
+            "Page Thumbnails",
+            lambda _checked=False: self.commandRequested.emit("toggle_thumbnails"),
+        )
+        add_action(
+            view_menu,
+            "Split View",
+            lambda _checked=False: self.commandRequested.emit("view_split"),
+        )
+        add_action(view_menu, "Search Document", self.searchClicked.emit)
+        canvas_menu = view_menu.addMenu("Canvas Tool")
+        for mode, label in (
+            ("browse", "Browse"),
+            ("hand", "Hand"),
+            ("select", "Select Text"),
+            ("magnifier", "Magnifier"),
+        ):
+            add_action(
+                canvas_menu,
+                label,
+                lambda _checked=False, value=mode: (
+                    self.canvasToolChanged.emit(value)
+                ),
+            )
+
+        page_menu = menu.addMenu("Page")
+        for label, key in (
+            ("Insert Pages…", "insert"),
+            ("Delete Pages…", "delete"),
+            ("Extract Pages…", "extract"),
+            ("Reorder Pages…", "order"),
+            ("Split PDF…", "split"),
+            ("Rotate Pages…", "rotate"),
+        ):
+            add_action(
+                page_menu,
+                label,
+                lambda _checked=False, value=key: (
+                    self.commandRequested.emit(value)
+                ),
+            )
+
+        tools_menu = menu.addMenu("Tools")
+        for label, key in (
+            ("Merge PDFs…", "merge"),
+            ("Merge CSV / Excel…", "merge_sheet"),
+            ("Batch Print…", "batch_print"),
+            ("Find and Open PDF…", "find_file"),
+            ("Diagnostics…", "diagnostics"),
+        ):
+            add_action(
+                tools_menu,
+                label,
+                lambda _checked=False, value=key: (
+                    self.commandRequested.emit(value)
+                ),
+            )
+        menu.addSeparator()
         preferences = QAction("Preferences…", self)
         preferences.triggered.connect(self.preferencesClicked.emit)
         about = QAction("About PDFDocuEdit Pro", self)
@@ -114,12 +225,22 @@ class CommandBar(QWidget):
 
     def _button(self, icon_name: str, tooltip: str, signal) -> MotionIconButton:
         button = MotionIconButton(icon_name, tooltip, D.ICON_MD)
-        button.clicked.connect(signal.emit)
+        button.clicked.connect(
+            signal.emit if hasattr(signal, "emit") else signal
+        )
         return button
 
     def set_document_available(self, available: bool) -> None:
         for button in (self._save, self._save_as, self._search, self._print):
             button.setEnabled(available)
+        for button in self._canvas_buttons.values():
+            button.setEnabled(available)
+
+    def set_canvas_tool(self, mode: str) -> None:
+        self._canvas_group.setExclusive(False)
+        for key, button in self._canvas_buttons.items():
+            button.setChecked(key == mode)
+        self._canvas_group.setExclusive(True)
 
     def set_undo_redo_enabled(self, can_undo: bool, can_redo: bool) -> None:
         self._undo.setEnabled(can_undo)
@@ -142,6 +263,7 @@ class CommandBar(QWidget):
             self._print,
             self._undo,
             self._redo,
+            *self._canvas_buttons.values(),
             self._diagnostics,
             self._more,
         ):
@@ -157,6 +279,7 @@ class CommandBar(QWidget):
             self._print,
             self._undo,
             self._redo,
+            *self._canvas_buttons.values(),
             self._diagnostics,
             self._more,
         ):

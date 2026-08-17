@@ -184,6 +184,27 @@ def test_split_view_same_document(tmp_path: Path, monkeypatch) -> None:
 
     session.split_canvas.set_page(1)
     assert session.canvas.current_page == 0  # independent pages
+
+    window._set_split_orientation("vertical")
+    assert session.canvas_area.orientation() == Qt.Orientation.Vertical
+    assert session.split_orientation == "vertical"
+    assert window.settings.get("split_orientation") == "vertical"
+
+    window._set_split_sync_page(True)
+    session.split_canvas.set_page(2)
+    assert session.canvas.current_page == 2
+    assert window.settings.get("split_sync_page") is True
+
+    window._set_split_sync_zoom(True)
+    session.split_canvas.set_zoom(1.5)
+    assert session.canvas.zoom_ratio == 1.5
+    assert window.settings.get("split_sync_zoom") is True
+
+    window._reset_split_sizes()
+    sizes = session.canvas_area.sizes()
+    assert len(sizes) == 2
+    assert abs(sizes[0] - sizes[1]) <= 1
+
     window._toggle_split_view()
     assert not session.has_split
     window.close()

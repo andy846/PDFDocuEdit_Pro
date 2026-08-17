@@ -728,7 +728,12 @@ def create_page_count_report(
         try:
             with fitz.open(path) as doc:
                 first_size = doc.load_page(0).rect if doc.page_count else None
-                paper = f"{first_size.width:.1f} × {first_size.height:.1f} pt" if first_size else "—"
+                paper = (
+                    f"{first_size.width * 25.4 / 72:.1f} × "
+                    f"{first_size.height * 25.4 / 72:.1f} mm"
+                    if first_size
+                    else "—"
+                )
                 rows.append((path.name, doc.page_count, path.stat().st_size, paper, str(path)))
         except Exception:
             rows.append((path.name, "Error", path.stat().st_size, "—", str(path)))
@@ -934,6 +939,69 @@ def merge_spreadsheets(
         raise ToolError(capability.reason)
     from openpyxl import Workbook, load_workbook
 
+    def csv_value(value: str) -> object:
+        text = value.strip()
+        if not text:
+            return None
+        # Match pandas' useful numeric inference from the legacy tool while
+        # preserving identifiers such as 00123 as text.
+        if re.fullmatch(r"[+-]?(?:0|[1-9][0-9]*)", text):
+            unsigned = text.lstrip("+-")
+            if len(unsigned) == 1 or not unsigned.startswith("0"):
+                try:
+                    return int(text)
+                except ValueError:
+                    pass
+        if re.fullmatch(
+            r"[+-]?(?:[0-9]+[.][0-9]*|[.][0-9]+|"
+            r"[0-9]+[eE][+-]?[0-9]+|"
+            r"[0-9]+[.][0-9]*[eE][+-]?[0-9]+)",
+            text,
+        ):
+            try:
+                return float(text)
+            except ValueError:
+                pass
+        return value
+
+    def blank_row(row: Iterable[object]) -> bool:
+        return all(value is None or str(value).strip() == "" for value in row)
+
+    def read_xls(path: Path) -> list[list[object]]:
+        try:
+            import xlrd
+        except ImportError as exc:
+            raise ToolError(
+                "Legacy .xls support requires the xlrd package."
+            ) from exc
+        workbook = xlrd.open_workbook(str(path), on_demand=True)
+        try:
+            sheet = workbook.sheet_by_index(0)
+            rows: list[list[object]] = []
+            for row_index in range(sheet.nrows):
+                values: list[object] = []
+                for column_index in range(sheet.ncols):
+                    cell = sheet.cell(row_index, column_index)
+                    value: object = cell.value
+                    if cell.ctype in {xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK}:
+                        value = None
+                    elif cell.ctype == xlrd.XL_CELL_NUMBER:
+                        number = float(cell.value)
+                        value = int(number) if number.is_integer() else number
+                    elif cell.ctype == xlrd.XL_CELL_DATE:
+                        value = xlrd.xldate.xldate_as_datetime(
+                            cell.value, workbook.datemode
+                        )
+                    elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                        value = bool(cell.value)
+                    elif cell.ctype == xlrd.XL_CELL_ERROR:
+                        value = None
+                    values.append(value)
+                rows.append(values)
+            return rows
+        finally:
+            workbook.release_resources()
+
     def unique_headers(values: Iterable[object]) -> list[str]:
         result: list[str] = []
         counts: dict[str, int] = {}
@@ -966,7 +1034,10 @@ def merge_spreadsheets(
                     break
                 except UnicodeDecodeError:
                     continue
-            rows = list(csv.reader((decoded or "").splitlines()))
+            rows = [
+                [csv_value(cell) for cell in row]
+                for row in csv.reader((decoded or "").splitlines())
+            ]
         elif path.suffix.lower() == ".xlsx":
             workbook = load_workbook(path, read_only=True, data_only=True)
             try:
@@ -974,14 +1045,19 @@ def merge_spreadsheets(
             finally:
                 workbook.close()
         elif path.suffix.lower() == ".xls":
-            raise ToolError("Legacy .xls files are not supported. Save the workbook as .xlsx first.")
+            rows = read_xls(path)
         else:
             raise ToolError(f"Unsupported spreadsheet format: {path.suffix or path.name}")
         rows = rows[max(0, int(skip_rows)) :]
+        rows = [list(row) for row in rows if not blank_row(row)]
         if rows:
             data_rows: list[list[object]] = []
             for row in rows[1:]:
-                cells = [str(row[0] if row else "")] if first_cell_only else [str(cell) for cell in row]
+                cells = (
+                    [str(row[0] if row and row[0] is not None else "")]
+                    if first_cell_only
+                    else [str(cell) if cell is not None else "" for cell in row]
+                )
                 if keywords and any(
                     cell.strip().casefold().startswith(keyword)
                     for cell in cells
@@ -1006,10 +1082,12 @@ def merge_spreadsheets(
     for source_headers, rows in tables:
         positions = {header: index for index, header in enumerate(source_headers)}
         for row in rows:
-            combined.append([
+            merged_row = [
                 row[position] if (position := positions.get(header)) is not None and position < len(row) else None
                 for header in headers
-            ])
+            ]
+            if not blank_row(merged_row):
+                combined.append(merged_row)
 
     if target.suffix.lower() == ".csv":
         with target.open("w", newline="", encoding="utf-8-sig") as handle:
@@ -1019,7 +1097,7 @@ def merge_spreadsheets(
     else:
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "Merged Data"
+        sheet.title = "sheet1"
         sheet.append(headers)
         for row in combined:
             sheet.append(row)

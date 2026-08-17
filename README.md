@@ -1,59 +1,63 @@
-# PDFDocuEdit Pro
+# PDFDocuEdit Pro V1.1
 
-PDFDocuEdit Pro is a PyQt6 and PyMuPDF desktop workspace for viewing, editing,
-converting and processing PDF documents on Windows and macOS.
+PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
 
-## Downloads
+## 主要功能
 
-The latest Windows build is published on the
-[Releases page](https://github.com/andy846/PDFDocuEdit_Pro/releases):
+### PDF 閱覽與導覽
 
-- **Installer (安裝版):** `PDFDocuEdit-Pro-1.0-Windows-x64-Setup.exe` —
-  Inno Setup installer with Start-menu and desktop shortcuts.
-- **Portable (免安裝版):** `PDFDocuEdit-Pro-1.0-Windows-x64-Portable.zip` —
-  extract anywhere and run `PDFDocuEdit Pro\PDFDocuEdit Pro.exe`; no installation
-  required and settings stay next to the executable.
+- 單頁、連續頁、雙頁與封面雙頁版面
+- 可延遲載入的頁面縮圖、快速跳頁、縮放及頁面尺寸（mm）顯示
+- 水平或垂直 Split View，可同步頁碼與縮放比例
+- Browse、Hand、Select Text 及 Magnifier 四種 Canvas 模式，可直接從主工具列切換
+- 書籤、目錄、文件資訊及快捷鍵指南
 
-## Development
+### 頁面整理
 
-Use Python 3.11–3.13 (3.12 recommended). Platform-specific Qt and native packages must be installed in
-separate environments; do not reuse a Windows environment on macOS or mix Intel
-and Apple Silicon packages.
+- 插入、刪除、擷取、分割、旋轉及重新排序頁面
+- 規則式頁碼範圍處理及縮圖式頁面管理
+- 合併 PDF、疊加文件、壓縮與批次處理
 
-```bash
-python3.12 -m venv .venv-pyqt6
-.venv-pyqt6/bin/python -m pip install -r requirements-dev.txt
-.venv-pyqt6/bin/python scripts/verify_source.py
-.venv-pyqt6/bin/python -m pytest
-.venv-pyqt6/bin/python main.py
-```
+### 標註與內容工具
 
-Optional features are enabled automatically when their runtime is present:
-LibreOffice or Microsoft Office for Office conversion, Ghostscript for
-PostScript, and zbar for barcode scanning.
+- 文字選取、螢光標示、繪圖、形狀及註解
+- 區域文字擷取、條碼掃描、文件分析及診斷
+- 深度搜尋及 Find/Open 文件搜尋
 
-## Detailed workflows
+### 列印
 
-The PyQt6 interface retains the full option-page workflows from the original
-application rather than reducing tools to one-click actions. This includes
-rule-based page extraction/deletion/splitting, three-mode page insertion,
-thumbnail organization, document analysis, single and batch print profiles,
-batch Office/TXT/PostScript conversion, compression, overlay, region text
-extraction, CSV/Excel merge rules, barcode batch scanning and PDF security
-permissions. Dialog geometry is remembered per tool and long-running batch
-operations report progress with cooperative cancellation.
+- 單一及批次列印
+- 頁面範圍、紙張、方向、彩色、雙面、份數、縮放、置中及偏移設定
+- Draft 150、Standard 300、High 600 DPI 及 72–600 DPI 自訂列印質素
+- 自動記住上一次列印設定
 
-## Release builds
+### 轉換與資料工具
 
-Run `python scripts/build.py` in a clean Python 3.11–3.13 environment on each target:
+- PDF、Office、文字、圖片及 PostScript 工作流程（視系統可用元件而定）
+- Merge CSV / Excel 支援 `.csv`、`.xlsx` 及 Legacy Excel `.xls`
+- 合併工作表固定命名為 `sheet1`，並保留數字型別、移除空白資料列
 
-- Windows 10/11 x64 produces an Inno Setup installer.
-- Apple Silicon macOS produces an arm64 App and DMG.
-- Intel macOS produces an x86_64 App and DMG.
+### 安全與私隱
 
-macOS architecture packages are intentionally built separately. Signing and
-notarization remain optional for internal builds. Release CI may set
-`PDFDOCUEDIT_CODESIGN_IDENTITY` and `PDFDOCUEDIT_NOTARY_PROFILE`. Windows CI
-may set `PDFDOCUEDIT_SIGNTOOL`, `PDFDOCUEDIT_CERT_SHA1`, and optionally
-`PDFDOCUEDIT_TIMESTAMP_URL`. With no variables set, the pipeline produces the
-unsigned/internal installer described by the release plan.
+- PDF 密碼及權限設定
+- 本機桌面處理；文件不會因一般編輯流程自動上傳至雲端
+
+## 支援格式
+
+- 文件：PDF、PS、EPS、TXT
+- 試算表：CSV、XLS、XLSX
+- Office 轉換能力取決於 Microsoft Office 或 LibreOffice
+- PostScript 轉換使用隨程式提供或系統安裝的 Ghostscript
+
+## 下載
+
+Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
+
+- 安裝版：`PDFDocuEdit-Pro-1.1-Windows-x64-Setup.exe`
+- 免安裝版：`PDFDocuEdit-Pro-1.1-Windows-x64-Portable.zip`
+
+開發、測試及封裝可使用專案內的 `scripts/build.py` 建置腳本。
+
+## 版權
+
+Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietary software. Unauthorized copying, modification, distribution, or commercial use of this software or its source code is prohibited.

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .theme import get_colors
+from core.resources import resource_path
+
+from .theme import get_colors, is_dark
 from .tokens import D, F, R, S
 
 
@@ -17,6 +19,9 @@ def _rgba(hex_color: str, alpha: int) -> str:
 
 def global_style() -> str:
     c = get_colors()
+    spin_theme = "dark" if is_dark() else "light"
+    spin_plus = resource_path("App_icon", f"spin_plus_{spin_theme}.svg").as_posix()
+    spin_minus = resource_path("App_icon", f"spin_minus_{spin_theme}.svg").as_posix()
     return f"""
         QMainWindow, QDialog, QWidget {{
             color: {c['text_primary']};
@@ -66,7 +71,7 @@ def global_style() -> str:
             background: {_rgba(c['bg_surface'], 245)};
             border: 1px solid {c['border']};
             border-radius: 12px;
-            margin: 0 {S.SM}px {S.SM}px {S.SM}px;
+            margin: {S.XS}px {S.SM}px {S.XS}px {S.SM}px;
         }}
         QFrame#commandDivider {{
             color: {c['border']};
@@ -131,10 +136,10 @@ def global_style() -> str:
             max-height: 28px;
         }}
         QWidget#statusBar QToolButton#commandButton {{
-            min-width: 28px;
-            max-width: 28px;
-            min-height: 28px;
-            max-height: 28px;
+            min-width: 32px;
+            max-width: 32px;
+            min-height: 32px;
+            max-height: 32px;
         }}
         QWidget#statusBar QComboBox#layoutSelector,
         QWidget#statusBar QToolButton#fitButton,
@@ -631,6 +636,11 @@ def global_style() -> str:
             background: {c['primary_glow']};
             border-color: {c['primary']};
         }}
+        QToolButton#commandButton:checked {{
+            color: {c['primary']};
+            background: {c['primary_soft']};
+            border-color: {c['primary']};
+        }}
         QToolButton#commandButton::menu-indicator {{ image: none; width: 0; height: 0; }}
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {{
             min-height: {D.CONTROL_H}px;
@@ -644,6 +654,39 @@ def global_style() -> str:
         QTextEdit {{ padding: {S.SM}px; }}
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus {{
             border: 1px solid {c['primary']};
+        }}
+        /* Give spin-box +/- controls a generous, reliable hit target. Use
+           explicit SVG glyphs: Qt's stylesheet style otherwise consumes the
+           arrow primitive before the platform/proxy style can paint it. */
+        QSpinBox::up-button, QSpinBox::down-button,
+        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+            subcontrol-origin: border;
+            width: 28px;
+            border-left: 1px solid {c['border_strong']};
+            background: {c['bg_sidebar']};
+        }}
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{
+            subcontrol-position: top right;
+            border-top-right-radius: {R.SM}px;
+        }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{
+            subcontrol-position: bottom right;
+            border-bottom-right-radius: {R.SM}px;
+        }}
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+        QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
+            background: {c['primary_soft']};
+        }}
+        QSpinBox::up-arrow, QSpinBox::down-arrow,
+        QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow {{
+            width: 14px;
+            height: 14px;
+        }}
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+            image: url("{spin_plus}");
+        }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+            image: url("{spin_minus}");
         }}
         /* Combo boxes embed a QLineEdit; the global 34px min-height would
            clip its text inside compact selectors (height overflow). */

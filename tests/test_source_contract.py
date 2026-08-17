@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from core.resources import APP_VERSION, COPYRIGHT_NOTICE
+
 ROOT = Path(__file__).resolve().parent.parent
 ACTIVE = [
     ROOT / "main.py",
@@ -43,6 +45,7 @@ def test_release_inputs_exist() -> None:
     required = (
         "PDFDocuEdit Pro.spec",
         "installer/PDFDocuEditPro.iss",
+        "installer/PDFDocuEditPro.version.txt",
         "requirements-base.txt",
         "requirements-windows.txt",
         "requirements-macos.txt",
@@ -50,3 +53,23 @@ def test_release_inputs_exist() -> None:
         "THIRD_PARTY_NOTICES.md",
     )
     assert not [value for value in required if not (ROOT / value).exists()]
+
+
+def test_release_metadata_is_v1_1() -> None:
+    assert APP_VERSION == "1.1"
+    assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
+    assert 'version = "1.1.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "1.1"' in (
+        ROOT / "installer/PDFDocuEditPro.iss"
+    ).read_text(encoding="utf-8")
+    assert 'VERSION = "1.1"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(1, 1, 0, 0)" in (
+        ROOT / "installer/PDFDocuEditPro.version.txt"
+    ).read_text(encoding="utf-8")
+
+
+def test_windows_icon_uses_high_dpi_master_sizes() -> None:
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert "GetDpiForWindow" in source
+    assert "round(32 * dpi / 96)" in source
+    assert "128, 256" in source

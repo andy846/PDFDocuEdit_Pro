@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialogButtonBox, QHeaderView, QLineEdit, QTableWidgetItem
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QHeaderView,
+    QLineEdit,
+    QTableWidgetItem,
+)
 
 from core.commands import Command, filter_commands
 
@@ -13,7 +19,26 @@ from .base import SortableTableWidget, ToolDialog
 class ShortcutsDialog(ToolDialog):
     def __init__(self, commands: list[Command], parent=None):
         super().__init__("Keyboard Shortcuts", "shortcuts", parent)
-        self.setMinimumSize(560, 520)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            target_width = min(
+                area.width() - 24,
+                max(self.width(), min(1180, round(area.width() * 0.9))),
+            )
+            target_height = min(
+                area.height() - 24,
+                max(self.height(), min(840, round(area.height() * 0.9))),
+            )
+            self.setMinimumSize(
+                min(840, target_width),
+                min(600, target_height),
+            )
+            self.resize(target_width, target_height)
+        else:
+            self.setMinimumSize(840, 600)
+            self.resize(1100, 780)
         self._commands = list(commands)
 
         self._filter = QLineEdit()
@@ -23,6 +48,7 @@ class ShortcutsDialog(ToolDialog):
         self._root.addWidget(self._filter)
 
         self.table = SortableTableWidget(0, 3)
+        self.table.setWordWrap(False)
         self.table.setHorizontalHeaderLabels(["Command", "Shortcut", "Section"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)

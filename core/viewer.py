@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QPoint, QSizeF, Qt, QThreadPool
+from PyQt6.QtCore import QPoint, QSizeF, Qt, QThreadPool, QTimer
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -66,6 +66,7 @@ from core.pdf_engine import (
     parse_page_range,
     search_pdf_file,
 )
+from core.resources import APP_VERSION, COPYRIGHT_NOTICE
 from core.settings import SettingsManager
 from core.tasks import FunctionTask
 from core.tools import (
@@ -119,7 +120,25 @@ from ui.side_panel import SHORTCUT_HINTS, SidePanel
 from ui.task_bar import TaskBar
 from ui.workspace import DocumentWorkspace
 
-APP_VERSION = "1.0"
+
+def _prepare_pdf_engine(
+    path: str,
+    password: str | None = None,
+) -> tuple[str, PdfEngine | str | None]:
+    """Prepare an independent engine without blocking the GUI thread."""
+    engine = PdfEngine()
+    try:
+        engine.open(path, password)
+    except PdfPasswordRequired:
+        engine.close()
+        return ("password_required", None)
+    except PdfInvalidPassword:
+        engine.close()
+        return ("invalid_password", None)
+    except Exception as exc:
+        engine.close()
+        return ("error", str(exc) or exc.__class__.__name__)
+    return ("ok", engine)
 
 
 class PDFViewer(QMainWindow):
@@ -135,12 +154,14 @@ class PDFViewer(QMainWindow):
         self._task_had_error = False
         self._closing = False
         self._printing = False
+        self._queued_open_paths: list[tuple[str, str | None]] = []
+        self._open_queue_scheduled = False
         self._thread_pool = QThreadPool.globalInstance()
         self._init_ui()
         self._restore_window_state()
         self._apply_theme(self.settings.get_theme())
         if initial_path:
-            self.load_file(initial_path)
+            self.queue_open_files([initial_path])
 
     # --- compatibility accessors (current session) ----------------------
     @property
@@ -360,6 +381,47 @@ class PDFViewer(QMainWindow):
         self.split_action.setCheckable(True)
         self.split_action.triggered.connect(self._toggle_split_view)
         view_menu.addAction(self.split_action)
+        split_options = view_menu.addMenu("Split View Options")
+        self.split_orientation_group = QActionGroup(self)
+        self.split_orientation_group.setExclusive(True)
+        self._split_orientation_actions: list[QAction] = []
+        for label, value in (
+            ("Side by side", "horizontal"),
+            ("Stacked", "vertical"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(value)
+            action.setChecked(
+                value
+                == str(self.settings.get("split_orientation", "horizontal"))
+            )
+            action.triggered.connect(
+                lambda _checked=False, orientation=value: (
+                    self._set_split_orientation(orientation)
+                )
+            )
+            self.split_orientation_group.addAction(action)
+            self._split_orientation_actions.append(action)
+            split_options.addAction(action)
+        self.split_sync_page_action = QAction("Synchronise page", self)
+        self.split_sync_page_action.setCheckable(True)
+        self.split_sync_page_action.setChecked(
+            bool(self.settings.get("split_sync_page", False))
+        )
+        self.split_sync_page_action.triggered.connect(self._set_split_sync_page)
+        split_options.addAction(self.split_sync_page_action)
+        self.split_sync_zoom_action = QAction("Synchronise zoom", self)
+        self.split_sync_zoom_action.setCheckable(True)
+        self.split_sync_zoom_action.setChecked(
+            bool(self.settings.get("split_sync_zoom", False))
+        )
+        self.split_sync_zoom_action.triggered.connect(self._set_split_sync_zoom)
+        split_options.addAction(self.split_sync_zoom_action)
+        split_options.addSeparator()
+        self.split_reset_action = QAction("Reset panes to 50/50", self)
+        self.split_reset_action.triggered.connect(self._reset_split_sizes)
+        split_options.addAction(self.split_reset_action)
 
         self.zoom_in_action = self._action("Zoom In", "Ctrl+=", self._canvas_call("zoom_in"))
         self.zoom_out_action = self._action("Zoom Out", "Ctrl+-", self._canvas_call("zoom_out"))
@@ -404,6 +466,8 @@ class PDFViewer(QMainWindow):
         command.preferencesClicked.connect(self.show_preferences)
         command.aboutClicked.connect(self.show_about)
         command.themeChanged.connect(self._theme_changed)
+        command.canvasToolChanged.connect(self._set_canvas_tool)
+        command.commandRequested.connect(self._command_bar_requested)
         self.side_panel.toolRequested.connect(self._tool_requested)
         self.side_panel.collapsedChanged.connect(
             lambda value: self.settings.set("left_panel_collapsed", value)
@@ -449,6 +513,13 @@ class PDFViewer(QMainWindow):
         session = DocumentSession(
             animations_enabled=bool(self.settings.get("animations_enabled", True)),
             parent=self,
+        )
+        session.set_split_orientation(
+            str(self.settings.get("split_orientation", "horizontal"))
+        )
+        session.set_split_sync(
+            page=bool(self.settings.get("split_sync_page", False)),
+            zoom=bool(self.settings.get("split_sync_zoom", False)),
         )
         self._sessions.append(session)
         self.workspace.create_tab(session)
@@ -594,7 +665,9 @@ class PDFViewer(QMainWindow):
     def _on_tab_changed(self, session: DocumentSession) -> None:
         self._session = session
         self._last_context_key = None
+        self._set_canvas_tool(session.canvas.tool_mode.value)
         self.split_action.setChecked(session.has_split)
+        self._sync_split_actions(session)
         for action in self._layout_actions:
             if action.data() == session.canvas.layout_mode.value:
                 action.setChecked(True)
@@ -656,6 +729,118 @@ class PDFViewer(QMainWindow):
         for path in rest:
             self.open_in_new_tab(path)
 
+    def queue_open_files(self, paths: list[str]) -> None:
+        """Open shell/file-association requests after the window can paint.
+
+        Large PDFs are copied to an editable working file by PdfEngine.open.
+        Running that work inside the constructor kept the splash on screen and
+        made Windows report the app as loading. The zero-delay handoff lets
+        the native main window and loading status become visible first.
+        """
+        self._queued_open_paths.extend((path, None) for path in paths if path)
+        if not self._queued_open_paths or self._open_queue_scheduled:
+            return
+        self._open_queue_scheduled = True
+        self.task_bar.start("Opening document", cancellable=False)
+        self.command_bar.set_work_status("Opening document")
+        self.bottom_bar.set_status("Opening document")
+        QTimer.singleShot(0, self._drain_open_queue)
+
+    def _drain_open_queue(self) -> None:
+        if not self._queued_open_paths:
+            self._open_queue_scheduled = False
+            return
+        if self._tasks:
+            QTimer.singleShot(100, self._drain_open_queue)
+            return
+        path, password = self._queued_open_paths.pop(0)
+        source = Path(path).expanduser().resolve()
+        if source.suffix.casefold() != ".pdf":
+            current = self._session
+            if current is not None and not current.engine.is_loaded():
+                self.load_file(str(source))
+            else:
+                self.open_in_new_tab(str(source))
+            self._queued_open_finished()
+            return
+        current = self._session
+        session = (
+            current
+            if current is not None
+            and not current.engine.is_loaded()
+            and not current.engine.is_modified
+            else self._create_session()
+        )
+        self.workspace.set_current_session(session)
+        self._session = session
+        session.canvas.wait_for_renders()
+        self._start_queued_pdf_open(session, str(source), password)
+
+    def _start_queued_pdf_open(
+        self,
+        session: DocumentSession,
+        path: str,
+        password: str | None,
+    ) -> None:
+        display_path = Path(path)
+        self._run_task(
+            "Opening document",
+            _prepare_pdf_engine,
+            path,
+            password,
+            on_result=lambda result: self._queued_pdf_prepared(
+                session,
+                display_path,
+                result,
+            ),
+            on_finished=self._queued_open_finished,
+        )
+
+    def _queued_pdf_prepared(
+        self,
+        session: DocumentSession,
+        display_path: Path,
+        result: tuple[str, PdfEngine | str | None],
+    ) -> None:
+        status, value = result
+        if status in {"password_required", "invalid_password"}:
+            if status == "invalid_password":
+                self.info_bar.show_message("The password is not valid.", "error")
+            password, accepted = ask_password(
+                self,
+                "Encrypted PDF",
+                "Password (ASCII characters only)",
+            )
+            if accepted:
+                self._queued_open_paths.insert(
+                    0,
+                    (str(display_path), password),
+                )
+            return
+        if status == "error":
+            self._error("Open failed", str(value))
+            return
+        opened = value
+        if not isinstance(opened, PdfEngine):
+            self._error("Open failed", "The PDF engine did not return a document.")
+            return
+        if self._closing or session not in self._sessions:
+            opened.close()
+            return
+        self.workspace.set_current_session(session)
+        self._session = session
+        self._replace_session_engine(session, opened)
+        self._complete_pdf_open(session, display_path)
+
+    def _queued_open_finished(self) -> None:
+        if self._closing:
+            self._open_queue_scheduled = False
+            return
+        if self._queued_open_paths:
+            QTimer.singleShot(0, self._drain_open_queue)
+        else:
+            self._open_queue_scheduled = False
+
     def _toggle_split_view(self) -> None:
         session = self._session
         if not session or not session.engine.is_loaded():
@@ -663,10 +848,43 @@ class PDFViewer(QMainWindow):
             return
         session.set_split(not session.has_split)
         self.split_action.setChecked(session.has_split)
+        self._sync_split_actions(session)
+        if session.has_split:
+            QTimer.singleShot(0, session.reset_split_sizes)
         self.info_bar.show_message(
             "Split view enabled." if session.has_split else "Split view closed.",
             "success",
         )
+
+    def _set_split_orientation(self, orientation: str) -> None:
+        value = "vertical" if orientation == "vertical" else "horizontal"
+        self.settings.set("split_orientation", value)
+        if self._session is not None:
+            self._session.set_split_orientation(value)
+            self._sync_split_actions(self._session)
+
+    def _set_split_sync_page(self, checked: bool) -> None:
+        self.settings.set("split_sync_page", bool(checked))
+        if self._session is not None:
+            self._session.set_split_sync(page=bool(checked))
+            self._sync_split_actions(self._session)
+
+    def _set_split_sync_zoom(self, checked: bool) -> None:
+        self.settings.set("split_sync_zoom", bool(checked))
+        if self._session is not None:
+            self._session.set_split_sync(zoom=bool(checked))
+            self._sync_split_actions(self._session)
+
+    def _reset_split_sizes(self) -> None:
+        if self._session is not None:
+            self._session.reset_split_sizes()
+
+    def _sync_split_actions(self, session: DocumentSession) -> None:
+        for action in self._split_orientation_actions:
+            action.setChecked(action.data() == session.split_orientation)
+        self.split_sync_page_action.setChecked(session.split_sync_page)
+        self.split_sync_zoom_action.setChecked(session.split_sync_zoom)
+        self.split_reset_action.setEnabled(session.has_split)
 
     # --- Theme and window state -----------------------------------------
     def _apply_theme(self, value: str) -> None:
@@ -832,6 +1050,17 @@ class PDFViewer(QMainWindow):
         canvas = self.workspace.canvas
         if canvas is not None:
             canvas.set_tool_mode(mode)
+        for action in self._tool_actions:
+            action.setChecked(action.data() == mode)
+        self.command_bar.set_canvas_tool(mode)
+
+    def _command_bar_requested(self, key: str) -> None:
+        if key == "toggle_thumbnails":
+            self._toggle_thumbnails()
+        elif key == "view_split":
+            self._toggle_split_view()
+        else:
+            self._tool_requested(key)
 
     def _set_captions(self, checked: bool) -> None:
         session = self._session
@@ -1040,11 +1269,11 @@ class PDFViewer(QMainWindow):
     ) -> bool:
         # Background canvas renders hold the live document; wait for them
         # before replacing it.
-        session.canvas.wait_for_renders()
+        opened = PdfEngine()
         password: str | None = None
         while True:
             try:
-                self.engine.open(path, password)
+                opened.open(path, password)
                 break
             except PdfPasswordRequired:
                 password, accepted = ask_password(
@@ -1053,13 +1282,47 @@ class PDFViewer(QMainWindow):
                     "Password (ASCII characters only)",
                 )
                 if not accepted:
+                    opened.close()
                     return False
             except PdfInvalidPassword:
                 self.info_bar.show_message("The password is not valid.", "error")
                 password = None
             except Exception as exc:
+                opened.close()
                 self._error("Open failed", str(exc))
                 return False
+        self._replace_session_engine(session, opened)
+        return self._complete_pdf_open(
+            session,
+            display_path,
+            reset_history=reset_history,
+            announce=announce,
+        )
+
+    @staticmethod
+    def _replace_session_engine(
+        session: DocumentSession,
+        opened: PdfEngine,
+    ) -> None:
+        """Release all old-document readers before deleting its temp copy."""
+        session.canvas.clear()
+        if session.split_canvas is not None:
+            session.split_canvas.clear()
+        session.nav_panel.thumbnails.quiesce_renders()
+        previous = session.engine
+        session.engine = opened
+        previous.close()
+
+    def _complete_pdf_open(
+        self,
+        session: DocumentSession,
+        display_path: Path,
+        *,
+        reset_history: bool = True,
+        announce: bool = True,
+    ) -> bool:
+        self.workspace.set_current_session(session)
+        self._session = session
         # Keep the user-facing source path when a PostScript temp PDF was used.
         if display_path.suffix.lower() == ".pdf":
             self.settings.add_recent_file(display_path)
@@ -1071,7 +1334,11 @@ class PDFViewer(QMainWindow):
             self._undo_stack.clear()
         self._update_undo_actions()
         self.workspace.set_recent_files(self.settings.recent_files())
-        self.workspace.canvas.load_doc(self.engine.document, self.settings.get_zoom_ratio())
+        zoom = self.settings.get_zoom_ratio()
+        session.canvas.load_doc(self.engine.document, zoom)
+        if session.split_canvas is not None:
+            session.split_canvas.load_doc(self.engine.document, zoom)
+            session.split_canvas.set_page(0, emit=False)
         temp_path = self.engine.temp_path
         if temp_path:
             self.workspace.nav_panel.load_document(
@@ -1206,6 +1473,9 @@ class PDFViewer(QMainWindow):
             self.undo_history_action,
             self.show_labels_action,
             self.split_action,
+            self.split_sync_page_action,
+            self.split_sync_zoom_action,
+            *self._split_orientation_actions,
             self.fit_width_action,
             self.fit_page_action,
             self.actual_size_action,
@@ -1216,6 +1486,9 @@ class PDFViewer(QMainWindow):
         ):
             action.setEnabled(available)
         self.decrypt_action.setEnabled(available and encrypted)
+        self.split_reset_action.setEnabled(
+            available and self._session is not None and self._session.has_split
+        )
         if not available:
             self.split_action.setChecked(False)
 
@@ -1565,6 +1838,7 @@ class PDFViewer(QMainWindow):
         if options.exec() != QDialog.DialogCode.Accepted or not options.details:
             return
         details = options.details
+        self.settings.set_print_profile(details)
         printer = self._create_printer(details)
         # Name the print job after the document (visible in the print queue),
         # matching the legacy version.
@@ -1609,6 +1883,10 @@ class PDFViewer(QMainWindow):
             if not info.isNull()
             else QPrinter(QPrinter.PrinterMode.HighResolution)
         )
+        # QPrinter's HighResolution mode follows the driver default, which is
+        # not necessarily the quality selected in our dialog. Set the desired
+        # raster/output resolution before the painter or page layout starts.
+        printer.setResolution(min(600, max(72, int(details.get("dpi", 300)))))
         printer.setCopyCount(int(details["copies"]))
         printer.setCollateCopies(bool(details["collate"]))
         printer.setColorMode(
@@ -1673,7 +1951,10 @@ class PDFViewer(QMainWindow):
         details: dict[str, object],
     ) -> None:
         rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-        render_dpi = min(300, max(96, printer.resolution()))
+        # Respect the effective QPrinter resolution. The dialog constrains
+        # custom values to 72–600 DPI so high quality remains practical for
+        # large pages while Draft mode materially reduces time and memory.
+        render_dpi = min(600, max(72, printer.resolution()))
         pix = page.get_pixmap(dpi=render_dpi, alpha=False)
         image = QImage(
             pix.samples,
@@ -1810,7 +2091,7 @@ class PDFViewer(QMainWindow):
         if not self.engine.is_loaded():
             self.info_bar.show_message("Open a PDF before annotating.", "warning")
             return
-        self.workspace.canvas.set_tool_mode(key)
+        self._set_canvas_tool(key)
         self._show_context("annotate")
         self.side_panel.set_active_tool(key)
 
@@ -3374,9 +3655,10 @@ class PDFViewer(QMainWindow):
         QMessageBox.about(
             self,
             "About PDFDocuEdit Pro",
-            f"<h3>PDFDocuEdit Pro {APP_VERSION}</h3>"
+            f"<h3>PDFDocuEdit Pro V{APP_VERSION}</h3>"
             "<p>A cross-platform PDF workspace built with Python, PyQt6 and PyMuPDF.</p>"
             "<p><b>Developer:</b> Andy Leung</p>"
+            f"<p>{COPYRIGHT_NOTICE}</p>"
             "<p>Interface icons are provided by Lucide under the ISC License.</p>",
         )
 

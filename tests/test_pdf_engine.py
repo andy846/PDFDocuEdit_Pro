@@ -262,12 +262,101 @@ def test_merge_csv_and_xlsx_without_optional_data_stack(tmp_path: Path) -> None:
     output = merge_spreadsheets([csv_path, xlsx_path], tmp_path / "merged.xlsx")
     merged = load_workbook(output, read_only=True, data_only=True)
     try:
+        assert merged.active.title == "sheet1"
         rows = list(merged.active.iter_rows(values_only=True))
     finally:
         merged.close()
     assert rows[0] == ("Name", "Pages", "Status")
-    assert rows[1] == ("Alpha", "2", None)
+    assert rows[1] == ("Alpha", 2, None)
     assert rows[2] == ("Beta", None, "Ready")
+
+
+def test_merge_spreadsheets_preserves_numbers_ids_and_removes_blank_rows(
+    tmp_path: Path,
+) -> None:
+    from openpyxl import load_workbook
+
+    source = tmp_path / "numbers.csv"
+    source.write_text(
+        "Name,Count,Rate,Identifier\nAlpha,2,3.5,00123\n,,,\nBeta,-4,1e3,A-01\n",
+        encoding="utf-8",
+    )
+    output = merge_spreadsheets([source], tmp_path / "numbers.xlsx")
+    workbook = load_workbook(output, read_only=True, data_only=True)
+    try:
+        assert workbook.active.title == "sheet1"
+        rows = list(workbook.active.iter_rows(values_only=True))
+    finally:
+        workbook.close()
+
+    assert rows == [
+        ("Name", "Count", "Rate", "Identifier"),
+        ("Alpha", 2, 3.5, "00123"),
+        ("Beta", -4, 1000.0, "A-01"),
+    ]
+
+
+def test_merge_spreadsheets_reads_legacy_xls_backend(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    class Cell:
+        def __init__(self, value, cell_type):
+            self.value = value
+            self.ctype = cell_type
+
+    values = [
+        [Cell("Name", 1), Cell("Count", 1)],
+        [Cell("Legacy", 1), Cell(7.0, 2)],
+        [Cell("", 0), Cell("", 0)],
+    ]
+
+    class Sheet:
+        nrows = len(values)
+        ncols = len(values[0])
+
+        @staticmethod
+        def cell(row, column):
+            return values[row][column]
+
+    class Workbook:
+        datemode = 0
+
+        @staticmethod
+        def sheet_by_index(index):
+            assert index == 0
+            return Sheet()
+
+        @staticmethod
+        def release_resources():
+            return None
+
+    fake_xlrd = SimpleNamespace(
+        XL_CELL_EMPTY=0,
+        XL_CELL_TEXT=1,
+        XL_CELL_NUMBER=2,
+        XL_CELL_DATE=3,
+        XL_CELL_BOOLEAN=4,
+        XL_CELL_ERROR=5,
+        XL_CELL_BLANK=6,
+        open_workbook=lambda path, on_demand: Workbook(),
+        xldate=SimpleNamespace(xldate_as_datetime=lambda value, datemode: value),
+    )
+    monkeypatch.setitem(sys.modules, "xlrd", fake_xlrd)
+    source = tmp_path / "legacy.xls"
+    source.write_bytes(b"legacy-test-double")
+
+    output = merge_spreadsheets([source], tmp_path / "legacy-output.xlsx")
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(output, read_only=True, data_only=True)
+    try:
+        rows = list(workbook.active.iter_rows(values_only=True))
+    finally:
+        workbook.close()
+    assert rows == [("Name", "Count"), ("Legacy", 7)]
 
 
 def test_merge_rules_and_region_text_export(tmp_path: Path) -> None:
@@ -308,7 +397,9 @@ def test_uppercase_pdf_discovery_for_report_and_deep_search(tmp_path: Path) -> N
         rows = list(workbook.active.iter_rows(values_only=True))
     finally:
         workbook.close()
-    assert any(row[0] == source.name and row[1] == 2 for row in rows[1:])
+    source_row = next(row for row in rows[1:] if row[0] == source.name)
+    assert source_row[1] == 2
+    assert source_row[3].endswith(" mm")
     results = deep_search(tmp_path, "searchable")
     assert [result["filename"] for result in results] == ["UPPER.PDF"]
 

@@ -136,6 +136,13 @@ def test_redact_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
         AnnotationOp(kind="redact", page=0, rects=(fitz.Rect(60, 80, 220, 105),))
     )
     assert "Annotatable" not in window.engine.document.load_page(0).get_text()
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(
+            lambda *args, **kwargs: QMessageBox.StandardButton.Discard
+        ),
+    )
     window.close()
 
 
