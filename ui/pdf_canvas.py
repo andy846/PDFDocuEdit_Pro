@@ -23,7 +23,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QFrame, QLabel, QScrollArea, QWidget
 
-from core.annotations import AnnotationOp
+from core.annotations import AnnotationOp, AnnotationStyle
 from core.pdf_engine import DOCUMENT_LOCK
 from styles.theme import get_colors
 from styles.tokens import S
@@ -35,6 +35,7 @@ from .page_view import (
     PageRenderCache,
     PageView,
     render_page_pixmap,
+    render_page_image,
     render_page_pixmap_quick,
 )
 
@@ -60,6 +61,14 @@ class ToolMode(StrEnum):
     UNDERLINE = "underline"
     STRIKEOUT = "strikeout"
     NOTE = "note"
+    SQUIGGLY = "squiggly"
+    LINE = "line"
+    ARROW = "arrow"
+    ELLIPSE = "ellipse"
+    POLYGON = "polygon"
+    FREETEXT_TYPEWRITER = "freetext_typewriter"
+    FREETEXT_BOX = "freetext_box"
+    FREETEXT_CALLOUT = "freetext_callout"
     INK = "ink"
     RECT = "rect"
     REDACT = "redact"
@@ -72,6 +81,13 @@ MARQUEE_TOOLS = {
     ToolMode.HIGHLIGHT,
     ToolMode.UNDERLINE,
     ToolMode.STRIKEOUT,
+    ToolMode.SQUIGGLY,
+    ToolMode.LINE,
+    ToolMode.ARROW,
+    ToolMode.ELLIPSE,
+    ToolMode.FREETEXT_TYPEWRITER,
+    ToolMode.FREETEXT_BOX,
+    ToolMode.FREETEXT_CALLOUT,
     ToolMode.RECT,
     ToolMode.REDACT,
     ToolMode.STAMP,
@@ -83,9 +99,32 @@ TEXT_MARK_TOOLS = {
     ToolMode.HIGHLIGHT: "highlight",
     ToolMode.UNDERLINE: "underline",
     ToolMode.STRIKEOUT: "strikeout",
+    ToolMode.SQUIGGLY: "squiggly",
 }
-
 STAMP_ASPECT = 0.35
+
+
+def callout_line_points(
+    page_bounds: fitz.Rect, text_rect: fitz.Rect
+) -> tuple[tuple[float, float], ...]:
+    """Return PDF /CL points ordered arrow tip, knee, text-box attachment."""
+    centre_y = (text_rect.y0 + text_rect.y1) / 2
+    left_space = max(0.0, text_rect.x0 - page_bounds.x0)
+    right_space = max(0.0, page_bounds.x1 - text_rect.x1)
+    use_left = left_space >= right_space
+    available = left_space if use_left else right_space
+    distance = max(12.0, min(72.0, available))
+    bend = min(30.0, max(10.0, distance * 0.45))
+    tip_y = min(page_bounds.y1, max(page_bounds.y0, centre_y + bend))
+    if use_left:
+        attach = (text_rect.x0, centre_y)
+        knee = (max(page_bounds.x0, text_rect.x0 - distance * 0.4), centre_y)
+        tip = (max(page_bounds.x0, text_rect.x0 - distance), tip_y)
+    else:
+        attach = (text_rect.x1, centre_y)
+        knee = (min(page_bounds.x1, text_rect.x1 + distance * 0.4), centre_y)
+        tip = (min(page_bounds.x1, text_rect.x1 + distance), tip_y)
+    return (tip, knee, attach)
 
 
 class _RenderSignals(QObject):
@@ -117,11 +156,11 @@ class _RenderTask(QRunnable):
         # so catch BaseException and keep the pool alive.
         try:
             with DOCUMENT_LOCK:
-                pixmap = render_page_pixmap(
+                image = render_page_image(
                     self._doc, self._page_num, self._zoom, self._dpr
                 )
             self.signals.finished.emit(
-                self._page_num, self._generation, self._key, pixmap
+                self._page_num, self._generation, self._key, image
             )
         except BaseException:
             return
@@ -166,11 +205,17 @@ class PdfCanvas(QScrollArea):
             "width": 1.5,
             "stamp_kind": "Draft",
             "image_path": "",
+            "fill": "",
+            "opacity": 1.0,
+            "font": "Helv",
+            "font_size": 11.0,
+            "alignment": 0,
         }
 
-        self.setWidgetResizable(True)
+        # Preserve the pager's real width so zoomed pages can scroll sideways.
+        self.setWidgetResizable(False)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         # Right-click menus: the context menu event lands on the widget under
         # the cursor (viewport or a page overlay), so forward each layer to
@@ -305,14 +350,17 @@ class PdfCanvas(QScrollArea):
 
     def set_annotation_options(self, **options) -> None:
         """Update current annotation settings (color, width, stamp_kind, image_path)."""
-        self._annot_options.update({k: v for k, v in options.items() if k in self._annot_options})
+        self._annot_options.update(
+            {k: v for k, v in options.items() if k in self._annot_options}
+        )
 
-    def _overlay_modes(self) -> tuple[bool, bool, bool]:
-        """Return (select_mode, note_mode, ink_mode) for the active tool."""
+    def _overlay_modes(self) -> tuple[bool, bool, bool, bool]:
+        """Return select, note, ink and polygon modes for the active tool."""
         select = self._tool_mode in MARQUEE_TOOLS or self._tool_mode == ToolMode.SELECT
         note = self._tool_mode == ToolMode.NOTE
         ink = self._tool_mode == ToolMode.INK
-        return select, note, ink
+        polygon = self._tool_mode == ToolMode.POLYGON
+        return select, note, ink, polygon
 
     def _refresh_cursors(self) -> None:
         hand = self._tool_mode == ToolMode.HAND or self._temp_hand
@@ -325,6 +373,7 @@ class PdfCanvas(QScrollArea):
         elif self._tool_mode in MARQUEE_TOOLS or self._tool_mode in {
             ToolMode.SELECT,
             ToolMode.INK,
+            ToolMode.POLYGON,
         }:
             cursor = Qt.CursorShape.CrossCursor
         elif self._tool_mode == ToolMode.NOTE:
@@ -332,13 +381,14 @@ class PdfCanvas(QScrollArea):
         else:
             cursor = Qt.CursorShape.ArrowCursor
         self.viewport().setCursor(cursor)
-        select, note, ink = (
-            (False, False, False) if hand else self._overlay_modes()
+        select, note, ink, polygon = (
+            (False, False, False, False) if hand else self._overlay_modes()
         )
         for view in self._page_views.values():
             view.overlay.set_select_mode(select)
             view.overlay.set_note_mode(note)
             view.overlay.set_ink_mode(ink)
+            view.overlay.set_polygon_mode(polygon)
             # The PDF image is a child widget and owns the cursor while the
             # pointer is over the page. Make it transparent during panning so
             # viewport drag events and the open/closed hand cursor both apply
@@ -387,11 +437,13 @@ class PdfCanvas(QScrollArea):
         value = min(self._max_zoom, max(self._min_zoom, ratio))
         if abs(value - self._zoom) < 0.001:
             return
+        anchor = self._view_anchor()
         self._zoom = value
         self._generation += 1
         self._teardown_views()
         if self._doc:
             self._relayout()
+            self._restore_view_anchor(anchor)
         if emit:
             self.zoomChanged.emit(value)
 
@@ -443,7 +495,7 @@ class PdfCanvas(QScrollArea):
         pdf_rect = fitz.Rect(
             overlay.widget_to_pdf(widget_rect.topLeft()),
             overlay.widget_to_pdf(widget_rect.bottomRight()),
-        )
+        ).normalize()
         if self._tool_mode == ToolMode.SELECT:
             page = self._doc.load_page(page_num)
             kept = words_intersecting(page, pdf_rect)
@@ -472,6 +524,63 @@ class PdfCanvas(QScrollArea):
                 )
             )
             return
+        if self._tool_mode in {ToolMode.LINE, ToolMode.ARROW}:
+            self.annotationRequested.emit(
+                AnnotationOp(
+                    kind="arrow" if self._tool_mode == ToolMode.ARROW else "line",
+                    page=page_num,
+                    points=(
+                        (pdf_rect.x0, pdf_rect.y0),
+                        (pdf_rect.x1, pdf_rect.y1),
+                    ),
+                    color=self._annot_options["color"],
+                    width=self._annot_options["width"],
+                )
+            )
+            return
+        if self._tool_mode == ToolMode.ELLIPSE:
+            self.annotationRequested.emit(
+                AnnotationOp(
+                    kind="ellipse",
+                    page=page_num,
+                    rects=(pdf_rect,),
+                    color=self._annot_options["color"],
+                    width=self._annot_options["width"],
+                )
+            )
+            return
+        if self._tool_mode in {
+            ToolMode.FREETEXT_TYPEWRITER,
+            ToolMode.FREETEXT_BOX,
+            ToolMode.FREETEXT_CALLOUT,
+        }:
+            style = AnnotationStyle(
+                stroke=self._annot_options["color"],
+                fill=self._annot_options["fill"],
+                opacity=self._annot_options["opacity"],
+                width=self._annot_options["width"],
+                font=self._annot_options["font"],
+                font_size=self._annot_options["font_size"],
+                alignment=self._annot_options["alignment"],
+            )
+            callout = (
+                callout_line_points(self._doc.load_page(page_num).cropbox, pdf_rect)
+                if self._tool_mode == ToolMode.FREETEXT_CALLOUT
+                else ()
+            )
+            self.annotationRequested.emit(
+                AnnotationOp(
+                    kind=str(self._tool_mode),
+                    page=page_num,
+                    rects=(pdf_rect,),
+                    points=callout,
+                    color=self._annot_options["color"],
+                    width=self._annot_options["width"],
+                    style=style,
+                )
+            )
+            return
+
         if self._tool_mode == ToolMode.RECT:
             self.annotationRequested.emit(
                 AnnotationOp(
@@ -490,7 +599,9 @@ class PdfCanvas(QScrollArea):
             return
         if self._tool_mode == ToolMode.STAMP:
             height = pdf_rect.width * STAMP_ASPECT
-            stamp_rect = fitz.Rect(pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y0 + height)
+            stamp_rect = fitz.Rect(
+                pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y0 + height
+            )
             self.annotationRequested.emit(
                 AnnotationOp(
                     kind="stamp",
@@ -502,15 +613,37 @@ class PdfCanvas(QScrollArea):
             return
         if self._tool_mode in {ToolMode.SIGNATURE, ToolMode.IMAGE}:
             image_path = self._annot_options["image_path"]
-            if image_path:
-                self.annotationRequested.emit(
-                    AnnotationOp(
-                        kind="image",
-                        page=page_num,
-                        rects=(pdf_rect,),
-                        image_path=image_path,
-                    )
+            self.annotationRequested.emit(
+                AnnotationOp(
+                    kind="image",
+                    page=page_num,
+                    rects=(pdf_rect,),
+                    image_path=image_path,
                 )
+            )
+
+    def _on_polygon(self, page_num: int, points_widget: list) -> None:
+        if (
+            self._tool_mode != ToolMode.POLYGON
+            or not self._doc
+            or page_num not in self._page_views
+            or len(points_widget) < 3
+        ):
+            return
+        overlay = self._page_views[page_num].overlay
+        points: list[tuple[float, float]] = []
+        for point_widget in points_widget:
+            point = overlay.widget_to_pdf(point_widget)
+            points.append((point.x, point.y))
+        self.annotationRequested.emit(
+            AnnotationOp(
+                kind="polygon",
+                page=page_num,
+                points=tuple(points),
+                color=self._annot_options["color"],
+                width=self._annot_options["width"],
+            )
+        )
 
     def _on_ink(self, page_num: int, points_widget: list) -> None:
         if not self._doc or page_num not in self._page_views or len(points_widget) < 2:
@@ -582,9 +715,7 @@ class PdfCanvas(QScrollArea):
         rect = self._doc.load_page(0).rect
         y += round(rect.height * self._zoom) + CAPTION_H + PAGE_SPACING
         for first in range(1, self._doc.page_count, 2):
-            pages = [first] + (
-                [first + 1] if first + 1 < self._doc.page_count else []
-            )
+            pages = [first] + ([first + 1] if first + 1 < self._doc.page_count else [])
             rows.append((y, pages))
             row_height = max(
                 round(self._doc.load_page(p).rect.height * self._zoom) for p in pages
@@ -598,18 +729,18 @@ class PdfCanvas(QScrollArea):
         page = self._doc.load_page(page_num)
         width = round(page.rect.width * self._zoom)
         height = round(page.rect.height * self._zoom)
-        viewport_width = max(1, self.viewport().width())
+        layout_width = max(1, self.viewport().width(), self._pager.width())
         for row_y, pages in self._rows:
             if page_num not in pages:
                 continue
             if len(pages) == 1:
-                x = MARGIN + max(0, (viewport_width - 2 * MARGIN - width) / 2)
+                x = MARGIN + max(0, (layout_width - 2 * MARGIN - width) / 2)
                 return QRectF(x, row_y, width, height)
             widths = [
                 round(self._doc.load_page(p).rect.width * self._zoom) for p in pages
             ]
             row_width = sum(widths) + PAGE_SPACING * (len(pages) - 1)
-            x = MARGIN + max(0, (viewport_width - 2 * MARGIN - row_width) / 2)
+            x = MARGIN + max(0, (layout_width - 2 * MARGIN - row_width) / 2)
             index = pages.index(page_num)
             x += sum(widths[:index]) + PAGE_SPACING * index
             return QRectF(x, row_y, width, height)
@@ -618,11 +749,17 @@ class PdfCanvas(QScrollArea):
     def _total_size(self) -> QSize:
         if not self._doc or not self._rows:
             return QSize(0, 0)
-        width = max(1, self.viewport().width())
+        widest_row = 0
+        for _row_y, pages in self._rows:
+            row_width = sum(
+                round(self._doc.load_page(page).rect.width * self._zoom)
+                for page in pages
+            ) + PAGE_SPACING * max(0, len(pages) - 1)
+            widest_row = max(widest_row, row_width)
+        width = max(1, self.viewport().width(), widest_row + MARGIN * 2)
         last_y, last_pages = self._rows[-1]
         last_height = max(
-            round(self._doc.load_page(p).rect.height * self._zoom)
-            for p in last_pages
+            round(self._doc.load_page(p).rect.height * self._zoom) for p in last_pages
         )
         height = last_y + last_height + CAPTION_H + MARGIN
         return QSize(width, max(1, height))
@@ -647,8 +784,7 @@ class PdfCanvas(QScrollArea):
         visible: list[int] = []
         for row_y, pages in self._rows:
             row_height = max(
-                round(self._doc.load_page(p).rect.height * self._zoom)
-                for p in pages
+                round(self._doc.load_page(p).rect.height * self._zoom) for p in pages
             )
             if row_y + row_height + CAPTION_H >= top and row_y <= bottom:
                 visible.extend(pages)
@@ -669,20 +805,26 @@ class PdfCanvas(QScrollArea):
                 view.deleteLater()
         for page_num in needed:
             if page_num in self._page_views:
+                page = self._doc.load_page(page_num)
                 rect = self._page_rect_in_layout(page_num)
-                self._page_views[page_num].setGeometry(
+                view = self._page_views[page_num]
+                view.setGeometry(
                     int(rect.x()),
                     int(rect.y()),
                     max(1, int(rect.width())),
                     int(rect.height()) + CAPTION_H,
                 )
+                view.overlay.set_geometry_info(
+                    page.rect,
+                    1.0 / self._zoom,
+                    page.rotation_matrix,
+                    page.derotation_matrix,
+                )
                 continue
             page = self._doc.load_page(page_num)
             view = PageView(page_num, page, self._pager)
             view.set_show_caption(self._show_captions)
-            view.overlay.setContextMenuPolicy(
-                Qt.ContextMenuPolicy.CustomContextMenu
-            )
+            view.overlay.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             view.overlay.customContextMenuRequested.connect(
                 lambda pos, overlay=view.overlay: self.contextMenuRequested.emit(
                     overlay.mapToGlobal(pos)
@@ -696,14 +838,21 @@ class PdfCanvas(QScrollArea):
                 int(rect.height()) + CAPTION_H,
             )
             view.show()
-            select, note, ink = self._overlay_modes()
+            select, note, ink, polygon = self._overlay_modes()
             view.overlay.set_select_mode(select)
             view.overlay.set_note_mode(note)
             view.overlay.set_ink_mode(ink)
             view.overlay.selectionMade.connect(self._on_selection)
+            view.overlay.set_polygon_mode(polygon)
             view.overlay.inkDrawn.connect(self._on_ink)
             view.overlay.noteClicked.connect(self._on_note)
-            view.overlay.set_geometry_info(page.rect, 1.0 / self._zoom)
+            view.overlay.polygonDrawn.connect(self._on_polygon)
+            view.overlay.set_geometry_info(
+                page.rect,
+                1.0 / self._zoom,
+                page.rotation_matrix,
+                page.derotation_matrix,
+            )
             self._page_views[page_num] = view
             self._request_render(page_num, page_num in focused)
         self._apply_search_hits()
@@ -730,9 +879,7 @@ class PdfCanvas(QScrollArea):
         # page never appears blank, then let the full render replace it.
         if DOCUMENT_LOCK.acquire(blocking=False):
             try:
-                quick = render_page_pixmap_quick(
-                    self._doc, page_num, self._zoom, dpr
-                )
+                quick = render_page_pixmap_quick(self._doc, page_num, self._zoom, dpr)
                 view = self._page_views.get(page_num)
                 if view is not None:
                     view.set_pixmap(quick)
@@ -746,9 +893,7 @@ class PdfCanvas(QScrollArea):
         if self._doc.needs_pass:
             try:
                 with DOCUMENT_LOCK:
-                    pixmap = render_page_pixmap(
-                        self._doc, page_num, self._zoom, dpr
-                    )
+                    pixmap = render_page_pixmap(self._doc, page_num, self._zoom, dpr)
             except BaseException:
                 return
             self._cache.put(key, pixmap)
@@ -757,9 +902,7 @@ class PdfCanvas(QScrollArea):
                 view.set_pixmap(pixmap, self._doc.load_page(page_num))
             return
         self._pending.add(token)
-        task = _RenderTask(
-            self._doc, page_num, self._zoom, dpr, key, self._generation
-        )
+        task = _RenderTask(self._doc, page_num, self._zoom, dpr, key, self._generation)
         task.signals.finished.connect(self._on_render_done)
         # Higher values run earlier in the pool; visible pages go first.
         self._pool.start(task, 6 if high else 0)
@@ -769,15 +912,35 @@ class PdfCanvas(QScrollArea):
         page_num: int,
         generation: int,
         key: tuple,
-        pixmap: QPixmap,
+        image: QImage,
     ) -> None:
         self._pending.discard((generation, page_num))
         if generation != self._generation or not self._doc:
             return
+        # QPixmap is a GUI resource and must only be created on this thread.
+        pixmap = QPixmap.fromImage(image)
         self._cache.put(key, pixmap)
         view = self._page_views.get(page_num)
         if view is not None:
             view.set_pixmap(pixmap, self._doc.load_page(page_num))
+
+    def _view_anchor(self) -> tuple[float, float]:
+        """Return the viewport centre as normalized pager coordinates."""
+        width = max(1, self._pager.width())
+        height = max(1, self._pager.height())
+        return (
+            (self.horizontalScrollBar().value() + self.viewport().width() / 2) / width,
+            (self.verticalScrollBar().value() + self.viewport().height() / 2) / height,
+        )
+
+    def _restore_view_anchor(self, anchor: tuple[float, float]) -> None:
+        x_ratio, y_ratio = anchor
+        self.horizontalScrollBar().setValue(
+            round(x_ratio * self._pager.width() - self.viewport().width() / 2)
+        )
+        self.verticalScrollBar().setValue(
+            round(y_ratio * self._pager.height() - self.viewport().height() / 2)
+        )
 
     def _update_current_from_scroll(self) -> None:
         if not self._doc or self._layout_mode == LayoutMode.SINGLE:
@@ -816,12 +979,20 @@ class PdfCanvas(QScrollArea):
     def _apply_pending_relayout(self) -> None:
         if not self._doc:
             return
+        anchor = self._view_anchor()
         self._relayout()
+        self._restore_view_anchor(anchor)
 
     def wheelEvent(self, event) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             factor = 1.2 if event.angleDelta().y() > 0 else 1 / 1.2
             self._queue_zoom(self._zoom * factor)
+            event.accept()
+            return
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            delta = event.angleDelta().y() or event.angleDelta().x()
+            bar = self.horizontalScrollBar()
+            bar.setValue(bar.value() - delta)
             event.accept()
             return
         super().wheelEvent(event)
@@ -912,25 +1083,39 @@ class PdfCanvas(QScrollArea):
         return False
 
     def _viewport_mouse_release(self, event) -> bool:
-        if self._hand_anchor is not None and event.button() == Qt.MouseButton.LeftButton:
+        if (
+            self._hand_anchor is not None
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
             self._hand_anchor = None
             self._refresh_cursors()
             return True
         return False
 
     def _viewport_key_press(self, event) -> bool:
-        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat() and not self._temp_hand:
+        if (
+            event.key() == Qt.Key.Key_Space
+            and not event.isAutoRepeat()
+            and not self._temp_hand
+        ):
             self._temp_hand = True
             self._refresh_cursors()
             return True
-        if event.key() == Qt.Key.Key_C and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        if (
+            event.key() == Qt.Key.Key_C
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
             if self._selection:
                 self.textCopied.emit(self._selection[1])
                 return True
         return False
 
     def _viewport_key_release(self, event) -> bool:
-        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat() and self._temp_hand:
+        if (
+            event.key() == Qt.Key.Key_Space
+            and not event.isAutoRepeat()
+            and self._temp_hand
+        ):
             self._temp_hand = False
             self._refresh_cursors()
             return True
@@ -1026,9 +1211,7 @@ class PdfCanvas(QScrollArea):
         sample_painter.drawImage(offset_x, offset_y, image)
         crosshair = max(4, round(6 * dpr))
         centre = target_pixels // 2
-        sample_painter.setPen(
-            QPen(QColor(get_colors()["primary"]), max(1.0, dpr))
-        )
+        sample_painter.setPen(QPen(QColor(get_colors()["primary"]), max(1.0, dpr)))
         sample_painter.drawLine(
             centre - crosshair,
             centre,

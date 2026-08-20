@@ -37,7 +37,11 @@ def test_active_source_uses_only_qt6_apis() -> None:
     violations = []
     for path in active_python_files():
         text = path.read_text(encoding="utf-8")
-        violations.extend(f"{path.relative_to(ROOT)} contains {value}" for value in FORBIDDEN if value in text)
+        violations.extend(
+            f"{path.relative_to(ROOT)} contains {value}"
+            for value in FORBIDDEN
+            if value in text
+        )
     assert not violations, "\n".join(violations)
 
 
@@ -50,20 +54,23 @@ def test_release_inputs_exist() -> None:
         "requirements-windows.txt",
         "requirements-macos.txt",
         "scripts/build.py",
+        "scripts/prepare_verapdf.py",
+        "build_assets/verapdf/BUNDLE_INFO.json",
+        "build_assets/verapdf/auto-install.xml",
         "THIRD_PARTY_NOTICES.md",
     )
     assert not [value for value in required if not (ROOT / value).exists()]
 
 
-def test_release_metadata_is_v1_1() -> None:
-    assert APP_VERSION == "1.1"
+def test_release_metadata_is_v2_0() -> None:
+    assert APP_VERSION == "2.0"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "1.1.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "1.1"' in (
+    assert 'version = "2.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "2.0"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "1.1"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(1, 1, 0, 0)" in (
+    assert 'VERSION = "2.0"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(2, 0, 0, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 

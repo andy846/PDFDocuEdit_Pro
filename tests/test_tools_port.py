@@ -2,6 +2,7 @@
 zoom slider, file info tooltip, status messages and shortcuts."""
 
 from __future__ import annotations
+import warnings
 
 import io
 from pathlib import Path
@@ -34,21 +35,27 @@ def _app() -> QApplication:
     when the last Python reference is dropped)."""
     global _app_instance
     if _app_instance is None:
-        _app_instance = QApplication.instance() or QApplication(["pdfdocuedit-tools-test"])
+        _app_instance = QApplication.instance() or QApplication(
+            ["pdfdocuedit-tools-test"]
+        )
     return _app_instance
 
 
 def _window(tmp_path: Path, monkeypatch):
     _app()
     monkeypatch.setattr(
-        viewer_module, "SettingsManager", lambda: SettingsManager(tmp_path / "settings.json")
+        viewer_module,
+        "SettingsManager",
+        lambda: SettingsManager(tmp_path / "settings.json"),
     )
     return viewer_module.PDFViewer()
 
 
 def _messages(window) -> list[str]:
     collected: list[str] = []
-    window.info_bar.show_message = lambda msg, kind="", duration=0: collected.append(msg)
+    window.info_bar.show_message = lambda msg, kind="", duration=0: collected.append(
+        msg
+    )
     return collected
 
 
@@ -63,12 +70,17 @@ def _allow_discard(monkeypatch) -> None:
 
 # --- P1: menus (G3/G9) ---------------------------------------------------
 
+
 def test_file_menu_has_legacy_encrypt_decrypt_and_postscript(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     menus = {action.text(): action for action in window.menuBar().actions()}
     file_menu = menus.get("&File")
     assert file_menu is not None and file_menu.menu() is not None
-    texts = [action.text() for action in file_menu.menu().actions() if not action.isSeparator()]
+    texts = [
+        action.text()
+        for action in file_menu.menu().actions()
+        if not action.isSeparator()
+    ]
     for label in ("Open PostScript…", "Encrypt PDF…", "Decrypt PDF…", "Print…"):
         assert label in texts
     assert texts.index("Encrypt PDF…") < texts.index("Print…")
@@ -93,7 +105,11 @@ def test_encrypt_decrypt_actions_follow_document_state(tmp_path, monkeypatch):
 def test_open_postscript_uses_ps_filter_and_loads(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     loaded: list[str] = []
-    monkeypatch.setattr(viewer_module.QFileDialog, "getOpenFileName", lambda *a, **k: ("/tmp/x.ps", "PostScript (*.ps *.eps)"))
+    monkeypatch.setattr(
+        viewer_module.QFileDialog,
+        "getOpenFileName",
+        lambda *a, **k: ("/tmp/x.ps", "PostScript (*.ps *.eps)"),
+    )
     monkeypatch.setattr(window, "load_file", lambda path: loaded.append(path))
     window._open_postscript()
     assert loaded == ["/tmp/x.ps"]
@@ -145,7 +161,9 @@ def test_print_pdf_confirms_system_dialog_and_names_job(tmp_path, monkeypatch):
     monkeypatch.setattr(viewer_module, "QPrintDialog", FakeNativeDialog)
     painted: list = []
     monkeypatch.setattr(
-        window, "_paint_documents", lambda printer, docs, details, **kwargs: painted.append(docs)
+        window,
+        "_paint_documents",
+        lambda printer, docs, details, **kwargs: painted.append(docs),
     )
     window.print_pdf()
     assert captured["title"] == "System Print"
@@ -192,7 +210,9 @@ def test_print_pdf_prints_directly_without_system_dialog(tmp_path, monkeypatch):
     monkeypatch.setattr(viewer_module, "QPrintDialog", ExplodingNativeDialog)
     painted: list = []
     monkeypatch.setattr(
-        window, "_paint_documents", lambda printer, docs, details, **kwargs: painted.append(docs)
+        window,
+        "_paint_documents",
+        lambda printer, docs, details, **kwargs: painted.append(docs),
     )
     window.print_pdf()
     assert painted and painted[0][0][2] == "direct.pdf"
@@ -350,7 +370,9 @@ def test_batch_print_skips_unreadable_files(tmp_path, monkeypatch):
     monkeypatch.setattr(viewer_module, "QPrintDialog", FakeNativeDialog)
     painted: list = []
 
-    def fake_paint(printer, documents, details, log=None, progress=None, should_cancel=None):
+    def fake_paint(
+        printer, documents, details, log=None, progress=None, should_cancel=None
+    ):
         painted.append((printer.docName(), documents))
         for index, (_document, pages, name) in enumerate(documents):
             log(f"Printing {name} ({len(pages)} page(s))…")
@@ -434,7 +456,9 @@ def test_batch_print_cancel_marks_partial_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(viewer_module, "QPrintDialog", FakeNativeDialog)
 
-    def fake_paint(printer, documents, details, log=None, progress=None, should_cancel=None):
+    def fake_paint(
+        printer, documents, details, log=None, progress=None, should_cancel=None
+    ):
         # The user cancels while the first page is being drawn.
         for index, (_document, pages, name) in enumerate(documents):
             log(f"Printing {name} ({len(pages)} page(s))…")
@@ -514,14 +538,23 @@ def test_mixed_orientation_pages_print_upright(tmp_path, monkeypatch):
         images = page.get_images(full=True)
         assert images, "the second page must contain its rendered image"
         data = result.extract_image(images[0][0])["image"]
-        with Image.open(io.BytesIO(data)).convert("L") as img:
-            pixels = img.load()
-            dark = [(x, y) for y in range(0, img.height, 2) for x in range(0, img.width, 2) if pixels[x, y] < 128]
+        with warnings.catch_warnings():
+            # Trusted 600-DPI image generated by this test, not user input.
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data)).convert("L") as img:
+                pixels = img.load()
+                dark = [
+                    (x, y)
+                    for y in range(0, img.height, 2)
+                    for x in range(0, img.width, 2)
+                    if pixels[x, y] < 128
+                ]
+                image_width = img.width
         assert dark, "the rendered page must have visible content"
         centroid_x = sum(x for x, _y in dark) / len(dark)
-        assert centroid_x > img.width / 2, (
-            f"content centroid {centroid_x} should sit on the right half after rotation"
-        )
+        assert (
+            centroid_x > image_width / 2
+        ), f"content centroid {centroid_x} should sit on the right half after rotation"
     window.close()
 
 
@@ -537,7 +570,8 @@ def test_save_as_uses_remembered_save_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(
         viewer_module.QFileDialog,
         "getSaveFileName",
-        lambda *args, **kwargs: captured.append(args[2]) or (str(chosen), "PDF (*.pdf)"),
+        lambda *args, **kwargs: captured.append(args[2])
+        or (str(chosen), "PDF (*.pdf)"),
     )
     window.save_as_file()
     assert Path(captured[0]) == saved / "src.pdf"
@@ -559,6 +593,7 @@ def test_save_as_falls_back_to_document_folder(tmp_path, monkeypatch):
     window.save_as_file()
     assert Path(captured[0]) == tmp_path / "src.pdf"
     window.close()
+
 
 def test_open_dialog_multi_select_opens_each_file_in_own_tab(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
@@ -662,7 +697,9 @@ def test_save_all_skipping_save_as_reports_warning(tmp_path, monkeypatch):
     session.engine.rotate_pages([0], 90)
     messages: list[tuple] = []
     monkeypatch.setattr(
-        window.info_bar, "show_message", lambda msg, kind="info", timeout=0: messages.append((msg, kind))
+        window.info_bar,
+        "show_message",
+        lambda msg, kind="info", timeout=0: messages.append((msg, kind)),
     )
     monkeypatch.setattr(
         viewer_module.QFileDialog,
@@ -675,6 +712,7 @@ def test_save_all_skipping_save_as_reports_warning(tmp_path, monkeypatch):
 
 
 # --- P1: sidebar legacy layout (G2a/G2b) ---------------------------------
+
 
 def test_thumbnail_panel_renders_only_visible_window(tmp_path):
     import time
@@ -794,7 +832,13 @@ def test_sidebar_sections_use_legacy_names(tmp_path, monkeypatch):
     _app()
     panel = SidePanel(animations_enabled=False)
     titles = [section.header.text() for section in panel._sections]
-    assert titles == ["Page Operations", "Annotate", "Conversion", "Utilities", "Security"]
+    assert titles == [
+        "Page Operations",
+        "Annotate",
+        "Conversion",
+        "Utilities",
+        "Security",
+    ]
     panel.deleteLater()
 
 
@@ -803,8 +847,16 @@ def test_sidebar_pages_order_and_new_order_tool(tmp_path, monkeypatch):
     panel = SidePanel(animations_enabled=False)
     pages_items = [item.key for item in panel.SECTIONS[0][2]]
     assert pages_items == [
-        "search", "insert", "delete", "extract", "order",
-        "sort", "split", "rotate", "info",
+        "search",
+        "insert",
+        "delete",
+        "extract",
+        "order",
+        "sort",
+        "split",
+        "rotate",
+        "info",
+        "smart_detection",
     ]
     assert "order" in panel._buttons
     received: list[str] = []
@@ -826,6 +878,7 @@ def test_viewer_order_tool_opens_order_context(tmp_path, monkeypatch):
 
 
 # --- P1: bottom bar rotate box (G4) --------------------------------------
+
 
 def test_bottom_bar_displays_page_size_in_millimetres():
     _app()
@@ -872,7 +925,9 @@ def test_bottom_bar_rotate_box_submenu(tmp_path, monkeypatch):
     box = submenus[0]
     assert box.text() == "Rotate Page(s) from Page Box"
     assert [action.text() for action in box.menu().actions()] == [
-        "90° Clockwise", "180°", "90° Counter-Clockwise",
+        "90° Clockwise",
+        "180°",
+        "90° Counter-Clockwise",
     ]
     received: list[int] = []
     bar.rotateBoxRequested.connect(received.append)
@@ -915,6 +970,7 @@ def test_rotate_box_pages_empty_and_invalid_input(tmp_path, monkeypatch):
 
 # --- P2: zoom slider (G5) ------------------------------------------------
 
+
 def test_zoom_slider_syncs_both_ways(tmp_path, monkeypatch):
     _app()
     bar = BottomBar()
@@ -943,13 +999,16 @@ def test_viewer_zoom_slider_sets_canvas(tmp_path, monkeypatch):
     source = make_pdf(tmp_path / "zoom.pdf")
     window.load_file(str(source))
     ratios: list[float] = []
-    monkeypatch.setattr(window.workspace.canvas, "set_zoom", lambda ratio: ratios.append(ratio))
+    monkeypatch.setattr(
+        window.workspace.canvas, "set_zoom", lambda ratio: ratios.append(ratio)
+    )
     window._zoom_slider_set(150)
     assert ratios == [1.5]
     window.close()
 
 
 # --- P2: file info tooltip (G6) ------------------------------------------
+
 
 def test_file_info_tooltip_contains_path_and_pages(tmp_path, monkeypatch):
     _app()
@@ -962,6 +1021,7 @@ def test_file_info_tooltip_contains_path_and_pages(tmp_path, monkeypatch):
 
 
 # --- P3: status messages (G7) --------------------------------------------
+
 
 def test_legacy_status_messages_on_load_and_save(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
@@ -976,6 +1036,7 @@ def test_legacy_status_messages_on_load_and_save(tmp_path, monkeypatch):
 
 
 # --- P3: shortcuts (G10) --------------------------------------------------
+
 
 def test_shortcut_guide_has_readable_resizable_viewport():
     from core.commands import Command
@@ -1045,9 +1106,7 @@ def test_spinbox_proxy_style_draws_visible_plus_and_minus():
     assert plus > minus
 
 
-def test_command_bar_more_menu_is_grouped_and_routes_page_tools(
-    tmp_path, monkeypatch
-):
+def test_command_bar_more_menu_is_grouped_and_routes_page_tools(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     menu = window.command_bar._more.menu()
     groups = [action.text() for action in menu.actions() if action.menu()]
@@ -1103,6 +1162,7 @@ def test_delete_shortcut_ignores_text_inputs(tmp_path, monkeypatch):
 
 # --- robustness: no qFatal on unexpected I/O errors -----------------------
 
+
 def test_settings_save_failure_degrades_gracefully(tmp_path, monkeypatch):
     from core.settings import SettingsManager
 
@@ -1146,7 +1206,9 @@ def test_organize_pages_applies_and_refreshes_canvas(tmp_path, monkeypatch):
         viewer_module, "VisualOrganizerDialog", lambda document, parent: FakeOrganizer()
     )
     refreshed: list[bool] = []
-    monkeypatch.setattr(window.workspace.canvas, "refresh", lambda: refreshed.append(True))
+    monkeypatch.setattr(
+        window.workspace.canvas, "refresh", lambda: refreshed.append(True)
+    )
 
     window._organize_pages()
 
@@ -1240,7 +1302,9 @@ def test_viewer_password_retry_after_wrong_password(tmp_path, monkeypatch):
     )
     messages: list[str] = []
     monkeypatch.setattr(
-        window.info_bar, "show_message", lambda msg, kind="", duration=0: messages.append(msg)
+        window.info_bar,
+        "show_message",
+        lambda msg, kind="", duration=0: messages.append(msg),
     )
     window.load_file(str(encrypted))
     assert window.engine.page_count == 2
@@ -1250,6 +1314,7 @@ def test_viewer_password_retry_after_wrong_password(tmp_path, monkeypatch):
 
 
 # --- password fields reject input methods (IME) ----------------------------
+
 
 def test_password_fields_disable_input_method(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QLineEdit
@@ -1276,14 +1341,13 @@ def test_password_fields_disable_input_method(tmp_path, monkeypatch):
 
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(
-        "PyQt6.QtWidgets.QInputDialog.exec", fake_exec
-    )
+    monkeypatch.setattr("PyQt6.QtWidgets.QInputDialog.exec", fake_exec)
     text, accepted = ask_password(None, "Encrypted PDF", "Password")
     assert (text, accepted) == ("secret123", True)
 
 
 # --- retina icons must fill the whole pixmap -------------------------------
+
 
 def test_retina_icons_render_full_pixmap(tmp_path, monkeypatch):
     from ui import icons as icons_module
@@ -1297,8 +1361,8 @@ def test_retina_icons_render_full_pixmap(tmp_path, monkeypatch):
     assert pixmap.width() == 32 and pixmap.height() == 32
     image = pixmap.toImage()
     probes = (
-        (14, 6),   # circle ring, top
-        (6, 15),   # circle ring, left
+        (14, 6),  # circle ring, top
+        (6, 15),  # circle ring, left
         (24, 15),  # circle ring, right
         (24, 24),  # magnifier handle (bottom-right)
     )
@@ -1310,6 +1374,7 @@ def test_retina_icons_render_full_pixmap(tmp_path, monkeypatch):
 
 
 # --- bundled Ghostscript detection -----------------------------------------
+
 
 def test_bundled_ghostscript_detection(tmp_path, monkeypatch):
 
@@ -1331,13 +1396,16 @@ def test_bundled_ghostscript_detection(tmp_path, monkeypatch):
 
     monkeypatch.setattr(capabilities_module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(capabilities_module.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(capabilities_module.sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(
+        capabilities_module.sys, "_MEIPASS", str(tmp_path), raising=False
+    )
     found = capabilities_module._bundled_ghostscript()
     assert found == str(fake_root / "gswin64c.exe")
     monkeypatch.undo()
 
 
 # --- fast-scroll rendering: visible pages render first ---------------------
+
 
 def test_quick_render_keeps_full_logical_page_size(tmp_path):
     from ui.page_view import render_page_pixmap, render_page_pixmap_quick
@@ -1441,6 +1509,7 @@ def test_canvas_renders_visible_pages_first(tmp_path, monkeypatch):
 
 # --- rounded translucent popup menus ---------------------------------------
 
+
 def test_menus_are_rounded_and_translucent(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QMenu
 
@@ -1473,6 +1542,6 @@ def test_spinbox_stylesheet_supplies_visible_plus_minus_svg_assets():
             asset = resource_path("App_icon", f"spin_{glyph}_{mode}.svg")
             assert asset.exists()
             assert asset.as_posix() in css
-        assert 'QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {' in css
-        assert 'QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {' in css
+        assert "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {" in css
+        assert "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {" in css
         assert css.count('image: url("') >= 2

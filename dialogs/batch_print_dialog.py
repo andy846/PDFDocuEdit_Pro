@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 from .base import ToolDialog
 from .batch_tools import PdfFileTable
 
+from .print_profile import collect_print_profile, quality_changed, restore_print_profile
 
 class BatchPrintDialog(ToolDialog):
     printRequested = pyqtSignal(object)  # details dict
@@ -127,12 +128,28 @@ class BatchPrintDialog(ToolDialog):
             self.printer.setCurrentIndex(index)
         self.copies = QSpinBox()
         self.copies.setRange(1, 999)
+        self.collate = QCheckBox("Collate multiple copies")
+        self.collate.setChecked(True)
         self.colour = QComboBox()
         self.colour.addItems(["Colour", "Grayscale"])
         self.duplex = QComboBox()
         self.duplex.addItems(
             ["Printer default", "Single-sided", "Duplex — long edge", "Duplex — short edge"]
         )
+        self.quality = QComboBox()
+        self.quality.addItem("Draft — 150 DPI", 150)
+        self.quality.addItem("Standard — 300 DPI", 300)
+        self.quality.addItem("High — 600 DPI", 600)
+        self.quality.addItem("Custom DPI", None)
+        self.quality.setCurrentIndex(1)
+        self.quality_dpi = QSpinBox()
+        self.quality_dpi.setRange(72, 600)
+        self.quality_dpi.setValue(300)
+        self.quality_dpi.setSuffix(" DPI")
+        self.quality.currentIndexChanged.connect(
+            lambda _index: quality_changed(self)
+        )
+        quality_changed(self)
         preferences = QPushButton("Printer Preferences…")
         preferences.clicked.connect(self._printer_preferences)
         self.confirm_system = QCheckBox("Confirm with the system dialog")
@@ -143,8 +160,11 @@ class BatchPrintDialog(ToolDialog):
         printer_form.addRow("Printer", self.printer)
         printer_form.addRow("", preferences)
         printer_form.addRow("Copies", self.copies)
+        printer_form.addRow("", self.collate)
         printer_form.addRow("Output", self.colour)
         printer_form.addRow("Two-sided", self.duplex)
+        printer_form.addRow("Print quality", self.quality)
+        printer_form.addRow("Custom quality", self.quality_dpi)
         printer_form.addRow("", self.confirm_system)
         right_layout.addWidget(printer_group)
 
@@ -155,8 +175,16 @@ class BatchPrintDialog(ToolDialog):
         self.paper.addItems(["PDF page size", "A4", "A3", "A5", "Letter"])
         self.orientation = QComboBox()
         self.orientation.addItems(["Automatic", "Portrait", "Landscape"])
-        self.fit = QCheckBox("Fit to printable area")
-        self.fit.setChecked(True)
+        self.scale_mode = QComboBox()
+        self.scale_mode.addItems(["Fit to printable area", "Actual size", "Custom scale"])
+        self.scale = QSpinBox()
+        self.scale.setRange(10, 400)
+        self.scale.setValue(100)
+        self.scale.setSuffix(" %")
+        self.scale.setEnabled(False)
+        self.scale_mode.currentIndexChanged.connect(
+            lambda index: self.scale.setEnabled(index == 2)
+        )
         self.center = QCheckBox("Centre on page")
         self.center.setChecked(True)
         # Pre-filled from the saved preferences so printer-specific offsets
@@ -172,10 +200,12 @@ class BatchPrintDialog(ToolDialog):
         self.bottom.setValue(bottom_mm)
         paper_form.addRow("Paper", self.paper)
         paper_form.addRow("Orientation", self.orientation)
-        paper_form.addRow(self.fit)  # spans both columns
+        paper_form.addRow("Scaling", self.scale_mode)
+        paper_form.addRow("Custom scale", self.scale)
         paper_form.addRow(self.center)
         paper_form.addRow("Shift from left", self.left)
         paper_form.addRow("Shift from right", self.right)
+        restore_print_profile(self, self._default_profile())
         paper_form.addRow("Shift from top", self.top)
         paper_form.addRow("Shift from bottom", self.bottom)
         paper_note = QLabel(
@@ -207,6 +237,12 @@ class BatchPrintDialog(ToolDialog):
         columns.addWidget(right)
         self._root.addLayout(columns)
 
+
+    def _default_profile(self) -> dict[str, object]:
+        settings = getattr(self.parent(), "settings", None)
+        if settings is not None:
+            return settings.get_print_profile()
+        return {}
     @staticmethod
     def _offset() -> QDoubleSpinBox:
         control = QDoubleSpinBox()
@@ -325,22 +361,14 @@ class BatchPrintDialog(ToolDialog):
         if not self.printer.currentText():
             self.show_error("No printer is available on this system.")
             return
-        self.details = {
-            "paths": list(self.file_paths),
-            "printer": self.printer.currentText(),
-            "copies": self.copies.value(),
-            "collate": True,
-            "colour": self.colour.currentIndex(),
-            "duplex": self.duplex.currentIndex(),
-            "paper": self.paper.currentText(),
-            "orientation": self.orientation.currentIndex(),
-            "scale_mode": 0 if self.fit.isChecked() else 1,
-            "scale": 100,
-            "center": self.center.isChecked(),
-            "offset_x": self.left.value() - self.right.value(),
-            "offset_y": self.top.value() - self.bottom.value(),
-            "confirm_system_dialog": self.confirm_system.isChecked(),
-        }
+        self.details = collect_print_profile(self)
+        self.details.update(
+            {
+                "paths": list(self.file_paths),
+                "page_mode": "all",
+                "page_range": "",
+            }
+        )
         self.printRequested.emit(self.details)
 
     def log_message(self, message: str) -> None:

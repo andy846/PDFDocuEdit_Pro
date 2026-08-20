@@ -38,6 +38,27 @@ def test_coordinate_round_trip() -> None:
     assert rect == QRectF(100, 200, 200, 200)
 
 
+def test_rotated_coordinate_round_trip_uses_unrotated_pdf_space() -> None:
+    document = fitz.open()
+    page = document.new_page(width=200, height=100)
+    page.set_rotation(90)
+    source = fitz.Rect(20, 10, 60, 30)
+    widget = pdf_rect_to_widget(
+        source,
+        page.rect,
+        0.5,
+        page.rotation_matrix,
+    )
+    first = widget_point_to_pdf(
+        widget.topLeft(), page.rect, 0.5, page.derotation_matrix
+    )
+    second = widget_point_to_pdf(
+        widget.bottomRight(), page.rect, 0.5, page.derotation_matrix
+    )
+    assert fitz.Rect(first, second).normalize() == source
+    document.close()
+
+
 def test_words_intersecting_and_extraction() -> None:
     page = make_page()
     rect = fitz.Rect(60, 85, 250, 105)  # first line only

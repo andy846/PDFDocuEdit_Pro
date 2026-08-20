@@ -1116,6 +1116,7 @@ def scan_barcodes(
     dpi: int = 180,
     is_cancelled: Callable[[], bool] | None = None,
     barcode_types: Iterable[str] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> list[dict[str, object]]:
     capability = detect_capabilities()[CapabilityId.BARCODE]
     if not capability.available:
@@ -1126,14 +1127,15 @@ def scan_barcodes(
     )
     results: list[dict[str, object]] = []
     with fitz.open(source_path) as doc:
-        selected = list(pages) if pages is not None else list(range(doc.page_count))
+        requested = list(pages) if pages is not None else list(range(doc.page_count))
+        selected = [index for index in requested if 0 <= index < doc.page_count]
+        total = len(selected)
         if capability.backend == "zbarimg CLI":
             with tempfile.TemporaryDirectory(prefix="pdfdocuedit-zbar-") as folder:
-                for index in selected:
+                for position, index in enumerate(selected):
                     if is_cancelled and is_cancelled():
                         break
-                    if not 0 <= index < doc.page_count:
-                        continue
+                    _progress(progress, position, total, f"Page {index + 1} of {doc.page_count}")
                     page = doc.load_page(index)
                     pixmap = page.get_pixmap(dpi=max(72, min(600, dpi)), alpha=False)
                     image_path = Path(folder) / f"page-{index + 1}.png"
@@ -1147,6 +1149,7 @@ def scan_barcodes(
                             process.stderr.strip() or "zbarimg could not scan the page."
                         )
                     if not process.stdout.strip():
+                        _progress(progress, position + 1, total, f"Page {index + 1} of {doc.page_count}")
                         continue  # no symbols on this page
                     try:
                         root = ET.fromstring(process.stdout)
@@ -1164,16 +1167,16 @@ def scan_barcodes(
                                 "data": "" if data is None else "".join(data.itertext()),
                             }
                         )
+                    _progress(progress, position + 1, total, f"Page {index + 1} of {doc.page_count}")
             return results
 
         from PIL import Image
         from pyzbar.pyzbar import decode
 
-        for index in selected:
+        for position, index in enumerate(selected):
             if is_cancelled and is_cancelled():
                 break
-            if not 0 <= index < doc.page_count:
-                continue
+            _progress(progress, position, total, f"Page {index + 1} of {doc.page_count}")
             page = doc.load_page(index)
             pixmap = page.get_pixmap(dpi=max(72, min(600, dpi)), alpha=False)
             image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
@@ -1187,6 +1190,7 @@ def scan_barcodes(
                         "data": value.data.decode("utf-8", errors="replace"),
                     }
                 )
+            _progress(progress, position + 1, total, f"Page {index + 1} of {doc.page_count}")
     return results
 
 
@@ -1202,23 +1206,41 @@ def scan_barcodes_batch(
 
     sources = [Path(value).expanduser().resolve() for value in paths]
     combined: list[dict[str, object]] = []
+    plans: list[tuple[Path, list[int]]] = []
     matched_pages = not page_range.strip()
-    for index, source in enumerate(sources, 1):
+    for source in sources:
+        try:
+            with fitz.open(source) as document:
+                pages = (
+                    parse_page_range(page_range, document.page_count)
+                    if page_range.strip()
+                    else list(range(document.page_count))
+                )
+        except Exception as exc:
+            raise ToolError(f"Cannot read {source.name}: {exc}") from exc
+        matched_pages = matched_pages or bool(pages)
+        plans.append((source, pages))
+
+    total_pages = sum(len(pages) for _source, pages in plans)
+    completed = 0
+    for source, pages in plans:
         if is_cancelled and is_cancelled():
             break
-        _progress(progress, index - 1, len(sources), source.name)
-        with fitz.open(source) as document:
-            pages = (
-                parse_page_range(page_range, document.page_count)
-                if page_range.strip()
-                else list(range(document.page_count))
+
+        def page_progress(current: int, _total: int, message: str) -> None:
+            _progress(
+                progress, completed + current, total_pages,
+                f"{source.name} - {message}",
             )
-        matched_pages = matched_pages or bool(pages)
-        for result in scan_barcodes(source, pages, dpi, is_cancelled, barcode_types):
+
+        for result in scan_barcodes(
+            source, pages, dpi, is_cancelled, barcode_types, page_progress
+        ):
             result["file"] = source.name
             result["path"] = str(source)
             combined.append(result)
-        _progress(progress, index, len(sources), source.name)
+        completed += len(pages)
+
     if page_range.strip() and not matched_pages:
         raise ToolError("The page range does not match any page in the selected PDFs.")
     return combined

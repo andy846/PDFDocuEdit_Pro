@@ -20,8 +20,21 @@ dist/
 release/
 wheels/
 Ghostscript/
+Tesseract/
+VeraPDF/
 PDFdocuEdit_Pro_backup/
 build_assets/
+!build_assets/
+build_assets/*
+!build_assets/verapdf/
+build_assets/verapdf/*
+!build_assets/verapdf/BUNDLE_INFO.json
+!build_assets/verapdf/auto-install.xml
+
+# Reference documentation
+claude-code-doc.html
+coding-plan-faq.html
+coding-plan.html
 
 # Local user state and test artifacts
 config.json

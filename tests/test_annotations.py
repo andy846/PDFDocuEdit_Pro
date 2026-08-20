@@ -7,6 +7,8 @@ import pytest
 
 from core.annotations import (
     AnnotationOp,
+    AnnotationStyle,
+    add_freetext,
     add_circle,
     add_highlight,
     add_ink,
@@ -111,7 +113,44 @@ def test_apply_annotation_dispatch(tmp_path: Path) -> None:
         doc,
         AnnotationOp(kind="highlight", page=0, rects=(fitz.Rect(60, 80, 200, 105),)),
     )
-    apply_annotation(doc, AnnotationOp(kind="note", page=0, points=((200, 300),), text="x"))
+    apply_annotation(
+        doc, AnnotationOp(kind="note", page=0, points=((200, 300),), text="x")
+    )
     assert annot_count(page) == 2
     with pytest.raises(ValueError):
         apply_annotation(doc, AnnotationOp(kind="unknown", page=0))
+
+
+def test_text_box_and_callout_have_distinct_pdf_structures(tmp_path: Path) -> None:
+    doc, _ = make_doc(tmp_path)
+    style = AnnotationStyle(stroke="red", fill="", width=2.0)
+    add_freetext(
+        doc,
+        0,
+        fitz.Rect(120, 60, 260, 120),
+        "Text box",
+        style,
+        boxed=True,
+    )
+    callout_points = ((35.0, 220.0), (75.0, 170.0), (120.0, 140.0))
+    add_freetext(
+        doc,
+        0,
+        fitz.Rect(120, 140, 260, 200),
+        "Callout",
+        style,
+        callout=callout_points,
+        boxed=True,
+    )
+
+    page = doc.load_page(0)
+    text_box, callout = list(page.annots())
+    text_box_object = doc.xref_object(text_box.xref)
+    callout_object = doc.xref_object(callout.xref)
+    assert "/FreeTextCallout" not in text_box_object
+    assert "/CL [" not in text_box_object
+    assert "/LE /OpenArrow" not in text_box_object
+    assert "/IT /FreeTextCallout" in callout_object
+    assert "/CL [" in callout_object
+    assert "/LE /OpenArrow" in callout_object
+    assert callout.vertices == list(callout_points)

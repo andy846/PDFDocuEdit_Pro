@@ -41,6 +41,17 @@ DEFAULT_COLOR = "yellow"
 
 
 @dataclass(frozen=True)
+class AnnotationStyle:
+    stroke: str = DEFAULT_COLOR
+    fill: str = ""
+    opacity: float = 1.0
+    width: float = 1.5
+    font: str = "Helv"
+    font_size: float = 11.0
+    alignment: int = 0
+
+
+@dataclass(frozen=True)
 class AnnotationOp:
     """One annotation action collected by the canvas and applied by the viewer."""
 
@@ -53,6 +64,7 @@ class AnnotationOp:
     width: float = 1.5
     stamp_kind: str = "Draft"
     image_path: str = ""
+    style: AnnotationStyle | None = None
 
     def description(self) -> str:
         labels = {
@@ -64,10 +76,16 @@ class AnnotationOp:
             "ink": "Freehand",
             "rect": "Rectangle",
             "line": "Line",
+            "arrow": "Arrow",
             "circle": "Circle",
+            "ellipse": "Ellipse",
             "polygon": "Polygon",
+            "freetext_typewriter": "Typewriter Text",
+            "freetext_box": "Text Box",
+            "freetext_callout": "Callout",
             "redact": "Redact",
             "stamp": "Stamp",
+            "signature": "Signature",
             "image": "Image",
         }
         return labels.get(self.kind, self.kind.title())
@@ -78,7 +96,15 @@ def _quads(rects: Iterable[fitz.Rect]) -> list[fitz.Quad]:
 
 
 def _rgb(color: str) -> tuple[float, float, float]:
-    return ANNOT_COLORS.get(color, ANNOT_COLORS[DEFAULT_COLOR])
+    value = str(color).strip()
+    if value.startswith("#") and len(value) == 7:
+        try:
+            return tuple(
+                int(value[index : index + 2], 16) / 255.0 for index in (1, 3, 5)
+            )
+        except ValueError:
+            pass
+    return ANNOT_COLORS.get(value, ANNOT_COLORS[DEFAULT_COLOR])
 
 
 def _page(doc: fitz.Document, page_num: int) -> fitz.Page:
@@ -188,6 +214,22 @@ def add_line(
     annot.update()
 
 
+def add_arrow(
+    doc: fitz.Document,
+    page_num: int,
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    style: AnnotationStyle,
+) -> None:
+    page = _page(doc, page_num)
+    annot = page.add_line_annot(fitz.Point(p1), fitz.Point(p2))
+    annot.set_border(width=style.width)
+    annot.set_colors(stroke=_rgb(style.stroke))
+    annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_OPEN_ARROW)
+    annot.set_opacity(max(0.0, min(1.0, style.opacity)))
+    annot.update()
+
+
 def add_circle(
     doc: fitz.Document,
     page_num: int,
@@ -213,6 +255,45 @@ def add_polygon(
     annot = page.add_polygon_annot(list(points))
     annot.set_border(width=width)
     annot.set_colors(stroke=_rgb(color))
+    annot.update()
+
+
+def add_freetext(
+    doc: fitz.Document,
+    page_num: int,
+    rect: fitz.Rect,
+    text: str,
+    style: AnnotationStyle,
+    *,
+    callout: Sequence[tuple[float, float]] = (),
+    boxed: bool = False,
+) -> None:
+    page = _page(doc, page_num)
+    callout_points = (
+        [fitz.Point(point) for point in callout] if len(callout) == 3 else None
+    )
+    callout_options: dict[str, object] = {}
+    if callout_points:
+        callout_options = {
+            "callout": callout_points,
+            "line_end": fitz.PDF_ANNOT_LE_OPEN_ARROW,
+        }
+    annot = page.add_freetext_annot(
+        rect,
+        text,
+        fontsize=style.font_size,
+        fontname=style.font or "Helv",
+        text_color=_rgb(style.stroke),
+        fill_color=_rgb(style.fill) if style.fill else None,
+        border_color=_rgb(style.stroke) if boxed else None,
+        border_width=max(0.0, style.width) if boxed else 0,
+        opacity=max(0.0, min(1.0, style.opacity)),
+        **callout_options,
+        align=max(0, min(2, int(style.alignment))),
+    )
+    if not callout_points:
+        for key in ("CL", "IT", "LE"):
+            doc.xref_set_key(annot.xref, key, "null")
     annot.update()
 
 
@@ -261,28 +342,97 @@ def list_annotations(page: fitz.Page) -> list[dict]:
                 rect = annot.rect
             except Exception:
                 continue  # stale xref after a page rebuild
-            results.append({"kind": kind, "rect": rect, "index": index})
+            info = dict(annot.info or {})
+            border = dict(annot.border or {})
+            colors = dict(annot.colors or {})
+            results.append(
+                {
+                    "kind": kind,
+                    "rect": rect,
+                    "index": index,
+                    "xref": int(annot.xref),
+                    "text": str(info.get("content") or ""),
+                    "stroke": colors.get("stroke"),
+                    "fill": colors.get("fill"),
+                    "opacity": float(annot.opacity),
+                    "width": float(border.get("width") or 0),
+                }
+            )
     except Exception:
         pass  # the annotation list itself is stale
     return results
 
 
-def remove_annotation(page: fitz.Page, index: int) -> None:
+def remove_annotation(page: fitz.Page, xref: int) -> None:
     with DOCUMENT_LOCK:
         try:
             annots = list(page.annots())
         except Exception:
             return  # stale annotation list after a page rebuild
-        if 0 <= index < len(annots):
+        target = next((annot for annot in annots if int(annot.xref) == int(xref)), None)
+        # Backwards compatibility for older callers that passed a list index.
+        if target is None and 0 <= xref < len(annots):
+            target = annots[xref]
+        if target is not None:
             try:
-                page.delete_annot(annots[index])
+                page.delete_annot(target)
             except Exception:
                 pass  # the xref vanished mid-operation
+
+
+def update_annotation(
+    page: fitz.Page,
+    xref: int,
+    style: AnnotationStyle,
+    *,
+    text: str | None = None,
+) -> bool:
+    """Update an existing annotation by stable xref."""
+
+    with DOCUMENT_LOCK:
+        target = next(
+            (
+                annot
+                for annot in list(page.annots() or [])
+                if int(annot.xref) == int(xref)
+            ),
+            None,
+        )
+        if target is None:
+            return False
+        colors: dict[str, tuple[float, float, float]] = {"stroke": _rgb(style.stroke)}
+        if style.fill:
+            colors["fill"] = _rgb(style.fill)
+        try:
+            target.set_colors(**colors)
+        except (RuntimeError, ValueError):
+            pass
+        try:
+            target.set_border(width=max(0.0, style.width))
+        except (RuntimeError, ValueError):
+            pass
+        target.set_opacity(max(0.0, min(1.0, style.opacity)))
+        if text is not None:
+            info = dict(target.info or {})
+            info["content"] = text
+            target.set_info(info)
+        update_options: dict[str, object] = {}
+        if "FreeText" in str(target.type[1]):
+            update_options = {
+                "fontsize": style.font_size,
+                "fontname": style.font or "Helv",
+                "text_color": _rgb(style.stroke),
+                "fill_color": _rgb(style.fill) if style.fill else None,
+                "align": max(0, min(2, int(style.alignment))),
+            }
+        target.update(**update_options)
+        return True
 
 
 def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
     """Apply one AnnotationOp to the live document (serialized against renders)."""
     with DOCUMENT_LOCK:
+        style = op.style or AnnotationStyle(stroke=op.color, width=op.width)
         if op.kind in {"highlight", "underline", "strikeout", "squiggly"}:
             handler = {
                 "highlight": add_highlight,
@@ -290,19 +440,33 @@ def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
                 "strikeout": add_strikeout,
                 "squiggly": add_squiggly,
             }[op.kind]
-            handler(doc, op.page, list(op.rects), op.color)
+            handler(doc, op.page, list(op.rects), style.stroke)
         elif op.kind == "note":
             add_note(doc, op.page, op.points[0] if op.points else (0, 0), op.text)
         elif op.kind == "ink":
-            add_ink(doc, op.page, op.points, op.color, op.width)
+            add_ink(doc, op.page, op.points, style.stroke, style.width)
         elif op.kind == "rect":
-            add_rect(doc, op.page, op.rects[0], op.color, op.width)
+            add_rect(doc, op.page, op.rects[0], style.stroke, style.width)
         elif op.kind == "line":
-            add_line(doc, op.page, op.points[0], op.points[1], op.color, op.width)
-        elif op.kind == "circle":
-            add_circle(doc, op.page, op.rects[0], op.color, op.width)
+            add_line(
+                doc, op.page, op.points[0], op.points[1], style.stroke, style.width
+            )
+        elif op.kind == "arrow":
+            add_arrow(doc, op.page, op.points[0], op.points[1], style)
+        elif op.kind in {"circle", "ellipse"}:
+            add_circle(doc, op.page, op.rects[0], style.stroke, style.width)
         elif op.kind == "polygon":
-            add_polygon(doc, op.page, op.points, op.color, op.width)
+            add_polygon(doc, op.page, op.points, style.stroke, style.width)
+        elif op.kind.startswith("freetext_"):
+            add_freetext(
+                doc,
+                op.page,
+                op.rects[0],
+                op.text,
+                style,
+                callout=op.points if op.kind == "freetext_callout" else (),
+                boxed=op.kind != "freetext_typewriter",
+            )
         elif op.kind == "stamp":
             add_stamp(doc, op.page, op.rects[0], op.stamp_kind)
         elif op.kind == "redact":

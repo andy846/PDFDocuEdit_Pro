@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import (
     QEasingCurve,
-    QParallelAnimationGroup,
+    QEvent,
+    QPoint,
     QPropertyAnimation,
     QTimer,
     pyqtSignal,
@@ -44,6 +45,9 @@ class InfoBar(QFrame):
         self._timer.timeout.connect(self._on_timer_expired)
         self._queue: deque[_QueuedMessage] = deque(maxlen=10)
         self._pending_count = 0
+        self._overlay_anchor = None
+        self._overlay_top_offset = 42
+        self._target_height = 42
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(S.LG, S.XS, S.SM, S.XS)
@@ -62,16 +66,61 @@ class InfoBar(QFrame):
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(1.0)
         self.setGraphicsEffect(self._opacity)
-        self._motion = QParallelAnimationGroup(self)
-        self._height_animation = QPropertyAnimation(self, b"maximumHeight", self)
         self._opacity_animation = QPropertyAnimation(self._opacity, b"opacity", self)
-        for animation in (self._height_animation, self._opacity_animation):
-            animation.setDuration(170)
-            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self._motion.addAnimation(animation)
+        self._opacity_animation.setDuration(170)
+        self._opacity_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._motion = self._opacity_animation
         self._motion.finished.connect(self._motion_finished)
 
-    def show_message(self, message: str, kind: str = "info", timeout: int = 4500) -> None:
+    def set_overlay_anchor(self, anchor, top_offset: int = 42) -> None:
+        """Float over an anchor without participating in its parent layout."""
+        if self._overlay_anchor is not None:
+            try:
+                self._overlay_anchor.removeEventFilter(self)
+            except RuntimeError:
+                pass
+        self._overlay_anchor = anchor
+        self._overlay_top_offset = max(0, int(top_offset))
+        anchor.installEventFilter(self)
+        QTimer.singleShot(0, self._position_overlay)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._overlay_anchor and event.type() in {
+            QEvent.Type.Move,
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+            QEvent.Type.LayoutRequest,
+        }:
+            QTimer.singleShot(0, self._position_overlay)
+        return super().eventFilter(watched, event)
+
+    def _position_overlay(self) -> None:
+        anchor = self._overlay_anchor
+        parent = self.parentWidget()
+        if anchor is None or parent is None:
+            return
+        try:
+            origin = anchor.mapTo(parent, QPoint(0, 0))
+            width = max(0, anchor.width() - (2 * S.SM))
+        except RuntimeError:
+            return
+        if width <= 0:
+            return
+        target = max(42, min(88, self.sizeHint().height()))
+        self._target_height = target
+        self.setMaximumHeight(target)
+        self.setGeometry(
+            origin.x() + S.SM,
+            origin.y() + self._overlay_top_offset,
+            width,
+            target,
+        )
+        if self.isVisible():
+            self.raise_()
+
+    def show_message(
+        self, message: str, kind: str = "info", timeout: int = 4500
+    ) -> None:
         if self.isVisible() and not self._closing:
             self._queue.append(_QueuedMessage(message, kind, timeout))
             self._update_queue_badge()
@@ -86,17 +135,15 @@ class InfoBar(QFrame):
         self._closing = False
         self.show()
         self.raise_()
-        target = max(42, self.sizeHint().height())
+        self._target_height = max(42, min(88, self.sizeHint().height()))
+        self.setMaximumHeight(self._target_height)
+        self._position_overlay()
         if self._animations_enabled:
-            self.setMaximumHeight(0)
             self._opacity.setOpacity(0.0)
-            self._height_animation.setStartValue(0)
-            self._height_animation.setEndValue(target)
             self._opacity_animation.setStartValue(0.0)
             self._opacity_animation.setEndValue(1.0)
             self._motion.start()
         else:
-            self.setMaximumHeight(target)
             self._opacity.setOpacity(1.0)
         self._timer.stop()
         if timeout > 0:
@@ -141,8 +188,6 @@ class InfoBar(QFrame):
         self._queue.clear()
         self._update_queue_badge()
         if self._animations_enabled:
-            self._height_animation.setStartValue(self.height())
-            self._height_animation.setEndValue(0)
             self._opacity_animation.setStartValue(self._opacity.opacity())
             self._opacity_animation.setEndValue(0.0)
             self._motion.start()

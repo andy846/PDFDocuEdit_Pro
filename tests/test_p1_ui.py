@@ -58,6 +58,11 @@ def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> 
     assert nav.outline._tree.topLevelItemCount() == 2
 
     window._show_nav_tab("search")
+    session = window._session
+    assert session is not None
+    assert not session.search_panel.isHidden()
+    assert nav.search not in [nav._stack.widget(i) for i in range(nav._stack.count())]
+    assert window.context_panel.isHidden()
     window.workspace.nav_panel.search._query.setText("searchable")
     window._run_search("searchable")
     assert nav.search._list.count() == 2

@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QSplitter
 from core.pdf_engine import PdfEngine
 from core.undo import UndoStack
 
+from .analysis_panel import AnalysisPanel
 from .nav_panel import NavPanel
 from .pdf_canvas import PdfCanvas
 
@@ -31,6 +32,10 @@ class DocumentSession(QObject):
         self.canvas = PdfCanvas()
         self.split_canvas: PdfCanvas | None = None
         self.nav_panel = NavPanel(animations_enabled=animations_enabled)
+        self.search_panel = self.nav_panel.search
+        self.search_panel.hide()
+        self.analysis_panel = AnalysisPanel()
+        self.analysis_panel.hide()
 
         self.canvas_area = QSplitter(Qt.Orientation.Horizontal)
         self.canvas_area.addWidget(self.canvas)
@@ -41,8 +46,12 @@ class DocumentSession(QObject):
         self.nav_panel.hide()
         self.tab_widget.addWidget(self.nav_panel)
         self.tab_widget.addWidget(self.canvas_area)
+        self.tab_widget.addWidget(self.search_panel)
+        self.tab_widget.addWidget(self.analysis_panel)
         self.tab_widget.setStretchFactor(0, 0)
         self.tab_widget.setStretchFactor(1, 1)
+        self.tab_widget.setStretchFactor(2, 0)
+        self.tab_widget.setStretchFactor(3, 0)
         self.tab_widget.setCollapsible(1, False)
 
     # --- split view ------------------------------------------------------
@@ -180,4 +189,5 @@ class DocumentSession(QObject):
         if self.split_canvas is not None:
             self.split_canvas.clear()
         self.nav_panel.clear_document()
+        self.analysis_panel.hide()
         self.engine.close()

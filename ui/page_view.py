@@ -29,7 +29,9 @@ class PageView(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(S.XS)
         self.overlay = PageOverlay(page_num)
-        self.overlay.set_geometry_info(page.rect, 1.0)
+        self.overlay.set_geometry_info(
+            page.rect, 1.0, page.rotation_matrix, page.derotation_matrix
+        )
         self._shadow = QGraphicsDropShadowEffect(self.overlay)
         self._shadow.setBlurRadius(28)
         self._shadow.setOffset(0, 7)
@@ -83,13 +85,13 @@ class PageRenderCache:
         self._cache.clear()
 
 
-def render_page_pixmap(
+def render_page_image(
     doc: fitz.Document,
     page_num: int,
     zoom: float,
     dpr: float,
-) -> QPixmap:
-    """Render one page at zoom × device-pixel-ratio (safe for worker threads)."""
+) -> QImage:
+    """Render one page into a worker-thread-safe QImage."""
     page = doc.load_page(page_num)
     matrix = fitz.Matrix(zoom * dpr, zoom * dpr)
     pixmap = page.get_pixmap(matrix=matrix, alpha=False)
@@ -100,7 +102,17 @@ def render_page_pixmap(
         pixmap.stride,
         QImage.Format.Format_RGB888,
     ).copy()
-    result = QPixmap.fromImage(image)
+    image.setDevicePixelRatio(dpr)
+    return image
+
+
+def render_page_pixmap(
+    doc: fitz.Document,
+    page_num: int,
+    zoom: float,
+    dpr: float,
+) -> QPixmap:
+    result = QPixmap.fromImage(render_page_image(doc, page_num, zoom, dpr))
     result.setDevicePixelRatio(dpr)
     return result
 

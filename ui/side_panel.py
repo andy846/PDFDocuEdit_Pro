@@ -63,7 +63,9 @@ class CollapsibleSection(QWidget):
         self._animations_enabled = animations_enabled
         self._sidebar_collapsed = False
         self._filtering = False
-        self._logical_expanded = bool(QSettings().value(f"sidebar/section/{key}", True, bool))
+        self._logical_expanded = bool(
+            QSettings().value(f"sidebar/section/{key}", True, bool)
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(S.XXS)
@@ -168,6 +170,8 @@ class SidePanel(QFrame):
         "sort",
         "split",
         "info",
+        "smart_detection",
+        "ocr",
         "pdf_to_word",
         "extract_text",
         "encrypt",
@@ -175,6 +179,14 @@ class SidePanel(QFrame):
         "highlight",
         "underline",
         "strikeout",
+        "squiggly",
+        "line",
+        "arrow",
+        "ellipse",
+        "polygon",
+        "freetext_typewriter",
+        "freetext_box",
+        "freetext_callout",
         "note",
         "ink",
         "rect",
@@ -199,6 +211,7 @@ class SidePanel(QFrame):
                 ToolItem("split", "Split PDF", "scissors", "Split.png"),
                 ToolItem("rotate", "Rotate pages", "rotate-cw"),
                 ToolItem("info", "Document information", "info", "info.png"),
+                ToolItem("smart_detection", "Smart Detection", "scan-search"),
             ),
         ),
         (
@@ -208,20 +221,35 @@ class SidePanel(QFrame):
                 ToolItem("highlight", "Highlight text", "highlighter"),
                 ToolItem("underline", "Underline text", "underline"),
                 ToolItem("strikeout", "Strikethrough text", "strikethrough"),
+                ToolItem("squiggly", "Squiggly underline", "waves"),
                 ToolItem("note", "Sticky note", "message-square"),
                 ToolItem("ink", "Freehand drawing", "pen-line"),
                 ToolItem("rect", "Rectangle", "square"),
+                ToolItem("line", "Line", "line-tool"),
+                ToolItem("arrow", "Arrow", "arrow-up-right"),
+                ToolItem("ellipse", "Ellipse", "circle"),
+                ToolItem("polygon", "Polygon", "pentagon"),
+                ToolItem("freetext_typewriter", "Typewriter text", "text-cursor-input"),
+                ToolItem("freetext_box", "Text box", "square-type"),
+                ToolItem("freetext_callout", "Callout", "message-square-more"),
                 ToolItem("redact", "Redact content", "eraser"),
                 ToolItem("stamp", "Rubber stamp", "stamp"),
                 ToolItem("signature", "Signature image", "signature"),
                 ToolItem("image", "Insert image", "image"),
-                ToolItem("watermark", "Add watermark", "layers"),
+                ToolItem("watermark", "Add watermark", "watermark"),
             ),
         ),
         (
             "convert",
             "Conversion",
             (
+                ToolItem(
+                    "ocr",
+                    "OCR",
+                    "scan",
+                    None,
+                    CapabilityId.OCR,
+                ),
                 ToolItem(
                     "pdf_to_word",
                     "PDF to Word",
@@ -258,7 +286,12 @@ class SidePanel(QFrame):
                     "PDF-report.png",
                     CapabilityId.SPREADSHEET,
                 ),
-                ToolItem("extract_text", "Extract text region", "file-text", "Extract-text.png"),
+                ToolItem(
+                    "extract_text",
+                    "Extract text region",
+                    "file-text",
+                    "Extract-text.png",
+                ),
                 ToolItem("merge", "Merge PDFs", "files", "Merge-PDF.png"),
                 ToolItem("overlay", "PDF overlay", "layers", "overlay.png"),
                 ToolItem("batch_print", "Batch print", "printer", "Batch_print.png"),
@@ -271,8 +304,20 @@ class SidePanel(QFrame):
                     "merge_csv_excel.png",
                     CapabilityId.SPREADSHEET,
                 ),
-                ToolItem("barcode", "Barcode / QR code", "scan", "qrcode.png", CapabilityId.BARCODE),
-                ToolItem("barcode_batch", "Batch Read Barcode/QR Code", "scan", "batch_qrcode.png", CapabilityId.BARCODE),
+                ToolItem(
+                    "barcode",
+                    "Barcode / QR code",
+                    "scan",
+                    "qrcode.png",
+                    CapabilityId.BARCODE,
+                ),
+                ToolItem(
+                    "barcode_batch",
+                    "Batch Read Barcode/QR Code",
+                    "scan",
+                    "batch_qrcode.png",
+                    CapabilityId.BARCODE,
+                ),
             ),
         ),
         (
@@ -285,7 +330,9 @@ class SidePanel(QFrame):
         ),
     )
 
-    def __init__(self, collapsed: bool = False, animations_enabled: bool = True, parent=None):
+    def __init__(
+        self, collapsed: bool = False, animations_enabled: bool = True, parent=None
+    ):
         super().__init__(parent)
         self.setObjectName("leftPanel")
         self._collapsed = collapsed
@@ -392,7 +439,9 @@ class SidePanel(QFrame):
                 tooltip = f"{item.label} ({hint})" if hint else item.label
                 button.setToolTip(tooltip)
                 button.setAccessibleName(item.label)
-                button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+                )
                 button.clicked.connect(
                     lambda _checked=False, key=item.key: self._activate_and_emit(key)
                 )
@@ -428,7 +477,11 @@ class SidePanel(QFrame):
         layout.addWidget(self._footer)
 
     def _item_icon(self, item: ToolItem):
-        return app_icon(item.asset_name, 24) if item.asset_name else icon(item.icon_name, 22)
+        return (
+            app_icon(item.asset_name, 24)
+            if item.asset_name
+            else icon(item.icon_name, 22)
+        )
 
     def _activate_and_emit(self, key: str) -> None:
         self.set_active_tool(key)
@@ -438,7 +491,9 @@ class SidePanel(QFrame):
     def _filter_tools(self, value: str) -> None:
         query = value.strip().casefold()
         visible_count = 0
-        for section, (_key, _title, items) in zip(self._sections, self.SECTIONS, strict=True):
+        for section, (_key, _title, items) in zip(
+            self._sections, self.SECTIONS, strict=True
+        ):
             matches = 0
             for item in items:
                 visible = not query or query in item.label.casefold()
@@ -447,7 +502,9 @@ class SidePanel(QFrame):
             visible_count += matches
             section.set_filtering(bool(query), matches > 0)
         self._tool_count.setText(
-            f"{visible_count} matching tools" if query else f"{len(self._buttons)} tools"
+            f"{visible_count} matching tools"
+            if query
+            else f"{len(self._buttons)} tools"
         )
 
     def set_collapsed(self, collapsed: bool, animate: bool = True) -> None:
@@ -464,7 +521,9 @@ class SidePanel(QFrame):
         )
         self._toggle.setIcon(icon("chevron-right" if collapsed else "chevron-left", 18))
         self._toggle.setToolTip("Expand tools" if collapsed else "Collapse tools")
-        self._toggle.setAccessibleName("Expand tool navigation" if collapsed else "Collapse tool navigation")
+        self._toggle.setAccessibleName(
+            "Expand tool navigation" if collapsed else "Collapse tool navigation"
+        )
         for section in self._sections:
             section.set_sidebar_collapsed(collapsed)
         for key, button in self._buttons.items():
@@ -513,7 +572,9 @@ class SidePanel(QFrame):
                 continue
             if key == "decrypt" and not self._document_encrypted:
                 button.setEnabled(False)
-                button.setToolTip(f"{item.label}\nThe open PDF has no password security.")
+                button.setToolTip(
+                    f"{item.label}\nThe open PDF has no password security."
+                )
                 continue
             if item.capability is not None:
                 capability = capabilities[item.capability]
@@ -536,7 +597,9 @@ class SidePanel(QFrame):
 
     def refresh_icons(self) -> None:
         self._brand_mark.setPixmap(app_pixmap("Main_menu.png", 30))
-        self._toggle.setIcon(icon("chevron-right" if self._collapsed else "chevron-left", 18))
+        self._toggle.setIcon(
+            icon("chevron-right" if self._collapsed else "chevron-left", 18)
+        )
         self._search_action.setIcon(icon("search", 16))
         for section in self._sections:
             section.refresh_icon()

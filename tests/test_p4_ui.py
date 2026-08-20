@@ -24,7 +24,9 @@ def make_pdf(path: Path, pages: int = 3, prefix: str = "Doc") -> Path:
 def _window(tmp_path: Path, monkeypatch):
     app = QApplication.instance() or QApplication(["pdfdocuedit-p4-test"])
     monkeypatch.setattr(
-        viewer_module, "SettingsManager", lambda: SettingsManager(tmp_path / "settings.json")
+        viewer_module,
+        "SettingsManager",
+        lambda: SettingsManager(tmp_path / "settings.json"),
     )
     window = viewer_module.PDFViewer()
     window.resize(1100, 760)
@@ -76,7 +78,9 @@ def test_open_multiple_tabs_and_switch(tmp_path: Path, monkeypatch) -> None:
     window.close()
 
 
-def test_close_tab_and_last_tab_returns_empty_state(tmp_path: Path, monkeypatch) -> None:
+def test_close_tab_and_last_tab_returns_empty_state(
+    tmp_path: Path, monkeypatch
+) -> None:
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "first.pdf")
     second = make_pdf(tmp_path / "second.pdf")
@@ -105,7 +109,9 @@ def test_close_tab_and_last_tab_returns_empty_state(tmp_path: Path, monkeypatch)
     window.close()
 
 
-def test_clicking_tab_x_closes_document_in_real_viewer(tmp_path: Path, monkeypatch) -> None:
+def test_clicking_tab_x_closes_document_in_real_viewer(
+    tmp_path: Path, monkeypatch
+) -> None:
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "first.pdf")
     second = make_pdf(tmp_path / "second.pdf")
@@ -239,4 +245,70 @@ def test_tab_commands_registered(tmp_path: Path, monkeypatch) -> None:
     ids = [command.id for command in window._commands]
     for wanted in ("tab_next", "tab_prev", "view_split"):
         assert wanted in ids, wanted
+    window.close()
+
+
+def test_outline_to_thumbnails_resyncs_each_document(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    first = make_pdf(tmp_path / "first.pdf", pages=4, prefix="Alpha")
+    second = make_pdf(tmp_path / "second.pdf", pages=3, prefix="Beta")
+    window.load_file(str(first))
+    first_session = window._session
+    window.open_in_new_tab(str(second))
+    second_session = window._session
+
+    window.workspace.set_current_session(first_session)
+    first_session.nav_panel.show_panel("outline")
+    first_session.nav_panel.outline.jumpRequested.emit(3)
+    first_session.nav_panel.show_panel("thumbnails")
+    app.processEvents()
+    assert first_session.canvas.current_page == 3
+    assert first_session.nav_panel.thumbnails._list.currentRow() == 3
+
+    window.workspace.set_current_session(second_session)
+    second_session.nav_panel.show_panel("outline")
+    second_session.nav_panel.outline.jumpRequested.emit(1)
+    second_session.nav_panel.show_panel("thumbnails")
+    app.processEvents()
+    assert second_session.canvas.current_page == 1
+    assert second_session.nav_panel.thumbnails._list.currentRow() == 1
+
+    window.workspace.set_current_session(first_session)
+    app.processEvents()
+    assert first_session.canvas.current_page == 3
+    assert first_session.nav_panel.thumbnails._list.currentRow() == 3
+    window.close()
+
+
+def test_notification_overlay_does_not_reflow_pdf_viewport(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    window._set_motion_enabled(False)
+    window.load_file(str(make_pdf(tmp_path / "notification.pdf", pages=2)))
+    window.info_bar.hide_bar()
+    app.processEvents()
+    session = window._session
+    workspace_geometry = window.workspace.geometry()
+    canvas_geometry = session.canvas.geometry()
+    splitter_sizes = window.splitter.sizes()
+
+    window.info_bar.show_message(
+        "Pages rotated. Save to keep the change.", "success", 0
+    )
+    app.processEvents()
+
+    assert window.info_bar.parentWidget() is window.centralWidget()
+    assert window.info_bar.isVisible()
+    assert window.info_bar.geometry().intersects(window.workspace.geometry())
+    assert window.workspace.geometry() == workspace_geometry
+    assert session.canvas.geometry() == canvas_geometry
+    assert window.splitter.sizes() == splitter_sizes
+
+    window.info_bar.hide_bar()
+    app.processEvents()
+    assert window.workspace.geometry() == workspace_geometry
+    assert session.canvas.geometry() == canvas_geometry
     window.close()

@@ -20,6 +20,8 @@ class CapabilityId(StrEnum):
     OFFICE_TO_PDF = "office_to_pdf"
     POSTSCRIPT = "postscript"
     BARCODE = "barcode"
+    VERAPDF = "verapdf"
+    OCR = "ocr"
     PDF_TO_WORD = "pdf_to_word"
     SPREADSHEET = "spreadsheet"
 
@@ -165,6 +167,54 @@ def _barcode_capability() -> Capability:
     )
 
 
+def bundled_tesseract_runtime() -> tuple[Path | None, Path | None, str]:
+    """Return the bundled Windows x64 Tesseract executable and tessdata."""
+    if platform.system() != "Windows":
+        return None, None, "OCR is currently supported only on Windows x64."
+    if platform.machine().casefold() not in {"amd64", "x86_64"}:
+        return None, None, "OCR requires a Windows x64 build."
+    roots: list[Path] = []
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            roots.append(Path(base) / "tesseract")
+        roots.append(Path(sys.executable).resolve().parent / "tesseract")
+    else:
+        roots.append(Path(__file__).resolve().parent.parent / "Tesseract")
+    missing_by_root: list[str] = []
+    required = (
+        Path("tesseract.exe"),
+        Path("tessdata/eng.traineddata"),
+        Path("tessdata/chi_tra.traineddata"),
+        Path("tessdata/configs/pdf"),
+    )
+    for root in roots:
+        missing = [str(item) for item in required if not (root / item).is_file()]
+        if not missing:
+            return root / "tesseract.exe", root / "tessdata", ""
+        missing_by_root = missing
+    detail = ", ".join(missing_by_root) if missing_by_root else "Tesseract directory"
+    return None, None, f"Bundled OCR assets are incomplete: {detail}."
+
+
+def _ocr_capability() -> Capability:
+    executable, tessdata, reason = bundled_tesseract_runtime()
+    return Capability(
+        CapabilityId.OCR,
+        "OCR",
+        executable is not None,
+        "Bundled Tesseract 5.5.3" if executable else "",
+        str(executable) if executable else "",
+        reason,
+        (
+            "Install the complete Tesseract 5.5.3 runtime under the bundled "
+            "tesseract folder, including eng and chi_tra language data."
+            if executable is None
+            else f"Language data: {tessdata}"
+        ),
+    )
+
+
 def _module_capability(
     capability_id: CapabilityId,
     display_name: str,
@@ -182,12 +232,63 @@ def _module_capability(
     )
 
 
+def _verapdf_capability() -> Capability:
+    names = (
+        ("verapdf.bat", "bin/verapdf.bat")
+        if platform.system() == "Windows"
+        else ("verapdf", "bin/verapdf")
+    )
+    roots: list[Path] = []
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            roots.append(Path(base) / "verapdf")
+        roots.append(Path(sys.executable).resolve().parent / "verapdf")
+    else:
+        roots.append(Path(__file__).resolve().parent.parent / "verapdf")
+    launcher = _configured_executable("verapdf_path")
+    backend = "Configured veraPDF" if launcher else ""
+    if not launcher:
+        for root in roots:
+            for name in names:
+                candidate = root / name
+                if candidate.is_file() and (
+                    platform.system() == "Windows" or os.access(candidate, os.X_OK)
+                ):
+                    launcher = str(candidate.resolve())
+                    backend = "Bundled veraPDF + Java"
+                    break
+            if launcher:
+                break
+    if not launcher:
+        launcher = PlatformService.find_executable(
+            ("verapdf.bat", "verapdf"), ()
+        )
+        backend = "System veraPDF" if launcher else ""
+    return Capability(
+        CapabilityId.VERAPDF,
+        "PDF/A and PDF/UA validation",
+        bool(launcher),
+        backend,
+        launcher or "",
+        "The offline veraPDF runtime was not found." if not launcher else "",
+        (
+            "Install the pinned veraPDF runtime or configure its launcher in Settings."
+            if not launcher
+            else "PDF/UA reports machine-verifiable checks."
+        ),
+    )
+
+
+
 @lru_cache(maxsize=1)
 def detect_capabilities() -> dict[CapabilityId, Capability]:
     values = [
         _office_capability(),
         _postscript_capability(),
         _barcode_capability(),
+        _ocr_capability(),
+        _verapdf_capability(),
         _module_capability(
             CapabilityId.PDF_TO_WORD,
             "PDF to Word",

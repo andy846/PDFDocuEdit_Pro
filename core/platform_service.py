@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import time
 import subprocess
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -71,6 +72,7 @@ class PlatformService:
         *,
         timeout: int = 300,
         cwd: str | os.PathLike[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> ProcessResult:
         kwargs: dict[str, object] = {}
         if platform.system() == "Windows":
@@ -79,6 +81,7 @@ class PlatformService:
             result = subprocess.run(
                 list(command),
                 cwd=cwd,
+                env=env,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -88,5 +91,68 @@ class PlatformService:
                 **kwargs,
             )
         except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(f"The external tool did not respond within {timeout}s.") from exc
+            raise TimeoutError(
+                f"The external tool did not respond within {timeout}s."
+            ) from exc
         return ProcessResult(result.returncode, result.stdout, result.stderr)
+
+    @staticmethod
+    def run_cancellable(
+        command: Sequence[str],
+        *,
+        is_cancelled,
+        timeout: int = 600,
+        cwd: str | os.PathLike[str] | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ProcessResult:
+        """Run a hidden process while polling for cooperative cancellation."""
+        kwargs: dict[str, object] = {}
+        if platform.system() == "Windows":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        process = subprocess.Popen(
+            list(command),
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **kwargs,
+        )
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                if is_cancelled and is_cancelled():
+                    PlatformService._stop_process(process)
+                    from .tasks import TaskCancelled
+
+                    raise TaskCancelled
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    PlatformService._stop_process(process)
+                    raise TimeoutError(
+                        f"The external tool did not respond within {timeout}s."
+                    )
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                    return ProcessResult(process.returncode or 0, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            if process.poll() is None:
+                PlatformService._stop_process(process)
+
+    @staticmethod
+    def _stop_process(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass

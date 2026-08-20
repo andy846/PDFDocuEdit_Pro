@@ -1,5 +1,5 @@
 #define MyAppName "PDFDocuEdit Pro"
-#define MyAppVersion "1.1"
+#define MyAppVersion "2.0"
 #define MyAppPublisher "Andy Leung"
 #define MyAppExeName "PDFDocuEdit Pro.exe"
 
@@ -14,7 +14,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\release
-OutputBaseFilename=PDFDocuEdit-Pro-{#MyAppVersion}-Windows-x64-Setup
+OutputBaseFilename=PDFDocuEdit-Pro-v{#MyAppVersion}-Setup-Windows-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

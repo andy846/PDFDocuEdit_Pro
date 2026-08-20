@@ -43,8 +43,23 @@ def global_style() -> str:
             border-color: {c['border_strong']};
         }}
         QWidget#organizerPageWidget[selected="true"] {{
-            border-color: {c['legacy_green']};
-            background: {c['legacy_green_soft']};
+            border-color: {c['primary']};
+            background: {c['primary_soft']};
+        }}
+        QWidget#organizerPageWidget:focus {{
+            border-color: {c['primary']};
+            background: {_rgba(c['primary_soft'], 180)};
+        }}
+        QLabel#organizerSelectionBadge {{
+            color: {c['on_primary']};
+            background: {c['primary']};
+            border: 2px solid {c['bg_surface']};
+            border-radius: 12px;
+            font-weight: 700;
+        }}
+        QFrame#organizerInsertionLine {{
+            background: {c['primary']};
+            border-radius: 1px;
         }}
         QWidget#organizerPageWidget[lifted="true"] {{
             border-color: {c['primary']};

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 import core.viewer as viewer_module
 from core.settings import SettingsManager
 from dialogs.readme_dialog import README_CONTENT, ReadmeDialog
+from ui.icons import _PATHS
 from ui.side_panel import SidePanel
 
 
@@ -24,7 +25,9 @@ def make_pdf(path: Path, pages: int = 3, prefix: str = "Doc") -> Path:
 def _window(tmp_path: Path, monkeypatch):
     app = QApplication.instance() or QApplication(["pdfdocuedit-legacy-test"])
     monkeypatch.setattr(
-        viewer_module, "SettingsManager", lambda: SettingsManager(tmp_path / "settings.json")
+        viewer_module,
+        "SettingsManager",
+        lambda: SettingsManager(tmp_path / "settings.json"),
     )
     window = viewer_module.PDFViewer()
     window.resize(1100, 760)
@@ -113,6 +116,18 @@ def test_save_all_files(tmp_path: Path, monkeypatch) -> None:
     window.close()
 
 
+def test_annotation_toolbar_icons_are_defined_and_unique() -> None:
+    annotation_items = next(
+        items
+        for section_key, _title, items in SidePanel.SECTIONS
+        if section_key == "annotate"
+    )
+    icon_names = [item.icon_name for item in annotation_items]
+    assert all(name in _PATHS for name in icon_names)
+    icon_drawings = [_PATHS[name] for name in icon_names]
+    assert len(icon_drawings) == len(set(icon_drawings))
+
+
 def test_sidebar_icons_follow_old_assets(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     expected = {
@@ -185,7 +200,9 @@ def test_decrypt_ui_flow_produces_readable_output(tmp_path: Path, monkeypatch) -
     window.close()
 
 
-def test_editing_encrypted_doc_preserves_password_on_save(tmp_path: Path, monkeypatch) -> None:
+def test_editing_encrypted_doc_preserves_password_on_save(
+    tmp_path: Path, monkeypatch
+) -> None:
     window, app = _window(tmp_path, monkeypatch)
     encrypted = tmp_path / "locked.pdf"
     with fitz.open() as doc:

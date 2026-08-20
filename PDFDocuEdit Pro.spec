@@ -38,6 +38,54 @@ for _rel in ("bin", "lib", "Resource", "iccprofiles"):
                 # inside a same-named folder (observed with 6.14.2 on Windows).
                 datas.append((str(_file), f"ghostscript/{_file.relative_to(_GS_ROOT).parent}"))
 
+# OCR is a Windows x64 bundled-only capability. Release builds must contain
+# the pinned Tesseract 5.5.3 runtime, both language files, the PDF config, and
+# its dependent DLLs. Missing assets are a build error rather than a runtime
+# fallback to an arbitrary system installation.
+_TESS_ROOT = ROOT / "Tesseract"
+if sys.platform == "win32":
+    _tess_required = (
+        _TESS_ROOT / "tesseract.exe",
+        _TESS_ROOT / "tessdata" / "eng.traineddata",
+        _TESS_ROOT / "tessdata" / "chi_tra.traineddata",
+        _TESS_ROOT / "tessdata" / "configs" / "pdf",
+        _TESS_ROOT / "BUNDLE_INFO.json",
+    )
+    _tess_missing = [str(path.relative_to(ROOT)) for path in _tess_required if not path.is_file()]
+    if not list(_TESS_ROOT.glob("*.dll")):
+        _tess_missing.append("Tesseract/*.dll")
+    if _tess_missing:
+        raise RuntimeError(
+            "Bundled Tesseract 5.5.3 assets are incomplete: "
+            + ", ".join(_tess_missing)
+        )
+    for _file in _TESS_ROOT.rglob("*"):
+        if _file.is_file():
+            datas.append(
+                (str(_file), f"tesseract/{_file.relative_to(_TESS_ROOT).parent}")
+            )
+
+# PDF/A and PDF/UA validation is fully offline. Both supported platforms ship
+# the pinned veraPDF Greenfield distribution and its private Temurin JRE.
+_VERA_ROOT = ROOT / "VeraPDF"
+_vera_windows = sys.platform == "win32"
+_vera_required = (
+    _VERA_ROOT / ("verapdf.bat" if _vera_windows else "verapdf"),
+    _VERA_ROOT / "jre" / "bin" / ("java.exe" if _vera_windows else "java"),
+    _VERA_ROOT / "BUNDLE_INFO.json",
+)
+_vera_missing = [
+    str(path.relative_to(ROOT)) for path in _vera_required if not path.is_file()
+]
+if _vera_missing:
+    raise RuntimeError(
+        "Bundled veraPDF/Temurin assets are incomplete: "
+        + ", ".join(_vera_missing)
+    )
+for _file in _VERA_ROOT.rglob("*"):
+    if _file.is_file():
+        datas.append((str(_file), f"verapdf/{_file.relative_to(_VERA_ROOT).parent}"))
+
 # pyzbar ships the zbar native library as DLLs inside its package on Windows.
 binaries = []
 try:
@@ -165,11 +213,11 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="1.1.0",
+        version="2.0.0",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "1.1",
-            "CFBundleVersion": "110",
+            "CFBundleShortVersionString": "2.0",
+            "CFBundleVersion": "200",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

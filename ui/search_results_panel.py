@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QRadioButton,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -34,17 +35,40 @@ class SearchResultsPanel(QFrame):
 
     jumpRequested = pyqtSignal(int, list)
     searchRequested = pyqtSignal(str, object)  # query, pages (list[int] | None)
+    closed = pyqtSignal()
+    ocrRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setMinimumWidth(300)
+        self.setMaximumWidth(380)
         self.setObjectName("navSubPanel")
         self._hits: list[SearchHit] = []
         self._page_count = 0
         self._current_page = 0
+        self._match_cursor = -1
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
         layout.setSpacing(S.XS)
+        header = QHBoxLayout()
+        title = QLabel("Search results")
+        title.setObjectName("appTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        previous = QPushButton("↑")
+        previous.setToolTip("Previous result (Shift+Enter)")
+        previous.clicked.connect(lambda: self._step(-1))
+        header.addWidget(previous)
+        following = QPushButton("↓")
+        following.setToolTip("Next result (Enter)")
+        following.clicked.connect(lambda: self._step(1))
+        header.addWidget(following)
+        close_button = QPushButton("×")
+        close_button.setToolTip("Close search (Esc)")
+        close_button.clicked.connect(self.closed.emit)
+        header.addWidget(close_button)
+        layout.addLayout(header)
 
         self._query = QLineEdit()
         self._query.setObjectName("searchQuery")
@@ -53,6 +77,7 @@ class SearchResultsPanel(QFrame):
         self._query.addAction(icon("search", 16), QLineEdit.ActionPosition.LeadingPosition)
         self._query.textChanged.connect(self._on_text_changed)
         layout.addWidget(self._query)
+        self._query.returnPressed.connect(self._activate_current)
 
         # --- page scope ---
         scope_row = QHBoxLayout()
@@ -94,6 +119,12 @@ class SearchResultsPanel(QFrame):
         self._list.itemActivated.connect(self._on_activated)
         layout.addWidget(self._list, 1)
 
+        self._ocr = QPushButton("Run OCR…")
+        self._ocr.setToolTip("Make a scanned PDF searchable")
+        self._ocr.clicked.connect(self.ocrRequested.emit)
+        self._ocr.hide()
+        layout.addWidget(self._ocr)
+
         self._status = QLabel("Type to search the document.")
         self._status.setObjectName("navEmpty")
         self._status.setWordWrap(True)
@@ -128,6 +159,7 @@ class SearchResultsPanel(QFrame):
     def set_results(self, hits: list[SearchHit], total_matches: int) -> None:
         self._hits = hits
         self._list.clear()
+        self._match_cursor = -1
         for hit in hits:
             count = len(hit.rects)
             item = QListWidgetItem(
@@ -140,19 +172,28 @@ class SearchResultsPanel(QFrame):
         if hits:
             self._list.setCurrentRow(0)
         self._status.setText(f"Found {total_matches} match(es) on {len(hits)} page(s).")
+        self._ocr.setVisible(not hits)
 
     def show_searching(self) -> None:
         self._status.setText("Searching…")
+        self._ocr.hide()
+
+    def show_progress(self, current: int, total: int, message: str) -> None:
+        self._status.setText(f"{message} ({current}/{total})" if total else message)
 
     def show_error(self, message: str) -> None:
+        self._ocr.hide()
         self._status.setText(message)
 
     def clear(self) -> None:
         self._hits = []
         self._list.clear()
+        self._match_cursor = -1
         self._status.setText("Type to search the document.")
+        self._ocr.hide()
 
     def reset_query(self) -> None:
+        self._ocr.hide()
         self._debounce.stop()
         self._query.blockSignals(True)
         self._query.clear()
@@ -164,6 +205,9 @@ class SearchResultsPanel(QFrame):
 
     def whole_word(self) -> bool:
         return self._whole_word.isChecked()
+
+    def query_text(self) -> str:
+        return self._query.text().strip()
 
     def _on_text_changed(self, _text: str) -> None:
         self._schedule()
@@ -205,3 +249,37 @@ class SearchResultsPanel(QFrame):
                 rects = list(hit.rects)
                 break
         self.jumpRequested.emit(page, rects)
+
+    def _step(self, offset: int) -> None:
+        matches = [
+            (hit.page, rect, row)
+            for row, hit in enumerate(self._hits)
+            for rect in hit.rects
+        ]
+        if not matches:
+            self._emit_search()
+            return
+        self._match_cursor = (self._match_cursor + offset) % len(matches)
+        page, rect, row = matches[self._match_cursor]
+        self._list.setCurrentRow(row)
+        self._status.setText(
+            f"Match {self._match_cursor + 1} of {len(matches)} · Page {page + 1}"
+        )
+        self.jumpRequested.emit(page, [rect])
+
+    def _activate_current(self) -> None:
+        if self._list.count():
+            self._step(1)
+        else:
+            self._emit_search()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+            self._step(-1 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self.closed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)

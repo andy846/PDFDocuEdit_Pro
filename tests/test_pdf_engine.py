@@ -7,6 +7,7 @@ import pytest
 
 import core.tools as tools_module
 from core.capabilities import Capability, CapabilityId
+from core.annotations import AnnotationOp, apply_annotation
 from core.pdf_engine import PdfEngine, PdfEngineError, parse_page_range
 from core.platform_service import ProcessResult
 from core.tools import (
@@ -64,6 +65,34 @@ def test_parse_page_range() -> None:
     assert parse_page_range("1-999999999", 3) == [0, 1, 2]
     with pytest.raises(ValueError, match="too large"):
         parse_page_range("1-999999999")
+
+
+def test_annotation_save_preserves_original_content_streams(tmp_path: Path) -> None:
+    source = make_pdf(tmp_path / "annotation-safe.pdf", pages=1, prefix="QR-ABC123")
+    original_file = source.read_bytes()
+    with fitz.open(source) as document:
+        original_streams = [
+            document.xref_stream_raw(xref)
+            for xref in document.load_page(0).get_contents()
+        ]
+
+    engine = PdfEngine()
+    engine.open(source)
+    assert engine.document is not None
+    apply_annotation(
+        engine.document,
+        AnnotationOp(kind="rect", page=0, rects=(fitz.Rect(20, 20, 50, 50),)),
+    )
+    engine.mark_modified()
+    engine.save()
+    engine.close()
+
+    assert source.read_bytes().startswith(original_file)
+    with fitz.open(source) as document:
+        page = document.load_page(0)
+        assert [
+            document.xref_stream_raw(xref) for xref in page.get_contents()
+        ] == original_streams
 
 
 def test_engine_edit_save_extract_split_and_search(tmp_path: Path) -> None:
@@ -163,9 +192,7 @@ def test_engine_rejects_noop_inserts_and_protects_split_outputs(tmp_path: Path) 
     assert len(outputs) == 2
     with pytest.raises(PdfEngineError, match="already exists"):
         engine.split_pdf([(0, 0), (1, 1)], tmp_path / "parts")
-    replaced = engine.split_pdf(
-        [(0, 0), (1, 1)], tmp_path / "parts", overwrite=True
-    )
+    replaced = engine.split_pdf([(0, 0), (1, 1)], tmp_path / "parts", overwrite=True)
     assert replaced == outputs
     engine.close()
 
@@ -207,7 +234,9 @@ def test_document_tools(tmp_path: Path) -> None:
 
 def test_text_to_pdf_supports_unicode(tmp_path: Path) -> None:
     source = tmp_path / "notes.txt"
-    source.write_text("PDFDocuEdit Pro\n中文內容\nProfessional output", encoding="utf-8")
+    source.write_text(
+        "PDFDocuEdit Pro\n中文內容\nProfessional output", encoding="utf-8"
+    )
     output = text_files_to_pdf([source], tmp_path / "notes.pdf")
     with fitz.open(output) as document:
         assert document.page_count >= 1
@@ -242,9 +271,7 @@ def test_text_batch_preflights_colliding_filenames(tmp_path: Path) -> None:
     first.write_text("First", encoding="utf-8")
     second.write_text("Second", encoding="utf-8")
     with pytest.raises(ToolError, match="same output"):
-        text_files_to_pdfs(
-            [first, second], tmp_path, single=False, overwrite=True
-        )
+        text_files_to_pdfs([first, second], tmp_path, single=False, overwrite=True)
 
 
 def test_merge_csv_and_xlsx_without_optional_data_stack(tmp_path: Path) -> None:
@@ -410,7 +437,9 @@ def test_uppercase_pdf_discovery_for_report_and_deep_search(tmp_path: Path) -> N
     assert failed["error"]
 
 
-def test_merge_spreadsheets_preserves_duplicate_and_blank_columns(tmp_path: Path) -> None:
+def test_merge_spreadsheets_preserves_duplicate_and_blank_columns(
+    tmp_path: Path,
+) -> None:
     from openpyxl import load_workbook
 
     source = tmp_path / "duplicate.csv"
@@ -455,6 +484,7 @@ def test_barcode_cli_fallback_parses_zbar_xml(tmp_path: Path, monkeypatch) -> No
 
 
 # --- encryption round trips ------------------------------------------------
+
 
 def test_encrypt_open_round_trip_with_correct_password(tmp_path: Path) -> None:
     source = make_pdf(tmp_path / "plain.pdf", 2, "Secret")

@@ -68,6 +68,31 @@ def test_layout_modes_and_page_sync(tmp_path: Path, monkeypatch) -> None:
     assert canvas._rows[2][1] == [3, 4]
     window.close()
 
+def test_horizontal_scroll_at_400_percent_all_layouts_and_split(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    source = make_pdf(tmp_path / "wide-scroll.pdf", pages=4)
+    window.load_file(str(source))
+    canvas = window.workspace.canvas
+    _wait_renders(app, canvas)
+
+    for mode in ("single", "continuous", "facing"):
+        window._set_layout_mode(mode)
+        canvas.set_zoom(4.0)
+        _wait_renders(app, canvas)
+        app.processEvents()
+        assert canvas.horizontalScrollBar().maximum() > 0, mode
+
+    window._toggle_split_view()
+    session = window._session
+    assert session is not None and session.split_canvas is not None
+    session.split_canvas.set_zoom(4.0)
+    _wait_renders(app, session.split_canvas)
+    app.processEvents()
+    assert session.split_canvas.horizontalScrollBar().maximum() > 0
+    window.close()
+
 
 def test_fit_and_actual_size(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)

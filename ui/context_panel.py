@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import fitz
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, Qt, pyqtProperty, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFileDialog,
+    QColorDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -50,6 +52,8 @@ class ContextPanel(QFrame):
     annotationColorChanged = pyqtSignal(str)
     annotationWidthChanged = pyqtSignal(int)
     stampKindChanged = pyqtSignal(str)
+    annotationStyleChanged = pyqtSignal(object)
+    editAnnotationRequested = pyqtSignal(int, object)
     imagePathChanged = pyqtSignal(str)
     removeAnnotationRequested = pyqtSignal(int)
     annotateRefreshRequested = pyqtSignal()
@@ -225,7 +229,10 @@ class ContextPanel(QFrame):
         page, layout = self._base_page(
             "Annotation options for the active canvas tool. Changes apply to new annotations."
         )
-        layout.addWidget(QLabel("Color"))
+        self._current_color = "yellow"
+        self._current_fill = ""
+        self._annot_color_label = QLabel("Color")
+        layout.addWidget(self._annot_color_label)
         colors_row = QHBoxLayout()
         colors_row.setSpacing(S.XS)
         self._color_buttons: dict[str, QPushButton] = {}
@@ -244,24 +251,57 @@ class ContextPanel(QFrame):
                 f"QPushButton#swatchButton:checked {{ border: 2px solid #555; }}"
             )
             button.clicked.connect(
-                lambda _checked=False, value=key: self.annotationColorChanged.emit(value)
+                lambda _checked=False, value=key: self._set_annotation_color(value)
             )
             group.addButton(button)
             colors_row.addWidget(button)
             self._color_buttons[key] = button
         colors_row.addStretch(1)
+        self._custom_color = QPushButton("Custom…")
+        self._custom_color.clicked.connect(self._choose_custom_color)
+        colors_row.addWidget(self._custom_color)
+        self._fill_color = QPushButton("Fill…")
+        self._fill_color.clicked.connect(self._choose_fill_color)
+        colors_row.addWidget(self._fill_color)
+
         layout.addLayout(colors_row)
         self._color_buttons["yellow"].setChecked(True)
 
         width_row = QHBoxLayout()
-        width_row.addWidget(QLabel("Line width"))
+        self._annot_width_label = QLabel("Line width")
+        width_row.addWidget(self._annot_width_label)
         self._annot_width = QSpinBox()
         self._annot_width.setRange(1, 6)
         self._annot_width.setValue(2)
         self._annot_width.valueChanged.connect(self.annotationWidthChanged.emit)
+        self._annot_width.valueChanged.connect(self._emit_annotation_style)
         width_row.addWidget(self._annot_width)
         width_row.addStretch(1)
         layout.addLayout(width_row)
+        self._style_form = QFormLayout()
+        self._annot_opacity = QSpinBox()
+        self._annot_opacity.setRange(0, 100)
+        self._annot_opacity.setSuffix(" %")
+        self._annot_opacity.setValue(100)
+        self._annot_opacity.valueChanged.connect(self._emit_annotation_style)
+        self._style_form.addRow("Opacity", self._annot_opacity)
+        self._annot_font = QComboBox()
+        self._annot_font.addItems(["Helv", "Cour", "Times-Roman"])
+        self._annot_font.currentTextChanged.connect(self._emit_annotation_style)
+        self._style_form.addRow("Font", self._annot_font)
+        self._annot_font_size = QSpinBox()
+        self._annot_font_size.setRange(4, 144)
+        self._annot_font_size.setValue(11)
+        self._annot_font_size.valueChanged.connect(self._emit_annotation_style)
+        self._style_form.addRow("Font size", self._annot_font_size)
+        self._annot_alignment = QComboBox()
+        self._annot_alignment.addItem("Left", 0)
+        self._annot_alignment.addItem("Center", 1)
+        self._annot_alignment.addItem("Right", 2)
+        self._annot_alignment.currentIndexChanged.connect(self._emit_annotation_style)
+        self._style_form.addRow("Alignment", self._annot_alignment)
+        layout.addLayout(self._style_form)
+
 
         stamp_form = QFormLayout()
         self._stamp_kind = QComboBox()
@@ -271,24 +311,39 @@ class ContextPanel(QFrame):
             QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow
         )
         self._stamp_kind.currentTextChanged.connect(self.stampKindChanged.emit)
-        stamp_form.addRow("Stamp", self._stamp_kind)
+        self._stamp_label = QLabel("Stamp")
+        stamp_form.addRow(self._stamp_label, self._stamp_kind)
         layout.addLayout(stamp_form)
 
-        layout.addWidget(QLabel("Signature / Image source"))
+        self._image_label = QLabel("Signature / Image source")
+        layout.addWidget(self._image_label)
         image_row = QHBoxLayout()
         self._image_edit = QLineEdit()
         self._image_edit.setReadOnly(True)
         self._image_edit.setPlaceholderText("Choose a PNG or JPG")
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse_image)
+        self._image_browse = QPushButton("Browse…")
+        self._image_browse.clicked.connect(self._browse_image)
         image_row.addWidget(self._image_edit, 1)
-        image_row.addWidget(browse)
+        image_row.addWidget(self._image_browse)
         layout.addLayout(image_row)
 
         layout.addWidget(QLabel("Annotations on this page"))
         self._annot_list = QListWidget()
         self._annot_list.setObjectName("navList")
         layout.addWidget(self._annot_list, 1)
+        self._annot_list.currentItemChanged.connect(
+            self._load_selected_annotation
+        )
+        properties = QFormLayout()
+        self._property_text = QLineEdit()
+        self._property_text.setPlaceholderText("FreeText / note content")
+        properties.addRow("Content", self._property_text)
+        layout.addLayout(properties)
+        apply_properties = QPushButton("Apply Properties")
+        apply_properties.setProperty("secondary", True)
+        apply_properties.clicked.connect(self._apply_selected_annotation)
+        layout.addWidget(apply_properties)
+
         actions = QHBoxLayout()
         refresh = QPushButton("Refresh")
         refresh.setProperty("secondary", True)
@@ -300,6 +355,75 @@ class ContextPanel(QFrame):
         actions.addWidget(remove)
         layout.addLayout(actions)
         self._add_page("annotate", page)
+
+    def _set_annotation_color(self, value: str) -> None:
+        self._current_color = value
+        self.annotationColorChanged.emit(value)
+        self._emit_annotation_style()
+
+    def _choose_color(self, initial: str) -> QColor | None:
+        settings = QSettings()
+        recent = settings.value("annotations/recent_colors", [], list) or []
+        for index, value in enumerate(recent[:16]):
+            QColorDialog.setCustomColor(index, QColor(str(value)))
+        dialog = QColorDialog(QColor(initial), self)
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        if dialog.exec() != QColorDialog.DialogCode.Accepted:
+            return None
+        color = dialog.selectedColor()
+        values = [color.name(QColor.NameFormat.HexArgb)] + [
+            str(value) for value in recent if str(value) != color.name(QColor.NameFormat.HexArgb)
+        ]
+        settings.setValue("annotations/recent_colors", values[:16])
+        return color
+
+    def _choose_custom_color(self) -> None:
+        initial = SWATCHES.get(self._current_color, self._current_color)
+        color = self._choose_color(initial)
+        if color is None:
+            return
+        self._current_color = color.name()
+        self._annot_opacity.setValue(round(color.alphaF() * 100))
+        self.annotationColorChanged.emit(self._current_color)
+        self._emit_annotation_style()
+
+    def _choose_fill_color(self) -> None:
+        color = self._choose_color(self._current_fill or "#ffffff")
+        if color is None:
+            return
+        self._current_fill = color.name()
+        self._fill_color.setStyleSheet(f"background: {self._current_fill};")
+        self._emit_annotation_style()
+
+    def _style_payload(self) -> dict[str, object]:
+        return {
+            "stroke": self._current_color,
+            "fill": self._current_fill,
+            "opacity": self._annot_opacity.value() / 100.0,
+            "width": float(self._annot_width.value()),
+            "font": self._annot_font.currentText(),
+            "font_size": float(self._annot_font_size.value()),
+            "alignment": int(self._annot_alignment.currentData() or 0),
+        }
+
+    def _emit_annotation_style(self, *_args) -> None:
+        self.annotationStyleChanged.emit(self._style_payload())
+
+    def set_annotation_defaults(self, values: dict[str, object]) -> None:
+        self._current_color = str(values.get("stroke") or values.get("color") or "yellow")
+        self._current_fill = str(values.get("fill") or "")
+        self._annot_width.setValue(round(float(values.get("width", 1.5))))
+        self._annot_opacity.setValue(round(float(values.get("opacity", 1.0)) * 100))
+        self._annot_font.setCurrentText(str(values.get("font") or "Helv"))
+        self._annot_font_size.setValue(round(float(values.get("font_size", 11.0))))
+        alignment = self._annot_alignment.findData(int(values.get("alignment", 0)))
+        self._annot_alignment.setCurrentIndex(max(0, alignment))
+        for key, button in self._color_buttons.items():
+            button.setChecked(key == self._current_color)
+        self._fill_color.setStyleSheet(
+            f"background: {self._current_fill};" if self._current_fill else ""
+        )
+
 
     def _browse_image(self) -> None:
         value, _ = QFileDialog.getOpenFileName(
@@ -313,6 +437,82 @@ class ContextPanel(QFrame):
         self._image_edit.setText(path)
         self._image_edit.setToolTip(path)
 
+
+    def set_annotation_tool(self, tool: str) -> None:
+        style_tools = {
+            "highlight", "underline", "strikeout", "squiggly", "ink", "rect",
+            "line", "arrow", "ellipse", "polygon", "freetext_typewriter",
+            "freetext_box", "freetext_callout",
+        }
+        color_visible = tool in style_tools
+        width_visible = tool in {
+            "ink", "rect", "line", "arrow", "ellipse", "polygon",
+            "freetext_box", "freetext_callout",
+        }
+        text_visible = tool.startswith("freetext_")
+        fill_visible = tool in {
+            "rect", "ellipse", "polygon", "freetext_box", "freetext_callout"
+        }
+        stamp_visible = tool == "stamp"
+        image_visible = tool in {"signature", "image"}
+        self._annot_color_label.setVisible(color_visible)
+        for button in self._color_buttons.values():
+            button.setVisible(color_visible)
+        self._custom_color.setVisible(color_visible)
+        self._fill_color.setVisible(fill_visible)
+        self._annot_width_label.setVisible(width_visible)
+        self._annot_width.setVisible(width_visible)
+        self._annot_font.setVisible(text_visible)
+        self._annot_font_size.setVisible(text_visible)
+        self._annot_alignment.setVisible(text_visible)
+        self._stamp_label.setVisible(stamp_visible)
+        self._stamp_kind.setVisible(stamp_visible)
+        self._image_label.setVisible(image_visible)
+        self._image_edit.setVisible(image_visible)
+        self._image_browse.setVisible(image_visible)
+    @staticmethod
+    def _pdf_color_hex(value) -> str:
+        if not value or len(value) < 3:
+            return ""
+        try:
+            channels = [max(0, min(255, round(float(part) * 255))) for part in value[:3]]
+        except (TypeError, ValueError):
+            return ""
+        return "#" + "".join(f"{part:02x}" for part in channels)
+
+    def _load_selected_annotation(self, item, _previous=None) -> None:
+        if item is None:
+            self._property_text.clear()
+            return
+        entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        self._property_text.setText(str(entry.get("text") or ""))
+        stroke = self._pdf_color_hex(entry.get("stroke"))
+        fill = self._pdf_color_hex(entry.get("fill"))
+        if stroke:
+            self._current_color = stroke
+        self._current_fill = fill
+        self._annot_opacity.setValue(
+            round(float(entry.get("opacity", 1.0)) * 100)
+        )
+        self._annot_width.setValue(
+            max(1, round(float(entry.get("width", 1.0) or 1.0)))
+        )
+        self._fill_color.setStyleSheet(
+            f"background: {fill};" if fill else ""
+        )
+
+    def _apply_selected_annotation(self) -> None:
+        item = self._annot_list.currentItem()
+        if item is None:
+            return
+        xref = item.data(Qt.ItemDataRole.UserRole)
+        if xref is None:
+            return
+        payload = self._style_payload()
+        payload["text"] = self._property_text.text()
+        self.editAnnotationRequested.emit(int(xref), payload)
+
+
     def refresh_annotation_list(self, page: fitz.Page | None) -> None:
         self._annot_list.clear()
         if page is None:
@@ -323,7 +523,8 @@ class ContextPanel(QFrame):
             entries = []  # never let a stale page crash the panel
         for entry in entries:
             item = QListWidgetItem(f"{entry['kind']}  ·  page area")
-            item.setData(Qt.ItemDataRole.UserRole, entry["index"])
+            item.setData(Qt.ItemDataRole.UserRole + 1, entry)
+            item.setData(Qt.ItemDataRole.UserRole, entry.get("xref", entry["index"]))
             self._annot_list.addItem(item)
 
     def _remove_selected_annotation(self) -> None:

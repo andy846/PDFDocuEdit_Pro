@@ -24,6 +24,7 @@ def _screen_dpr() -> float:
         return max(1.0, app.primaryScreen().devicePixelRatio())
     return 1.0
 
+
 _PATHS: dict[str, str] = {
     "menu": '<path d="M4 6h16M4 12h16M4 18h16"/>',
     "folder-open": '<path d="M6 14 8 9h12l-2 9H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 2h6a2 2 0 0 1 2 2v2"/>',
@@ -73,6 +74,16 @@ _PATHS: dict[str, str] = {
     "message-square": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     "pen-line": '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     "square": '<rect x="3" y="3" width="18" height="18" rx="2"/>',
+    "waves": '<path d="M2 12c2.2-4 4.2-4 6.4 0s4.2 4 6.4 0 4.2-4 7.2 0"/>',
+    "line-tool": '<path d="M5 19 19 5"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="5" r="1.5"/>',
+    "arrow-up-right": '<path d="M5 19 19 5M9 5h10v10"/>',
+    "circle": '<circle cx="12" cy="12" r="9"/>',
+    "pentagon": '<path d="m12 2 9 6.5L17.6 20H6.4L3 8.5Z"/>',
+    "text-cursor-input": '<path d="M5 4h4M7 4v16M5 20h4"/><rect x="11" y="6" width="10" height="12" rx="2"/><path d="M14 10h4M16 10v4"/>',
+    "square-type": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M12 8v8M9 16h6"/>',
+    "message-square-more": '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/>',
+    "watermark": '<path d="M4 6h16M6 10h12M8 14h8M10 18h4"/><path d="m3 3 18 18"/>',
+    "scan-search": '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="11" cy="11" r="4"/><path d="m14 14 3 3"/>',
     "eraser": '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
     "stamp": '<path d="M5 22h14"/><path d="M19.27 13.73A2.5 2.5 0 0 0 17.5 13h-11A2.5 2.5 0 0 0 4 15.5V17a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1.5c0-.66-.26-1.3-.73-1.77Z"/><path d="M14 13V8.5C14 7 15 7 15 5a3 3 0 0 0-6 0c0 2 1 2 1 3.5V13"/>',
     "signature": '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 4 3 3"/><path d="M2 6h.01M5 22h12"/>',
@@ -138,9 +149,7 @@ def app_pixmap(filename: str, size: int) -> QPixmap:
         tinted.fill(Qt.GlobalColor.transparent)
         painter = QPainter(tinted)
         painter.drawPixmap(0, 0, scaled)
-        painter.setCompositionMode(
-            QPainter.CompositionMode.CompositionMode_SourceIn
-        )
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
         painter.fillRect(tinted.rect(), foreground)
         painter.end()
         scaled = tinted

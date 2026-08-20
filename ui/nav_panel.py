@@ -22,7 +22,7 @@ from .outline_panel import OutlinePanel
 from .search_results_panel import SearchResultsPanel
 from .thumbnail_panel import ThumbnailPanel
 
-TAB_KEYS = ("thumbnails", "outline", "bookmarks", "search")
+TAB_KEYS = ("thumbnails", "outline", "bookmarks")
 TAB_LABELS = {
     "thumbnails": "Page thumbnails",
     "outline": "Outline",
@@ -86,7 +86,7 @@ class NavPanel(QFrame):
         self.outline = OutlinePanel()
         self.bookmarks = BookmarkPanel()
         self.search = SearchResultsPanel()
-        for widget in (self.thumbnails, self.outline, self.bookmarks, self.search):
+        for widget in (self.thumbnails, self.outline, self.bookmarks):
             self._stack.addWidget(widget)
         layout.addWidget(self._stack, 1)
 

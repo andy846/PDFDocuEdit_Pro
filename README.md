@@ -1,4 +1,4 @@
-# PDFDocuEdit Pro V1.1
+# PDFDocuEdit Pro V2.0
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
 
@@ -12,15 +12,29 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 - Browse、Hand、Select Text 及 Magnifier 四種 Canvas 模式，可直接從主工具列切換
 - 書籤、目錄、文件資訊及快捷鍵指南
 
+### Document Inspector、Preflight 與 Smart Detection
+
+- 每個文件 session 提供非模態 Analysis Panel，結果可跳頁、複製頁碼、匯出 CSV/XLSX、擷取或送往 Organizer
+- Inspector 檢查 metadata、page boxes、字型、圖片 occurrence/effective DPI 及 colorspace
+- General Office、Digital Print、Production Print 三組可編輯 preflight profile
+- Exact/Near Blank、文字、圖片、vector、annotation、form、barcode 及 QR code detection
+- 分析以 revision 標記；文件修改後舊結果會變成 stale，不能直接套用頁面操作
+- PDF/A-1～4 與 PDF/UA-1/2 由離線 veraPDF Greenfield 驗證；PDF/UA 結果只代表 machine-verifiable checks
+- PDF/X 僅提供 readiness checks，不宣稱正式 compliance
+
 ### 頁面整理
 
-- 插入、刪除、擷取、分割、旋轉及重新排序頁面
+- 清晰的多頁 selection、鍵盤操作、插入線及 `N pages selected` 狀態
+- Insert、Replace、Duplicate、Extract、Delete、Rotate、Restore 及重新排序
+- 外部 PDF 插入／取代支援頁碼範圍與記憶體內密碼；Apply 為單一 Undo transaction
 - 規則式頁碼範圍處理及縮圖式頁面管理
 - 合併 PDF、疊加文件、壓縮與批次處理
 
 ### 標註與內容工具
 
-- 文字選取、螢光標示、繪圖、形狀及註解
+- Typewriter、Text Box、Callout 可編輯 FreeText annotation
+- Line、Arrow、Ellipse、Polygon、螢光、Underline、Strikeout、Squiggly、Ink、Rectangle、Note、Stamp
+- 每個工具可保存 stroke/fill/opacity/width/font defaults、Recent Colors 及命名 palette
 - 區域文字擷取、條碼掃描、文件分析及診斷
 - 深度搜尋及 Find/Open 文件搜尋
 
@@ -53,8 +67,29 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：`PDFDocuEdit-Pro-1.1-Windows-x64-Setup.exe`
-- 免安裝版：`PDFDocuEdit-Pro-1.1-Windows-x64-Portable.zip`
+- 安裝版：`PDFDocuEdit-Pro-2.0-Windows-x64-Setup.exe`
+- 免安裝版：`PDFDocuEdit-Pro-2.0-Windows-x64-Portable.zip`
+
+
+### PDF/A 與 PDF/UA 驗證（Windows / macOS）
+
+Release build 固定 veraPDF Greenfield 1.30.2，並按平台封裝私人 Eclipse
+Temurin JRE 21。驗證全程離線，clean machine 不需要 system Java。
+`build_assets/verapdf/BUNDLE_INFO.json` 記錄來源 URL、版本、SHA-256、大小及
+授權。正式建置可先執行 `python scripts/prepare_verapdf.py`，下載、驗證並
+建立平台對應的 `VeraPDF/` bundle；script 會拒絕覆蓋既有 bundle。
+`scripts/build.py` 會再檢查 launcher、JRE、manifest，並執行離線
+`--version` smoke test；缺少或版本不符會中止 release build。
+
+PDF/UA 報告只包含機器可驗證規則；沒有 XMP conformance claim 顯示
+`Not declared`，不會自動當作 PDF/A-1b。PDF/X readiness 不等於 certification。
+
+### OCR (Windows x64)
+
+Conversion 面板提供 bundled Tesseract 5.5.3 英文／繁中 OCR，可抽取 UTF-8
+文字或建立 searchable PDF，且不會取代原始檔。Release build 必須包含完整
+`Tesseract/` runtime、`eng`、`chi_tra` 語言資料及 PDF config；缺少任一
+必要資產時建置會直接失敗。
 
 開發、測試及封裝可使用專案內的 `scripts/build.py` 建置腳本。
 

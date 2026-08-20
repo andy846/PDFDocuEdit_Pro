@@ -4,6 +4,8 @@ import time
 from pathlib import Path
 
 import fitz
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import core.viewer as viewer_module
@@ -24,7 +26,9 @@ def make_pdf(path: Path, pages: int = 3) -> Path:
 def _window(tmp_path: Path, monkeypatch):
     app = QApplication.instance() or QApplication(["pdfdocuedit-p3-test"])
     monkeypatch.setattr(
-        viewer_module, "SettingsManager", lambda: SettingsManager(tmp_path / "settings.json")
+        viewer_module,
+        "SettingsManager",
+        lambda: SettingsManager(tmp_path / "settings.json"),
     )
     window = viewer_module.PDFViewer()
     window.resize(1100, 760)
@@ -45,7 +49,9 @@ def annot_count(window) -> int:
     return len(list(window.engine.document.load_page(0).annots()))
 
 
-def test_annotation_tool_modes_and_highlight_commit(tmp_path: Path, monkeypatch) -> None:
+def test_annotation_tool_modes_and_highlight_commit(
+    tmp_path: Path, monkeypatch
+) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "p3.pdf")
     window.load_file(str(source))
@@ -116,9 +122,7 @@ def test_redact_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         QMessageBox,
         "question",
-        staticmethod(
-            lambda *args, **kwargs: QMessageBox.StandardButton.No
-        ),
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.No),
     )
     window._handle_annotation(
         AnnotationOp(kind="redact", page=0, rects=(fitz.Rect(60, 80, 220, 105),))
@@ -128,9 +132,7 @@ def test_redact_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         QMessageBox,
         "question",
-        staticmethod(
-            lambda *args, **kwargs: QMessageBox.StandardButton.Yes
-        ),
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Yes),
     )
     window._handle_annotation(
         AnnotationOp(kind="redact", page=0, rects=(fitz.Rect(60, 80, 220, 105),))
@@ -139,9 +141,7 @@ def test_redact_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         QMessageBox,
         "question",
-        staticmethod(
-            lambda *args, **kwargs: QMessageBox.StandardButton.Discard
-        ),
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Discard),
     )
     window.close()
 
@@ -182,4 +182,35 @@ def test_annotation_commands_registered(tmp_path: Path, monkeypatch) -> None:
         "watermark",
     ):
         assert f"annot_{key}" in ids, key
+    window.close()
+
+
+def test_polygon_tool_creates_clicked_triangle_not_drag_rectangle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    source = make_pdf(tmp_path / "polygon.pdf", pages=1)
+    window.load_file(str(source))
+    _wait_renders(app, window.workspace.canvas)
+    window._activate_annotation_tool("polygon")
+
+    overlay = window.workspace.canvas._page_views[0].overlay
+    QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, pos=QPoint(80, 80))
+    QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, pos=QPoint(260, 100))
+    QTest.mouseDClick(overlay, Qt.MouseButton.LeftButton, pos=QPoint(150, 280))
+    app.processEvents()
+
+    page = window.engine.document.load_page(0)
+    annotations = list(page.annots())
+    assert len(annotations) == 1
+    polygon = annotations[0]
+    assert "Polygon" in str(polygon.type)
+    assert polygon.vertices is not None
+    assert len(polygon.vertices) == 3
+    assert len({(round(point[0]), round(point[1])) for point in polygon.vertices}) == 3
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Discard),
+    )
     window.close()
