@@ -15,6 +15,7 @@ from core.analysis import (
     FindingSet,
     FindingSource,
     FindingStatus,
+    InspectionReport,
     Severity,
     TextRule,
     inspect_and_analyze,
@@ -334,4 +335,96 @@ def test_analysis_panel_status_and_grouped_csv_export(
         "Details,ObjectRef,BBox,Value"
     )
     assert text.count("blank pages detected") == 1
+    panel.close()
+
+
+def test_repeated_nonblank_findings_group_by_rule_but_keep_details() -> None:
+    findings = FindingSet(
+        "group-rules",
+        0,
+        AnalysisRequest(),
+        [
+            Finding(
+                FindingSource.PREFLIGHT,
+                "font.not_embedded",
+                Severity.ERROR,
+                page,
+                "Font is not embedded",
+                f"Font resource on page {page + 1}",
+                object_ref=f"{page + 10} 0 obj",
+                category="Fonts",
+            )
+            for page in range(3)
+        ],
+    )
+
+    groups = findings.groups()
+
+    assert len(groups) == 1
+    assert groups[0].count == 3
+    assert groups[0].pages == (0, 1, 2)
+    assert len(groups[0].findings) == 3
+    assert "Font resource on page 1" in groups[0].details
+    assert "10 0 obj" in groups[0].object_ref
+
+
+def test_results_panel_groups_all_rules_and_action_buttons_fit() -> None:
+    app = QApplication.instance() or QApplication(["analysis-layout-test"])
+    finding_set = FindingSet(
+        "panel-groups",
+        0,
+        AnalysisRequest(),
+        [
+            Finding(
+                FindingSource.PREFLIGHT,
+                "image.rgb",
+                Severity.WARNING,
+                page,
+                "RGB image detected",
+                f"Image on page {page + 1}",
+                category="Color",
+            )
+            for page in range(4)
+        ],
+    )
+    report = InspectionReport({}, [], [], [], {}, finding_set)
+    panel = AnalysisPanel()
+    panel.setFixedSize(390, 520)
+    panel.set_report(report)
+    panel.tabs.setCurrentIndex(3)
+    panel.show()
+    app.processEvents()
+
+    assert panel.results.rowCount() == 1
+    assert panel.results.item(0, 6).text() == "4"
+    panel.group_results.setChecked(False)
+    app.processEvents()
+    assert panel.results.rowCount() == 4
+
+    assert set(panel.result_action_buttons) == {
+        "Select all",
+        "Copy pages",
+        "Export",
+        "Extract",
+        "Remove pages",
+    }
+    assert [action.text() for action in panel.export_actions_menu.actions()] == [
+        "Page list (CSV)...",
+        "",
+        "Findings (CSV)...",
+        "Findings (Excel)...",
+    ]
+
+    jumped: list[int] = []
+    panel.jumpRequested.connect(jumped.append)
+    panel.results.cellClicked.emit(2, 0)
+    assert jumped == [2]
+
+    results_tab = panel.tabs.widget(3)
+    for button in panel.result_action_buttons.values():
+        top_left = button.mapTo(results_tab, QPoint(0, 0))
+        assert button.isVisible()
+        assert top_left.x() >= 0
+        assert top_left.x() + button.width() <= results_tab.width()
+        assert top_left.y() + button.height() <= results_tab.height()
     panel.close()

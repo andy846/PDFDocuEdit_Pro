@@ -213,11 +213,11 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="2.0.0",
+        version="2.1.0",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "2.0",
-            "CFBundleVersion": "200",
+            "CFBundleShortVersionString": "2.1",
+            "CFBundleVersion": "210",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

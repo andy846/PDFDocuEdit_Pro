@@ -136,6 +136,9 @@ def test_sidebar_icons_follow_old_assets(tmp_path: Path, monkeypatch) -> None:
         "barcode": "qrcode.png",
         "barcode_batch": "batch_qrcode.png",
         "sort": "visual_organize.png",
+        "rotate": "rotate_pages.png",
+        "smart_detection": "smart_detection.png",
+        "ocr": "OCR1.png",
     }
     found: dict[str, str] = {}
     for _section_key, _title, items in SidePanel.SECTIONS:

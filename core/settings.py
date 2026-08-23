@@ -40,6 +40,7 @@ class SettingsManager:
         "split_sync_page": False,
         "split_sync_zoom": False,
         "default_app_prompt_shown": False,
+        "shortcut_overrides": {},
     }
 
     def __init__(self, config_file: str | os.PathLike[str] | None = None):
@@ -65,7 +66,11 @@ class SettingsManager:
                 data = json.loads(legacy.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
                     continue
-                allowed = {key: value for key, value in data.items() if key in self.DEFAULT_SETTINGS}
+                allowed = {
+                    key: value
+                    for key, value in data.items()
+                    if key in self.DEFAULT_SETTINGS
+                }
                 self._settings.update(allowed)
                 self._save()
                 return
@@ -138,6 +143,24 @@ class SettingsManager:
 
     def get_all(self) -> dict[str, Any]:
         return self._settings.copy()
+
+    def get_shortcut_overrides(self) -> dict[str, str]:
+        value = self.get("shortcut_overrides", {})
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(command_id): str(sequence)
+            for command_id, sequence in value.items()
+            if isinstance(command_id, str) and isinstance(sequence, str)
+        }
+
+    def set_shortcut_overrides(self, overrides: dict[str, str]) -> None:
+        cleaned = {
+            str(command_id): str(sequence)
+            for command_id, sequence in overrides.items()
+            if isinstance(command_id, str) and isinstance(sequence, str)
+        }
+        self.set("shortcut_overrides", cleaned)
 
     def reset(self) -> None:
         self._settings = self.DEFAULT_SETTINGS.copy()

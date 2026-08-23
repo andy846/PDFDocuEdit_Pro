@@ -62,15 +62,15 @@ def test_release_inputs_exist() -> None:
     assert not [value for value in required if not (ROOT / value).exists()]
 
 
-def test_release_metadata_is_v2_0() -> None:
-    assert APP_VERSION == "2.0"
+def test_release_metadata_is_v2_1() -> None:
+    assert APP_VERSION == "2.1"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "2.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "2.0"' in (
+    assert 'version = "2.1.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "2.1"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "2.0"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(2, 0, 0, 0)" in (
+    assert 'VERSION = "2.1"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(2, 1, 0, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 

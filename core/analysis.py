@@ -237,6 +237,7 @@ class FindingSet:
         return self
 
     def groups(self) -> tuple[FindingGroup, ...]:
+        """Return UI groups while preserving every underlying detailed finding."""
         self.normalize()
         blank_rules = {"page.blank", "detect.exact_blank"}
         blanks = tuple(item for item in self.findings if item.rule_id in blank_rules)
@@ -270,22 +271,62 @@ class FindingSet:
                     status,
                 )
             )
-        for index, item in enumerate(self.findings):
+
+        buckets: dict[
+            tuple[str, str, str, Severity, str, FindingStatus],
+            list[Finding],
+        ] = {}
+        for item in self.findings:
             if item.rule_id in blank_rules:
                 continue
+            category = item.category or _category_for_finding(item)
+            key = (
+                category,
+                str(item.source),
+                item.rule_id,
+                item.severity,
+                item.summary,
+                item.status,
+            )
+            buckets.setdefault(key, []).append(item)
+
+        for index, (key, members) in enumerate(buckets.items()):
+            category, source, rule_id, severity, summary, status = key
+            member_tuple = tuple(members)
+            pages = tuple(
+                sorted({page for item in member_tuple for page in item.all_pages()})
+            )
+            details = list(
+                dict.fromkeys(item.details for item in member_tuple if item.details)
+            )
+            if len(details) <= 1:
+                grouped_details = details[0] if details else ""
+            else:
+                preview = " | ".join(details[:3])
+                remaining = len(details) - 3
+                grouped_details = (
+                    f"{preview} | +{remaining} more detail variant(s)"
+                    if remaining > 0
+                    else preview
+                )
+            object_refs = list(
+                dict.fromkeys(
+                    item.object_ref for item in member_tuple if item.object_ref
+                )
+            )
             groups.append(
                 FindingGroup(
-                    f"{item.rule_id}:{index}",
-                    item.category or _category_for_finding(item),
-                    str(item.source),
-                    item.rule_id,
-                    item.severity,
-                    item.summary,
-                    item.details,
-                    (item,),
-                    item.all_pages(),
-                    item.status,
-                    item.object_ref,
+                    f"{rule_id}:{index}",
+                    category,
+                    source,
+                    rule_id,
+                    severity,
+                    summary,
+                    grouped_details,
+                    member_tuple,
+                    pages,
+                    status,
+                    ", ".join(object_refs[:10]),
                 )
             )
         return tuple(groups)

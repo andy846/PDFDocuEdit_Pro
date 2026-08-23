@@ -209,9 +209,14 @@ class SidePanel(QFrame):
                 ToolItem("order", "Order pages", "list-tree", "sorting.png"),
                 ToolItem("sort", "Organize pages", "layers", "visual_organize.png"),
                 ToolItem("split", "Split PDF", "scissors", "Split.png"),
-                ToolItem("rotate", "Rotate pages", "rotate-cw"),
+                ToolItem("rotate", "Rotate pages", "rotate-cw", "rotate_pages.png"),
                 ToolItem("info", "Document information", "info", "info.png"),
-                ToolItem("smart_detection", "Smart Detection", "scan-search"),
+                ToolItem(
+                    "smart_detection",
+                    "Smart Detection",
+                    "scan-search",
+                    "smart_detection.png",
+                ),
             ),
         ),
         (
@@ -247,7 +252,7 @@ class SidePanel(QFrame):
                     "ocr",
                     "OCR",
                     "scan",
-                    None,
+                    "OCR1.png",
                     CapabilityId.OCR,
                 ),
                 ToolItem(
@@ -341,6 +346,7 @@ class SidePanel(QFrame):
         self._active_key: str | None = None
         self._document_available = False
         self._document_encrypted = False
+        self._shortcut_hints = SHORTCUT_HINTS.copy()
         self._buttons: dict[str, MotionNavButton] = {}
         self._items: dict[str, ToolItem] = {}
         self._sections: list[CollapsibleSection] = []
@@ -435,7 +441,7 @@ class SidePanel(QFrame):
                 button.setAutoExclusive(False)
                 button.setProperty("section", section_key)
                 button.setIcon(self._item_icon(item))
-                hint = SHORTCUT_HINTS.get(item.key, "")
+                hint = self._shortcut_hints.get(item.key, "")
                 tooltip = f"{item.label} ({hint})" if hint else item.label
                 button.setToolTip(tooltip)
                 button.setAccessibleName(item.label)
@@ -553,6 +559,17 @@ class SidePanel(QFrame):
         for button in self._buttons.values():
             button.set_animations_enabled(enabled)
 
+    def _base_tooltip(self, key: str) -> str:
+        item = self._items[key]
+        hint = self._shortcut_hints.get(key, "")
+        return f"{item.label} ({hint})" if hint else item.label
+
+    def set_shortcut_hints(self, hints: dict[str, str]) -> None:
+        self._shortcut_hints = {
+            key: value for key, value in hints.items() if key in self._items and value
+        }
+        self._refresh_availability()
+
     def refresh_capabilities(self) -> None:
         self._refresh_availability()
 
@@ -565,15 +582,17 @@ class SidePanel(QFrame):
         capabilities = detect_capabilities()
         for key, item in self._items.items():
             button = self._buttons[key]
-            button.setToolTip(item.label)
+            button.setToolTip(self._base_tooltip(key))
             if key in self.DOCUMENT_TOOLS and not self._document_available:
                 button.setEnabled(False)
-                button.setToolTip(f"{item.label}\nOpen a PDF to use this tool.")
+                button.setToolTip(
+                    f"{self._base_tooltip(key)}\nOpen a PDF to use this tool."
+                )
                 continue
             if key == "decrypt" and not self._document_encrypted:
                 button.setEnabled(False)
                 button.setToolTip(
-                    f"{item.label}\nThe open PDF has no password security."
+                    f"{self._base_tooltip(key)}\nThe open PDF has no password security."
                 )
                 continue
             if item.capability is not None:
@@ -581,7 +600,7 @@ class SidePanel(QFrame):
                 button.setEnabled(capability.available)
                 if not capability.available:
                     button.setToolTip(
-                        f"{item.label}\nUnavailable: {capability.reason}\n{capability.guidance}"
+                        f"{self._base_tooltip(key)}\nUnavailable: {capability.reason}\n{capability.guidance}"
                     )
                 continue
             button.setEnabled(True)

@@ -17,8 +17,10 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSpinBox,
+    QToolButton,
     QDoubleSpinBox,
     QTabWidget,
     QTableWidget,
@@ -260,7 +262,7 @@ class AnalysisPanel(QFrame):
         self.group_results.toggled.connect(self._refresh_results)
         controls.addWidget(self.group_results)
         controls.addStretch(1)
-        controls.addWidget(QLabel("Export"))
+        controls.addWidget(QLabel("Rows"))
         self.export_mode = QComboBox()
         self.export_mode.addItem("Grouped findings", "grouped")
         self.export_mode.addItem("Detailed findings", "detailed")
@@ -283,29 +285,51 @@ class AnalysisPanel(QFrame):
                 "Value",
             ]
         )
-        self.results.cellDoubleClicked.connect(self._jump_result)
+        self.results.cellClicked.connect(self._jump_result)
         layout.addWidget(self.results, 1)
 
         buttons = QHBoxLayout()
-        for label, callback in (
-            ("View pages", self._go_selected),
-            ("Select all", self.results.selectAll),
-            ("Select detected pages", self._select_detected_rows),
-            ("Copy pages", self._copy_pages),
-            ("Export page list", self._export_page_list),
-            ("Export CSV", self._export_csv),
-            ("Export XLSX", self._export_xlsx),
-            ("Extract", self._extract),
-            ("Remove selected pages", self._organize),
-            ("Ignore", lambda: self._set_selected_status(FindingStatus.IGNORED)),
-            (
-                "Mark Expected",
-                lambda: self._set_selected_status(FindingStatus.EXPECTED),
-            ),
-        ):
-            button = QPushButton(label)
-            button.clicked.connect(callback)
-            buttons.addWidget(button)
+        buttons.setSpacing(6)
+        self.result_action_buttons: dict[str, QWidget] = {}
+
+        select_all = QPushButton("Select all")
+        select_all.clicked.connect(self.results.selectAll)
+        buttons.addWidget(select_all)
+        self.result_action_buttons["Select all"] = select_all
+
+        copy_pages = QPushButton("Copy pages")
+        copy_pages.clicked.connect(self._copy_pages)
+        buttons.addWidget(copy_pages)
+        self.result_action_buttons["Copy pages"] = copy_pages
+
+        export_button = QToolButton()
+        export_button.setText("Export")
+        export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        export_menu = QMenu(export_button)
+        export_menu.addAction("Page list (CSV)...").triggered.connect(
+            self._export_page_list
+        )
+        export_menu.addSeparator()
+        export_menu.addAction("Findings (CSV)...").triggered.connect(self._export_csv)
+        export_menu.addAction("Findings (Excel)...").triggered.connect(
+            self._export_xlsx
+        )
+        export_button.setMenu(export_menu)
+        buttons.addWidget(export_button)
+        self.result_action_buttons["Export"] = export_button
+        self.export_actions_menu = export_menu
+
+        extract = QPushButton("Extract")
+        extract.clicked.connect(self._extract)
+        buttons.addWidget(extract)
+        self.result_action_buttons["Extract"] = extract
+
+        remove = QPushButton("Remove pages")
+        remove.clicked.connect(self._organize)
+        buttons.addWidget(remove)
+        self.result_action_buttons["Remove pages"] = remove
+
+        buttons.addStretch(1)
         layout.addLayout(buttons)
         return tab
 

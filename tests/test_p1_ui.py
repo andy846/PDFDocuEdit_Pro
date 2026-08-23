@@ -24,7 +24,9 @@ def make_pdf(path: Path, pages: int = 2) -> Path:
 def _window(tmp_path: Path, monkeypatch):
     app = QApplication.instance() or QApplication(["pdfdocuedit-p1-test"])
     monkeypatch.setattr(
-        viewer_module, "SettingsManager", lambda: SettingsManager(tmp_path / "settings.json")
+        viewer_module,
+        "SettingsManager",
+        lambda: SettingsManager(tmp_path / "settings.json"),
     )
     return viewer_module.PDFViewer(), app
 
@@ -48,6 +50,8 @@ def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> 
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "nav.pdf")
     window.load_file(str(source))
+    window.resize(1100, 760)
+    window.show()
     app.processEvents()
     nav = window.workspace.nav_panel
 
@@ -57,10 +61,30 @@ def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> 
     assert nav.active_key() == "outline"
     assert nav.outline._tree.topLevelItemCount() == 2
 
-    window._show_nav_tab("search")
+    window.show_document_info()
+    app.processEvents()
     session = window._session
     assert session is not None
+    assert session.analysis_panel.isVisible()
+    assert session.tab_widget.sizes()[3] >= 300
+
+    window._toggle_thumbnails()
+    app.processEvents()
+    assert session.nav_panel.isVisible()
+    assert session.nav_panel.active_key() == "thumbnails"
+    sizes = session.tab_widget.sizes()
+    assert sizes[0] >= 200
+    assert sizes[2] == 0
+    assert sizes[3] == 0
+
+    window._show_nav_tab("search")
+    app.processEvents()
     assert not session.search_panel.isHidden()
+    assert session.search_panel.isVisible()
+    assert not session.analysis_panel.isVisible()
+    sizes = session.tab_widget.sizes()
+    assert sizes[2] >= 300
+    assert sizes[3] == 0
     assert nav.search not in [nav._stack.widget(i) for i in range(nav._stack.count())]
     assert window.context_panel.isHidden()
     window.workspace.nav_panel.search._query.setText("searchable")
@@ -68,6 +92,20 @@ def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> 
     assert nav.search._list.count() == 2
     nav.search._on_activated(nav.search._list.item(1))
     assert window._page == 1
+
+    window._toggle_thumbnails()
+    app.processEvents()
+    assert session.nav_panel.isVisible()
+    assert session.nav_panel.active_key() == "thumbnails"
+    sizes = session.tab_widget.sizes()
+    assert sizes[0] >= 200
+    assert sizes[2] == 0
+    assert sizes[3] == 0
+
+    window._toggle_thumbnails()
+    app.processEvents()
+    assert not session.nav_panel.isVisible()
+    assert session.tab_widget.sizes()[0] == 0
 
     window.goto_page(0)
     # The title prompt cannot be automated offscreen; exercise the bookmark
@@ -105,7 +143,9 @@ def test_command_registry_palette_and_dialogs(tmp_path: Path, monkeypatch) -> No
     window.close()
 
 
-def test_multi_step_undo_and_redo_preserves_history(tmp_path: Path, monkeypatch) -> None:
+def test_multi_step_undo_and_redo_preserves_history(
+    tmp_path: Path, monkeypatch
+) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "undo.pdf")
     window.load_file(str(source))

@@ -188,7 +188,9 @@ def _perform_document_analysis(
             report.standard_status = "Passed"
         elif validation.compliant is False:
             unique_rules = (
-                validation.summary.failed_rule_count if validation.summary else len(validation.findings)
+                validation.summary.failed_rule_count
+                if validation.summary
+                else len(validation.findings)
             )
             report.standard_status = (
                 f"Failed  -  {unique_rules} unique rule failure"
@@ -310,6 +312,9 @@ class PDFViewer(QMainWindow):
 
         self.bottom_bar = BottomBar()
         layout.addWidget(self.bottom_bar)
+        self._registered_shortcut_actions: list[QAction] = []
+        self._command_action_map: dict[str, QAction] = {}
+        self._command_shortcuts: list[QShortcut] = []
         self._build_menu_bar()
         self._connect_signals()
         self._commands: list[Command] = []
@@ -599,6 +604,12 @@ class PDFViewer(QMainWindow):
         action = QAction(label, self)
         if shortcut:
             action.setShortcut(shortcut)
+        action.setProperty("shortcutBaseLabel", label)
+        action.setProperty(
+            "shortcutDefault",
+            action.shortcut().toString(QKeySequence.SequenceFormat.PortableText),
+        )
+        self._registered_shortcut_actions.append(action)
         action.triggered.connect(callback)
         return action
 
@@ -1224,7 +1235,23 @@ class PDFViewer(QMainWindow):
             self._show_context(self._last_context_key)
 
     def _toggle_thumbnails(self) -> None:
-        self.workspace.toggle_thumbnails()
+        session = self._session
+        if session is None:
+            return
+        right_panel_visible = (
+            session.search_panel.isVisible() or session.analysis_panel.isVisible()
+        )
+        if (
+            session.nav_panel.isVisible()
+            and session.nav_panel.active_key() == "thumbnails"
+            and not right_panel_visible
+        ):
+            session.nav_panel.hide()
+            sizes = session.tab_widget.sizes()
+            total = max(sum(sizes), session.tab_widget.width(), 900)
+            session.tab_widget.setSizes([0, total, 0, 0])
+            return
+        self._show_nav_tab("thumbnails")
 
     def _goto_first_page(self) -> None:
         self.goto_page(0)
@@ -2747,20 +2774,48 @@ class PDFViewer(QMainWindow):
         if key == "search":
             self._show_search_panel()
             return
+        session = self._session
+        if session is None:
+            return
+        self._hide_search_panel(session)
+        session.analysis_panel.hide()
         self.workspace.show_nav_tab(key)
+        sizes = session.tab_widget.sizes()
+        total = max(sum(sizes), session.tab_widget.width(), 900)
+        nav_width = max(1, session.nav_panel.width())
+        session.tab_widget.setSizes([nav_width, max(360, total - nav_width), 0, 0])
 
     def _show_search_panel(self, session: DocumentSession | None = None) -> None:
         session = session or self._session
         if session is None:
             return
         self._hide_context()
+        session.analysis_panel.hide()
         session.search_panel.show()
+        sizes = session.tab_widget.sizes()
+        total = max(sum(sizes), session.tab_widget.width(), 900)
+        nav_width = sizes[0] if sizes and session.nav_panel.isVisible() else 0
+        search_width = 340
+        session.tab_widget.setSizes(
+            [nav_width, max(360, total - nav_width - search_width), search_width, 0]
+        )
+        session.search_panel.raise_()
         session.search_panel.focus_query()
 
     def _hide_search_panel(self, session: DocumentSession | None = None) -> None:
         session = session or self._session
-        if session is not None:
-            session.search_panel.hide()
+        if session is None:
+            return
+        session.search_panel.hide()
+        sizes = session.tab_widget.sizes()
+        total = max(sum(sizes), session.tab_widget.width(), 900)
+        nav_width = sizes[0] if sizes and session.nav_panel.isVisible() else 0
+        analysis_width = (
+            sizes[3] if len(sizes) > 3 and session.analysis_panel.isVisible() else 0
+        )
+        session.tab_widget.setSizes(
+            [nav_width, max(360, total - nav_width - analysis_width), 0, analysis_width]
+        )
 
     def _load_navigation(self) -> None:
         session = self._session
@@ -2937,6 +2992,7 @@ class PDFViewer(QMainWindow):
 
     def _build_command_registry(self) -> None:
         commands: list[Command] = []
+        overrides = self.settings.get_shortcut_overrides()
 
         def document() -> bool:
             return self._session is not None and self._session.engine.is_loaded()
@@ -2949,7 +3005,27 @@ class PDFViewer(QMainWindow):
             handler,
             enabled=None,
         ) -> None:
-            commands.append(Command(key, label, shortcut, section, handler, enabled))
+            default = QKeySequence(shortcut).toString(
+                QKeySequence.SequenceFormat.PortableText
+            )
+            current = (
+                QKeySequence(overrides[key]).toString(
+                    QKeySequence.SequenceFormat.PortableText
+                )
+                if key in overrides
+                else default
+            )
+            commands.append(
+                Command(
+                    key,
+                    label,
+                    current,
+                    section,
+                    handler,
+                    enabled,
+                    default_shortcut=default,
+                )
+            )
 
         make("open", "Open…", "Ctrl+O", "File", self._open_dialog)
         make(
@@ -3226,6 +3302,46 @@ class PDFViewer(QMainWindow):
             "last_page", "Last Page", "End", "Navigate", self._goto_last_page, document
         )
 
+        make(
+            "rotate_left",
+            "Rotate Current Page Left",
+            "Ctrl+L",
+            "Page",
+            lambda: self._rotate_current(-90),
+            document,
+        )
+        make(
+            "rotate_right",
+            "Rotate Current Page Right",
+            "Ctrl+R",
+            "Page",
+            lambda: self._rotate_current(90),
+            document,
+        )
+        make(
+            "quick_extract",
+            "Extract Pages",
+            "Ctrl+E",
+            "Page",
+            self._extract_pages_dialog,
+            document,
+        )
+        make(
+            "quick_delete",
+            "Delete Selected Pages",
+            "Delete",
+            "Page",
+            self._delete_pages_shortcut,
+            document,
+        )
+        make(
+            "escape_browse",
+            "Return to Browse Tool",
+            "Escape",
+            "View",
+            self._escape_to_browse,
+            document,
+        )
         make("readme", "README", "", "Help", self._show_readme)
         make("preferences", "Preferences…", "", "Help", self.show_preferences)
         make("save_all", "Save All", "", "File", self.save_all_files, document)
@@ -3239,48 +3355,138 @@ class PDFViewer(QMainWindow):
         )
         make("shortcuts", "Keyboard Shortcuts", "Ctrl+/", "Help", self._show_shortcuts)
 
-        self._commands = commands
+        used_shortcuts: set[str] = set()
+        resolved_commands: list[Command] = []
+        for command in commands:
+            sequence = command.shortcut
+            if sequence and sequence in used_shortcuts:
+                fallback = command.default_shortcut
+                sequence = (
+                    fallback if fallback and fallback not in used_shortcuts else ""
+                )
+            if sequence:
+                used_shortcuts.add(sequence)
+            resolved_commands.append(replace(command, shortcut=sequence))
+        self._commands = resolved_commands
+
+    @staticmethod
+    def _shortcut_label_key(value: str) -> str:
+        return (
+            value.replace("&", "")
+            .replace("…", "")
+            .replace("...", "")
+            .strip()
+            .casefold()
+        )
+
+    def _command_action(
+        self, command: Command, claimed: set[QAction]
+    ) -> QAction | None:
+        if command.id in {
+            "rotate_left",
+            "rotate_right",
+            "quick_extract",
+            "quick_delete",
+            "escape_browse",
+        }:
+            return None
+        label_key = self._shortcut_label_key(command.label)
+        label_matches = [
+            action
+            for action in self._registered_shortcut_actions
+            if action not in claimed
+            and self._shortcut_label_key(
+                str(action.property("shortcutBaseLabel") or action.text())
+            )
+            == label_key
+        ]
+        if len(label_matches) == 1:
+            return label_matches[0]
+        if command.default_shortcut:
+            shortcut_matches = [
+                action
+                for action in self._registered_shortcut_actions
+                if action not in claimed
+                and str(action.property("shortcutDefault") or "")
+                == command.default_shortcut
+            ]
+            if len(shortcut_matches) == 1:
+                return shortcut_matches[0]
+        return None
+
+    def _run_shortcut_command(self, command_id: str) -> None:
+        command = next((item for item in self._commands if item.id == command_id), None)
+        if command is None or not command.is_enabled():
+            return
+        if command_id != "escape_browse" and self._editing_focused():
+            return
+        command.handler()
+
+    def _apply_command_shortcuts(self) -> None:
+        for action in self._registered_shortcut_actions:
+            action.setShortcut(
+                QKeySequence(str(action.property("shortcutDefault") or ""))
+            )
+        for shortcut in self._command_shortcuts:
+            shortcut.setEnabled(False)
+            shortcut.setParent(None)
+            shortcut.deleteLater()
+        self._command_shortcuts.clear()
+        self._command_action_map.clear()
+
+        for name in (
+            "_shortcut_bookmark",
+            "_shortcut_next_tab",
+            "_shortcut_prev_tab",
+            "_shortcut_browse",
+            "_shortcut_rotate_left",
+            "_shortcut_rotate_right",
+            "_shortcut_extract",
+            "_shortcut_delete",
+        ):
+            setattr(self, name, None)
+
+        claimed: set[QAction] = set()
+        named_shortcuts = {
+            "add_bookmark": "_shortcut_bookmark",
+            "tab_next": "_shortcut_next_tab",
+            "tab_prev": "_shortcut_prev_tab",
+            "escape_browse": "_shortcut_browse",
+            "rotate_left": "_shortcut_rotate_left",
+            "rotate_right": "_shortcut_rotate_right",
+            "quick_extract": "_shortcut_extract",
+            "quick_delete": "_shortcut_delete",
+        }
+        for command in self._commands:
+            sequence = QKeySequence(command.shortcut)
+            action = self._command_action(command, claimed)
+            if action is not None:
+                action.setShortcut(sequence)
+                claimed.add(action)
+                self._command_action_map[command.id] = action
+                continue
+            if sequence.isEmpty():
+                continue
+            shortcut = QShortcut(sequence, self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(
+                lambda command_id=command.id: self._run_shortcut_command(command_id)
+            )
+            self._command_shortcuts.append(shortcut)
+            attribute = named_shortcuts.get(command.id)
+            if attribute:
+                setattr(self, attribute, shortcut)
+
+        self.side_panel.set_shortcut_hints(
+            {
+                command.id: command.shortcut
+                for command in self._commands
+                if command.shortcut
+            }
+        )
 
     def _install_shortcuts(self) -> None:
-        # Ctrl+K and Ctrl+/ are bound once, by their menu actions.
-
-        def window_shortcut(sequence: str, handler: Callable) -> QShortcut:
-            shortcut = QShortcut(QKeySequence(sequence), self)
-            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.activated.connect(handler)
-            return shortcut
-
-        def guarded_window_shortcut(sequence: str, handler: Callable) -> QShortcut:
-            """Window-level shortcut that ignores presses while typing in
-            an input field (same guard as the Delete key)."""
-
-            def run() -> None:
-                if not self._editing_focused():
-                    handler()
-
-            return window_shortcut(sequence, run)
-
-        self._shortcut_bookmark = guarded_window_shortcut(
-            "Ctrl+D",
-            lambda: self._add_bookmark(self._session) if self._session else None,
-        )
-        self._shortcut_next_tab = QShortcut(QKeySequence("Ctrl+Tab"), self)
-        self._shortcut_browse = window_shortcut("Escape", self._escape_to_browse)
-        self._shortcut_next_tab.activated.connect(self._next_tab)
-        self._shortcut_prev_tab = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
-        self._shortcut_prev_tab.activated.connect(self._previous_tab)
-
-        # Legacy main-toolbar shortcuts (Ctrl+L/R/E, Delete).
-        self._shortcut_rotate_left = guarded_window_shortcut(
-            "Ctrl+L", lambda: self._rotate_current(-90)
-        )
-        self._shortcut_rotate_right = guarded_window_shortcut(
-            "Ctrl+R", lambda: self._rotate_current(90)
-        )
-        self._shortcut_extract = guarded_window_shortcut(
-            "Ctrl+E", self._extract_pages_dialog
-        )
-        self._shortcut_delete = window_shortcut("Delete", self._delete_pages_shortcut)
+        self._apply_command_shortcuts()
 
     def _editing_focused(self) -> bool:
         widget = QApplication.focusWidget()
@@ -4274,7 +4480,7 @@ class PDFViewer(QMainWindow):
 
     # --- Preferences/help/errors ----------------------------------------
     def show_preferences(self) -> None:
-        dialog = PreferencesDialog(self.settings, self)
+        dialog = PreferencesDialog(self.settings, self, self._commands)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             refresh_capabilities()
             self.side_panel.refresh_capabilities()
@@ -4282,6 +4488,11 @@ class PDFViewer(QMainWindow):
                 bool(self.settings.get("animations_enabled", True))
             )
             self._apply_theme(self.settings.get_theme())
+            self._build_command_registry()
+            self._apply_command_shortcuts()
+            palette = getattr(self, "_command_palette", None)
+            if palette is not None:
+                palette.close()
 
     def _show_readme(self) -> None:
         ReadmeDialog(self).exec()

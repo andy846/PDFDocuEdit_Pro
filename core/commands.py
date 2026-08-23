@@ -16,6 +16,7 @@ class Command:
     section: str
     handler: Callable[[], None]
     enabled: Callable[[], bool] | None = field(default=None, compare=False)
+    default_shortcut: str = ""
 
     def is_enabled(self) -> bool:
         return self.enabled is None or self.enabled()

@@ -127,6 +127,26 @@ def test_print_profile_roundtrip_and_validation(tmp_path: Path) -> None:
     assert profile["page_range"] == "2-4"
     assert reloaded.get_print_offsets() == (1.0, 5.0, 2.0, 6.0)
 
+
+
+def test_shortcut_overrides_roundtrip_and_ignore_invalid_values(tmp_path: Path) -> None:
+    config = tmp_path / "settings.json"
+    settings = SettingsManager(config)
+    settings.set_shortcut_overrides(
+        {"open": "Ctrl+Alt+O", "quick_delete": "", "ignored": 42}
+    )
+
+    reloaded = SettingsManager(config)
+    assert reloaded.get_shortcut_overrides() == {
+        "open": "Ctrl+Alt+O",
+        "quick_delete": "",
+    }
+
+    reloaded.set("shortcut_overrides", ["not", "a", "mapping"])
+    assert reloaded.get_shortcut_overrides() == {}
+
+    reloaded.set("shortcut_overrides", {"open": None, 7: "Ctrl+7"})
+    assert reloaded.get_shortcut_overrides() == {}
     reloaded.set(
         "print_profile",
         {
