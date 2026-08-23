@@ -206,6 +206,24 @@ def build_portable_zip() -> Path:
     return zip_path
 
 
+def _find_inno_setup_compiler() -> str | None:
+    """Locate Inno Setup even when its standard install folder is not on PATH."""
+    compiler = shutil.which("ISCC.exe") or shutil.which("iscc")
+    if compiler:
+        return compiler
+    program_roots = (
+        os.environ.get("ProgramFiles(x86)"),
+        os.environ.get("ProgramFiles"),
+    )
+    for root in program_roots:
+        if not root:
+            continue
+        candidate = Path(root) / "Inno Setup 6" / "ISCC.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def build_windows() -> tuple[Path, Path]:
     validate_tesseract_bundle()
     validate_verapdf_bundle()
@@ -218,7 +236,7 @@ def build_windows() -> tuple[Path, Path]:
         "PDFDocuEdit Pro.spec",
     )
     portable = build_portable_zip()
-    compiler = shutil.which("ISCC.exe") or shutil.which("iscc")
+    compiler = _find_inno_setup_compiler()
     if not compiler:
         raise RuntimeError(
             "Inno Setup 6 (ISCC.exe) is required to build the installer."
