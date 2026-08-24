@@ -171,14 +171,14 @@ def validate_verapdf_bundle() -> None:
 def _clean_portable_tree(tree: Path) -> None:
     """Remove cache/temp/debug artefacts from a portable distribution tree."""
     purge_dirs = {"__pycache__", ".pytest_cache", ".ruff_cache", "tests", "test"}
-    purge_suffixes = {".pyc", ".pyo", ".pyd", ".log", ".tmp", ".bak"}
+    purge_suffixes = {".pyc", ".pyo", ".log", ".tmp", ".bak"}
     for dirpath, dirnames, filenames in os.walk(tree, topdown=False):
         for name in filenames:
             full = Path(dirpath) / name
             if full.suffix.casefold() in purge_suffixes:
                 full.unlink(missing_ok=True)
         for name in list(dirnames):
-            if name in purge_dirs or name.startswith("."):
+            if name in purge_dirs:
                 shutil.rmtree(Path(dirpath) / name, ignore_errors=True)
 
 
