@@ -61,8 +61,11 @@ security management.
   follow the selected words.
 * **Sticky Notes, Freehand & Shapes:** Add notes, freehand ink and
   rectangle annotations with configurable color and line width.
-* **Stamps & Signatures:** 14 standard rubber stamps, plus signature and
-  image insertion.
+* **Stamps & Signatures:** 14 standard rubber stamps plus reusable custom
+  image and text stamps. Use **Add image…** to import a PNG/JPG, or
+  **Add text…** to generate a bordered text stamp; **Remove** deletes it
+  from the personal stamp library.
+  Signature and general image insertion are also available.
 * **Redaction:** Permanently remove sensitive content (with confirmation).
 * **Watermarks:** Apply text or image watermarks with opacity, rotation and
   page-range control.

@@ -3,25 +3,31 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
+import textwrap
+import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QPoint, QSizeF, Qt, QThreadPool, QTimer
+from PyQt6.QtCore import QPoint, QRectF, QSizeF, Qt, QThreadPool, QTimer
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
     QColor,
+    QFont,
+    QFontMetrics,
     QGuiApplication,
     QImage,
     QKeySequence,
     QPageLayout,
     QPageSize,
     QPainter,
+    QPen,
     QShortcut,
     QTransform,
 )
@@ -43,6 +49,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.analysis import (
+    AnalysisRequest,
+    Finding,
+    FindingSource,
+    InspectionReport,
+    Severity,
+    inspect_and_analyze,
+)
 from core.annotations import (
     AnnotationOp,
     AnnotationStyle,
@@ -52,14 +66,6 @@ from core.annotations import (
     remove_annotation,
     update_annotation,
 )
-from core.analysis import (
-    AnalysisRequest,
-    Finding,
-    FindingSource,
-    InspectionReport,
-    Severity,
-    inspect_and_analyze,
-)
 from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
 from core.commands import Command
 from core.file_association import (
@@ -68,6 +74,7 @@ from core.file_association import (
     open_default_apps_settings,
     register_default_app,
 )
+from core.ocr import OCRMode, OCRResult, run_ocr
 from core.pdf_engine import (
     PdfEngine,
     PdfInvalidPassword,
@@ -76,7 +83,6 @@ from core.pdf_engine import (
     search_pdf_file,
 )
 from core.platform_service import PlatformService
-from core.ocr import OCRMode, OCRResult, run_ocr
 from core.resources import APP_VERSION, COPYRIGHT_NOTICE
 from core.settings import SettingsManager
 from core.tasks import FunctionTask
@@ -110,8 +116,8 @@ from dialogs.conversion_dialogs import (
 )
 from dialogs.data_dialogs import PageCountReportDialog, SpreadsheetMergeDialog
 from dialogs.document_dialogs import PrintOptionsDialog, VisualOrganizerDialog
-from dialogs.page_operations import InsertPagesDialog, PageSelectionDialog, SplitDialog
 from dialogs.ocr_dialog import OCRDialog, OCRTextResultDialog
+from dialogs.page_operations import InsertPagesDialog, PageSelectionDialog, SplitDialog
 from dialogs.readme_dialog import ReadmeDialog
 from dialogs.search_open_dialog import SearchOpenDialog
 from dialogs.security_dialogs import DecryptDialog, EncryptDialog
@@ -317,6 +323,7 @@ class PDFViewer(QMainWindow):
         self._command_shortcuts: list[QShortcut] = []
         self._build_menu_bar()
         self._connect_signals()
+        self._load_custom_stamps()
         self._commands: list[Command] = []
         self._build_command_registry()
         self._install_shortcuts()
@@ -661,6 +668,14 @@ class PDFViewer(QMainWindow):
         self.context_panel.annotationColorChanged.connect(self._set_annot_color)
         self.context_panel.annotationWidthChanged.connect(self._set_annot_width)
         self.context_panel.stampKindChanged.connect(self._set_stamp_kind)
+        self.context_panel.stampImageChanged.connect(self._set_stamp_image)
+        self.context_panel.customStampAddRequested.connect(self._add_custom_stamp)
+        self.context_panel.customTextStampAddRequested.connect(
+            self._add_custom_text_stamp
+        )
+        self.context_panel.customStampRemoveRequested.connect(
+            self._remove_custom_stamp
+        )
         self.context_panel.imagePathChanged.connect(self._set_annot_image)
         self.context_panel.removeAnnotationRequested.connect(
             self._handle_remove_annotation
@@ -828,7 +843,9 @@ class PDFViewer(QMainWindow):
         ):
             self._reload_thumbnails(session)
             return
-        self._snapshot_before("Reorder Pages")
+        if not self._snapshot_before("Reorder Pages"):
+            self._reload_thumbnails(session)
+            return
         try:
             session.engine.reorder_pages(order)
         except Exception as exc:
@@ -1509,6 +1526,8 @@ class PDFViewer(QMainWindow):
         *,
         reset_history: bool = True,
         announce: bool = True,
+        preserve_save_context: bool = False,
+        restored_modified: bool = True,
     ) -> bool:
         # Background canvas renders hold the live document; wait for them
         # before replacing it.
@@ -1534,6 +1553,10 @@ class PDFViewer(QMainWindow):
                 opened.close()
                 self._error("Open failed", str(exc))
                 return False
+        if preserve_save_context:
+            opened.inherit_save_context(
+                session.engine, modified=restored_modified
+            )
         self._replace_session_engine(session, opened)
         return self._complete_pdf_open(
             session,
@@ -1833,25 +1856,32 @@ class PDFViewer(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
-    def _snapshot_before(self, description: str) -> None:
+    def _snapshot_before(self, description: str) -> bool:
         """Save a snapshot of the current *in-memory* document before a change.
 
         The engine's temp file only reflects the last saved state, so the live
         document must be serialized for undo to capture every pending edit.
         """
         if self.engine is None or not self.engine.is_loaded():
-            return
+            return False
+        if not self._confirm_signature_invalidation():
+            return False
         stack = self._undo_stack
         if stack is None:
-            return
+            return False
         handle, temp_name = tempfile.mkstemp(prefix=".snapshot-", suffix=".pdf")
         os.close(handle)
         try:
             self.engine.snapshot(temp_name)
-            stack.push(temp_name, description)
+            stack.push(
+                temp_name,
+                description,
+                modified=self.engine.is_modified,
+            )
         finally:
             Path(temp_name).unlink(missing_ok=True)
         self._update_undo_actions()
+        return True
 
     def _update_undo_actions(self) -> None:
         stack = self._undo_stack
@@ -1883,7 +1913,9 @@ class PDFViewer(QMainWindow):
             return
         snapshot_path = self._pop_undo()
         if snapshot_path:
-            self._reopen_from_snapshot(snapshot_path)
+            self._reopen_from_snapshot(
+                snapshot_path, modified=stack.restored_modified
+            )
 
     def _redo(self) -> None:
         stack = self._undo_stack
@@ -1894,16 +1926,17 @@ class PDFViewer(QMainWindow):
             return
         snapshot_path = self._pop_redo()
         if snapshot_path:
-            self._reopen_from_snapshot(snapshot_path)
+            self._reopen_from_snapshot(
+                snapshot_path, modified=stack.restored_modified
+            )
 
     def _pop_undo(self) -> Path | None:
         stack = self._undo_stack
         if stack is None or self.engine is None:
             return None
-        temp = self.engine.temp_path
-        if not temp or not temp.is_file():
-            return None
-        stack.push_redo(str(temp), stack.undo_description)
+        self._push_current_history_snapshot(
+            stack.push_redo, stack.undo_description
+        )
         path = stack.pop_undo()
         if path:
             self._update_undo_actions()
@@ -1913,38 +1946,57 @@ class PDFViewer(QMainWindow):
         stack = self._undo_stack
         if stack is None or self.engine is None:
             return None
-        temp = self.engine.temp_path
-        if not temp or not temp.is_file():
-            return None
-        stack.push_undo(str(temp), stack.redo_description)
+        self._push_current_history_snapshot(
+            stack.push_undo, stack.redo_description
+        )
         path = stack.pop_redo()
         if path:
             self._update_undo_actions()
         return path
 
-    def _reopen_from_snapshot(self, snapshot_path: Path) -> None:
+    def _push_current_history_snapshot(self, push, description: str) -> None:
+        """Serialize the live document before moving through undo history."""
+        handle, temp_name = tempfile.mkstemp(prefix=".snapshot-", suffix=".pdf")
+        os.close(handle)
+        try:
+            self.engine.snapshot(temp_name)
+            push(
+                temp_name,
+                description,
+                modified=self.engine.is_modified,
+            )
+        finally:
+            Path(temp_name).unlink(missing_ok=True)
+
+    def _reopen_from_snapshot(
+        self, snapshot_path: Path, *, modified: bool
+    ) -> None:
         """Re-open the document from a snapshot file."""
         session = self._session
         if session is None:
             return
         try:
             session.canvas.wait_for_renders()
-            session.engine.close()
             self._open_pdf(
                 session,
                 str(snapshot_path),
                 display_path=session.display_path or snapshot_path,
                 reset_history=False,
                 announce=False,
+                preserve_save_context=True,
+                restored_modified=modified,
             )
             self.info_bar.show_message("Undo applied.", "success")
         except Exception as exc:
             self._error("Undo failed", str(exc))
+        finally:
+            snapshot_path.unlink(missing_ok=True)
 
     def _rotate_pages(self, pages: str, angle: int) -> None:
         try:
             selected = self._pages_from_text(pages)
-            self._snapshot_before("Rotate Pages")
+            if not self._snapshot_before("Rotate Pages"):
+                return
             self.engine.rotate_pages(selected, angle)
             self.workspace.canvas.refresh()
             self._sync_modified_state()
@@ -1970,7 +2022,8 @@ class PDFViewer(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            self._snapshot_before("Delete Pages")
+            if not self._snapshot_before("Delete Pages"):
+                return
             self.engine.delete_pages(pages)
             self._after_page_count_change()
             self.info_bar.show_message(
@@ -2054,7 +2107,8 @@ class PDFViewer(QMainWindow):
         try:
             with fitz.open(source) as document:
                 pages = list(range(document.page_count))
-            self._snapshot_before("Insert Pages")
+            if not self._snapshot_before("Insert Pages"):
+                return
             self.engine.insert_pages(source, pages, position - 1)
             self._after_page_count_change()
             self.info_bar.show_message(
@@ -2072,7 +2126,8 @@ class PDFViewer(QMainWindow):
                 order = [
                     int(part.strip()) - 1 for part in value.split(",") if part.strip()
                 ]
-            self._snapshot_before("Reorder Pages")
+            if not self._snapshot_before("Reorder Pages"):
+                return
             self.engine.reorder_pages(order)
             self.workspace.canvas.set_page(0)
             self._reload_thumbnails(self._session)
@@ -2086,25 +2141,27 @@ class PDFViewer(QMainWindow):
             self._error("Reorder failed", str(exc))
 
     def _after_page_count_change(self) -> None:
-        self._page = min(self._page, self.engine.page_count - 1)
-        canvas = self.workspace.canvas
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        session.page = min(session.page, session.engine.page_count - 1)
+        canvas = session.canvas
         # The cached page renders are keyed by page index, which is now
         # stale, so the canvas must re-render before scrolling.
         canvas.refresh()
-        canvas.set_page(max(0, self._page))
-        name = (
-            self.engine.original_path.name if self.engine.original_path else "Document"
-        )
-        path = self._display_path or self.engine.original_path
+        canvas.set_page(max(0, session.page))
+        name = session.document_name
+        path = session.display_path or session.engine.original_path
         self.bottom_bar.set_document_info(
-            name, self.engine.page_count, str(path) if path else ""
+            name, session.engine.page_count, str(path) if path else ""
         )
-        self.context_panel.set_page_count(self.engine.page_count)
-        nav = self.workspace.nav_panel
-        if nav is not None:
-            nav.search.set_page_count(self.engine.page_count)
-        if self._session is not None:
-            self._reload_thumbnails(self._session)
+        self.context_panel.set_page_count(session.engine.page_count)
+        session.nav_panel.search.set_page_count(session.engine.page_count)
+        self._reload_thumbnails(session)
+        # set_page() does not emit when the page index stays unchanged (the
+        # common case when deleting from an Outlook attachment on page 1), so
+        # explicitly refresh every page-dependent status control.
+        self._update_page_state()
         self._sync_modified_state()
 
     # --- Search, information and printing -------------------------------
@@ -2529,6 +2586,12 @@ class PDFViewer(QMainWindow):
         canvas_values = dict(values)
         canvas_values["color"] = canvas_values.pop("stroke")
         self.workspace.canvas.set_annotation_options(**canvas_values)
+        if key == "stamp":
+            stamp_kind, stamp_image = self.context_panel.current_stamp()
+            self.workspace.canvas.set_annotation_options(
+                stamp_kind=stamp_kind,
+                stamp_image_path=stamp_image,
+            )
 
         self._set_canvas_tool(key)
         self._show_context("annotate")
@@ -2565,7 +2628,172 @@ class PDFViewer(QMainWindow):
         self.settings.set("annotation_defaults", defaults)
 
     def _set_stamp_kind(self, value: str) -> None:
-        self.workspace.canvas.set_annotation_options(stamp_kind=value)
+        canvas = self.workspace.canvas
+        if canvas is not None:
+            canvas.set_annotation_options(stamp_kind=value)
+
+    def _set_stamp_image(self, value: str) -> None:
+        canvas = self.workspace.canvas
+        if canvas is not None:
+            canvas.set_annotation_options(stamp_image_path=value)
+
+    def _load_custom_stamps(self, selected: str = "") -> None:
+        self.context_panel.set_custom_stamps(
+            self.settings.get_custom_stamps(), selected=selected
+        )
+
+    def _add_custom_stamp(self) -> None:
+        source_value, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Custom Stamp Image",
+            self.settings.get_last_directory(),
+            "Images (*.png *.jpg *.jpeg)",
+        )
+        if not source_value:
+            return
+        source = Path(source_value).expanduser().resolve()
+        image = QImage(str(source))
+        if not source.is_file() or image.isNull():
+            self._error("Custom stamp", "Choose a valid PNG or JPG image.")
+            return
+        name, accepted = QInputDialog.getText(
+            self,
+            "Custom Stamp Name",
+            "Name",
+            text=source.stem,
+        )
+        name = " ".join(name.split())[:60]
+        if not accepted or not name:
+            return
+        stamps = self.settings.get_custom_stamps()
+        if any(existing.casefold() == name.casefold() for existing in stamps):
+            self._error("Custom stamp", f'A custom stamp named "{name}" already exists.')
+            return
+        stamp_dir = self.settings.path.parent / "stamps"
+        stamp_dir.mkdir(parents=True, exist_ok=True)
+        target = stamp_dir / f"{uuid.uuid4().hex}{source.suffix.casefold()}"
+        try:
+            shutil.copy2(source, target)
+            stamps[name] = str(target.resolve())
+            self.settings.set_custom_stamps(stamps)
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            self._error("Custom stamp", f"Could not import the stamp image:\n{exc}")
+            return
+        self._load_custom_stamps(selected=name)
+        kind, image_path = self.context_panel.current_stamp()
+        self._set_stamp_kind(kind)
+        self._set_stamp_image(image_path)
+        self.info_bar.show_message(f"Custom stamp added: {name}", "success")
+
+    def _add_custom_text_stamp(self) -> None:
+        text, accepted = QInputDialog.getMultiLineText(
+            self,
+            "Custom Text Stamp",
+            "Stamp text (up to 3 lines)",
+        )
+        text = "\n".join(line.strip() for line in text.strip().splitlines())
+        if not accepted or not text:
+            return
+        wrapped: list[str] = []
+        for line in text.splitlines():
+            wrapped.extend(textwrap.wrap(line, width=24) or [""])
+        display_lines = wrapped[:3]
+        if len(wrapped) > 3:
+            display_lines[-1] = display_lines[-1].rstrip("…") + "…"
+        stamp_text = "\n".join(display_lines)
+        default_name = " ".join(text.split())[:40]
+        name, named = QInputDialog.getText(
+            self,
+            "Custom Stamp Name",
+            "Name",
+            text=default_name,
+        )
+        name = " ".join(name.split())[:60]
+        if not named or not name:
+            return
+        stamps = self.settings.get_custom_stamps()
+        if any(existing.casefold() == name.casefold() for existing in stamps):
+            self._error("Custom stamp", f'A custom stamp named "{name}" already exists.')
+            return
+        stamp_dir = self.settings.path.parent / "stamps"
+        stamp_dir.mkdir(parents=True, exist_ok=True)
+        target = stamp_dir / f"{uuid.uuid4().hex}.png"
+        try:
+            self._render_text_stamp(stamp_text, target)
+            stamps[name] = str(target.resolve())
+            self.settings.set_custom_stamps(stamps)
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            self._error("Custom stamp", f"Could not create the text stamp:\n{exc}")
+            return
+        self._load_custom_stamps(selected=name)
+        kind, image_path = self.context_panel.current_stamp()
+        self._set_stamp_kind(kind)
+        self._set_stamp_image(image_path)
+        self.info_bar.show_message(f"Custom text stamp added: {name}", "success")
+
+    @staticmethod
+    def _render_text_stamp(text: str, target: Path) -> None:
+        """Render reusable stamp text to a transparent, high-resolution PNG."""
+        font = QFont("Arial", 42, QFont.Weight.Bold)
+        metrics = QFontMetrics(font)
+        lines = text.splitlines() or [text]
+        padding_x = 34
+        padding_y = 24
+        width = max(260, max(metrics.horizontalAdvance(line) for line in lines) + 68)
+        height = max(110, metrics.height() * len(lines) + 48)
+        image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            color = QColor("#c62828")
+            painter.setPen(QPen(color, 5))
+            painter.drawRoundedRect(QRectF(3, 3, width - 6, height - 6), 16, 16)
+            painter.setFont(font)
+            painter.setPen(color)
+            painter.drawText(
+                QRectF(
+                    padding_x,
+                    padding_y,
+                    width - padding_x * 2,
+                    height - padding_y * 2,
+                ),
+                Qt.AlignmentFlag.AlignCenter,
+                text,
+            )
+        finally:
+            painter.end()
+        if not image.save(str(target), "PNG"):
+            raise OSError("The generated PNG could not be saved.")
+
+    def _remove_custom_stamp(self, name: str) -> None:
+        stamps = self.settings.get_custom_stamps()
+        path_value = stamps.get(name)
+        if not path_value:
+            self._load_custom_stamps()
+            return
+        answer = QMessageBox.question(
+            self,
+            "Remove custom stamp",
+            f'Remove the custom stamp "{name}"?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        stamps.pop(name, None)
+        self.settings.set_custom_stamps(stamps)
+        target = Path(path_value).resolve()
+        managed_dir = (self.settings.path.parent / "stamps").resolve()
+        if target.parent == managed_dir:
+            target.unlink(missing_ok=True)
+        self._load_custom_stamps()
+        self._set_stamp_kind("Draft")
+        self._set_stamp_image("")
+        self.info_bar.show_message(f"Custom stamp removed: {name}", "success")
 
     def _set_annot_image(self, value: str) -> None:
         self.workspace.canvas.set_annotation_options(image_path=value)
@@ -2630,7 +2858,8 @@ class PDFViewer(QMainWindow):
         if op.kind == "ink" and len(op.points) < 2:
             self.info_bar.show_message("Draw a longer freehand stroke.", "warning")
             return
-        self._snapshot_before(op.description())
+        if not self._snapshot_before(op.description()):
+            return
         try:
             apply_annotation(session.engine.document, op)
             session.engine.mark_modified()
@@ -2670,7 +2899,8 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
-        self._snapshot_before("Remove Annotation")
+        if not self._snapshot_before("Remove Annotation"):
+            return
         try:
             remove_annotation(session.engine.document.load_page(session.page), xref)
             session.engine.mark_modified()
@@ -2694,7 +2924,8 @@ class PDFViewer(QMainWindow):
             font_size=float(values.get("font_size", 11.0)),
             alignment=int(values.get("alignment", 0)),
         )
-        self._snapshot_before("Edit Annotation Properties")
+        if not self._snapshot_before("Edit Annotation Properties"):
+            return
         try:
             changed = update_annotation(
                 session.engine.document.load_page(session.page),
@@ -2738,7 +2969,8 @@ class PDFViewer(QMainWindow):
         if not pages:
             self.info_bar.show_message("Choose a valid page range.", "warning")
             return
-        self._snapshot_before("Watermark")
+        if not self._snapshot_before("Watermark"):
+            return
         try:
             if details["mode"] == "text":
                 add_watermark_text(
@@ -3508,6 +3740,7 @@ class PDFViewer(QMainWindow):
             existing.show()
             existing.raise_()
             existing.activateWindow()
+            existing.focus_input()
             return
         palette = CommandPalette(self._commands, self)
         palette.commandTriggered.connect(self._run_command)
@@ -3518,6 +3751,7 @@ class PDFViewer(QMainWindow):
         palette.show()
         palette.raise_()
         palette.activateWindow()
+        palette.focus_input()
 
     def _run_command(self, command_id: str) -> None:
         for command in self._commands:
@@ -3731,7 +3965,8 @@ class PDFViewer(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self._snapshot_before("Delete Pages")
+            if not self._snapshot_before("Delete Pages"):
+                return
             self.engine.delete_pages(pages)
             self._after_page_count_change()
             self.info_bar.show_message(
@@ -3750,7 +3985,8 @@ class PDFViewer(QMainWindow):
             return
         details = dialog.details
         try:
-            self._snapshot_before("Insert Pages")
+            if not self._snapshot_before("Insert Pages"):
+                return
             if details["mode"] == "single":
                 self.engine.insert_pages(
                     str(details["source"]),
@@ -3827,10 +4063,9 @@ class PDFViewer(QMainWindow):
             dialog = VisualOrganizerDialog(document, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        if not self._confirm_signature_invalidation():
-            return
         try:
-            self._snapshot_before("Organize Pages")
+            if not self._snapshot_before("Organize Pages"):
+                return
             plan = getattr(dialog, "page_plan", None)
             if plan:
                 self.engine.apply_page_plan(plan)
@@ -4559,7 +4794,8 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
-        self._snapshot_before("Rotate Page")
+        if not self._snapshot_before("Rotate Page"):
+            return
         try:
             session.engine.rotate_pages([session.page], angle)
         except Exception as exc:
@@ -4589,7 +4825,8 @@ class PDFViewer(QMainWindow):
                 0,
             )
             return
-        self._snapshot_before("Rotate Pages")
+        if not self._snapshot_before("Rotate Pages"):
+            return
         try:
             session.engine.rotate_pages(pages, angle)
         except Exception as exc:
@@ -4619,7 +4856,8 @@ class PDFViewer(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            self._snapshot_before("Delete Page")
+            if not self._snapshot_before("Delete Page"):
+                return
             page_number = session.page + 1
             try:
                 session.engine.delete_page(session.page)

@@ -217,7 +217,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleDisplayName": APP_NAME,
             "CFBundleShortVersionString": "2.1",
-            "CFBundleVersion": "210",
+            "CFBundleVersion": "211",
+            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.1B",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

@@ -122,12 +122,19 @@ def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> 
 
 def test_command_registry_palette_and_dialogs(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
     ids = [command.id for command in window._commands]
     assert len(ids) == len(set(ids))
     assert "undo_history" in ids
     assert "nav_outline" in ids
 
     palette = CommandPalette(window._commands, window)
+    palette.show()
+    app.processEvents()
+    assert palette._input.hasFocus()
+    available_width = QApplication.primaryScreen().availableGeometry().width()
+    assert palette.width() == max(320, min(780, available_width - 32))
     palette._refresh("merge")
     rows = [
         palette._list.topLevelItem(index).text(0)
@@ -140,6 +147,79 @@ def test_command_registry_palette_and_dialogs(tmp_path: Path, monkeypatch) -> No
     assert "rotate" not in enabled_ids
     assert "open" in enabled_ids
     palette.close()
+    window.close()
+
+
+def test_undo_keeps_real_save_target(tmp_path: Path, monkeypatch) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    source = make_pdf(tmp_path / "undo-save-target.pdf")
+    window.load_file(str(source))
+
+    window._snapshot_before("Rotate Pages")
+    window.engine.rotate_pages([0], 90)
+    window._snapshot_before("Rotate Pages")
+    window.engine.rotate_pages([0], 90)
+    window._undo()
+    app.processEvents()
+
+    assert window.engine.original_path == source.resolve()
+    assert window.engine.is_modified
+    window.engine.rotate_pages([0], 180)
+    assert window.engine.save() == source.resolve()
+    with fitz.open(source) as document:
+        assert document.load_page(0).rotation == 270
+    window.close()
+
+
+def test_delete_pages_refreshes_status_for_outlook_attachment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, app = _window(tmp_path, monkeypatch)
+    outlook_folder = tmp_path / "Content.Outlook" / "ABC123"
+    outlook_folder.mkdir(parents=True)
+    source = make_pdf(outlook_folder / "attachment.pdf")
+    window.load_file(str(source))
+
+    def answer(_parent, title, *_args, **_kwargs):
+        if title == "Delete pages":
+            return viewer_module.QMessageBox.StandardButton.Yes
+        return viewer_module.QMessageBox.StandardButton.Discard
+
+    monkeypatch.setattr(viewer_module.QMessageBox, "question", answer)
+    window._delete_pages("2")
+    app.processEvents()
+
+    assert window.engine.page_count == 1
+    assert window.bottom_bar._total.text() == "/ 1"
+    assert window.bottom_bar._page_count == 1
+    assert window.context_panel._page_count == 1
+    assert window.workspace.nav_panel.search._page_count == 1
+    assert "1 page(s)" in window.bottom_bar._file.toolTip()
+    window.close()
+
+
+def test_signed_document_warning_can_cancel_destructive_edit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, _app = _window(tmp_path, monkeypatch)
+    source = make_pdf(tmp_path / "signed.pdf")
+    window.load_file(str(source))
+    monkeypatch.setattr(window.engine, "has_digital_signatures", lambda: True)
+    monkeypatch.setattr(
+        viewer_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: viewer_module.QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        viewer_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: viewer_module.QMessageBox.StandardButton.Cancel,
+    )
+
+    window._delete_pages("2")
+
+    assert window.engine.page_count == 2
+    assert not window._undo_stack.can_undo
     window.close()
 
 
@@ -166,6 +246,11 @@ def test_multi_step_undo_and_redo_preserves_history(
     window._redo_to(2)
     assert window._undo_stack.redo_count == 0
     assert window._undo_stack.undo_count == 2
+    monkeypatch.setattr(
+        viewer_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: viewer_module.QMessageBox.StandardButton.Discard,
+    )
     window.close()
 
 

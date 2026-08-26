@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import time
 import subprocess
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path

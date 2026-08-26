@@ -1,4 +1,4 @@
-# PDFDocuEdit Pro V2.1
+# PDFDocuEdit Pro V2.1B
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
 
@@ -34,6 +34,7 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 
 - Typewriter、Text Box、Callout 可編輯 FreeText annotation
 - Line、Arrow、Ellipse、Polygon、螢光、Underline、Strikeout、Squiggly、Ink、Rectangle、Note、Stamp
+- Rubber Stamp 支援 14 款內建印章，以及可命名、重複使用及移除的自訂 PNG/JPG 或文字印章
 - 每個工具可保存 stroke/fill/opacity/width/font defaults、Recent Colors 及命名 palette
 - 區域文字擷取、條碼掃描、文件分析及診斷
 - 深度搜尋及 Find/Open 文件搜尋
@@ -67,8 +68,8 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：`PDFDocuEdit-Pro-v2.1-Setup-Windows-x64.exe`
-- 免安裝版：`PDFDocuEdit-Pro-v2.1-Portable-Windows-x64.zip`
+- 安裝版：`PDFDocuEdit-Pro-v2.1B-Setup-Windows-x64.exe`
+- 免安裝版：`PDFDocuEdit-Pro-v2.1B-Portable-Windows-x64.zip`
 
 
 ### PDF/A 與 PDF/UA 驗證（Windows / macOS）

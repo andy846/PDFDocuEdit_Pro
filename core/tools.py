@@ -1227,10 +1227,19 @@ def scan_barcodes_batch(
         if is_cancelled and is_cancelled():
             break
 
-        def page_progress(current: int, _total: int, message: str) -> None:
+        def page_progress(
+            current: int,
+            _total: int,
+            message: str,
+            *,
+            _completed: int = completed,
+            _source: Path = source,
+        ) -> None:
             _progress(
-                progress, completed + current, total_pages,
-                f"{source.name} - {message}",
+                progress,
+                _completed + current,
+                total_pages,
+                f"{_source.name} - {message}",
             )
 
         for result in scan_barcodes(

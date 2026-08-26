@@ -3,8 +3,8 @@ highlights, and maps coordinates between widget space and PDF points."""
 
 from __future__ import annotations
 
-from enum import StrEnum
 from collections.abc import Iterable
+from enum import StrEnum
 
 import fitz
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal

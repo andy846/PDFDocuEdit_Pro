@@ -6,8 +6,8 @@ import fitz
 import pytest
 
 import core.tools as tools_module
-from core.capabilities import Capability, CapabilityId
 from core.annotations import AnnotationOp, apply_annotation
+from core.capabilities import Capability, CapabilityId
 from core.pdf_engine import PdfEngine, PdfEngineError, parse_page_range
 from core.platform_service import ProcessResult
 from core.tools import (
@@ -159,6 +159,34 @@ def test_engine_rejects_deleting_every_page(tmp_path: Path) -> None:
     with pytest.raises(PdfEngineError):
         engine.delete_pages([0])
     engine.close()
+
+
+def test_digital_signature_reference_is_detected() -> None:
+    class SignatureWidget:
+        field_type = fitz.PDF_WIDGET_TYPE_SIGNATURE
+        field_value = ""
+        xref = 17
+
+    class SignaturePage:
+        @staticmethod
+        def widgets():
+            return [SignatureWidget()]
+
+    class SignatureDocument:
+        page_count = 1
+
+        @staticmethod
+        def load_page(_page_number):
+            return SignaturePage()
+
+        @staticmethod
+        def xref_object(_xref):
+            return "<< /FT /Sig /V 23 0 R >>"
+
+    engine = PdfEngine()
+    engine._doc = SignatureDocument()
+    assert engine.has_digital_signatures()
+    engine._doc = None
 
 
 def test_visual_organizer_transaction_and_repeat_insert(tmp_path: Path) -> None:

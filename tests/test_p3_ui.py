@@ -5,6 +5,7 @@ from pathlib import Path
 
 import fitz
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QImage
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -104,12 +105,19 @@ def test_note_and_remove_annotation_flow(tmp_path: Path, monkeypatch) -> None:
     )
     assert annot_count(window) == 1
 
-    window._handle_remove_annotation(0)
+    page = window.engine.document.load_page(0)
+    xref = int(next(page.annots()).xref)
+    window._handle_remove_annotation(xref)
     assert annot_count(window) == 0
     assert window.engine.is_modified
 
     window._undo()
     assert annot_count(window) == 1
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Discard,
+    )
     window.close()
 
 
@@ -156,12 +164,92 @@ def test_context_panel_options_reach_canvas(tmp_path: Path, monkeypatch) -> None
     window.context_panel.annotationColorChanged.emit("red")
     window.context_panel.annotationWidthChanged.emit(4)
     window.context_panel.stampKindChanged.emit("Final")
+    window.context_panel.stampImageChanged.emit("/tmp/custom-stamp.png")
     window.context_panel.imagePathChanged.emit("/tmp/fake.png")
     options = window.workspace.canvas._annot_options
     assert options["color"] == "red"
     assert options["width"] == 4.0
     assert options["stamp_kind"] == "Final"
+    assert options["stamp_image_path"] == "/tmp/custom-stamp.png"
     assert options["image_path"] == "/tmp/fake.png"
+    window.close()
+
+
+def test_custom_stamp_import_persists_selects_and_removes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from PIL import Image
+
+    window, app = _window(tmp_path, monkeypatch)
+    stamp_source = tmp_path / "company-seal.png"
+    Image.new("RGBA", (160, 60), (180, 20, 20, 220)).save(stamp_source)
+    monkeypatch.setattr(
+        viewer_module.QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(stamp_source), "Images (*.png)"),
+    )
+    monkeypatch.setattr(
+        viewer_module.QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("Company Seal", True),
+    )
+
+    window._add_custom_stamp()
+
+    stamps = window.settings.get_custom_stamps()
+    assert set(stamps) == {"Company Seal"}
+    managed = Path(stamps["Company Seal"])
+    assert managed.is_file()
+    assert managed.parent == (window.settings.path.parent / "stamps").resolve()
+    assert window.context_panel.current_custom_stamp_name() == "Company Seal"
+
+    source = make_pdf(tmp_path / "custom-stamp.pdf")
+    window.load_file(str(source))
+    _wait_renders(app, window.workspace.canvas)
+    window._activate_annotation_tool("stamp")
+    options = window.workspace.canvas._annot_options
+    assert options["stamp_kind"] == "Draft"
+    assert options["stamp_image_path"] == str(managed)
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window._remove_custom_stamp("Company Seal")
+    assert window.settings.get_custom_stamps() == {}
+    assert not managed.exists()
+    assert window.context_panel.current_stamp() == ("Draft", "")
+    window.close()
+
+
+def test_custom_text_stamp_is_rendered_and_selected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    window, _app = _window(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        viewer_module.QInputDialog,
+        "getMultiLineText",
+        lambda *args, **kwargs: ("PAID\n26 AUG 2026", True),
+    )
+    monkeypatch.setattr(
+        viewer_module.QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("Paid Stamp", True),
+    )
+
+    window._add_custom_text_stamp()
+
+    stamps = window.settings.get_custom_stamps()
+    assert set(stamps) == {"Paid Stamp"}
+    target = Path(stamps["Paid Stamp"])
+    image = QImage(str(target))
+    assert target.suffix == ".png"
+    assert not image.isNull()
+    assert image.hasAlphaChannel()
+    assert image.width() > image.height()
+    assert window.context_panel.current_custom_stamp_name() == "Paid Stamp"
+    assert window.context_panel.current_stamp() == ("Draft", str(target))
     window.close()
 
 

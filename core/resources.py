@@ -14,7 +14,7 @@ from PyQt6.QtCore import QStandardPaths
 
 APP_NAME = "PDFDocuEdit Pro"
 APP_SLUG = "PDFDocuEditPro"
-APP_VERSION = "2.1"
+APP_VERSION = "2.1B"
 COPYRIGHT_NOTICE = (
     "Copyright © 2026 Andy Leung. All rights reserved. "
     "PDFDocuEdit Pro is proprietary software. Unauthorized copying, "

@@ -10,6 +10,7 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -20,11 +21,10 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QSpinBox,
-    QToolButton,
-    QDoubleSpinBox,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )

@@ -2,9 +2,9 @@
 zoom slider, file info tooltip, status messages and shortcuts."""
 
 from __future__ import annotations
-import warnings
 
 import io
+import warnings
 from pathlib import Path
 
 import fitz

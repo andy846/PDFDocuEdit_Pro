@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QTreeWidget,
@@ -36,9 +37,12 @@ class CommandPalette(QDialog):
         screen = QApplication.primaryScreen()
         if screen:
             area = screen.availableGeometry()
-            self.setFixedSize(min(540, area.width() - 32), min(420, area.height() - 32))
+            self.setFixedSize(
+                max(320, min(780, area.width() - 32)),
+                max(280, min(480, area.height() - 32)),
+            )
         else:
-            self.setFixedSize(540, 420)
+            self.setFixedSize(780, 480)
         self._commands = list(commands)
 
         layout = QVBoxLayout(self)
@@ -48,6 +52,7 @@ class CommandPalette(QDialog):
         self._input = QLineEdit()
         self._input.setObjectName("paletteInput")
         self._input.setPlaceholderText("Type a command name or shortcut…")
+        self.setFocusProxy(self._input)
         self._input.textChanged.connect(self._refresh)
         self._input.returnPressed.connect(self._activate_current)
         self._input.installEventFilter(self)
@@ -57,6 +62,10 @@ class CommandPalette(QDialog):
         self._list.setObjectName("paletteList")
         self._list.setHeaderHidden(True)
         self._list.setColumnCount(2)
+        self._list.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._list.header().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
         self._list.setRootIsDecorated(False)
         self._list.setUniformRowHeights(True)
         self._list.itemActivated.connect(self._activate_item)
@@ -72,6 +81,17 @@ class CommandPalette(QDialog):
 
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self.reject)
         self._refresh("")
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Popup activation can otherwise leave focus on the main window for
+        # the first key press, especially when Ctrl+K reopens the palette.
+        QTimer.singleShot(0, self.focus_input)
+
+    def focus_input(self) -> None:
+        """Make the command box ready for immediate typing."""
+        self._input.setFocus(Qt.FocusReason.PopupFocusReason)
+        self._input.selectAll()
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self._input and event.type() == QEvent.Type.KeyPress:

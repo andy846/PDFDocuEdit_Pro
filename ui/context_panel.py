@@ -7,9 +7,9 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, Qt, pyqtPr
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QColorDialog,
     QComboBox,
     QFileDialog,
-    QColorDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -52,6 +52,10 @@ class ContextPanel(QFrame):
     annotationColorChanged = pyqtSignal(str)
     annotationWidthChanged = pyqtSignal(int)
     stampKindChanged = pyqtSignal(str)
+    stampImageChanged = pyqtSignal(str)
+    customStampAddRequested = pyqtSignal()
+    customTextStampAddRequested = pyqtSignal()
+    customStampRemoveRequested = pyqtSignal(str)
     annotationStyleChanged = pyqtSignal(object)
     editAnnotationRequested = pyqtSignal(int, object)
     imagePathChanged = pyqtSignal(str)
@@ -305,15 +309,33 @@ class ContextPanel(QFrame):
 
         stamp_form = QFormLayout()
         self._stamp_kind = QComboBox()
-        self._stamp_kind.addItems(list(STAMP_IDS.keys()))
+        for name in STAMP_IDS:
+            self._stamp_kind.addItem(name)
         self._stamp_kind.setCurrentText("Draft")
         self._stamp_kind.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow
         )
-        self._stamp_kind.currentTextChanged.connect(self.stampKindChanged.emit)
+        self._stamp_kind.currentIndexChanged.connect(self._stamp_selection_changed)
         self._stamp_label = QLabel("Stamp")
         stamp_form.addRow(self._stamp_label, self._stamp_kind)
         layout.addLayout(stamp_form)
+        self._stamp_actions = QWidget()
+        stamp_actions = QHBoxLayout(self._stamp_actions)
+        stamp_actions.setContentsMargins(0, 0, 0, 0)
+        self._stamp_add = QPushButton("Add image…")
+        self._stamp_add.setProperty("secondary", True)
+        self._stamp_add.clicked.connect(self.customStampAddRequested.emit)
+        self._stamp_add_text = QPushButton("Add text…")
+        self._stamp_add_text.setProperty("secondary", True)
+        self._stamp_add_text.clicked.connect(self.customTextStampAddRequested.emit)
+        self._stamp_remove = QPushButton("Remove")
+        self._stamp_remove.setProperty("secondary", True)
+        self._stamp_remove.setEnabled(False)
+        self._stamp_remove.clicked.connect(self._remove_current_custom_stamp)
+        stamp_actions.addWidget(self._stamp_add)
+        stamp_actions.addWidget(self._stamp_add_text)
+        stamp_actions.addWidget(self._stamp_remove)
+        layout.addWidget(self._stamp_actions)
 
         self._image_label = QLabel("Signature / Image source")
         layout.addWidget(self._image_label)
@@ -437,6 +459,53 @@ class ContextPanel(QFrame):
         self._image_edit.setText(path)
         self._image_edit.setToolTip(path)
 
+    def set_custom_stamps(
+        self, stamps: dict[str, str], selected: str = ""
+    ) -> None:
+        """Replace the managed custom-stamp choices without emitting changes."""
+        previous = selected or self.current_custom_stamp_name()
+        self._stamp_kind.blockSignals(True)
+        try:
+            self._stamp_kind.clear()
+            for name in STAMP_IDS:
+                self._stamp_kind.addItem(name)
+            selected_index = -1
+            for name, path in sorted(stamps.items(), key=lambda item: item[0].casefold()):
+                self._stamp_kind.addItem(
+                    f"Custom: {name}", {"name": name, "path": path}
+                )
+                if name == previous:
+                    selected_index = self._stamp_kind.count() - 1
+            if selected_index >= 0:
+                self._stamp_kind.setCurrentIndex(selected_index)
+            else:
+                self._stamp_kind.setCurrentText("Draft")
+        finally:
+            self._stamp_kind.blockSignals(False)
+        self._stamp_remove.setEnabled(bool(self.current_custom_stamp_name()))
+
+    def current_stamp(self) -> tuple[str, str]:
+        """Return the built-in kind and optional custom image path."""
+        data = self._stamp_kind.currentData()
+        if isinstance(data, dict):
+            return "Draft", str(data.get("path") or "")
+        return self._stamp_kind.currentText() or "Draft", ""
+
+    def current_custom_stamp_name(self) -> str:
+        data = self._stamp_kind.currentData()
+        return str(data.get("name") or "") if isinstance(data, dict) else ""
+
+    def _stamp_selection_changed(self) -> None:
+        kind, image_path = self.current_stamp()
+        self._stamp_remove.setEnabled(bool(self.current_custom_stamp_name()))
+        self.stampKindChanged.emit(kind)
+        self.stampImageChanged.emit(image_path)
+
+    def _remove_current_custom_stamp(self) -> None:
+        name = self.current_custom_stamp_name()
+        if name:
+            self.customStampRemoveRequested.emit(name)
+
 
     def set_annotation_tool(self, tool: str) -> None:
         style_tools = {
@@ -467,6 +536,7 @@ class ContextPanel(QFrame):
         self._annot_alignment.setVisible(text_visible)
         self._stamp_label.setVisible(stamp_visible)
         self._stamp_kind.setVisible(stamp_visible)
+        self._stamp_actions.setVisible(stamp_visible)
         self._image_label.setVisible(image_visible)
         self._image_edit.setVisible(image_visible)
         self._image_browse.setVisible(image_visible)

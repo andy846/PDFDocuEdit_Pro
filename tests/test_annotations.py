@@ -8,8 +8,8 @@ import pytest
 from core.annotations import (
     AnnotationOp,
     AnnotationStyle,
-    add_freetext,
     add_circle,
+    add_freetext,
     add_highlight,
     add_ink,
     add_line,
@@ -73,6 +73,22 @@ def test_drawing_annotations(tmp_path: Path) -> None:
     assert any(str(a.type[1]) == "Stamp" for a in page.annots())
 
 
+def test_custom_image_stamp_is_inserted(tmp_path: Path) -> None:
+    doc, image = make_doc(tmp_path)
+    page = doc.load_page(0)
+    apply_annotation(
+        doc,
+        AnnotationOp(
+            kind="stamp",
+            page=0,
+            rects=(fitz.Rect(80, 180, 240, 240),),
+            stamp_kind="Draft",
+            image_path=str(image),
+        ),
+    )
+    assert page.get_images()
+
+
 def test_redact_removes_underlying_text(tmp_path: Path) -> None:
     doc, _ = make_doc(tmp_path)
     page = doc.load_page(0)
@@ -102,7 +118,10 @@ def test_list_and_remove_annotations(tmp_path: Path) -> None:
     entries = list_annotations(page)
     assert len(entries) == 2
     assert entries[0]["kind"] == "Square"
+    # A missing xref must never be reinterpreted as a list index.
     remove_annotation(page, 0)
+    assert annot_count(page) == 2
+    remove_annotation(page, entries[0]["xref"])
     assert annot_count(page) == 1
 
 

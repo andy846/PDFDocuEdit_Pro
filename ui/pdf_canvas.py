@@ -34,8 +34,8 @@ from .page_view import (
     PAGE_SPACING,
     PageRenderCache,
     PageView,
-    render_page_pixmap,
     render_page_image,
+    render_page_pixmap,
     render_page_pixmap_quick,
 )
 
@@ -204,6 +204,7 @@ class PdfCanvas(QScrollArea):
             "color": "yellow",
             "width": 1.5,
             "stamp_kind": "Draft",
+            "stamp_image_path": "",
             "image_path": "",
             "fill": "",
             "opacity": 1.0,
@@ -349,7 +350,7 @@ class PdfCanvas(QScrollArea):
         return self._tool_mode
 
     def set_annotation_options(self, **options) -> None:
-        """Update current annotation settings (color, width, stamp_kind, image_path)."""
+        """Update current annotation style and image-source settings."""
         self._annot_options.update(
             {k: v for k, v in options.items() if k in self._annot_options}
         )
@@ -598,7 +599,13 @@ class PdfCanvas(QScrollArea):
             )
             return
         if self._tool_mode == ToolMode.STAMP:
-            height = pdf_rect.width * STAMP_ASPECT
+            stamp_image_path = str(self._annot_options["stamp_image_path"] or "")
+            aspect = STAMP_ASPECT
+            if stamp_image_path:
+                image = QImage(stamp_image_path)
+                if not image.isNull() and image.width() > 0:
+                    aspect = max(0.1, min(3.0, image.height() / image.width()))
+            height = pdf_rect.width * aspect
             stamp_rect = fitz.Rect(
                 pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y0 + height
             )
@@ -608,6 +615,7 @@ class PdfCanvas(QScrollArea):
                     page=page_num,
                     rects=(stamp_rect,),
                     stamp_kind=self._annot_options["stamp_kind"],
+                    image_path=stamp_image_path,
                 )
             )
             return

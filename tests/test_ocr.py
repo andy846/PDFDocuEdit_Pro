@@ -6,7 +6,7 @@ import fitz
 import pytest
 
 import core.ocr as ocr_module
-from core.ocr import OCRMode, OCRRequest, OCRError, run_ocr
+from core.ocr import OCRError, OCRMode, OCRRequest, run_ocr
 from core.platform_service import ProcessResult
 from core.tasks import TaskCancelled
 

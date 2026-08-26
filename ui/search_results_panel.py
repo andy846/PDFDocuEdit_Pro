@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QRadioButton,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
 )
 

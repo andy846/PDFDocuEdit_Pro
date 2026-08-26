@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import uuid
 from dataclasses import replace
+from pathlib import Path
 
 import fitz
 from PyQt6.QtCore import (
@@ -25,16 +25,16 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
-    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QInputDialog,
-    QPushButton,
+    QLabel,
     QLineEdit,
+    QPushButton,
     QRadioButton,
     QScrollArea,
     QSpinBox,

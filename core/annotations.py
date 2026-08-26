@@ -285,12 +285,16 @@ def add_freetext(
         fontname=style.font or "Helv",
         text_color=_rgb(style.stroke),
         fill_color=_rgb(style.fill) if style.fill else None,
-        border_color=_rgb(style.stroke) if boxed else None,
-        border_width=max(0.0, style.width) if boxed else 0,
         opacity=max(0.0, min(1.0, style.opacity)),
         **callout_options,
         align=max(0, min(2, int(style.alignment))),
     )
+    if boxed:
+        # PyMuPDF 1.26 rejects border_color / border_width in the
+        # non-rich-text constructor. Apply the same appearance afterward.
+        annot.set_border(width=max(0.0, style.width))
+        red, green, blue = _rgb(style.stroke)
+        doc.xref_set_key(annot.xref, "C", f"[{red:g} {green:g} {blue:g}]")
     if not callout_points:
         for key in ("CL", "IT", "LE"):
             doc.xref_set_key(annot.xref, key, "null")
@@ -364,15 +368,18 @@ def list_annotations(page: fitz.Page) -> list[dict]:
 
 
 def remove_annotation(page: fitz.Page, xref: int) -> None:
+    """Remove exactly the annotation identified by its stable PDF xref.
+
+    An xref is not interchangeable with an annotation's position in the
+    page's annotation list. In particular, falling back to a list index when
+    a stale xref disappears can silently delete a different annotation.
+    """
     with DOCUMENT_LOCK:
         try:
             annots = list(page.annots())
         except Exception:
             return  # stale annotation list after a page rebuild
         target = next((annot for annot in annots if int(annot.xref) == int(xref)), None)
-        # Backwards compatibility for older callers that passed a list index.
-        if target is None and 0 <= xref < len(annots):
-            target = annots[xref]
         if target is not None:
             try:
                 page.delete_annot(target)
@@ -468,7 +475,10 @@ def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
                 boxed=op.kind != "freetext_typewriter",
             )
         elif op.kind == "stamp":
-            add_stamp(doc, op.page, op.rects[0], op.stamp_kind)
+            if op.image_path:
+                insert_image(doc, op.page, op.rects[0], op.image_path)
+            else:
+                add_stamp(doc, op.page, op.rects[0], op.stamp_kind)
         elif op.kind == "redact":
             redact(doc, op.page, list(op.rects))
         elif op.kind == "image":

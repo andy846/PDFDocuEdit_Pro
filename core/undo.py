@@ -19,6 +19,7 @@ class _Snapshot:
 
     path: Path
     description: str
+    modified: bool = False
 
     def cleanup(self) -> None:
         self.path.unlink(missing_ok=True)
@@ -35,8 +36,9 @@ class UndoStack(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._undo: deque[_Snapshot] = deque(maxlen=MAX_UNDO_DEPTH)
+        self._undo: deque[_Snapshot] = deque()
         self._redo: list[_Snapshot] = []
+        self._restored_modified = False
 
     @property
     def can_undo(self) -> bool:
@@ -70,7 +72,14 @@ class UndoStack(QObject):
     def redo_description(self) -> str:
         return self._redo[-1].description if self._redo else ""
 
-    def push(self, source_path: str, description: str) -> None:
+    @property
+    def restored_modified(self) -> bool:
+        """Whether the state returned by the latest pop was unsaved."""
+        return self._restored_modified
+
+    def push(
+        self, source_path: str, description: str, *, modified: bool = False
+    ) -> None:
         """Copy the current document file as a snapshot before a change."""
         source = Path(source_path)
         if not source.is_file():
@@ -83,8 +92,10 @@ class UndoStack(QObject):
         except Exception:
             Path(temp_name).unlink(missing_ok=True)
             return
-        snapshot = _Snapshot(path=Path(temp_name), description=description)
-        self._undo.append(snapshot)
+        snapshot = _Snapshot(
+            path=Path(temp_name), description=description, modified=modified
+        )
+        self._append_undo(snapshot)
         self._clear_redo()
         self.changed.emit()
 
@@ -93,6 +104,7 @@ class UndoStack(QObject):
         if not self._undo:
             return None
         snapshot = self._undo.pop()
+        self._restored_modified = snapshot.modified
         self.changed.emit()
         return snapshot.path
 
@@ -101,10 +113,13 @@ class UndoStack(QObject):
         if not self._redo:
             return None
         snapshot = self._redo.pop()
+        self._restored_modified = snapshot.modified
         self.changed.emit()
         return snapshot.path
 
-    def push_redo(self, source_path: str, description: str) -> None:
+    def push_redo(
+        self, source_path: str, description: str, *, modified: bool = True
+    ) -> None:
         """Save the current document to the redo stack."""
         source = Path(source_path)
         if not source.is_file():
@@ -117,10 +132,16 @@ class UndoStack(QObject):
         except Exception:
             Path(temp_name).unlink(missing_ok=True)
             return
-        self._redo.append(_Snapshot(path=Path(temp_name), description=description))
+        self._redo.append(
+            _Snapshot(
+                path=Path(temp_name), description=description, modified=modified
+            )
+        )
         self.changed.emit()
 
-    def push_undo(self, source_path: str, description: str) -> None:
+    def push_undo(
+        self, source_path: str, description: str, *, modified: bool = True
+    ) -> None:
         """Save the current document to the undo stack (used during redo)."""
         source = Path(source_path)
         if not source.is_file():
@@ -133,8 +154,18 @@ class UndoStack(QObject):
         except Exception:
             Path(temp_name).unlink(missing_ok=True)
             return
-        self._undo.append(_Snapshot(path=Path(temp_name), description=description))
+        self._append_undo(
+            _Snapshot(
+                path=Path(temp_name), description=description, modified=modified
+            )
+        )
         self.changed.emit()
+
+    def _append_undo(self, snapshot: _Snapshot) -> None:
+        """Append without leaking the temp file evicted at the depth limit."""
+        if len(self._undo) >= MAX_UNDO_DEPTH:
+            self._undo.popleft().cleanup()
+        self._undo.append(snapshot)
 
     def _clear_redo(self) -> None:
         for snapshot in self._redo:
@@ -146,4 +177,5 @@ class UndoStack(QObject):
             snapshot.cleanup()
         self._undo.clear()
         self._clear_redo()
+        self._restored_modified = False
         self.changed.emit()

@@ -145,7 +145,7 @@ class FindingSet:
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
 
-    def normalize(self) -> "FindingSet":
+    def normalize(self) -> FindingSet:
         """Remove parser noise and exact duplicates without merging occurrences."""
         has_rules = any(
             item.source == FindingSource.STANDARD
@@ -169,7 +169,7 @@ class FindingSet:
         self,
         total_pages: int,
         page_records: list[dict[str, Any]] | None = None,
-    ) -> "FindingSet":
+    ) -> FindingSet:
         blank_rules = {"page.blank", "detect.exact_blank"}
         blank_pages = sorted(
             {
@@ -188,7 +188,10 @@ class FindingSet:
 
         side = "even" if next(iter(parity)) == 0 else "odd"
         frequency = len(blank_pages) / max(1, total_pages)
-        gaps = [right - left for left, right in zip(blank_pages, blank_pages[1:])]
+        gaps = [
+            right - left
+            for left, right in zip(blank_pages, blank_pages[1:], strict=False)
+        ]
         if gaps and len(set(gaps)) == 1:
             spacing = f"regular spacing every {gaps[0]} pages"
         else:

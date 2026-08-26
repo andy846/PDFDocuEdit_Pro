@@ -5,10 +5,10 @@ from pathlib import Path
 import fitz
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QPixmap
-import core.verapdf as verapdf_module
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+import core.verapdf as verapdf_module
 from core.analysis import (
     AnalysisRequest,
     Finding,
@@ -21,10 +21,10 @@ from core.analysis import (
     inspect_and_analyze,
 )
 from core.pdf_engine import PagePlanEntry, PdfEngine
+from core.platform_service import ProcessResult
 from core.verapdf import VeraPdfRuntime, parse_verapdf_xml, validate_with_verapdf
 from ui.analysis_panel import AnalysisPanel
 from ui.page_overlay import InteractionState, PageOverlay
-from core.platform_service import ProcessResult
 
 
 def _make_analysis_pdf(path: Path) -> Path:
@@ -169,7 +169,7 @@ def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) ->
 
 
 def test_analysis_panel_populates_inspector_categories(tmp_path) -> None:
-    app = QApplication.instance() or QApplication(["analysis-panel-test"])
+    _app = QApplication.instance() or QApplication(["analysis-panel-test"])
     report = inspect_and_analyze(
         _make_analysis_pdf(tmp_path / "panel.pdf"), "doc", 0, AnalysisRequest()
     )
@@ -297,7 +297,7 @@ def test_even_blank_pages_are_grouped_as_expected_duplex_pattern(
 def test_analysis_panel_status_and_grouped_csv_export(
     tmp_path: Path, monkeypatch
 ) -> None:
-    app = QApplication.instance() or QApplication(["analysis-export-test"])
+    _app = QApplication.instance() or QApplication(["analysis-export-test"])
     source = tmp_path / "grouped.pdf"
     with fitz.open() as document:
         document.new_page().insert_text((72, 96), "Front")

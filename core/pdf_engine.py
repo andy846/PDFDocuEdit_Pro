@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import shutil
 import tempfile
@@ -258,6 +259,25 @@ class PdfEngine:
     def detach_save_target(self) -> None:
         """Require the next save to choose a PDF path (used for converted input)."""
         self._original_path = None
+
+    def inherit_save_context(
+        self, source: PdfEngine, *, modified: bool = True
+    ) -> None:
+        """Keep the user's save destination when loading an undo snapshot.
+
+        Undo snapshots are ordinary temporary PDFs. Opening one normally
+        makes that temporary file the engine's ``original_path``, so a later
+        Ctrl+S would save to the snapshot instead of the user's document.
+        Preserve the destination and encryption policy from the live engine,
+        along with whether the restored state still has unsaved edits.
+        """
+        self._original_path = source._original_path
+        self._password = source._password
+        self._reencrypt_on_save = source._reencrypt_on_save
+        self._saved_permissions = source._saved_permissions
+        self._document_id = source._document_id
+        self._revision = source._revision + 1
+        self._is_modified = modified
 
     @property
     def document(self) -> fitz.Document | None:

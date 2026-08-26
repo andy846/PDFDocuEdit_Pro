@@ -36,6 +36,7 @@ class SettingsManager:
         "split_orientation": "horizontal",
         "annotation_defaults": {},
         "annotation_recent_colors": [],
+        "custom_stamps": {},
         "verapdf_path": None,
         "split_sync_page": False,
         "split_sync_zoom": False,
@@ -161,6 +162,34 @@ class SettingsManager:
             if isinstance(command_id, str) and isinstance(sequence, str)
         }
         self.set("shortcut_overrides", cleaned)
+
+    def get_custom_stamps(self) -> dict[str, str]:
+        """Return named custom-stamp image paths that still exist."""
+        value = self.get("custom_stamps", {})
+        if not isinstance(value, dict):
+            return {}
+        stamps: dict[str, str] = {}
+        for raw_name, raw_path in value.items():
+            name = str(raw_name).strip()
+            path = Path(str(raw_path)).expanduser()
+            if name and path.is_file() and path.suffix.casefold() in {
+                ".png",
+                ".jpg",
+                ".jpeg",
+            }:
+                stamps[name] = str(path.resolve())
+        return stamps
+
+    def set_custom_stamps(self, stamps: dict[str, str]) -> None:
+        """Persist a normalized name-to-image mapping for custom stamps."""
+        cleaned = {
+            str(name).strip(): str(Path(path).expanduser().resolve())
+            for name, path in stamps.items()
+            if str(name).strip()
+            and Path(path).expanduser().is_file()
+            and Path(path).suffix.casefold() in {".png", ".jpg", ".jpeg"}
+        }
+        self.set("custom_stamps", cleaned)
 
     def reset(self) -> None:
         self._settings = self.DEFAULT_SETTINGS.copy()

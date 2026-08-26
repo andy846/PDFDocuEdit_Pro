@@ -10,7 +10,6 @@ from core.commands import Command
 from core.settings import SettingsManager
 from ui.diagnostics_dialog import PreferencesDialog
 
-
 _app_instance: QApplication | None = None
 
 

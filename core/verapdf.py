@@ -15,7 +15,6 @@ from .analysis import Finding, FindingSource, Severity, ValidationSummary
 from .platform_service import PlatformService
 from .resources import bundle_root
 
-
 SUPPORTED_PROFILES: tuple[tuple[str, str], ...] = (
     ("1a", "PDF/A-1a"),
     ("1b", "PDF/A-1b"),

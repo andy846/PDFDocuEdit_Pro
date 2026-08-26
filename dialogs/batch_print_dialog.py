@@ -35,8 +35,8 @@ from PyQt6.QtWidgets import (
 
 from .base import ToolDialog
 from .batch_tools import PdfFileTable
-
 from .print_profile import collect_print_profile, quality_changed, restore_print_profile
+
 
 class BatchPrintDialog(ToolDialog):
     printRequested = pyqtSignal(object)  # details dict
