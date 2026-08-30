@@ -139,7 +139,7 @@ class SingleInstanceRouter(QObject):
 
 
 def _create_splash() -> QSplashScreen:
-    splash_path = resource_path("splash.png")
+    splash_path = resource_path("Splash.png")
     if splash_path.exists():
         pixmap = QPixmap(str(splash_path))
         # Show the splash at up to 45% of the screen width at native

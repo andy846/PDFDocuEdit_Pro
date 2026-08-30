@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QEvent
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtWidgets import QApplication
 
 import core.viewer as viewer_module
 from core.settings import SettingsManager
+from styles.tokens import D
 
 
 def make_pdf(path: Path) -> Path:
@@ -42,6 +44,8 @@ def test_main_window_constructs_and_loads_document(tmp_path: Path, monkeypatch) 
     app.processEvents()
     assert window.engine.page_count == 1
     assert "smoke.pdf" in window.windowTitle()
+    assert window.command_bar._title.text() == "PDFDocuEdit Pro"
+    assert "smoke.pdf" in window.command_bar._title.toolTip()
     assert window.workspace.canvas.current_page == 0
     assert not window.task_bar.isVisible()
     assert window.side_panel._buttons["insert"].isEnabled()
@@ -60,6 +64,46 @@ def test_main_window_constructs_and_loads_document(tmp_path: Path, monkeypatch) 
     window.close_document()
     assert not window.side_panel._buttons["insert"].isEnabled()
     assert not window.bottom_bar._zoom_in.isEnabled()
+    window.close()
+
+
+def test_windows_integrated_title_bar_keeps_complete_menu(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication(["pdfdocuedit-chrome-test"])
+    monkeypatch.setattr(
+        viewer_module,
+        "SettingsManager",
+        lambda: SettingsManager(tmp_path / "chrome-settings.json"),
+    )
+    window = viewer_module.PDFViewer()
+    window.resize(1280, 760)
+    window.show()
+    app.processEvents()
+
+    integrated = os.name == "nt"
+    assert window._integrated_chrome is integrated
+    assert bool(window.windowFlags() & Qt.WindowType.FramelessWindowHint) is integrated
+    assert bool(window.command_bar.property("integratedTitleBar")) is integrated
+    assert window.command_bar._window_divider.isHidden() is not integrated
+    assert window.command_bar._window_controls.isHidden() is not integrated
+    if integrated:
+        assert window.menuBar().isHidden()
+        compact_menu = window.command_bar._main_menu_button.menu()
+        assert compact_menu is not None
+        assert len(compact_menu.actions()) == len(window.menuBar().actions())
+        assert window.command_bar._window_close.property("closeButton") is True
+        assert window._resize_handles is not None
+        assert len(window._resize_handles.handles) == 8
+        assert window._resize_handles.handles["top"].height() == 6
+        window._toggle_maximize_restore()
+        app.processEvents()
+        assert window.isMaximized()
+        assert window.command_bar._window_maximize.toolTip() == "Restore"
+        assert all(handle.isHidden() for handle in window._resize_handles.handles.values())
+        window._toggle_maximize_restore()
+        app.processEvents()
+        assert not window.isMaximized()
     window.close()
 
 
@@ -101,7 +145,7 @@ def test_motion_states_and_reduced_motion_behaviour(tmp_path: Path, monkeypatch)
     source = make_pdf(tmp_path / "motion.pdf")
     window.load_file(str(source))
     assert window.context_panel.show_tool("rotate", "Rotate Pages")
-    assert window.context_panel.panelWidth == 320
+    assert window.context_panel.panelWidth == D.CONTEXT_W
     window._hide_context()
     assert window.context_panel.panelWidth == 0
     assert window.context_panel.isHidden()

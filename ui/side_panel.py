@@ -51,6 +51,26 @@ SHORTCUT_HINTS: dict[str, str] = {
     "delete": "F8",
     "extract": "F9",
     "split": "F10",
+    "highlight": "Ctrl+Alt+H",
+    "underline": "Ctrl+Alt+U",
+    "strikeout": "Ctrl+Alt+S",
+    "squiggly": "Ctrl+Alt+Q",
+    "note": "Ctrl+Alt+N",
+    "ink": "Ctrl+Alt+K",
+    "rect": "Ctrl+Alt+R",
+    "line": "Ctrl+Alt+L",
+    "arrow": "Ctrl+Alt+A",
+    "ellipse": "Ctrl+Alt+E",
+    "polygon": "Ctrl+Alt+P",
+    "freetext_typewriter": "Ctrl+Alt+T",
+    "freetext_box": "Ctrl+Alt+B",
+    "freetext_callout": "Ctrl+Alt+C",
+    "redact": "Ctrl+Alt+D",
+    "stamp": "Ctrl+Alt+M",
+    "signature": "Ctrl+Alt+G",
+    "image": "Ctrl+Alt+I",
+    "watermark": "Ctrl+Alt+W",
+    "font_inspect": "Ctrl+Alt+F",
 }
 
 
@@ -195,6 +215,7 @@ class SidePanel(QFrame):
         "signature",
         "image",
         "watermark",
+        "font_inspect",
     }
 
     SECTIONS = (
@@ -223,6 +244,7 @@ class SidePanel(QFrame):
             "annotate",
             "Annotate",
             (
+                ToolItem("font_inspect", "Inspect text font", "font-inspect"),
                 ToolItem("highlight", "Highlight text", "highlighter"),
                 ToolItem("underline", "Underline text", "underline"),
                 ToolItem("strikeout", "Strikethrough text", "strikethrough"),

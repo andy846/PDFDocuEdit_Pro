@@ -129,6 +129,9 @@ LIGHT = {
     "text_disabled": "#98989e",
     "border": "#d8d8dc",
     "border_strong": "#c5c5ca",
+    # A single, quiet hairline used to separate the application's main zones.
+    # It is intentionally darker than ordinary control borders.
+    "separator": "#c6c6cb",
     "primary": "#0a64d8",
     "primary_hover": "#0759c4",
     "primary_pressed": "#054ba6",
@@ -166,6 +169,7 @@ DARK = {
     "text_disabled": "#707077",
     "border": "#3d3d41",
     "border_strong": "#515157",
+    "separator": "#161618",
     "primary": "#5a9cf5",
     "primary_hover": "#70aaf7",
     "primary_pressed": "#4389e6",

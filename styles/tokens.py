@@ -12,9 +12,10 @@ class S:
 
 
 class R:
-    SM = 6
-    MD = 8
-    LG = 10
+    SM = 8
+    MD = 10
+    LG = 14
+    XL = 18
 
 
 class F:
@@ -35,7 +36,7 @@ class D:
     COMMAND_H = 48
     SIDEBAR_W = 272
     SIDEBAR_COLLAPSED_W = 52
-    CONTEXT_W = 320
+    CONTEXT_W = 400
     STATUSBAR_H = 48
     CONTROL_H = 34
     ICON_BUTTON = 34

@@ -4,7 +4,7 @@ The layout mirrors the original PDFDocuEdit Pro "PDF Content Deep Search"
 window, restyled with the application theme tokens: folder row, prominent
 search row, options row (subfolders / barcode content / open method), status
 row with progress, three tabs (Search Result / Preview / Error Message) and
-action rows (clear / export / open selected / auto column width).
+one compact action row (clear / export / open selected).
 """
 
 from __future__ import annotations
@@ -151,6 +151,7 @@ class DeepSearchDialog(ToolDialog):
         # --- tabs: results / preview / errors ---
         self.tabs = QTabWidget()
         self.table = SortableTableWidget(0, 4)
+        self.table.setObjectName("deepSearchResultsTable")
         self._setup_result_table()
         self.tabs.addTab(self.table, "Search Result")
         self.preview = QTextEdit()
@@ -158,6 +159,7 @@ class DeepSearchDialog(ToolDialog):
         self.preview.setReadOnly(True)
         self.tabs.addTab(self.preview, "Preview")
         self.error_table = SortableTableWidget(0, 2)
+        self.error_table.setObjectName("deepSearchErrorTable")
         self._setup_error_table()
         self.tabs.addTab(self.error_table, "Error Message")
         self._root.addWidget(self.tabs, 1)
@@ -184,13 +186,6 @@ class DeepSearchDialog(ToolDialog):
             actions.addWidget(button)
         actions.addStretch(1)
         self._root.addLayout(actions)
-
-        actions_second = QHBoxLayout()
-        self.resize_button = QPushButton("Automatically adjust column width")
-        self.resize_button.clicked.connect(self._auto_resize_columns)
-        actions_second.addWidget(self.resize_button)
-        actions_second.addStretch(1)
-        self._root.addLayout(actions_second)
 
         self.table.itemSelectionChanged.connect(self._update_preview)
         self.table.cellDoubleClicked.connect(self._handle_double_click)

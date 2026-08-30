@@ -1224,7 +1224,7 @@ def test_organize_pages_applies_and_refreshes_canvas(tmp_path, monkeypatch):
 
 
 def test_search_panel_scope_integration(tmp_path, monkeypatch):
-    """The former advanced-search dialog features live in the search panel."""
+    """Search scope changes wait for an explicit Search command."""
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "scope.pdf", pages=3)
     window.load_file(str(source))
@@ -1233,18 +1233,21 @@ def test_search_panel_scope_integration(tmp_path, monkeypatch):
 
     received: list[tuple[str, object]] = []
     panel.searchRequested.connect(lambda query, pages: received.append((query, pages)))
-    panel._query.blockSignals(True)
     panel._query.setText("searchable")
-    panel._query.blockSignals(False)
+    QApplication.processEvents()
+    assert received == []
+    assert panel._search_button.isEnabled()
+    assert "press Search" in panel._status.text()
 
     panel._all_pages.setChecked(True)
-    panel._emit_search()
+    panel._search_button.click()
     assert received[-1] == ("searchable", None)
 
     panel._current_only.setChecked(True)
     panel.set_current_page(1)
     assert panel._current_only.text() == "Current page (2)"
-    panel._emit_search()
+    assert len(received) == 1
+    panel._query.returnPressed.emit()
     assert received[-1] == ("searchable", [1])
 
     panel._custom.setChecked(True)
@@ -1545,3 +1548,24 @@ def test_spinbox_stylesheet_supplies_visible_plus_minus_svg_assets():
         assert "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {" in css
         assert "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {" in css
         assert css.count('image: url("') >= 2
+
+
+def test_combobox_stylesheet_supplies_visible_theme_arrow_assets():
+    from core.resources import resource_path
+    from styles.components import global_style
+    from styles.theme import apply_theme, get_theme
+
+    app = _app()
+    original = get_theme()
+    try:
+        for mode in ("light", "dark"):
+            apply_theme(app, mode)
+            css = global_style()
+            asset = resource_path("App_icon", f"combo_down_{mode}.svg")
+            assert asset.is_file()
+            assert asset.as_posix() in css
+            assert "QComboBox::down-arrow {" in css
+            assert "QComboBox::drop-down:hover {" in css
+            assert "width: 30px;" in css
+    finally:
+        apply_theme(app, original)

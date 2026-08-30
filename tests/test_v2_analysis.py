@@ -139,6 +139,48 @@ def test_overlay_first_press_release_emits_once_and_state_is_exclusive() -> None
     overlay.close()
 
 
+def test_arrow_drag_uses_directional_endpoints_instead_of_a_marquee() -> None:
+    app = QApplication.instance() or QApplication(["arrow-interaction-test"])
+    overlay = PageOverlay(3)
+    pixmap = QPixmap(240, 220)
+    pixmap.fill(Qt.GlobalColor.white)
+    overlay.set_pixmap(pixmap)
+    overlay.show()
+    app.processEvents()
+
+    lines: list[list] = []
+    selections: list[object] = []
+    overlay.lineDrawn.connect(lambda _page, points: lines.append(points))
+    overlay.selectionMade.connect(lambda _page, rect: selections.append(rect))
+    overlay.set_line_mode(
+        True,
+        arrow=True,
+        color="#cc2244",
+        width=4.5,
+        opacity=0.6,
+    )
+    assert overlay._interaction_state == InteractionState.LINE
+
+    QTest.mousePress(overlay, Qt.MouseButton.LeftButton, pos=QPoint(190, 160))
+    QTest.mouseMove(overlay, QPoint(45, 35), delay=10)
+    assert overlay._marquee is None
+    assert overlay._preview is not None
+    assert overlay._preview["kind"] == "arrow"
+    assert overlay._preview["color"] == "#cc2244"
+    assert overlay._preview["width"] == 4.5
+    QTest.mouseRelease(overlay, Qt.MouseButton.LeftButton, pos=QPoint(45, 35))
+    app.processEvents()
+
+    assert selections == []
+    assert len(lines) == 1
+    assert [(round(point.x()), round(point.y())) for point in lines[0]] == [
+        (190, 160),
+        (45, 35),
+    ]
+    assert overlay._preview is None
+    overlay.close()
+
+
 def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) -> None:
     runtime_root = tmp_path / "VeraPDF"
     runtime = VeraPdfRuntime(

@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QPoint, QRectF, QSizeF, Qt, QThreadPool, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QRectF, QSizeF, Qt, QThreadPool, QTimer
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -57,14 +57,26 @@ from core.analysis import (
     Severity,
     inspect_and_analyze,
 )
+from core.annotation_io import (
+    export_annotation_summary,
+    export_annotations_json,
+    flatten_annotations,
+    import_annotations_json,
+)
 from core.annotations import (
     AnnotationOp,
     AnnotationStyle,
+    AnnotationValidationError,
     add_watermark_image,
     add_watermark_text,
     apply_annotation,
+    apply_redaction_marks,
+    list_document_annotations,
     remove_annotation,
     update_annotation,
+    update_annotation_geometry,
+    update_annotation_text,
+    validate_annotation_op,
 )
 from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
 from core.commands import Command
@@ -74,8 +86,10 @@ from core.file_association import (
     open_default_apps_settings,
     register_default_app,
 )
+from core.font_inspector import inspect_font_at
 from core.ocr import OCRMode, OCRResult, run_ocr
 from core.pdf_engine import (
+    DOCUMENT_LOCK,
     PdfEngine,
     PdfInvalidPassword,
     PdfPasswordRequired,
@@ -137,6 +151,7 @@ from ui.icons import clear_icon_cache
 from ui.infobar import InfoBar
 from ui.side_panel import SHORTCUT_HINTS, SidePanel
 from ui.task_bar import TaskBar
+from ui.window_chrome import FramelessResizeHandles
 from ui.workspace import DocumentWorkspace
 
 
@@ -223,6 +238,9 @@ def _perform_document_analysis(
 class PDFViewer(QMainWindow):
     def __init__(self, initial_path: str | None = None):
         super().__init__()
+        self._integrated_chrome = os.name == "nt"
+        if self._integrated_chrome:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.settings = SettingsManager()
         self._sessions: list[DocumentSession] = []
         self._session: DocumentSession | None = None
@@ -322,6 +340,14 @@ class PDFViewer(QMainWindow):
         self._command_action_map: dict[str, QAction] = {}
         self._command_shortcuts: list[QShortcut] = []
         self._build_menu_bar()
+        self.command_bar.set_application_menu(self.menuBar())
+        self.command_bar.set_integrated_chrome(self._integrated_chrome)
+        if self._integrated_chrome:
+            self.menuBar().hide()
+            self._main_menu_shortcut = QShortcut(QKeySequence("Alt+M"), self)
+            self._main_menu_shortcut.activated.connect(
+                self.command_bar.open_application_menu
+            )
         self._connect_signals()
         self._load_custom_stamps()
         self._commands: list[Command] = []
@@ -329,6 +355,9 @@ class PDFViewer(QMainWindow):
         self._install_shortcuts()
         self._set_motion_enabled(bool(self.settings.get("animations_enabled", True)))
         self._set_document_available(False)
+        self._resize_handles = (
+            FramelessResizeHandles(self) if self._integrated_chrome else None
+        )
 
     def _build_menu_bar(self) -> None:
         menu = self.menuBar()
@@ -566,6 +595,13 @@ class PDFViewer(QMainWindow):
         self.split_reset_action = QAction("Reset panes to 50/50", self)
         self.split_reset_action.triggered.connect(self._reset_split_sizes)
         split_options.addAction(self.split_reset_action)
+        self.split_open_document_action = QAction("Open comparison PDF…", self)
+        self.split_open_document_action.triggered.connect(
+            lambda: self._open_split_document(self._session)
+            if self._session is not None
+            else None
+        )
+        split_options.addAction(self.split_open_document_action)
 
         self.zoom_in_action = self._action(
             "Zoom In", "Ctrl+=", self._canvas_call("zoom_in")
@@ -636,6 +672,9 @@ class PDFViewer(QMainWindow):
         command.themeChanged.connect(self._theme_changed)
         command.canvasToolChanged.connect(self._set_canvas_tool)
         command.commandRequested.connect(self._command_bar_requested)
+        command.minimizeRequested.connect(self.showMinimized)
+        command.maximizeRestoreRequested.connect(self._toggle_maximize_restore)
+        command.closeRequested.connect(self.close)
         self.side_panel.toolRequested.connect(self._tool_requested)
         self.side_panel.collapsedChanged.connect(
             lambda value: self.settings.set("left_panel_collapsed", value)
@@ -680,7 +719,22 @@ class PDFViewer(QMainWindow):
         self.context_panel.removeAnnotationRequested.connect(
             self._handle_remove_annotation
         )
-        self.context_panel.annotateRefreshRequested.connect(self._refresh_annotate_list)
+        self.context_panel.applyRedactionsRequested.connect(self._apply_redactions)
+        self.context_panel.annotationSelected.connect(self._select_annotation)
+        self.context_panel.exportAnnotationsRequested.connect(self._export_annotations)
+        self.context_panel.importAnnotationsRequested.connect(self._import_annotations)
+        self.context_panel.exportAnnotationSummaryRequested.connect(
+            self._export_annotation_summary
+        )
+        self.context_panel.flattenAnnotationsRequested.connect(
+            self._flatten_annotations
+        )
+        self.context_panel.fontStyleApplyRequested.connect(
+            self._apply_inspected_font
+        )
+        self.context_panel.fontNameCopyRequested.connect(
+            self._copy_inspected_font_name
+        )
         self.context_panel.closed.connect(self._hide_context)
         self.context_panel.rotateRequested.connect(self._rotate_pages)
         self.context_panel.deleteRequested.connect(self._delete_pages)
@@ -710,24 +764,180 @@ class PDFViewer(QMainWindow):
         return session
 
     def _wire_session(self, session: DocumentSession) -> None:
-        canvas = session.canvas
-        nav = session.nav_panel
+        self._wire_canvas(session, session.canvas)
+        self._wire_navigation(session)
+        session.splitSourceRequested.connect(
+            lambda source, s=session: self._set_split_source(s, source)
+        )
+        session.splitOpenRequested.connect(
+            lambda s=session: self._open_split_document(s)
+        )
+        session.splitCloseRequested.connect(
+            lambda s=session: self._close_split_view(s)
+        )
+
+    def _wire_canvas(self, session: DocumentSession, canvas) -> None:
         canvas.pageChanged.connect(
-            lambda page, s=session: self._session_page_changed(s, page)
+            lambda page, s=session, c=canvas: self._canvas_page_changed(s, c, page)
         )
         canvas.zoomChanged.connect(
-            lambda ratio, s=session: self._session_zoom_changed(s, ratio)
+            lambda ratio, s=session, c=canvas: self._canvas_zoom_changed(s, c, ratio)
         )
         canvas.textCopied.connect(self._copy_text_to_clipboard)
         canvas.contextMenuRequested.connect(
-            lambda pos, s=session: self._show_canvas_menu(pos, s)
+            lambda pos, s=session, c=canvas: self._show_canvas_menu(pos, s, c)
+        )
+        canvas.annotationSelected.connect(
+            lambda page, xref, s=session, c=canvas: self._canvas_annotation_selected_from(
+                s, c, page, xref
+            )
+        )
+        canvas.annotationContextRequested.connect(
+            lambda page, xref, pos, s=session, c=canvas: self._show_annotation_menu_from(
+                pos, s, c, page, xref
+            )
+        )
+        canvas.annotationGeometryChanged.connect(
+            lambda page, xref, payload, s=session, c=canvas: self._change_annotation_geometry_from(
+                s, c, page, xref, payload
+            )
+        )
+        canvas.annotationTextChanged.connect(
+            lambda page, xref, text, s=session, c=canvas: self._inline_edit_annotation_from(
+                s, c, page, xref, text
+            )
         )
         canvas.annotationRequested.connect(
-            lambda op, s=session: self._handle_annotation(op, s)
+            lambda op, s=session, c=canvas: self._handle_annotation_from(s, c, op)
         )
         canvas.noteRequested.connect(
-            lambda page, point, s=session: self._handle_note_request(page, point, s)
+            lambda page, point, s=session, c=canvas: self._handle_note_from(
+                s, c, page, point
+            )
         )
+        canvas.fontInspectionRequested.connect(
+            lambda page, point, s=session, c=canvas: self._handle_font_inspection(
+                s, c, page, point
+            )
+        )
+
+    @staticmethod
+    def _external_split_source(session: DocumentSession, canvas):
+        if canvas is session.split_canvas:
+            return session.split_source_session
+        return None
+
+    def _canvas_page_changed(
+        self, session: DocumentSession, canvas, page: int
+    ) -> None:
+        if self._external_split_source(session, canvas) is None:
+            self._session_page_changed(session, page)
+
+    def _canvas_zoom_changed(
+        self, session: DocumentSession, canvas, ratio: float
+    ) -> None:
+        if self._external_split_source(session, canvas) is None:
+            self._session_zoom_changed(session, ratio)
+
+    def _comparison_read_only(self) -> None:
+        self.info_bar.show_message(
+            "The comparison document is read-only here. Switch to its tab to edit it.",
+            "info",
+        )
+
+    def _canvas_annotation_selected_from(
+        self, session: DocumentSession, canvas, page: int, xref: int
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        self._canvas_annotation_selected(session, page, xref)
+
+    def _show_annotation_menu_from(
+        self,
+        global_pos,
+        session: DocumentSession,
+        canvas,
+        page: int,
+        xref: int,
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._show_canvas_menu(global_pos, session, canvas)
+            return
+        self._show_annotation_menu(global_pos, session, page, xref)
+
+    def _change_annotation_geometry_from(
+        self,
+        session: DocumentSession,
+        canvas,
+        page: int,
+        xref: int,
+        payload: dict,
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        self._change_annotation_geometry(session, page, xref, payload)
+
+    def _inline_edit_annotation_from(
+        self,
+        session: DocumentSession,
+        canvas,
+        page: int,
+        xref: int,
+        text: str,
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        self._inline_edit_annotation(session, page, xref, text)
+
+    def _handle_annotation_from(
+        self, session: DocumentSession, canvas, op: AnnotationOp
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        self._handle_annotation(op, session)
+
+    def _handle_note_from(
+        self, session: DocumentSession, canvas, page: int, point
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        self._handle_note_request(page, point, session)
+
+    @staticmethod
+    def _session_canvases(session: DocumentSession | None) -> tuple:
+        if session is None:
+            return ()
+        if session.split_canvas is None or session.split_source_session is not None:
+            return (session.canvas,)
+        return (session.canvas, session.split_canvas)
+
+    def _document_canvases(self, session: DocumentSession) -> tuple:
+        canvases = list(self._session_canvases(session))
+        for host in self._sessions:
+            if (
+                host is not session
+                and host.split_canvas is not None
+                and host.split_source_session is session
+            ):
+                canvases.append(host.split_canvas)
+        return tuple(canvases)
+
+    def _refresh_session_canvases(
+        self, session: DocumentSession, pages: set[int] | None = None
+    ) -> None:
+        for canvas in self._document_canvases(session):
+            if pages is None:
+                canvas.refresh()
+            else:
+                canvas.invalidate_pages(pages)
+
+    def _wire_navigation(self, session: DocumentSession) -> None:
+        nav = session.nav_panel
         nav.thumbnails.pageSelected.connect(
             lambda page, s=session: self._session_goto(s, page)
         )
@@ -794,7 +1004,14 @@ class PDFViewer(QMainWindow):
     def _session_page_changed(self, session: DocumentSession, page: int) -> None:
         if session is not self._session:
             return
+        page_changed = session.page != page
         session.page = page
+        if page_changed:
+            # Selection handles are page-local editing affordances. Keeping
+            # them across navigation makes an old annotation appear active
+            # again when the user returns to its page.
+            for canvas in self._session_canvases(session):
+                canvas.clear_annotation_selection()
         self._update_page_state()
         session.nav_panel.thumbnails.set_current_page(page)
         session.nav_panel.bookmarks.set_current_page(page)
@@ -852,7 +1069,7 @@ class PDFViewer(QMainWindow):
             self.info_bar.show_message(f"Reorder failed: {exc}", "error", 0)
             self._reload_thumbnails(session)
             return
-        session.canvas.refresh()
+        self._refresh_session_canvases(session)
         self._reload_thumbnails(session)
         self._after_page_count_change()
         self.info_bar.show_message(
@@ -914,11 +1131,12 @@ class PDFViewer(QMainWindow):
         self._set_document_available(True)
         self._refresh_annotate_list()
         self._session_nav_tab_changed(session, session.nav_panel.active_key())
+        self._refresh_all_split_source_choices()
 
     def _on_tab_close_requested(self, session: DocumentSession) -> None:
         self.close_document(session)
 
-    def open_in_new_tab(self, path: str) -> None:
+    def open_in_new_tab(self, path: str) -> DocumentSession | None:
         session = self._create_session()
         try:
             loaded = self._load_path(session, path)
@@ -928,6 +1146,8 @@ class PDFViewer(QMainWindow):
         if not loaded and not session.engine.is_loaded():
             # Remove the placeholder tab a failed open left behind.
             self.close_document(session)
+            return None
+        return session
 
     def open_files(self, paths: list[str]) -> None:
         """Open several documents at once, each in its own tab.
@@ -1073,14 +1293,105 @@ class PDFViewer(QMainWindow):
             )
             return
         session.set_split(not session.has_split)
+        if session.split_canvas is not None:
+            split = session.split_canvas
+            split.set_tool_mode(session.canvas.tool_mode)
+            split.set_annotation_options(**session.canvas.annotation_options())
+            self._wire_canvas(session, split)
+            self._refresh_split_source_choices(session)
         self.split_action.setChecked(session.has_split)
         self._sync_split_actions(session)
         if session.has_split:
             QTimer.singleShot(0, session.reset_split_sizes)
         self.info_bar.show_message(
-            "Split view enabled." if session.has_split else "Split view closed.",
+            (
+                "Split view enabled. Choose another open document or Open PDF "
+                "in the comparison header."
+                if session.has_split
+                else "Split view closed."
+            ),
             "success",
         )
+
+    def _close_split_view(self, session: DocumentSession) -> None:
+        if not session.has_split:
+            return
+        session.set_split(False)
+        if session is self._session:
+            self.split_action.setChecked(False)
+            self._sync_split_actions(session)
+        self.info_bar.show_message("Split view closed.", "success")
+
+    def _set_split_source(
+        self,
+        host: DocumentSession,
+        source: DocumentSession | None,
+    ) -> None:
+        if host not in self._sessions or not host.has_split:
+            return
+        if source is host or source not in self._sessions:
+            source = None
+        if not host.set_split_source(source):
+            self.info_bar.show_message(
+                "The selected comparison document is no longer available.",
+                "warning",
+            )
+            source = None
+            host.set_split_source(None)
+        if host.split_canvas is not None:
+            if source is None:
+                host.split_canvas.set_tool_mode(host.canvas.tool_mode)
+                host.split_canvas.set_annotation_options(
+                    **host.canvas.annotation_options()
+                )
+            else:
+                host.split_canvas.set_tool_mode("browse")
+        self._refresh_split_source_choices(host)
+        name = host.document_name if source is None else source.document_name
+        mode = "same-document view" if source is None else "read-only comparison"
+        self.info_bar.show_message(f"Split pane: {name} ({mode}).", "success")
+
+    def _refresh_split_source_choices(self, host: DocumentSession) -> None:
+        pane = host.split_pane
+        if pane is None:
+            return
+        sources: list[tuple[str, object | None]] = [
+            (f"Same document — {host.document_name}", None)
+        ]
+        sources.extend(
+            (candidate.document_name, candidate)
+            for candidate in self._sessions
+            if candidate is not host and candidate.engine.is_loaded()
+        )
+        pane.set_sources(sources, host.split_source_session)
+
+    def _refresh_all_split_source_choices(self) -> None:
+        for session in self._sessions:
+            self._refresh_split_source_choices(session)
+
+    def _open_split_document(self, host: DocumentSession) -> None:
+        if host not in self._sessions or not host.engine.is_loaded():
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open comparison PDF",
+            self.settings.get_last_directory(),
+            "PDF (*.pdf)",
+        )
+        if not path:
+            return
+        source = self.open_in_new_tab(path)
+        if source is None:
+            return
+        self.workspace.set_current_session(host)
+        self._session = host
+        if not host.has_split:
+            host.set_split(True)
+            if host.split_canvas is not None:
+                self._wire_canvas(host, host.split_canvas)
+        self._set_split_source(host, source)
+        self.split_action.setChecked(True)
+        self._sync_split_actions(host)
 
     def _set_split_orientation(self, orientation: str) -> None:
         value = "vertical" if orientation == "vertical" else "horizontal"
@@ -1111,6 +1422,7 @@ class PDFViewer(QMainWindow):
         self.split_sync_page_action.setChecked(session.split_sync_page)
         self.split_sync_zoom_action.setChecked(session.split_sync_zoom)
         self.split_reset_action.setEnabled(session.has_split)
+        self.split_open_document_action.setEnabled(session.has_split)
 
     # --- Theme and window state -----------------------------------------
     def _apply_theme(self, value: str) -> None:
@@ -1132,7 +1444,7 @@ class PDFViewer(QMainWindow):
         """Match the Windows title bar (non-client frame) to the theme."""
         import sys as _sys
 
-        if _sys.platform != "win32":
+        if _sys.platform != "win32" or self._integrated_chrome:
             return
         try:
             import ctypes
@@ -1215,6 +1527,13 @@ class PDFViewer(QMainWindow):
     def _toggle_side_panel(self) -> None:
         self.side_panel.set_collapsed(not self.side_panel.is_collapsed())
 
+    def _toggle_maximize_restore(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self.command_bar.set_maximized(self.isMaximized())
+
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
             self.showNormal()
@@ -1285,8 +1604,18 @@ class PDFViewer(QMainWindow):
         self.bottom_bar.set_layout_mode(mode)
 
     def _set_canvas_tool(self, mode: str) -> None:
-        canvas = self.workspace.canvas
-        if canvas is not None:
+        session = self._session
+        canvases = list(self._session_canvases(session))
+        if (
+            session is not None
+            and session.split_canvas is not None
+            and session.split_source_session is not None
+        ):
+            if mode == "font_inspect":
+                canvases.append(session.split_canvas)
+            else:
+                session.split_canvas.set_tool_mode("browse")
+        for canvas in canvases:
             canvas.set_tool_mode(mode)
         for action in self._tool_actions:
             action.setChecked(action.data() == mode)
@@ -1333,8 +1662,15 @@ class PDFViewer(QMainWindow):
     def _copy_text_to_clipboard(self, text: str) -> None:
         QApplication.clipboard().setText(text)
 
-    def _show_canvas_menu(self, global_pos, session: DocumentSession) -> None:
+    def _show_canvas_menu(
+        self, global_pos, session: DocumentSession, canvas=None
+    ) -> None:
         """Right-click menu for the PDF canvas."""
+        canvas = canvas or session.canvas
+        source = self._external_split_source(session, canvas)
+        if source is not None:
+            self._show_comparison_canvas_menu(global_pos, session, source, canvas)
+            return
         menu = QMenu(self)
         loaded = session.engine.is_loaded()
 
@@ -1342,9 +1678,9 @@ class PDFViewer(QMainWindow):
             self.workspace.set_current_session(session)
             self._session = session
 
-        copy_action = menu.addAction("Copy Text", session.canvas.copy_selection)
+        copy_action = menu.addAction("Copy Text", canvas.copy_selection)
         copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        copy_action.setEnabled(loaded and bool(session.canvas.selected_text()))
+        copy_action.setEnabled(loaded and bool(canvas.selected_text()))
         menu.addSeparator()
 
         def activate_then(handler):
@@ -1354,40 +1690,51 @@ class PDFViewer(QMainWindow):
 
             return run
 
-        previous = menu.addAction("Previous Page", activate_then(self.previous_page))
+        previous = menu.addAction(
+            "Previous Page",
+            activate_then(lambda: canvas.set_page(canvas.current_page - 1)),
+        )
         previous.setShortcut("Ctrl+Left")
         previous.setEnabled(loaded)
-        next_page = menu.addAction("Next Page", activate_then(self.next_page))
+        next_page = menu.addAction(
+            "Next Page",
+            activate_then(lambda: canvas.set_page(canvas.current_page + 1)),
+        )
         next_page.setShortcut("Ctrl+Right")
         next_page.setEnabled(loaded)
-        first = menu.addAction("First Page", activate_then(self._goto_first_page))
+        first = menu.addAction(
+            "First Page", activate_then(lambda: canvas.set_page(0))
+        )
         first.setShortcut("Home")
         first.setEnabled(loaded)
-        last = menu.addAction("Last Page", activate_then(self._goto_last_page))
+        last = menu.addAction(
+            "Last Page",
+            activate_then(lambda: canvas.set_page(session.engine.page_count - 1)),
+        )
         last.setShortcut("End")
         last.setEnabled(loaded)
         menu.addSeparator()
 
-        zoom_in = menu.addAction("Zoom In", activate_then(self._canvas_call("zoom_in")))
+        zoom_in = menu.addAction("Zoom In", activate_then(canvas.zoom_in))
         zoom_in.setShortcut("Ctrl+=")
         zoom_in.setEnabled(loaded)
         zoom_out = menu.addAction(
-            "Zoom Out", activate_then(self._canvas_call("zoom_out"))
+            "Zoom Out", activate_then(canvas.zoom_out)
         )
         zoom_out.setShortcut("Ctrl+-")
         zoom_out.setEnabled(loaded)
         fit_width = menu.addAction(
-            "Fit Page Width", activate_then(self._canvas_call("fit_width"))
+            "Fit Page Width", activate_then(canvas.fit_width)
         )
         fit_width.setShortcut("Ctrl+0")
         fit_width.setEnabled(loaded)
         fit_page = menu.addAction(
-            "Fit Whole Page", activate_then(self._canvas_call("fit_page"))
+            "Fit Whole Page", activate_then(canvas.fit_page)
         )
         fit_page.setShortcut("Ctrl+9")
         fit_page.setEnabled(loaded)
         actual = menu.addAction(
-            "Actual Size", activate_then(self._canvas_call("actual_size"))
+            "Actual Size", activate_then(canvas.actual_size)
         )
         actual.setShortcut("Ctrl+8")
         actual.setEnabled(loaded)
@@ -1400,10 +1747,10 @@ class PDFViewer(QMainWindow):
             ("Facing Pages", "facing"),
         ):
             action = layout_menu.addAction(
-                label, activate_then(lambda v=mode: self._set_layout_mode(v))
+                label, activate_then(lambda v=mode: canvas.set_layout_mode(v))
             )
             action.setCheckable(True)
-            action.setChecked(session.canvas.layout_mode.value == mode)
+            action.setChecked(canvas.layout_mode.value == mode)
         menu.addSeparator()
 
         rotate_left = menu.addAction(
@@ -1446,6 +1793,144 @@ class PDFViewer(QMainWindow):
         info.setEnabled(loaded)
 
         menu.exec(global_pos)
+
+    def _show_comparison_canvas_menu(
+        self,
+        global_pos,
+        host: DocumentSession,
+        source: DocumentSession,
+        canvas,
+    ) -> None:
+        """Safe navigation menu for an external, read-only comparison pane."""
+
+        menu = QMenu(self)
+        heading = menu.addAction(f"Comparing: {source.document_name}")
+        heading.setEnabled(False)
+        switch = menu.addAction("Switch to editable document tab")
+        switch.triggered.connect(
+            lambda: self.workspace.set_current_session(source)
+        )
+        menu.addSeparator()
+        copy_action = menu.addAction("Copy Text", canvas.copy_selection)
+        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.setEnabled(bool(canvas.selected_text()))
+        previous = menu.addAction(
+            "Previous Page", lambda: canvas.set_page(canvas.current_page - 1)
+        )
+        previous.setEnabled(canvas.current_page > 0)
+        next_page = menu.addAction(
+            "Next Page", lambda: canvas.set_page(canvas.current_page + 1)
+        )
+        next_page.setEnabled(canvas.current_page + 1 < source.engine.page_count)
+        menu.addSeparator()
+        menu.addAction("Zoom In", canvas.zoom_in)
+        menu.addAction("Zoom Out", canvas.zoom_out)
+        menu.addAction("Fit Page Width", canvas.fit_width)
+        menu.addAction("Fit Whole Page", canvas.fit_page)
+        layout_menu = menu.addMenu("Page Layout")
+        for label, mode in (
+            ("Single Page", "single"),
+            ("Continuous Pages", "continuous"),
+            ("Facing Pages", "facing"),
+        ):
+            action = layout_menu.addAction(
+                label, lambda _checked=False, value=mode: canvas.set_layout_mode(value)
+            )
+            action.setCheckable(True)
+            action.setChecked(canvas.layout_mode.value == mode)
+        menu.addSeparator()
+        menu.addAction(
+            "Use same document in both panes",
+            lambda: self._set_split_source(host, None),
+        )
+        menu.addAction("Close split view", lambda: self._close_split_view(host))
+        menu.exec(global_pos)
+
+    def _show_annotation_menu(
+        self, global_pos, session: DocumentSession, page: int, xref: int
+    ) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        session.canvas.select_annotation(page, xref)
+        menu = QMenu(self)
+        menu.addAction(
+            "Edit Properties…",
+            lambda: self._focus_annotation_properties(page, xref),
+        )
+        menu.addAction(
+            "Delete Annotation",
+            lambda: self._handle_remove_annotation(page, xref),
+        )
+        menu.exec(global_pos)
+
+    def _focus_annotation_properties(self, page: int, xref: int) -> None:
+        self._select_annotation(page, xref)
+        self._show_context("annotate", "Annotation Options")
+
+    def _canvas_annotation_selected(
+        self, session: DocumentSession, page: int, xref: int
+    ) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        for canvas in self._session_canvases(session):
+            canvas.select_annotation(page, xref)
+        if session.page != page:
+            self.goto_page(page)
+        self.context_panel.select_annotation(page, xref)
+
+    def _change_annotation_geometry(
+        self,
+        session: DocumentSession,
+        page: int,
+        xref: int,
+        payload: dict,
+    ) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        if not self._snapshot_before("Move/Resize Annotation"):
+            return
+        try:
+            new_xref = update_annotation_geometry(
+                session.engine.document.load_page(page),
+                xref,
+                rect=payload.get("rect"),
+                points=tuple(payload.get("points") or ()),
+            )
+            if new_xref is None:
+                raise ValueError("This annotation cannot be moved or resized.")
+            session.engine.mark_modified()
+        except Exception as exc:
+            self.info_bar.show_message(f"Move/resize failed: {exc}", "error", 0)
+            return
+        self._refresh_session_canvases(session, {page})
+        for canvas in self._session_canvases(session):
+            canvas.select_annotation(page, new_xref)
+        self._sync_modified_state()
+        self._refresh_annotate_list()
+
+    def _inline_edit_annotation(
+        self,
+        session: DocumentSession,
+        page: int,
+        xref: int,
+        text: str,
+    ) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        if not self._snapshot_before("Edit Annotation Text"):
+            return
+        try:
+            if not update_annotation_text(
+                session.engine.document.load_page(page), xref, text
+            ):
+                raise ValueError("The annotation no longer exists or is not editable.")
+            session.engine.mark_modified()
+        except Exception as exc:
+            self.info_bar.show_message(f"Inline edit failed: {exc}", "error", 0)
+            return
+        self._refresh_session_canvases(session, {page})
+        self._sync_modified_state()
+        self._refresh_annotate_list()
 
     # --- Document lifecycle ---------------------------------------------
     def _open_dialog(self) -> None:
@@ -1565,19 +2050,32 @@ class PDFViewer(QMainWindow):
             announce=announce,
         )
 
-    @staticmethod
     def _replace_session_engine(
+        self,
         session: DocumentSession,
         opened: PdfEngine,
     ) -> None:
         """Release all old-document readers before deleting its temp copy."""
+        dependent_hosts = [
+            host
+            for host in self._sessions
+            if host is not session and host.split_source_session is session
+        ]
+        for host in dependent_hosts:
+            if host.split_canvas is not None:
+                host.split_canvas.clear()
         session.canvas.clear()
-        if session.split_canvas is not None:
+        if (
+            session.split_canvas is not None
+            and session.split_source_session is None
+        ):
             session.split_canvas.clear()
         session.nav_panel.thumbnails.quiesce_renders()
         previous = session.engine
         session.engine = opened
         previous.close()
+        for host in dependent_hosts:
+            host.set_split_source(session)
 
     def _complete_pdf_open(
         self,
@@ -1602,7 +2100,10 @@ class PDFViewer(QMainWindow):
         self.workspace.set_recent_files(self.settings.recent_files())
         zoom = self.settings.get_zoom_ratio()
         session.canvas.load_doc(self.engine.document, zoom)
-        if session.split_canvas is not None:
+        if (
+            session.split_canvas is not None
+            and session.split_source_session is None
+        ):
             session.split_canvas.load_doc(self.engine.document, zoom)
             session.split_canvas.set_page(0, emit=False)
         temp_path = self.engine.temp_path
@@ -1620,6 +2121,8 @@ class PDFViewer(QMainWindow):
         )
         self.context_panel.set_page_count(self.engine.page_count)
         self._update_page_state()
+        self._refresh_annotate_list()
+        self._refresh_all_split_source_choices()
         if announce:
             self.info_bar.show_message(
                 f"✅ Loaded: {display_path.name}", "success", 2500
@@ -1680,12 +2183,16 @@ class PDFViewer(QMainWindow):
             # session pointing at a tab that is not the visible one.
             self._session = previous
             return
+        for host in self._sessions:
+            if host is not target and host.split_source_session is target:
+                host.set_split_source(None)
         self._sessions = [item for item in self._sessions if item is not target]
         self.workspace.close_tab(target)
         thumbnail_snapshot = getattr(target, "_thumbnail_snapshot", None)
         if thumbnail_snapshot:
             Path(thumbnail_snapshot).unlink(missing_ok=True)
         target.close()
+        self._refresh_all_split_source_choices()
         remaining = self.workspace.current_session()
         if remaining is not None:
             self._session = remaining
@@ -1745,6 +2252,7 @@ class PDFViewer(QMainWindow):
             self.split_action,
             self.split_sync_page_action,
             self.split_sync_zoom_action,
+            self.split_open_document_action,
             *self._split_orientation_actions,
             self.fit_width_action,
             self.fit_page_action,
@@ -1759,6 +2267,9 @@ class PDFViewer(QMainWindow):
         self.split_reset_action.setEnabled(
             available and self._session is not None and self._session.has_split
         )
+        self.split_open_document_action.setEnabled(
+            available and self._session is not None and self._session.has_split
+        )
         if not available:
             self.split_action.setChecked(False)
 
@@ -1767,6 +2278,7 @@ class PDFViewer(QMainWindow):
         if session is None or not session.engine.is_loaded():
             self.setWindowModified(False)
             self.setWindowTitle("PDFDocuEdit Pro")
+            self.command_bar.set_window_title("PDFDocuEdit Pro")
             return
         finding_set = session.analysis_panel.finding_set()
         if finding_set and finding_set.is_stale(
@@ -1779,6 +2291,7 @@ class PDFViewer(QMainWindow):
         path = session.display_path or session.engine.original_path
         title = f"PDFDocuEdit Pro — {path.name}" if path else "PDFDocuEdit Pro"
         self.setWindowTitle(f"{title}[*]")
+        self.command_bar.set_window_title(title, modified)
         self.workspace.update_tab_title(session)
 
     # --- Navigation and page operations ---------------------------------
@@ -1822,6 +2335,7 @@ class PDFViewer(QMainWindow):
             "sort": "Order Pages",
             "split": "Split PDF",
             "annotate": "Annotation Options",
+            "font_inspect": "Font Inspector",
         }
         if self.context_panel.show_tool(key, titles.get(key, "Options")):
             self._last_context_key = key
@@ -1975,9 +2489,10 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None:
             return
+        view_state = self._capture_session_view_state(session)
         try:
             session.canvas.wait_for_renders()
-            self._open_pdf(
+            restored = self._open_pdf(
                 session,
                 str(snapshot_path),
                 display_path=session.display_path or snapshot_path,
@@ -1986,11 +2501,62 @@ class PDFViewer(QMainWindow):
                 preserve_save_context=True,
                 restored_modified=modified,
             )
+            if not restored:
+                return
+            self._restore_session_view_state(session, view_state)
             self.info_bar.show_message("Undo applied.", "success")
         except Exception as exc:
             self._error("Undo failed", str(exc))
         finally:
             snapshot_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _capture_canvas_view_state(canvas) -> dict[str, object]:
+        return {
+            "page": canvas.current_page,
+            "zoom": canvas.zoom_ratio,
+            "layout": canvas.layout_mode.value,
+            "horizontal_scroll": canvas.horizontalScrollBar().value(),
+            "vertical_scroll": canvas.verticalScrollBar().value(),
+        }
+
+    def _capture_session_view_state(
+        self, session: DocumentSession
+    ) -> dict[str, object]:
+        return {
+            "page": session.page,
+            "primary": self._capture_canvas_view_state(session.canvas),
+            "secondary": (
+                self._capture_canvas_view_state(session.split_canvas)
+                if session.split_canvas is not None
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _restore_canvas_view_state(canvas, state: dict[str, object]) -> None:
+        canvas.set_layout_mode(str(state["layout"]), emit=False)
+        canvas.set_zoom(float(state["zoom"]), emit=False)
+        canvas.set_page(int(state["page"]), emit=False)
+        canvas.horizontalScrollBar().setValue(int(state["horizontal_scroll"]))
+        canvas.verticalScrollBar().setValue(int(state["vertical_scroll"]))
+
+    def _restore_session_view_state(
+        self, session: DocumentSession, state: dict[str, object]
+    ) -> None:
+        primary = state.get("primary")
+        if isinstance(primary, dict):
+            self._restore_canvas_view_state(session.canvas, primary)
+        secondary = state.get("secondary")
+        if session.split_canvas is not None and isinstance(secondary, dict):
+            self._restore_canvas_view_state(session.split_canvas, secondary)
+        session.page = max(
+            0, min(int(state.get("page", 0)), session.engine.page_count - 1)
+        )
+        session.nav_panel.thumbnails.set_current_page(session.page)
+        session.nav_panel.bookmarks.set_current_page(session.page)
+        self._update_page_state()
+        self._refresh_annotate_list()
 
     def _rotate_pages(self, pages: str, angle: int) -> None:
         try:
@@ -2525,6 +3091,7 @@ class PDFViewer(QMainWindow):
             return
         handlers = {
             "search": self.search_document,
+            "font_inspect": self._activate_font_inspector,
             "rotate": lambda: self._show_context("rotate"),
             "insert": self._insert_pages_dialog,
             "delete": self._delete_pages_dialog,
@@ -2559,10 +3126,94 @@ class PDFViewer(QMainWindow):
             try:
                 handler()
             finally:
-                if key != "rotate":
+                if key not in {"rotate", "font_inspect"}:
                     self.side_panel.set_active_tool(None)
 
     # --- P3: annotations and content editing -----------------------------
+    def _activate_font_inspector(self) -> None:
+        if not self.engine.is_loaded():
+            self.info_bar.show_message(
+                "Open a PDF before inspecting text fonts.", "warning"
+            )
+            return
+        self._set_canvas_tool("font_inspect")
+        self.context_panel.set_font_inspection(None)
+        self._show_context("font_inspect")
+        self.side_panel.set_active_tool("font_inspect")
+        self.bottom_bar.set_status(
+            "Font Inspector: click text to identify its PDF font, size and color."
+        )
+
+    def _handle_font_inspection(
+        self,
+        host: DocumentSession,
+        canvas,
+        page_number: int,
+        point: fitz.Point,
+    ) -> None:
+        source = self._external_split_source(host, canvas) or host
+        if not source.engine.is_loaded() or not (
+            0 <= int(page_number) < source.engine.page_count
+        ):
+            return
+        with DOCUMENT_LOCK:
+            page = source.engine.document.load_page(int(page_number))
+            inspection = inspect_font_at(page, fitz.Point(point))
+        for candidate in (host.canvas, host.split_canvas):
+            if candidate is not None and candidate is not canvas:
+                candidate.clear_font_inspection()
+        if inspection is None:
+            canvas.clear_font_inspection()
+            self.context_panel.set_font_inspection(None, no_hit=True)
+            self.bottom_bar.set_status(
+                "Font Inspector: no selectable PDF text at that position."
+            )
+            return
+        canvas.show_font_inspection(
+            int(page_number), fitz.Rect(inspection["bbox"])
+        )
+        self.context_panel.set_font_inspection(inspection)
+        self._show_context("font_inspect")
+        self.side_panel.set_active_tool("font_inspect")
+        self.bottom_bar.set_status(
+            "Font Inspector: "
+            f"{inspection['display_font']} · {float(inspection['size']):.2f} pt"
+        )
+
+    def _apply_inspected_font(
+        self, tool: str, inspection: dict[str, object]
+    ) -> None:
+        if tool not in {"freetext_typewriter", "freetext_box"}:
+            return
+        if not inspection.get("usable_for_annotations"):
+            self.info_bar.show_message(
+                "That PDF font is not installed and cannot be reused for a new annotation.",
+                "warning",
+            )
+            return
+        defaults = self.settings.get("annotation_defaults", {}) or {}
+        defaults = dict(defaults) if isinstance(defaults, dict) else {}
+        current = defaults.get(tool, {})
+        values = dict(current) if isinstance(current, dict) else {}
+        values.update(
+            {
+                "font": str(inspection.get("suggested_font") or "Helv"),
+                "font_size": max(1.0, float(inspection.get("size") or 11.0)),
+                "stroke": str(inspection.get("color") or "#202124"),
+            }
+        )
+        defaults[tool] = values
+        self.settings.set("annotation_defaults", defaults)
+        self._activate_annotation_tool(tool)
+        self.info_bar.show_message(
+            f"Using {values['font']} at {values['font_size']:.2f} pt for new text annotations.",
+            "success",
+        )
+
+    def _copy_inspected_font_name(self, name: str) -> None:
+        QApplication.clipboard().setText(name)
+        self.info_bar.show_message(f"Copied font name: {name}", "success")
+
     def _activate_annotation_tool(self, key: str) -> None:
         if key == "watermark":
             self.side_panel.set_active_tool(None)
@@ -2572,30 +3223,38 @@ class PDFViewer(QMainWindow):
             self.info_bar.show_message("Open a PDF before annotating.", "warning")
             return
         defaults = self.settings.get("annotation_defaults", {}) or {}
-        values = dict(defaults.get(key, {})) if isinstance(defaults, dict) else {}
+        saved_values = defaults.get(key, {}) if isinstance(defaults, dict) else {}
+        values = dict(saved_values) if isinstance(saved_values, dict) else {}
+        text_defaults = key.startswith("freetext_") and not values
         values = {
-            "stroke": values.get("stroke", "yellow"),
-            "fill": values.get("fill", ""),
+            "stroke": values.get("stroke", "#202124" if text_defaults else "yellow"),
+            "fill": values.get(
+                "fill",
+                "#fff4b8"
+                if text_defaults and key != "freetext_typewriter"
+                else "",
+            ),
             "opacity": values.get("opacity", 1.0),
             "width": values.get("width", 1.5),
             "font": values.get("font", "Helv"),
-            "font_size": values.get("font_size", 11.0),
+            "font_size": values.get("font_size", 14.0 if text_defaults else 11.0),
             "alignment": values.get("alignment", 0),
         }
+        self._set_canvas_tool(key)
+        self.context_panel.set_annotation_tool(key)
         self.context_panel.set_annotation_defaults(values)
         canvas_values = dict(values)
         canvas_values["color"] = canvas_values.pop("stroke")
-        self.workspace.canvas.set_annotation_options(**canvas_values)
+        for canvas in self._session_canvases(self._session):
+            canvas.set_annotation_options(**canvas_values)
         if key == "stamp":
             stamp_kind, stamp_image = self.context_panel.current_stamp()
-            self.workspace.canvas.set_annotation_options(
-                stamp_kind=stamp_kind,
-                stamp_image_path=stamp_image,
-            )
-
-        self._set_canvas_tool(key)
+            for canvas in self._session_canvases(self._session):
+                canvas.set_annotation_options(
+                    stamp_kind=stamp_kind,
+                    stamp_image_path=stamp_image,
+                )
         self._show_context("annotate")
-        self.context_panel.set_annotation_tool(key)
         self.side_panel.set_active_tool(key)
         if key == "polygon":
             self.bottom_bar.set_status(
@@ -2607,19 +3266,22 @@ class PDFViewer(QMainWindow):
             )
 
     def _set_annot_color(self, value: str) -> None:
-        self.workspace.canvas.set_annotation_options(color=value)
+        for canvas in self._session_canvases(self._session):
+            canvas.set_annotation_options(color=value)
 
-    def _set_annot_width(self, value: int) -> None:
-        self.workspace.canvas.set_annotation_options(width=float(value))
+    def _set_annot_width(self, value: float) -> None:
+        for canvas in self._session_canvases(self._session):
+            canvas.set_annotation_options(width=float(value))
 
     def _set_annot_style(self, values: dict[str, object]) -> None:
-        canvas = self.workspace.canvas
-        if canvas is None:
+        session = self._session
+        if session is None:
             return
         options = dict(values)
         options["color"] = options.pop("stroke", "yellow")
-        canvas.set_annotation_options(**options)
-        tool = str(canvas.tool_mode)
+        for canvas in self._session_canvases(session):
+            canvas.set_annotation_options(**options)
+        tool = str(session.canvas.tool_mode)
         if tool not in self.ANNOTATION_TOOL_KEYS:
             return
         defaults = self.settings.get("annotation_defaults", {}) or {}
@@ -2628,13 +3290,11 @@ class PDFViewer(QMainWindow):
         self.settings.set("annotation_defaults", defaults)
 
     def _set_stamp_kind(self, value: str) -> None:
-        canvas = self.workspace.canvas
-        if canvas is not None:
+        for canvas in self._session_canvases(self._session):
             canvas.set_annotation_options(stamp_kind=value)
 
     def _set_stamp_image(self, value: str) -> None:
-        canvas = self.workspace.canvas
-        if canvas is not None:
+        for canvas in self._session_canvases(self._session):
             canvas.set_annotation_options(stamp_image_path=value)
 
     def _load_custom_stamps(self, selected: str = "") -> None:
@@ -2796,7 +3456,8 @@ class PDFViewer(QMainWindow):
         self.info_bar.show_message(f"Custom stamp removed: {name}", "success")
 
     def _set_annot_image(self, value: str) -> None:
-        self.workspace.canvas.set_annotation_options(image_path=value)
+        for canvas in self._session_canvases(self._session):
+            canvas.set_annotation_options(image_path=value)
 
     def _handle_annotation(
         self, op: AnnotationOp, session: DocumentSession | None = None
@@ -2808,17 +3469,9 @@ class PDFViewer(QMainWindow):
         self._session = target
         if not session.engine.is_loaded():
             return
-        if op.kind == "redact":
-            answer = QMessageBox.question(
-                self,
-                "Redact content",
-                "Redaction permanently removes the selected content from the document.\nContinue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        if op.kind in {"signature", "image"} and not Path(op.image_path).is_file():
+        if op.kind in {"signature", "signature_image", "image"} and not Path(
+            op.image_path
+        ).is_file():
             path, _ = QFileDialog.getOpenFileName(
                 self, "Choose image", "", "Images (*.png *.jpg *.jpeg)"
             )
@@ -2827,7 +3480,7 @@ class PDFViewer(QMainWindow):
             self._set_annot_image(path)
             self.context_panel.set_annotate_image(path)
             op = replace(op, image_path=path)
-        if op.kind.startswith("freetext_"):
+        if op.kind.startswith("freetext_") and not op.text.strip():
             text, accepted = QInputDialog.getMultiLineText(
                 self,
                 op.description(),
@@ -2839,24 +3492,12 @@ class PDFViewer(QMainWindow):
             op = replace(op, text=text)
 
         document = session.engine.document
-        if document is None or not 0 <= op.page < document.page_count:
-            self.info_bar.show_message(
-                "The annotation target page is invalid.", "warning"
-            )
+        if document is None:
             return
-        if op.rects:
-            page_rect = document.load_page(op.page).rect
-            rects = tuple(fitz.Rect(rect) & page_rect for rect in op.rects)
-            if any(
-                rect.is_empty or rect.width < 1 or rect.height < 1 for rect in rects
-            ):
-                self.info_bar.show_message(
-                    "Draw a larger annotation area inside the page.", "warning"
-                )
-                return
-            op = replace(op, rects=rects)
-        if op.kind == "ink" and len(op.points) < 2:
-            self.info_bar.show_message("Draw a longer freehand stroke.", "warning")
+        try:
+            op = validate_annotation_op(document, op)
+        except AnnotationValidationError as exc:
+            self.info_bar.show_message(str(exc), "warning")
             return
         if not self._snapshot_before(op.description()):
             return
@@ -2866,13 +3507,15 @@ class PDFViewer(QMainWindow):
         except Exception as exc:
             self.info_bar.show_message(f"{op.description()} failed: {exc}", "error", 0)
             return
-        session.canvas.refresh()
+        self._refresh_session_canvases(session, {op.page})
         self._sync_modified_state()
         self._refresh_annotate_list()
-        self.info_bar.show_message(
-            f"{op.description()} added. Save the document to keep the change.",
-            "success",
+        message = (
+            "Redaction mark added for review. Content has not been removed."
+            if op.kind == "redact"
+            else f"{op.description()} added. Save the document to keep the change."
         )
+        self.info_bar.show_message(message, "success")
 
     def _handle_note_request(
         self, page: int, point, session: DocumentSession | None = None
@@ -2895,23 +3538,72 @@ class PDFViewer(QMainWindow):
         )
         self._handle_annotation(op, session)
 
-    def _handle_remove_annotation(self, xref: int) -> None:
+    def _handle_remove_annotation(self, page_or_xref: int, xref: int | None = None) -> None:
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
+        page = session.page if xref is None else int(page_or_xref)
+        target_xref = int(page_or_xref) if xref is None else int(xref)
         if not self._snapshot_before("Remove Annotation"):
             return
         try:
-            remove_annotation(session.engine.document.load_page(session.page), xref)
+            changed = remove_annotation(
+                session.engine.document.load_page(page), target_xref
+            )
+            if not changed:
+                raise ValueError("The annotation no longer exists.")
             session.engine.mark_modified()
         except Exception as exc:
             self.info_bar.show_message(f"Remove annotation failed: {exc}", "error", 0)
             return
-        session.canvas.refresh()
+        self._refresh_session_canvases(session, {page})
         self._sync_modified_state()
         self._refresh_annotate_list()
 
-    def _edit_annotation(self, xref: int, values: dict[str, object]) -> None:
+    def _apply_redactions(self) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        with DOCUMENT_LOCK:
+            mark_count = sum(
+                1
+                for entry in list_document_annotations(session.engine.document)
+                if str(entry.get("kind")) == "Redact"
+            )
+        if mark_count == 0:
+            self.info_bar.show_message("No redaction marks were found.", "warning")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Apply redaction marks",
+            "Permanently remove content covered by every redaction mark?\n\n"
+            "This step cannot be reversed after saving. A document snapshot "
+            "will be kept for Undo during this session.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not self._snapshot_before("Apply Redactions"):
+            return
+        try:
+            count = apply_redaction_marks(session.engine.document)
+            session.engine.mark_modified()
+        except Exception as exc:
+            self.info_bar.show_message(f"Apply redactions failed: {exc}", "error", 0)
+            return
+        self._refresh_session_canvases(session)
+        self._sync_modified_state()
+        self._refresh_annotate_list()
+        self.info_bar.show_message(
+            f"Applied {count} redaction mark{'s' if count != 1 else ''}. "
+            "Save to make the removal permanent.",
+            "success",
+        )
+
+    def _edit_annotation(
+        self, page: int, xref: int, values: dict[str, object]
+    ) -> None:
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
@@ -2928,7 +3620,7 @@ class PDFViewer(QMainWindow):
             return
         try:
             changed = update_annotation(
-                session.engine.document.load_page(session.page),
+                session.engine.document.load_page(page),
                 xref,
                 style,
                 text=str(values.get("text", "")),
@@ -2939,7 +3631,7 @@ class PDFViewer(QMainWindow):
         except Exception as exc:
             self.info_bar.show_message(f"Edit annotation failed: {exc}", "error", 0)
             return
-        session.canvas.refresh()
+        self._refresh_session_canvases(session, {page})
         self._sync_modified_state()
         self._refresh_annotate_list()
         self.info_bar.show_message(
@@ -2948,12 +3640,92 @@ class PDFViewer(QMainWindow):
 
     def _refresh_annotate_list(self) -> None:
         session = self._session
-        page = (
-            session.engine.document.load_page(session.page)
-            if session is not None and session.engine.is_loaded()
-            else None
+        with DOCUMENT_LOCK:
+            entries = (
+                list_document_annotations(session.engine.document)
+                if session is not None and session.engine.is_loaded()
+                else []
+            )
+            self.context_panel.refresh_annotation_list(entries)
+
+    def _select_annotation(self, page: int, xref: int) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        if session.page != page:
+            self.goto_page(page)
+        for canvas in self._session_canvases(session):
+            canvas.select_annotation(page, xref)
+
+    def _export_annotations(self) -> None:
+        if not self.engine.is_loaded():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export annotations", "annotations.json", "JSON (*.json)"
         )
-        self.context_panel.refresh_annotation_list(page)
+        if not path:
+            return
+        try:
+            target = export_annotations_json(self.engine.document, path)
+            self.info_bar.show_message(f"Annotations exported: {target.name}", "success")
+        except Exception as exc:
+            self.info_bar.show_message(f"Export annotations failed: {exc}", "error", 0)
+
+    def _import_annotations(self) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded():
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import annotations", "", "JSON (*.json)"
+        )
+        if not path or not self._snapshot_before("Import Annotations"):
+            return
+        try:
+            result = import_annotations_json(session.engine.document, path)
+            imported = int(result["imported"])
+            skipped = list(result["skipped"])
+            if imported:
+                session.engine.mark_modified()
+                self._refresh_session_canvases(session)
+                self._sync_modified_state()
+                self._refresh_annotate_list()
+            self.info_bar.show_message(
+                f"Imported {imported} annotation(s); skipped {len(skipped)}.",
+                "success" if imported else "warning",
+                0 if skipped else 3000,
+            )
+        except Exception as exc:
+            self.info_bar.show_message(f"Import annotations failed: {exc}", "error", 0)
+
+    def _export_annotation_summary(self) -> None:
+        if not self.engine.is_loaded():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export annotation summary", "annotation-summary.md", "Markdown (*.md)"
+        )
+        if not path:
+            return
+        try:
+            target = export_annotation_summary(self.engine.document, path)
+            self.info_bar.show_message(f"Summary exported: {target.name}", "success")
+        except Exception as exc:
+            self.info_bar.show_message(f"Summary export failed: {exc}", "error", 0)
+
+    def _flatten_annotations(self) -> None:
+        if not self.engine.is_loaded():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save flattened copy", "flattened.pdf", "PDF (*.pdf)"
+        )
+        if not path:
+            return
+        try:
+            target = flatten_annotations(self.engine.document, path)
+            self.info_bar.show_message(
+                f"Flattened copy created: {target.name}", "success", 5000
+            )
+        except Exception as exc:
+            self.info_bar.show_message(f"Flatten failed: {exc}", "error", 0)
 
     def _show_watermark_dialog(self) -> None:
         if not self.engine.is_loaded():
@@ -3302,13 +4074,13 @@ class PDFViewer(QMainWindow):
         )
 
         tool_shortcuts = {"search": "Ctrl+F", **SHORTCUT_HINTS}
-        for _section_key, _title, items in SidePanel.SECTIONS:
+        for section_key, _title, items in SidePanel.SECTIONS:
             for item in items:
                 make(
                     item.key,
                     item.label,
                     tool_shortcuts.get(item.key, ""),
-                    "Tools",
+                    "Annotate" if section_key == "annotate" else "Tools",
                     lambda key=item.key: self._tool_requested(key),
                     lambda key=item.key: self._tool_available(key),
                 )
@@ -3319,28 +4091,6 @@ class PDFViewer(QMainWindow):
             "Tools",
             lambda: self._tool_requested("diagnostics"),
         )
-        for key, label in (
-            ("highlight", "Highlight Text"),
-            ("underline", "Underline Text"),
-            ("strikeout", "Strikethrough Text"),
-            ("note", "Sticky Note"),
-            ("ink", "Freehand Drawing"),
-            ("rect", "Rectangle Annotation"),
-            ("redact", "Redact Content"),
-            ("stamp", "Rubber Stamp"),
-            ("signature", "Signature Image"),
-            ("image", "Insert Image"),
-            ("watermark", "Add Watermark"),
-        ):
-            make(
-                f"annot_{key}",
-                label,
-                "",
-                "Annotate",
-                lambda value=key: self._activate_annotation_tool(value),
-                document,
-            )
-
         make(
             "toggle_tools",
             "Toggle Tools Panel",
@@ -3587,14 +4337,26 @@ class PDFViewer(QMainWindow):
         )
         make("shortcuts", "Keyboard Shortcuts", "Ctrl+/", "Help", self._show_shortcuts)
 
+        override_shortcuts = {
+            QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText)
+            for value in overrides.values()
+            if value
+        }
         used_shortcuts: set[str] = set()
         resolved_commands: list[Command] = []
         for command in commands:
             sequence = command.shortcut
-            if sequence and sequence in used_shortcuts:
+            is_override = command.id in overrides
+            if sequence and not is_override and sequence in override_shortcuts:
+                sequence = ""
+            elif sequence and sequence in used_shortcuts:
                 fallback = command.default_shortcut
                 sequence = (
-                    fallback if fallback and fallback not in used_shortcuts else ""
+                    fallback
+                    if fallback
+                    and fallback not in used_shortcuts
+                    and fallback not in override_shortcuts
+                    else ""
                 )
             if sequence:
                 used_shortcuts.add(sequence)
@@ -3725,9 +4487,18 @@ class PDFViewer(QMainWindow):
         return isinstance(widget, (QLineEdit, QAbstractSpinBox, QComboBox, QTextEdit))
 
     def _delete_pages_shortcut(self) -> None:
-        """Delete-key shortcut that ignores presses while typing in an input."""
+        """Delete a selected annotation first, otherwise open page deletion."""
         if self._editing_focused():
             return
+        session = self._session
+        if session is not None:
+            for canvas in self._session_canvases(session):
+                selected = canvas.selected_annotation()
+                if selected is not None:
+                    self._handle_remove_annotation(*selected)
+                    for target in self._session_canvases(session):
+                        target.clear_annotation_selection()
+                    return
         self._delete_pages_dialog()
 
     def _show_command_palette(self) -> None:
@@ -4982,6 +5753,20 @@ class PDFViewer(QMainWindow):
         self.info_bar.show_message(message, "error", 0)
 
     # --- Qt events -------------------------------------------------------
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.command_bar.set_maximized(self.isMaximized())
+            resize_handles = getattr(self, "_resize_handles", None)
+            if resize_handles is not None:
+                resize_handles.update()
+        super().changeEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        resize_handles = getattr(self, "_resize_handles", None)
+        if resize_handles is not None:
+            resize_handles.update()
+
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls() and any(
             url.toLocalFile().lower().endswith((".pdf", ".ps", ".eps"))

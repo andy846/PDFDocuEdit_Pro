@@ -1,14 +1,14 @@
-"""Live search results panel with debounced queries and page scoping.
+"""Explicit document search panel with page scoping.
 
 The former "advanced search" dialog (page scope, match case, whole word) is
 integrated here so Ctrl+F provides one complete search surface: scope the
-search to all pages, the current page, or a custom range, type to search and
-click a hit to jump to its page.
+search to all pages, the current page, or a custom range, then press Search
+and click a hit to jump to its page.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -27,11 +27,9 @@ from styles.tokens import S
 
 from .icons import icon
 
-DEBOUNCE_MS = 300
-
 
 class SearchResultsPanel(QFrame):
-    """Non-modal search: type to search, click a hit to jump to its page."""
+    """Non-modal search that runs only on an explicit user command."""
 
     jumpRequested = pyqtSignal(int, list)
     searchRequested = pyqtSignal(str, object)  # query, pages (list[int] | None)
@@ -76,8 +74,17 @@ class SearchResultsPanel(QFrame):
         self._query.setClearButtonEnabled(True)
         self._query.addAction(icon("search", 16), QLineEdit.ActionPosition.LeadingPosition)
         self._query.textChanged.connect(self._on_text_changed)
-        layout.addWidget(self._query)
-        self._query.returnPressed.connect(self._activate_current)
+        self._query.returnPressed.connect(self._emit_search)
+        query_row = QHBoxLayout()
+        query_row.setSpacing(S.XS)
+        query_row.addWidget(self._query, 1)
+        self._search_button = QPushButton("Search")
+        self._search_button.setProperty("primary", True)
+        self._search_button.setToolTip("Search now (Enter)")
+        self._search_button.clicked.connect(self._emit_search)
+        self._search_button.setEnabled(False)
+        query_row.addWidget(self._search_button)
+        layout.addLayout(query_row)
 
         # --- page scope ---
         scope_row = QHBoxLayout()
@@ -90,7 +97,7 @@ class SearchResultsPanel(QFrame):
         self._custom.setToolTip("Search a custom page range")
         self._all_pages.setChecked(True)
         for radio in (self._all_pages, self._current_only, self._custom):
-            radio.toggled.connect(self._schedule)
+            radio.toggled.connect(self._mark_search_pending)
             scope_row.addWidget(radio)
         scope_row.addStretch(1)
         layout.addLayout(scope_row)
@@ -107,8 +114,8 @@ class SearchResultsPanel(QFrame):
         options.setSpacing(S.SM)
         self._match_case = QCheckBox("Match case")
         self._whole_word = QCheckBox("Whole word")
-        self._match_case.toggled.connect(self._schedule)
-        self._whole_word.toggled.connect(self._schedule)
+        self._match_case.toggled.connect(self._mark_search_pending)
+        self._whole_word.toggled.connect(self._mark_search_pending)
         options.addWidget(self._match_case)
         options.addWidget(self._whole_word)
         options.addStretch(1)
@@ -125,15 +132,10 @@ class SearchResultsPanel(QFrame):
         self._ocr.hide()
         layout.addWidget(self._ocr)
 
-        self._status = QLabel("Type to search the document.")
+        self._status = QLabel("Enter keywords, then press Search.")
         self._status.setObjectName("navEmpty")
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
-
-        self._debounce = QTimer(self)
-        self._debounce.setSingleShot(True)
-        self._debounce.setInterval(DEBOUNCE_MS)
-        self._debounce.timeout.connect(self._emit_search)
 
     # --- document state ---------------------------------------------------
     def set_page_count(self, count: int) -> None:
@@ -189,15 +191,15 @@ class SearchResultsPanel(QFrame):
         self._hits = []
         self._list.clear()
         self._match_cursor = -1
-        self._status.setText("Type to search the document.")
+        self._status.setText("Enter keywords, then press Search.")
         self._ocr.hide()
 
     def reset_query(self) -> None:
         self._ocr.hide()
-        self._debounce.stop()
         self._query.blockSignals(True)
         self._query.clear()
         self._query.blockSignals(False)
+        self._search_button.setEnabled(False)
         self.clear()
 
     def case_sensitive(self) -> bool:
@@ -210,15 +212,24 @@ class SearchResultsPanel(QFrame):
         return self._query.text().strip()
 
     def _on_text_changed(self, _text: str) -> None:
-        self._schedule()
+        self._search_button.setEnabled(bool(self._query.text().strip()))
+        self._mark_search_pending()
 
-    def _schedule(self) -> None:
-        self._debounce.start()
+    def _mark_search_pending(self, _checked: bool | None = None) -> None:
+        self._hits = []
+        self._list.clear()
+        self._match_cursor = -1
+        self._ocr.hide()
+        if self._query.text().strip():
+            self._status.setText("Ready — press Search or Enter to run.")
+        else:
+            self._status.setText("Enter keywords, then press Search.")
 
     def _emit_search(self) -> None:
         query = self._query.text().strip()
         if not query:
             self.clear()
+            self._search_button.setEnabled(False)
             return
         pages = None
         if self._current_only.isChecked():
@@ -257,7 +268,7 @@ class SearchResultsPanel(QFrame):
             for rect in hit.rects
         ]
         if not matches:
-            self._emit_search()
+            self._status.setText("No current results — press Search to run a query.")
             return
         self._match_cursor = (self._match_cursor + offset) % len(matches)
         page, rect, row = matches[self._match_cursor]

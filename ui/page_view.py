@@ -84,6 +84,16 @@ class PageRenderCache:
     def clear(self) -> None:
         self._cache.clear()
 
+    def invalidate(self, document_id: int, pages: set[int]) -> None:
+        """Drop only cached renders for the affected live-document pages."""
+        stale = [
+            key
+            for key in self._cache
+            if len(key) >= 2 and key[0] == document_id and int(key[1]) in pages
+        ]
+        for key in stale:
+            self._cache.pop(key, None)
+
 
 def render_page_image(
     doc: fitz.Document,

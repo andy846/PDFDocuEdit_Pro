@@ -4,6 +4,8 @@ scrolling, background rendering, pan, text selection and a magnifier."""
 from __future__ import annotations
 
 from enum import StrEnum
+from functools import wraps
+from math import hypot
 
 import fitz
 from PyQt6.QtCore import (
@@ -12,6 +14,7 @@ from PyQt6.QtCore import (
     QEventLoop,
     QObject,
     QPoint,
+    QPointF,
     QRectF,
     QRunnable,
     QSize,
@@ -23,7 +26,12 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QFrame, QLabel, QScrollArea, QWidget
 
-from core.annotations import AnnotationOp, AnnotationStyle
+from core.annotations import (
+    AnnotationOp,
+    AnnotationStyle,
+    freetext_visual_metrics,
+    list_annotations,
+)
 from core.pdf_engine import DOCUMENT_LOCK
 from styles.theme import get_colors
 from styles.tokens import S
@@ -43,6 +51,15 @@ MARGIN = S.XL
 RENDER_BUFFER_PAGES = 2
 MAX_PENDING_RENDERS = 8
 MAGNIFIER_ZOOM = 2.5
+
+
+def _document_locked(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        with DOCUMENT_LOCK:
+            return function(*args, **kwargs)
+
+    return wrapper
 MAGNIFIER_SIZE = 200
 
 
@@ -57,6 +74,7 @@ class ToolMode(StrEnum):
     HAND = "hand"
     SELECT = "select"
     MAGNIFIER = "magnifier"
+    FONT_INSPECT = "font_inspect"
     HIGHLIGHT = "highlight"
     UNDERLINE = "underline"
     STRIKEOUT = "strikeout"
@@ -82,10 +100,7 @@ MARQUEE_TOOLS = {
     ToolMode.UNDERLINE,
     ToolMode.STRIKEOUT,
     ToolMode.SQUIGGLY,
-    ToolMode.LINE,
-    ToolMode.ARROW,
     ToolMode.ELLIPSE,
-    ToolMode.FREETEXT_TYPEWRITER,
     ToolMode.FREETEXT_BOX,
     ToolMode.FREETEXT_CALLOUT,
     ToolMode.RECT,
@@ -94,6 +109,8 @@ MARQUEE_TOOLS = {
     ToolMode.SIGNATURE,
     ToolMode.IMAGE,
 }
+
+LINE_TOOLS = {ToolMode.LINE, ToolMode.ARROW}
 
 TEXT_MARK_TOOLS = {
     ToolMode.HIGHLIGHT: "highlight",
@@ -176,6 +193,11 @@ class PdfCanvas(QScrollArea):
     annotationRequested = pyqtSignal(object)  # AnnotationOp
     noteRequested = pyqtSignal(int, object)  # (page, fitz.Point)
     contextMenuRequested = pyqtSignal(object)  # global QPoint
+    annotationSelected = pyqtSignal(int, int)
+    annotationContextRequested = pyqtSignal(int, int, object)
+    annotationGeometryChanged = pyqtSignal(int, int, object)
+    annotationTextChanged = pyqtSignal(int, int, str)
+    fontInspectionRequested = pyqtSignal(int, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -195,8 +217,11 @@ class PdfCanvas(QScrollArea):
         self._cache = PageRenderCache()
         self._pool = QThreadPool.globalInstance()
         self._selection: tuple[int, str] | None = None
+        self._selected_annotation: tuple[int, int] | None = None
         self._search_hits: tuple[int, list[fitz.Rect]] | None = None
+        self._font_inspection: tuple[int, fitz.Rect] | None = None
         self._show_captions = True
+        self._annotations_editable = True
         self._hand_anchor: QPoint | None = None
         self._temp_hand = False
         self._magnifier_popup: QLabel | None = None
@@ -267,7 +292,9 @@ class PdfCanvas(QScrollArea):
         self._generation += 1
         self._cache.clear()
         self._clear_search_hits()
+        self._font_inspection = None
         self._selection = None
+        self._selected_annotation = None
         self._teardown_views()
         self._relayout()
 
@@ -279,7 +306,9 @@ class PdfCanvas(QScrollArea):
         self._generation += 1
         self._cache.clear()
         self._selection = None
+        self._selected_annotation = None
         self._clear_search_hits()
+        self._font_inspection = None
         self._teardown_views()
         self._pager.setFixedSize(QSize(0, 0))
 
@@ -312,6 +341,67 @@ class PdfCanvas(QScrollArea):
         if self._doc:
             self._relayout()
 
+    def invalidate_pages(self, page_numbers) -> None:
+        """Re-render affected pages without clearing unrelated cache or views."""
+        if not self._doc:
+            return
+        pages = {
+            int(page)
+            for page in page_numbers
+            if 0 <= int(page) < self._doc.page_count
+        }
+        if not pages:
+            return
+        self._generation += 1
+        self._pending = {
+            token for token in self._pending if int(token[1]) not in pages
+        }
+        self._cache.invalidate(id(self._doc), pages)
+        for page_num in pages:
+            if page_num in self._page_views:
+                page = self._doc.load_page(page_num)
+                self._page_views[page_num].overlay.set_annotations(
+                    list_annotations(page)
+                )
+                self._request_render(page_num, high=True)
+
+    def selected_annotation(self) -> tuple[int, int] | None:
+        return self._selected_annotation
+
+    def select_annotation(self, page: int, xref: int) -> None:
+        self._selected_annotation = (int(page), int(xref))
+        for page_num, view in self._page_views.items():
+            view.overlay.select_annotation(xref if page_num == page else None)
+
+    def clear_annotation_selection(self) -> None:
+        self._selected_annotation = None
+        for view in self._page_views.values():
+            view.overlay.select_annotation(None)
+
+    @property
+    def annotations_editable(self) -> bool:
+        return self._annotations_editable
+
+    def set_annotations_editable(self, editable: bool) -> None:
+        self._annotations_editable = bool(editable)
+        if not self._annotations_editable:
+            self.set_tool_mode(ToolMode.BROWSE)
+        for view in self._page_views.values():
+            view.overlay.set_annotations_editable(self._annotations_editable)
+
+    def _on_annotation_selected(self, page: int, xref: int) -> None:
+        self.select_annotation(page, xref)
+        self.annotationSelected.emit(page, xref)
+
+    def _configure_annotation_preview(self, overlay: PageOverlay) -> None:
+        overlay.set_annotation_preview_style(
+            self._tool_mode.value,
+            color=str(self._annot_options["color"]),
+            fill=str(self._annot_options["fill"]),
+            width=float(self._annot_options["width"]),
+            opacity=float(self._annot_options["opacity"]),
+        )
+
     # --- layout modes ----------------------------------------------------
     def set_layout_mode(self, mode: LayoutMode | str, emit: bool = True) -> None:
         value = mode if isinstance(mode, LayoutMode) else LayoutMode(str(mode))
@@ -341,6 +431,8 @@ class PdfCanvas(QScrollArea):
     # --- tool modes ------------------------------------------------------
     def set_tool_mode(self, mode: ToolMode | str) -> None:
         self._tool_mode = mode if isinstance(mode, ToolMode) else ToolMode(str(mode))
+        if self._tool_mode != ToolMode.FONT_INSPECT:
+            self.clear_font_inspection()
         if self._magnifier_popup:
             self._magnifier_popup.hide()
         self._refresh_cursors()
@@ -354,14 +446,32 @@ class PdfCanvas(QScrollArea):
         self._annot_options.update(
             {k: v for k, v in options.items() if k in self._annot_options}
         )
+        self._refresh_cursors()
 
-    def _overlay_modes(self) -> tuple[bool, bool, bool, bool]:
-        """Return select, note, ink and polygon modes for the active tool."""
+    def annotation_options(self) -> dict:
+        """Return a copy of the active annotation options."""
+        return dict(self._annot_options)
+
+    def _annotation_style(self) -> AnnotationStyle:
+        return AnnotationStyle(
+            stroke=str(self._annot_options["color"]),
+            fill=str(self._annot_options["fill"]),
+            opacity=float(self._annot_options["opacity"]),
+            width=float(self._annot_options["width"]),
+            font=str(self._annot_options["font"]),
+            font_size=float(self._annot_options["font_size"]),
+            alignment=int(self._annot_options["alignment"]),
+        )
+
+    def _overlay_modes(self) -> tuple[bool, bool, bool, bool, bool, bool]:
+        """Return select, note, ink, polygon, line and font-inspect modes."""
         select = self._tool_mode in MARQUEE_TOOLS or self._tool_mode == ToolMode.SELECT
-        note = self._tool_mode == ToolMode.NOTE
+        note = self._tool_mode in {ToolMode.NOTE, ToolMode.FREETEXT_TYPEWRITER}
         ink = self._tool_mode == ToolMode.INK
         polygon = self._tool_mode == ToolMode.POLYGON
-        return select, note, ink, polygon
+        line = self._tool_mode in LINE_TOOLS
+        font_inspect = self._tool_mode == ToolMode.FONT_INSPECT
+        return select, note, ink, polygon, line, font_inspect
 
     def _refresh_cursors(self) -> None:
         hand = self._tool_mode == ToolMode.HAND or self._temp_hand
@@ -371,25 +481,38 @@ class PdfCanvas(QScrollArea):
                 if self._hand_anchor is not None
                 else Qt.CursorShape.OpenHandCursor
             )
-        elif self._tool_mode in MARQUEE_TOOLS or self._tool_mode in {
+        elif self._tool_mode in MARQUEE_TOOLS | LINE_TOOLS or self._tool_mode in {
             ToolMode.SELECT,
             ToolMode.INK,
             ToolMode.POLYGON,
         }:
             cursor = Qt.CursorShape.CrossCursor
-        elif self._tool_mode == ToolMode.NOTE:
+        elif self._tool_mode == ToolMode.FREETEXT_TYPEWRITER:
+            cursor = Qt.CursorShape.IBeamCursor
+        elif self._tool_mode in {ToolMode.NOTE, ToolMode.FONT_INSPECT}:
             cursor = Qt.CursorShape.PointingHandCursor
         else:
             cursor = Qt.CursorShape.ArrowCursor
         self.viewport().setCursor(cursor)
-        select, note, ink, polygon = (
-            (False, False, False, False) if hand else self._overlay_modes()
+        select, note, ink, polygon, line, font_inspect = (
+            (False, False, False, False, False, False)
+            if hand
+            else self._overlay_modes()
         )
         for view in self._page_views.values():
+            self._configure_annotation_preview(view.overlay)
             view.overlay.set_select_mode(select)
             view.overlay.set_note_mode(note)
             view.overlay.set_ink_mode(ink)
             view.overlay.set_polygon_mode(polygon)
+            view.overlay.set_font_inspect_mode(font_inspect)
+            view.overlay.set_line_mode(
+                line,
+                arrow=self._tool_mode == ToolMode.ARROW,
+                color=str(self._annot_options["color"]),
+                width=float(self._annot_options["width"]),
+                opacity=float(self._annot_options["opacity"]),
+            )
             # The PDF image is a child widget and owns the cursor while the
             # pointer is over the page. Make it transparent during panning so
             # viewport drag events and the open/closed hand cursor both apply
@@ -409,6 +532,7 @@ class PdfCanvas(QScrollArea):
     def zoom_ratio(self) -> float:
         return self._zoom
 
+    @_document_locked
     def set_page(self, page: int, *, emit: bool = True) -> None:
         if not self._doc or not 0 <= page < self._doc.page_count:
             return
@@ -454,6 +578,7 @@ class PdfCanvas(QScrollArea):
     def zoom_out(self) -> None:
         self.set_zoom(self._zoom / 1.2)
 
+    @_document_locked
     def fit_width(self) -> None:
         if not self._doc:
             return
@@ -461,6 +586,7 @@ class PdfCanvas(QScrollArea):
         available = max(100, self.viewport().width() - MARGIN * 2)
         self.set_zoom(available / page_width)
 
+    @_document_locked
     def fit_page(self) -> None:
         if not self._doc:
             return
@@ -488,7 +614,35 @@ class PdfCanvas(QScrollArea):
     def _clear_search_hits(self) -> None:
         self._search_hits = None
 
+    def show_font_inspection(self, page: int, rect: fitz.Rect) -> None:
+        self._font_inspection = (int(page), fitz.Rect(rect))
+        self._apply_font_inspection()
+
+    def clear_font_inspection(self) -> None:
+        self._font_inspection = None
+        self._apply_font_inspection()
+
+    def _apply_font_inspection(self) -> None:
+        target_page, rect = (
+            self._font_inspection
+            if self._font_inspection is not None
+            else (-1, None)
+        )
+        for page_num, view in self._page_views.items():
+            view.overlay.set_font_inspection_rect(
+                rect if page_num == target_page else None
+            )
+
+    def _on_font_inspect(self, page_num: int, widget_point: QPointF) -> None:
+        view = self._page_views.get(page_num)
+        if view is None:
+            return
+        self.fontInspectionRequested.emit(
+            page_num, view.overlay.widget_to_pdf(widget_point)
+        )
+
     # --- selection and annotations --------------------------------------
+    @_document_locked
     def _on_selection(self, page_num: int, widget_rect: QRectF) -> None:
         if not self._doc or page_num not in self._page_views:
             return
@@ -522,20 +676,7 @@ class PdfCanvas(QScrollArea):
                     page=page_num,
                     rects=tuple(rect for rect, _word in kept),
                     color=self._annot_options["color"],
-                )
-            )
-            return
-        if self._tool_mode in {ToolMode.LINE, ToolMode.ARROW}:
-            self.annotationRequested.emit(
-                AnnotationOp(
-                    kind="arrow" if self._tool_mode == ToolMode.ARROW else "line",
-                    page=page_num,
-                    points=(
-                        (pdf_rect.x0, pdf_rect.y0),
-                        (pdf_rect.x1, pdf_rect.y1),
-                    ),
-                    color=self._annot_options["color"],
-                    width=self._annot_options["width"],
+                    style=self._annotation_style(),
                 )
             )
             return
@@ -547,6 +688,7 @@ class PdfCanvas(QScrollArea):
                     rects=(pdf_rect,),
                     color=self._annot_options["color"],
                     width=self._annot_options["width"],
+                    style=self._annotation_style(),
                 )
             )
             return
@@ -555,15 +697,7 @@ class PdfCanvas(QScrollArea):
             ToolMode.FREETEXT_BOX,
             ToolMode.FREETEXT_CALLOUT,
         }:
-            style = AnnotationStyle(
-                stroke=self._annot_options["color"],
-                fill=self._annot_options["fill"],
-                opacity=self._annot_options["opacity"],
-                width=self._annot_options["width"],
-                font=self._annot_options["font"],
-                font_size=self._annot_options["font_size"],
-                alignment=self._annot_options["alignment"],
-            )
+            style = self._annotation_style()
             callout = (
                 callout_line_points(self._doc.load_page(page_num).cropbox, pdf_rect)
                 if self._tool_mode == ToolMode.FREETEXT_CALLOUT
@@ -590,6 +724,7 @@ class PdfCanvas(QScrollArea):
                     rects=(pdf_rect,),
                     color=self._annot_options["color"],
                     width=self._annot_options["width"],
+                    style=self._annotation_style(),
                 )
             )
             return
@@ -623,7 +758,11 @@ class PdfCanvas(QScrollArea):
             image_path = self._annot_options["image_path"]
             self.annotationRequested.emit(
                 AnnotationOp(
-                    kind="image",
+                    kind=(
+                        "signature_image"
+                        if self._tool_mode == ToolMode.SIGNATURE
+                        else "image"
+                    ),
                     page=page_num,
                     rects=(pdf_rect,),
                     image_path=image_path,
@@ -650,6 +789,31 @@ class PdfCanvas(QScrollArea):
                 points=tuple(points),
                 color=self._annot_options["color"],
                 width=self._annot_options["width"],
+                style=self._annotation_style(),
+            )
+        )
+
+    def _on_line(self, page_num: int, points_widget: list) -> None:
+        if (
+            self._tool_mode not in LINE_TOOLS
+            or not self._doc
+            or page_num not in self._page_views
+            or len(points_widget) != 2
+        ):
+            return
+        overlay = self._page_views[page_num].overlay
+        start = overlay.widget_to_pdf(points_widget[0])
+        end = overlay.widget_to_pdf(points_widget[1])
+        if hypot(end.x - start.x, end.y - start.y) < 1.0:
+            return
+        self.annotationRequested.emit(
+            AnnotationOp(
+                kind="arrow" if self._tool_mode == ToolMode.ARROW else "line",
+                page=page_num,
+                points=((start.x, start.y), (end.x, end.y)),
+                color=self._annot_options["color"],
+                width=self._annot_options["width"],
+                style=self._annotation_style(),
             )
         )
 
@@ -668,6 +832,7 @@ class PdfCanvas(QScrollArea):
                 points=points,
                 color=self._annot_options["color"],
                 width=self._annot_options["width"],
+                style=self._annotation_style(),
             )
         )
 
@@ -675,7 +840,57 @@ class PdfCanvas(QScrollArea):
         if not self._doc or page_num not in self._page_views:
             return
         overlay = self._page_views[page_num].overlay
+        if self._tool_mode == ToolMode.FREETEXT_TYPEWRITER:
+            style = self._annotation_style()
+            overlay.start_typewriter_editor(
+                point_widget,
+                font_name=style.font,
+                font_size=style.font_size,
+                color=style.stroke,
+                opacity=style.opacity,
+            )
+            return
         self.noteRequested.emit(page_num, overlay.widget_to_pdf(point_widget))
+
+    def _on_typewriter_committed(
+        self, page_num: int, placement: object, text: str
+    ) -> None:
+        if not self._doc or page_num not in self._page_views:
+            return
+        overlay = self._page_views[page_num].overlay
+        style = self._annotation_style()
+        if isinstance(placement, dict):
+            widget_rect = QRectF(placement.get("editor_rect", QRectF()))
+            anchor_widget = QPointF(
+                placement.get("anchor", widget_rect.center())
+            )
+        else:
+            widget_rect = QRectF(placement)
+            anchor_widget = widget_rect.center()
+        midpoint, line_height = freetext_visual_metrics(
+            style.font,
+            style.font_size,
+        )
+        scale = max(0.001, overlay._scale)
+        final_widget_rect = QRectF(
+            anchor_widget.x(),
+            anchor_widget.y() - midpoint / scale,
+            max(12.0 / scale, widget_rect.width()),
+            line_height / scale,
+        )
+        first = overlay.widget_to_pdf(final_widget_rect.topLeft())
+        second = overlay.widget_to_pdf(final_widget_rect.bottomRight())
+        rect = fitz.Rect(first, second).normalize()
+        self.annotationRequested.emit(
+            AnnotationOp(
+                kind="freetext_typewriter",
+                page=page_num,
+                rects=(rect,),
+                text=text,
+                color=self._annot_options["color"],
+                style=style,
+            )
+        )
 
     def clear_selection(self) -> None:
         self._selection = None
@@ -703,6 +918,7 @@ class PdfCanvas(QScrollArea):
             view.deleteLater()
         self._page_views.clear()
 
+    @_document_locked
     def _compute_rows(self) -> list[tuple[int, list[int]]]:
         """Ordered (row_y, [pages]) rows for the current layout and zoom."""
         if not self._doc:
@@ -731,6 +947,7 @@ class PdfCanvas(QScrollArea):
             y += row_height + CAPTION_H + PAGE_SPACING
         return rows
 
+    @_document_locked
     def _page_rect_in_layout(self, page_num: int) -> QRectF:
         if not self._doc or not 0 <= page_num < self._doc.page_count:
             return QRectF()
@@ -754,6 +971,7 @@ class PdfCanvas(QScrollArea):
             return QRectF(x, row_y, width, height)
         return QRectF()
 
+    @_document_locked
     def _total_size(self) -> QSize:
         if not self._doc or not self._rows:
             return QSize(0, 0)
@@ -772,6 +990,7 @@ class PdfCanvas(QScrollArea):
         height = last_y + last_height + CAPTION_H + MARGIN
         return QSize(width, max(1, height))
 
+    @_document_locked
     def _relayout(self) -> None:
         if not self._doc:
             return
@@ -780,6 +999,7 @@ class PdfCanvas(QScrollArea):
         self._sync_views()
         self._update_current_from_scroll()
 
+    @_document_locked
     def _visible_pages(self, buffer_pages: int | None = None) -> list[int]:
         if not self._doc or not self._rows:
             return []
@@ -798,6 +1018,7 @@ class PdfCanvas(QScrollArea):
                 visible.extend(pages)
         return visible
 
+    @_document_locked
     def _sync_views(self) -> None:
         if not self._doc:
             return
@@ -828,16 +1049,16 @@ class PdfCanvas(QScrollArea):
                     page.rotation_matrix,
                     page.derotation_matrix,
                 )
+                view.overlay.set_annotations(list_annotations(page))
+                self._configure_annotation_preview(view.overlay)
+                selected = self._selected_annotation
+                view.overlay.select_annotation(
+                    selected[1] if selected is not None and selected[0] == page_num else None
+                )
                 continue
             page = self._doc.load_page(page_num)
             view = PageView(page_num, page, self._pager)
             view.set_show_caption(self._show_captions)
-            view.overlay.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            view.overlay.customContextMenuRequested.connect(
-                lambda pos, overlay=view.overlay: self.contextMenuRequested.emit(
-                    overlay.mapToGlobal(pos)
-                )
-            )
             rect = self._page_rect_in_layout(page_num)
             view.setGeometry(
                 int(rect.x()),
@@ -846,25 +1067,56 @@ class PdfCanvas(QScrollArea):
                 int(rect.height()) + CAPTION_H,
             )
             view.show()
-            select, note, ink, polygon = self._overlay_modes()
+            select, note, ink, polygon, line, font_inspect = self._overlay_modes()
             view.overlay.set_select_mode(select)
             view.overlay.set_note_mode(note)
             view.overlay.set_ink_mode(ink)
             view.overlay.selectionMade.connect(self._on_selection)
             view.overlay.set_polygon_mode(polygon)
+            view.overlay.set_font_inspect_mode(font_inspect)
+            view.overlay.set_line_mode(
+                line,
+                arrow=self._tool_mode == ToolMode.ARROW,
+                color=str(self._annot_options["color"]),
+                width=float(self._annot_options["width"]),
+                opacity=float(self._annot_options["opacity"]),
+            )
             view.overlay.inkDrawn.connect(self._on_ink)
             view.overlay.noteClicked.connect(self._on_note)
+            view.overlay.typewriterCommitted.connect(self._on_typewriter_committed)
+            view.overlay.lineDrawn.connect(self._on_line)
             view.overlay.polygonDrawn.connect(self._on_polygon)
+            view.overlay.fontInspectClicked.connect(self._on_font_inspect)
+            view.overlay.annotationSelected.connect(self._on_annotation_selected)
+            view.overlay.annotationContextRequested.connect(
+                self.annotationContextRequested.emit
+            )
+            view.overlay.pageContextRequested.connect(self.contextMenuRequested.emit)
+            view.overlay.annotationGeometryChanged.connect(
+                self.annotationGeometryChanged.emit
+            )
+            view.overlay.annotationTextChanged.connect(
+                self.annotationTextChanged.emit
+            )
             view.overlay.set_geometry_info(
                 page.rect,
                 1.0 / self._zoom,
                 page.rotation_matrix,
                 page.derotation_matrix,
             )
+            view.overlay.set_annotations(list_annotations(page))
+            view.overlay.set_annotations_editable(self._annotations_editable)
+            self._configure_annotation_preview(view.overlay)
+            selected = self._selected_annotation
+            view.overlay.select_annotation(
+                selected[1] if selected is not None and selected[0] == page_num else None
+            )
             self._page_views[page_num] = view
             self._request_render(page_num, page_num in focused)
         self._apply_search_hits()
+        self._apply_font_inspection()
 
+    @_document_locked
     def _request_render(self, page_num: int, high: bool = False) -> None:
         token = (self._generation, page_num)
         if not self._doc or token in self._pending:
@@ -915,6 +1167,7 @@ class PdfCanvas(QScrollArea):
         # Higher values run earlier in the pool; visible pages go first.
         self._pool.start(task, 6 if high else 0)
 
+    @_document_locked
     def _on_render_done(
         self,
         page_num: int,
@@ -1162,6 +1415,7 @@ class PdfCanvas(QScrollArea):
         local = overlay.mapFrom(self.viewport(), position)
         return page_num, pager_pos, overlay.widget_to_pdf(local)
 
+    @_document_locked
     def _update_magnifier(self, position: QPoint) -> None:
         target = self._magnifier_target(position)
         if target is None or not self._doc:

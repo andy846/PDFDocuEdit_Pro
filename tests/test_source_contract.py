@@ -62,15 +62,29 @@ def test_release_inputs_exist() -> None:
     assert not [value for value in required if not (ROOT / value).exists()]
 
 
-def test_release_metadata_is_v2_1b() -> None:
-    assert APP_VERSION == "2.1B"
+def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
+    assert (ROOT / "Splash.png").is_file()
+    assert 'resource_path("Splash.png")' in (ROOT / "main.py").read_text(encoding="utf-8")
+    assert 'ROOT / "Splash.png"' in (ROOT / "PDFDocuEdit Pro.spec").read_text(
+        encoding="utf-8"
+    )
+    assert 'ROOT / "Splash.png"' in (ROOT / "scripts/verify_source.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"Splash.png:."' in (ROOT / "pyinstaller_prompt.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_release_metadata_is_v2_5() -> None:
+    assert APP_VERSION == "2.5"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "2.1b0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "2.1B"' in (
+    assert 'version = "2.5.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "2.5"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "2.1B"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(2, 1, 0, 1)" in (
+    assert 'VERSION = "2.5"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(2, 5, 0, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 

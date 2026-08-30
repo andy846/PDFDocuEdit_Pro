@@ -1,1 +1,1 @@
-pyinstaller --name="PDFDocuEdit Pro" --icon=icon.ico --add-data "splash.png:." --add-data "App_icon;App_icon" --onedir --noconsole --noupx PDFdocuEdit_Pro.py
+pyinstaller --name="PDFDocuEdit Pro" --icon=icon.ico --add-data "Splash.png:." --add-data "App_icon;App_icon" --onedir --noconsole --noupx PDFdocuEdit_Pro.py

@@ -43,7 +43,7 @@ def main() -> int:
                 errors.append(f"{path.relative_to(ROOT)}: {label}")
     required = [
         ROOT / "main.py",
-        ROOT / "splash.png",
+        ROOT / "Splash.png",
         ROOT / "icon.ico",
         ROOT / "THIRD_PARTY_NOTICES.md",
         ROOT / "App_icon" / "Main_menu.png",

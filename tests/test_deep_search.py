@@ -89,9 +89,11 @@ def test_deep_search_dialog_legacy_layout(tmp_path: Path) -> None:
         dialog.clear_button,
         dialog.export_button,
         dialog.open_selected_button,
-        dialog.resize_button,
     ):
         assert button is not None
+    assert not hasattr(dialog, "resize_button")
+    assert dialog.table.objectName() == "deepSearchResultsTable"
+    assert dialog.error_table.objectName() == "deepSearchErrorTable"
     dialog.close()
 
 

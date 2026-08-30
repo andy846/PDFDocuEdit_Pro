@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Source quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-base.txt
+            requirements-dev.txt
+      - name: Install quality tools
+        run: python -m pip install ruff==0.15.10
+      - name: Ruff
+        run: python -m ruff check .
+
+  tests:
+    name: Tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-base.txt
+            requirements-dev.txt
+            requirements-windows.txt
+      - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+      - name: Install project test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Install Windows integration dependency
+        if: runner.os == 'Windows'
+        run: python -m pip install comtypes==1.4.12
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Run tests
+        run: python -m pytest

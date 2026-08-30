@@ -22,6 +22,9 @@ def global_style() -> str:
     spin_theme = "dark" if is_dark() else "light"
     spin_plus = resource_path("App_icon", f"spin_plus_{spin_theme}.svg").as_posix()
     spin_minus = resource_path("App_icon", f"spin_minus_{spin_theme}.svg").as_posix()
+    combo_down = resource_path(
+        "App_icon", f"combo_down_{spin_theme}.svg"
+    ).as_posix()
     return f"""
         QMainWindow, QDialog, QWidget {{
             color: {c['text_primary']};
@@ -82,14 +85,46 @@ def global_style() -> str:
             border-radius: 12px;
             margin: {S.SM}px {S.SM}px 0 {S.SM}px;
         }}
+        QWidget#commandBar[integratedTitleBar="true"] {{
+            background: {c['bg_surface']};
+            border: none;
+            border-bottom: 1px solid {c['separator']};
+            border-radius: 0;
+            margin: 0;
+        }}
+        QWidget#windowControls {{
+            background: transparent;
+        }}
+        QToolButton#windowControlButton {{
+            min-width: 46px;
+            max-width: 46px;
+            min-height: {D.COMMAND_H - 2 * S.XS}px;
+            max-height: {D.COMMAND_H - 2 * S.XS}px;
+            padding: 0;
+            border: none;
+            border-radius: 0;
+            background: transparent;
+        }}
+        QToolButton#windowControlButton:hover,
+        QToolButton#windowControlButton[hovered="true"] {{
+            color: {c['text_primary']};
+            background: {c['bg_active']};
+            border: none;
+        }}
+        QToolButton#windowControlButton[closeButton="true"]:hover,
+        QToolButton#windowControlButton[closeButton="true"][hovered="true"] {{
+            color: #ffffff;
+            background: {c['error']};
+        }}
         QWidget#statusBar {{
             background: {_rgba(c['bg_surface'], 245)};
-            border: 1px solid {c['border']};
-            border-radius: 12px;
-            margin: {S.XS}px {S.SM}px {S.XS}px {S.SM}px;
+            border: none;
+            border-top: 1px solid {c['separator']};
+            border-radius: 0;
+            margin: 0;
         }}
         QFrame#commandDivider {{
-            color: {c['border']};
+            color: {c['separator']};
             min-width: 1px;
             max-width: 1px;
             margin: 7px 0;
@@ -130,7 +165,7 @@ def global_style() -> str:
             min-width: 112px;
         }}
         QFrame#statusSeparator {{
-            color: {c['border']};
+            color: {c['separator']};
             min-width: 1px;
             max-width: 1px;
             margin: 4px {S.XS}px;
@@ -174,13 +209,15 @@ def global_style() -> str:
         QWidget#pageView {{ background: transparent; }}
         QFrame#taskBar {{
             background: {_rgba(c['bg_surface'], 245)};
-            border: 1px solid {c['border']};
-            border-radius: 10px;
-            margin: 0 {S.SM}px 0 {S.SM}px;
+            border: none;
+            border-bottom: 1px solid {c['separator']};
+            border-radius: 0;
+            margin: 0;
         }}
         /* Document tabs: rounded translucent tab cards over the workspace. */
         QTabWidget#documentTabs::pane {{
             border: none;
+            border-top: 1px solid {c['separator']};
             background: transparent;
         }}
         QTabWidget#documentTabs QTabBar {{
@@ -262,6 +299,49 @@ def global_style() -> str:
             width: 0;
         }}
 
+        QFrame#splitPane {{
+            background: transparent;
+            border: none;
+        }}
+        QFrame#splitPaneHeader {{
+            min-height: 38px;
+            max-height: 38px;
+            background: {_rgba(c['bg_surface'], 245)};
+            border: none;
+            border-bottom: 1px solid {c['separator']};
+        }}
+        QLabel#splitPaneLabel {{
+            color: {c['text_secondary']};
+            font-size: {F.XS}px;
+            font-weight: {F.SEMIBOLD};
+        }}
+        QComboBox#splitDocumentSelector {{
+            min-height: 28px;
+            max-height: 28px;
+            border-radius: {R.MD}px;
+            background: {c['bg_sidebar']};
+        }}
+        QLabel#splitModeBadge {{
+            color: {c['success']};
+            background: {c['success_soft']};
+            border: 1px solid {c['success']};
+            border-radius: {R.MD}px;
+            padding: 3px {S.SM}px;
+            font-size: {F.XS}px;
+        }}
+        QFrame#splitPane[externalDocument="true"] QLabel#splitModeBadge {{
+            color: {c['warning']};
+            background: {c['warning_soft']};
+            border-color: {c['warning']};
+        }}
+        QToolButton#splitPaneButton {{
+            min-height: 28px;
+            max-height: 28px;
+            padding: 0 {S.SM}px;
+            border-radius: {R.MD}px;
+            background: {c['bg_sidebar']};
+        }}
+
         QFrame#leftPanel, QFrame#contextPanel {{
             background: {_rgba(c['bg_sidebar'], 225)};
             border: none;
@@ -271,6 +351,33 @@ def global_style() -> str:
         }}
         QFrame#contextPanel {{
             background: {_rgba(c['bg_surface'], 235)};
+        }}
+        QWidget#contextPage {{
+            background: {_rgba(c['bg_elevated'], 188)};
+            border: 1px solid {c['border']};
+            border-radius: {R.XL}px;
+        }}
+        QTabWidget#annotationTabs::pane {{
+            background: {_rgba(c['bg_surface'], 205)};
+            border: 1px solid {c['border']};
+            border-radius: {R.LG}px;
+        }}
+        QTabWidget#annotationTabs QTabBar::tab {{
+            min-height: 30px;
+            margin: 0 {S.XXS}px {S.XS}px 0;
+            padding: 0 {S.MD}px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: {R.MD}px;
+        }}
+        QTabWidget#annotationTabs QTabBar::tab:hover:!selected {{
+            color: {c['primary']};
+            background: {c['bg_hover']};
+        }}
+        QTabWidget#annotationTabs QTabBar::tab:selected {{
+            color: {c['primary']};
+            background: {c['primary_soft']};
+            border-color: {c['primary_glow']};
         }}
         QWidget#sidebarHeader {{
             background: {_rgba(c['bg_elevated'], 200)};
@@ -409,6 +516,21 @@ def global_style() -> str:
             color: {c['success']};
             background: {c['bg_sidebar']};
             border-left: 3px solid {c['success']};
+            border-radius: {R.SM}px;
+            padding: {S.SM}px {S.MD}px;
+        }}
+        QLabel#fontInspectorSample {{
+            color: {c['text_primary']};
+            background: {c['bg_surface']};
+            border: 1px solid {c['border']};
+            border-radius: {R.LG}px;
+            padding: {S.LG}px;
+            min-height: 52px;
+        }}
+        QLabel#fontInspectorWarning {{
+            color: {c['warning']};
+            background: {c['warning_soft']};
+            border-left: 3px solid {c['warning']};
             border-radius: {R.SM}px;
             padding: {S.SM}px {S.MD}px;
         }}
@@ -736,14 +858,36 @@ def global_style() -> str:
             background: {c['primary']};
             border-radius: 6px;
         }}
-        QComboBox::drop-down {{ border: none; width: 24px; }}
+        /* Qt stops painting its native combo arrow once the subcontrol is
+           styled. Supply a theme-aware glyph and a visible button surface so
+           the control never becomes an invisible-but-clickable hit area. */
+        QComboBox::drop-down {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 30px;
+            background: {c['bg_sidebar']};
+            border: none;
+            border-left: 1px solid {c['border_strong']};
+            border-top-right-radius: {R.SM}px;
+            border-bottom-right-radius: {R.SM}px;
+        }}
+        QComboBox::drop-down:hover {{
+            background: {c['primary_soft']};
+            border-left-color: {c['primary_glow']};
+        }}
+        QComboBox::down-arrow {{
+            image: url("{combo_down}");
+            width: 14px;
+            height: 14px;
+        }}
+        QComboBox::down-arrow:on {{ top: 1px; }}
         /* Modern rounded, slightly translucent popup menus. The windows are
            made translucent by the proxy style so the corners are truly round. */
         QMenu {{
             background-color: {_rgba(c['bg_surface'], 246)};
             color: {c['text_primary']};
             border: 1px solid {c['border_strong']};
-            border-radius: 12px;
+            border-radius: {R.LG}px;
             padding: 6px;
         }}
         QMenu::item {{
@@ -759,7 +903,7 @@ def global_style() -> str:
             background-color: {_rgba(c['bg_surface'], 246)};
             color: {c['text_primary']};
             border: 1px solid {c['border_strong']};
-            border-radius: 10px;
+            border-radius: {R.LG}px;
             padding: 4px;
             outline: none;
             selection-background-color: {c['primary_soft']};
@@ -782,9 +926,20 @@ def global_style() -> str:
             background: {c['bg_surface']};
             alternate-background-color: {c['bg_sidebar']};
             border: 1px solid {c['border']};
-            border-radius: {R.SM}px;
+            border-radius: {R.MD}px;
             gridline-color: {c['border']};
             selection-background-color: {c['bg_active']};
+        }}
+        QTableWidget#deepSearchResultsTable,
+        QTableWidget#deepSearchErrorTable {{
+            selection-color: {c['on_primary']};
+            selection-background-color: {c['primary']};
+        }}
+        QTableWidget#deepSearchResultsTable::item:selected,
+        QTableWidget#deepSearchErrorTable::item:selected {{
+            color: {c['on_primary']};
+            background: {c['primary']};
+            border: 1px solid {c['primary_pressed']};
         }}
         QHeaderView::section {{
             min-height: 32px;
@@ -799,7 +954,7 @@ def global_style() -> str:
         QTabBar::tab:selected {{ color: {c['primary']}; border-bottom-color: {c['primary']}; }}
         QGroupBox {{
             border: 1px solid {c['border']};
-            border-radius: {R.MD}px;
+            border-radius: {R.LG}px;
             margin-top: {S.MD}px;
             padding: {S.LG}px {S.MD}px {S.MD}px {S.MD}px;
             font-weight: {F.MEDIUM};
@@ -812,9 +967,10 @@ def global_style() -> str:
         }}
         QProgressBar::chunk {{ background: {c['primary']}; border-radius: 2px; }}
         QProgressBar#taskProgress {{ min-height: 6px; max-height: 6px; }}
-        QSplitter::handle {{ background: {c['border']}; }}
+        QSplitter::handle {{ background: {c['separator']}; }}
         QSplitter::handle:horizontal {{ width: 1px; }}
-        QSplitter::handle:hover {{ background: {c['primary']}; }}
+        QSplitter::handle:vertical {{ height: 1px; }}
+        QSplitter::handle:hover {{ background: {c['border_strong']}; }}
     """
 
 

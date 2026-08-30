@@ -16,9 +16,9 @@ from pathlib import Path
 
 import fitz
 
-# Serializes live-document access between the GUI thread (mutations, saves)
-# and background render threads (load_page/get_pixmap). Concurrent reads are
-# safe in MuPDF, but reads racing a save/insert crash at the C level.
+# Serializes every operation on the shared live document between the GUI
+# thread and background render workers. PyMuPDF document and page objects must
+# not be used concurrently across threads, even when both callers only read.
 DOCUMENT_LOCK = threading.RLock()
 
 
@@ -77,6 +77,7 @@ class PdfEngine:
         self._document_id = uuid.uuid4().hex
         self._revision = 0
 
+    @_locked
     def open(self, path: str | os.PathLike[str], password: str | None = None) -> None:
         source = Path(path).expanduser().resolve()
         if not source.is_file():
@@ -304,12 +305,14 @@ class PdfEngine:
         return self._revision
 
     @property
+    @_locked
     def page_count(self) -> int:
         return self._doc.page_count if self._doc else 0
 
     def is_loaded(self) -> bool:
         return self._doc is not None
 
+    @_locked
     def has_digital_signatures(self) -> bool:
         """Return True only for signature fields that contain a signature value."""
         if self._doc is None:
@@ -676,6 +679,7 @@ class PdfEngine:
             outputs.append(target)
         return outputs
 
+    @_locked
     def get_page_size(self, page_num: int) -> tuple[float, float]:
         doc = self._require_document()
         if not 0 <= page_num < doc.page_count:
@@ -683,6 +687,7 @@ class PdfEngine:
         rect = doc.load_page(page_num).rect
         return rect.width, rect.height
 
+    @_locked
     def get_metadata(self) -> dict:
         return dict(self._require_document().metadata or {})
 
@@ -790,6 +795,7 @@ class PdfEngine:
                 os.unlink(temp_name)
         return target
 
+    @_locked
     def search_text(
         self, text: str, page_num: int | None = None
     ) -> list[tuple[int, list[fitz.Rect]]]:
@@ -803,6 +809,7 @@ class PdfEngine:
                     results.append((number, hits))
         return results
 
+    @_locked
     def search_text_detailed(
         self,
         text: str,
@@ -817,6 +824,7 @@ class PdfEngine:
             doc, text, case_sensitive=case_sensitive, whole_word=whole_word, pages=pages
         )
 
+    @_locked
     def extract_text(self, page_num: int | None = None) -> str:
         doc = self._require_document()
         if page_num is not None:
@@ -829,9 +837,11 @@ class PdfEngine:
             doc.load_page(index).get_text() for index in range(doc.page_count)
         )
 
+    @_locked
     def get_toc(self) -> list:
         return self._require_document().get_toc()
 
+    @_locked
     def get_page_labels(self) -> list[str]:
         doc = self._require_document()
         return [

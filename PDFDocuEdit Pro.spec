@@ -12,7 +12,7 @@ WIN_ICON = _win_icon_alt if _win_icon_alt.exists() else ROOT / "icon.ico"
 WIN_VERSION = ROOT / "installer" / "PDFDocuEditPro.version.txt"
 
 datas = [
-    (str(ROOT / "splash.png"), "."),
+    (str(ROOT / "Splash.png"), "."),
     (str(ROOT / "icon.ico"), "."),
     (str(ROOT / "icon.png"), "."),
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
@@ -213,12 +213,12 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="2.1.0",
+        version="2.5.0",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "2.1",
-            "CFBundleVersion": "211",
-            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.1B",
+            "CFBundleShortVersionString": "2.5",
+            "CFBundleVersion": "250",
+            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.5",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

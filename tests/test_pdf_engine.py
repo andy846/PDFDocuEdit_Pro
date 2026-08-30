@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Thread
 
 import fitz
 import pytest
@@ -8,7 +9,7 @@ import pytest
 import core.tools as tools_module
 from core.annotations import AnnotationOp, apply_annotation
 from core.capabilities import Capability, CapabilityId
-from core.pdf_engine import PdfEngine, PdfEngineError, parse_page_range
+from core.pdf_engine import DOCUMENT_LOCK, PdfEngine, PdfEngineError, parse_page_range
 from core.platform_service import ProcessResult
 from core.tools import (
     ToolError,
@@ -54,6 +55,30 @@ def make_pdf(path: Path, pages: int = 3, prefix: str = "Page") -> Path:
             page.insert_text((72, 96), f"{prefix} {index + 1} searchable text")
         document.save(path)
     return path
+
+
+def test_live_document_reader_waits_for_global_lock(tmp_path: Path) -> None:
+    engine = PdfEngine()
+    engine.open(make_pdf(tmp_path / "locked-reader.pdf", pages=1))
+    started = Event()
+    finished = Event()
+    extracted: list[str] = []
+
+    def read_document() -> None:
+        started.set()
+        extracted.append(engine.extract_text(0))
+        finished.set()
+
+    worker = Thread(target=read_document, daemon=True)
+    with DOCUMENT_LOCK:
+        worker.start()
+        assert started.wait(1)
+        assert not finished.wait(0.1)
+
+    assert finished.wait(2)
+    worker.join(timeout=1)
+    assert "Page 1 searchable text" in extracted[0]
+    engine.close()
 
 
 def test_parse_page_range() -> None:
@@ -509,6 +534,39 @@ def test_barcode_cli_fallback_parses_zbar_xml(tmp_path: Path, monkeypatch) -> No
     ]
     assert scan_barcodes(source, barcode_types=["QRCODE"])[0]["data"] == "PDFDocuEdit"
     assert scan_barcodes(source, barcode_types=["CODE128"]) == []
+
+
+@pytest.mark.parametrize(
+    ("returncode", "raises_error"),
+    ((4, False), (1, True)),
+)
+def test_barcode_cli_distinguishes_no_symbol_from_processing_error(
+    tmp_path: Path, monkeypatch, returncode: int, raises_error: bool
+) -> None:
+    source = make_pdf(tmp_path / f"barcode-exit-{returncode}.pdf", 1)
+    capability = Capability(
+        CapabilityId.BARCODE,
+        "Barcode / QR Code",
+        True,
+        "zbarimg CLI",
+        "/fake/zbarimg",
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "detect_capabilities",
+        lambda: {CapabilityId.BARCODE: capability},
+    )
+    monkeypatch.setattr(
+        tools_module.PlatformService,
+        "run",
+        lambda *_args, **_kwargs: ProcessResult(returncode, "", "decode failed"),
+    )
+
+    if raises_error:
+        with pytest.raises(ToolError, match="decode failed"):
+            scan_barcodes(source)
+    else:
+        assert scan_barcodes(source) == []
 
 
 # --- encryption round trips ------------------------------------------------
