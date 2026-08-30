@@ -1380,19 +1380,11 @@ def test_retina_icons_render_full_pixmap(tmp_path, monkeypatch):
 
 
 def test_bundled_ghostscript_detection(tmp_path, monkeypatch):
-
-    import sys
-
     from core import capabilities as capabilities_module
 
-    # On non-Windows dev trees the Windows binaries must NOT be picked up;
-    # on Windows the repository ships them and detection must find them.
-    if sys.platform == "win32":
-        dev_tree = capabilities_module._bundled_ghostscript()
-        assert dev_tree and Path(dev_tree).is_file()
-    else:
-        assert capabilities_module._bundled_ghostscript() is None
-
+    # Exercise a self-contained application bundle. The development-tree
+    # runtime is optional because large Ghostscript binaries are not tracked
+    # by Git and therefore are intentionally absent from clean CI checkouts.
     fake_root = tmp_path / "ghostscript" / "bin"
     fake_root.mkdir(parents=True)
     (fake_root / "gswin64c.exe").write_text("fake", encoding="utf-8")

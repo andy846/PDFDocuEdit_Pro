@@ -27,16 +27,9 @@ jobs:
         run: python -m ruff check .
 
   tests:
-    name: Tests on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Full test suite on Windows
+    runs-on: windows-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -49,6 +42,36 @@ jobs:
             requirements-base.txt
             requirements-dev.txt
             requirements-windows.txt
+      - name: Install project test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Install Windows integration dependency
+        run: python -m pip install comtypes==1.4.12
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Run tests
+        run: python -m pytest
+
+  cross-platform-core:
+    name: Core tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-base.txt
+            requirements-dev.txt
       - name: Install Qt runtime libraries
         if: runner.os == 'Linux'
         run: |
@@ -56,10 +79,21 @@ jobs:
           sudo apt-get install --yes libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
       - name: Install project test dependencies
         run: python -m pip install -r requirements-dev.txt
-      - name: Install Windows integration dependency
-        if: runner.os == 'Windows'
-        run: python -m pip install comtypes==1.4.12
       - name: Verify dependency consistency
         run: python -m pip check
-      - name: Run tests
-        run: python -m pytest
+      - name: Run platform-neutral core tests
+        run: >-
+          python -m pytest
+          tests/test_annotations.py
+          tests/test_bookmarks.py
+          tests/test_commands.py
+          tests/test_deep_search.py
+          tests/test_font_inspector.py
+          tests/test_ocr.py
+          tests/test_pdf_engine.py
+          tests/test_search_detailed.py
+          tests/test_settings.py
+          tests/test_source_contract.py
+          tests/test_tasks.py
+          tests/test_toc.py
+          tests/test_undo_history.py

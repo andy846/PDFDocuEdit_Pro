@@ -1,8 +1,8 @@
 # PDFdocuEdit Pro — Annotate Tools 驗證報告與可執行實施計畫
 
-驗證日期：2026-08-29  
-驗證範圍：目前工作樹中的 active PyQt6 codebase；不包含 `backup/` 舊版實作。  
-驗證方式：靜態呼叫鏈追蹤、offscreen UI 檢查、針對性 pytest、完整 pytest。  
+驗證日期：2026-08-29
+驗證範圍：目前工作樹中的 active PyQt6 codebase；不包含 `backup/` 舊版實作。
+驗證方式：靜態呼叫鏈追蹤、offscreen UI 檢查、針對性 pytest、完整 pytest。
 本文件先整理驗證證據與實施計畫，並持續記錄已完成的實作批次。
 
 ## 1. 驗證基線
