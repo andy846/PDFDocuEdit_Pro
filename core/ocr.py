@@ -12,6 +12,7 @@ from pathlib import Path
 import fitz
 
 from .capabilities import bundled_tesseract_runtime
+from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .platform_service import PlatformService
 from .tasks import TaskCancelled
 
@@ -210,14 +211,16 @@ def _create_searchable_pdf(
         prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
     )
     os.close(handle)
+    expected_page_count = 0
     try:
         with fitz.open(source) as original:
             if original.needs_pass:
                 original.authenticate(password or "")
+            expected_page_count = original.page_count
             with fitz.open() as output:
                 output.insert_pdf(original)
-                output.set_metadata(original.metadata or {})
-                output.set_toc(original.get_toc() or [])
+                set_safe_pdf_metadata(output, original.metadata)
+                set_safe_pdf_toc(output, original.get_toc())
                 for page_number in pages:
                     _check_cancel(is_cancelled)
                     with fitz.open(layers[page_number]) as layer:
@@ -225,6 +228,9 @@ def _create_searchable_pdf(
                         page.show_pdf_page(page.rect, layer, 0, overlay=True)
                 output.save(temp_name, garbage=4, deflate=True)
         _check_cancel(is_cancelled)
+        validate_pdf_file(
+            temp_name, expected_page_count=expected_page_count
+        )
         os.replace(temp_name, target)
     finally:
         if os.path.exists(temp_name):

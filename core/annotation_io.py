@@ -16,6 +16,7 @@ from .annotations import (
     list_document_annotations,
 )
 from .pdf_engine import DOCUMENT_LOCK
+from .pdf_io import validate_pdf_file
 
 SCHEMA = "pdfdocuedit.annotations"
 SCHEMA_VERSION = 1
@@ -224,9 +225,13 @@ def flatten_annotations(
     try:
         with DOCUMENT_LOCK:
             source = doc.tobytes(garbage=0, deflate=False)
+            expected_page_count = doc.page_count
         with fitz.open(stream=source, filetype="pdf") as flattened:
             flattened.bake(annots=True, widgets=widgets)
             flattened.save(temp_name, garbage=4, deflate=True)
+        validate_pdf_file(
+            temp_name, expected_page_count=expected_page_count
+        )
         os.replace(temp_name, target)
     finally:
         if os.path.exists(temp_name):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -46,6 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.pdf_engine import PagePlanEntry, parse_page_range
+from core.pdf_io import validate_pdf_file
 
 from .base import SortableTableWidget, ToolDialog
 from .print_profile import collect_print_profile, quality_changed, restore_print_profile, selected_quality_dpi
@@ -846,6 +849,11 @@ class VisualOrganizerDialog(ToolDialog):
             return
         if not path.casefold().endswith(".pdf"):
             path += ".pdf"
+        target = Path(path).expanduser().resolve()
+        handle, temp_name = tempfile.mkstemp(
+            prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
+        )
+        os.close(handle)
         try:
             with fitz.open() as output:
                 for widget in selected:
@@ -865,9 +873,15 @@ class VisualOrganizerDialog(ToolDialog):
                                 from_page=entry.source_page,
                                 to_page=entry.source_page,
                             )
-                output.save(path, garbage=3, deflate=True)
+                output.save(temp_name, garbage=3, deflate=True)
+            validate_pdf_file(
+                temp_name, expected_page_count=len(selected)
+            )
+            os.replace(temp_name, target)
         except Exception as exc:
             self.show_error(f"Extract failed: {exc}")
+        finally:
+            Path(temp_name).unlink(missing_ok=True)
 
     def _update_summary(self) -> None:
         selected = len(self.pages.selected_widgets())

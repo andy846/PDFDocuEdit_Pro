@@ -33,7 +33,7 @@ class F:
 
 
 class D:
-    COMMAND_H = 48
+    COMMAND_H = 44
     SIDEBAR_W = 272
     SIDEBAR_COLLAPSED_W = 52
     CONTEXT_W = 400

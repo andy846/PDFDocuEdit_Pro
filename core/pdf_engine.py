@@ -16,6 +16,8 @@ from pathlib import Path
 
 import fitz
 
+from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
+
 # Serializes every operation on the shared live document between the GUI
 # thread and background render workers. PyMuPDF document and page objects must
 # not be used concurrently across threads, even when both callers only read.
@@ -74,6 +76,7 @@ class PdfEngine:
         self._password: str | None = None
         self._reencrypt_on_save = False
         self._saved_permissions: int | None = None
+        self._requires_full_save = False
         self._document_id = uuid.uuid4().hex
         self._revision = 0
 
@@ -125,6 +128,7 @@ class PdfEngine:
         self._password = password_used
         self._reencrypt_on_save = reencrypt
         self._saved_permissions = saved_permissions
+        self._requires_full_save = False
         self._document_id = uuid.uuid4().hex
         self._revision = 0
 
@@ -155,14 +159,17 @@ class PdfEngine:
                         working.insert_pdf(
                             source_doc, from_page=0, to_page=source_doc.page_count - 1
                         )
-                    working.set_metadata(source_doc.metadata or {})
-                    working.set_toc(source_doc.get_toc() or [])
+                    set_safe_pdf_metadata(working, source_doc.metadata)
+                    set_safe_pdf_toc(working, source_doc.get_toc())
                     working.save(
                         temp_name,
                         garbage=4,
                         deflate=True,
                         encryption=fitz.PDF_ENCRYPT_NONE,
                     )
+            validate_pdf_file(
+                temp_name, expected_page_count=source_doc.page_count
+            )
         except Exception:
             Path(temp_name).unlink(missing_ok=True)
             raise
@@ -183,6 +190,7 @@ class PdfEngine:
         self._password = None
         self._reencrypt_on_save = False
         self._saved_permissions = None
+        self._requires_full_save = False
 
     @_locked
     def save(self, path: str | os.PathLike[str] | None = None) -> Path:
@@ -202,6 +210,7 @@ class PdfEngine:
                 # the user password is known (a full re-save must generate
                 # fresh encryption keys), but the user password, encryption
                 # strength, and the document's original permissions are kept.
+                set_safe_pdf_metadata(self._doc, self._doc.metadata)
                 self._doc.save(
                     temp_name,
                     garbage=0,
@@ -215,6 +224,18 @@ class PdfEngine:
                         if self._saved_permissions is not None
                         else int(fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT)
                     ),
+                )
+            elif self._requires_full_save:
+                # Page-tree changes such as rotation, insertion and reorder are
+                # rewritten in full. Incremental updates of malformed scanner
+                # PDFs can be accepted by MuPDF itself but rejected elsewhere.
+                set_safe_pdf_metadata(self._doc, self._doc.metadata)
+                self._doc.save(
+                    temp_name,
+                    garbage=0,
+                    deflate=False,
+                    clean=False,
+                    encryption=fitz.PDF_ENCRYPT_KEEP,
                 )
             elif self._doc.can_save_incrementally():
                 # The working document is an isolated copy of the source.
@@ -234,6 +255,11 @@ class PdfEngine:
                     clean=False,
                     encryption=fitz.PDF_ENCRYPT_KEEP,
                 )
+            validate_pdf_file(
+                temp_name,
+                password=self._password if self._reencrypt_on_save else None,
+                expected_page_count=self._doc.page_count,
+            )
             os.replace(temp_name, target)
         except Exception:
             if os.path.exists(temp_name):
@@ -252,9 +278,12 @@ class PdfEngine:
         if self._doc:
             self._touch()
 
-    def _touch(self) -> None:
+    def _touch(self, *, requires_full_save: bool = False) -> None:
         """Record one logical mutation for stale-analysis detection."""
         self._is_modified = True
+        self._requires_full_save = (
+            self._requires_full_save or requires_full_save
+        )
         self._revision += 1
 
     def detach_save_target(self) -> None:
@@ -276,6 +305,7 @@ class PdfEngine:
         self._password = source._password
         self._reencrypt_on_save = source._reencrypt_on_save
         self._saved_permissions = source._saved_permissions
+        self._requires_full_save = source._requires_full_save
         self._document_id = source._document_id
         self._revision = source._revision + 1
         self._is_modified = modified
@@ -380,7 +410,7 @@ class PdfEngine:
                     to_page=page_num,
                     start_at=insert_at + offset,
                 )
-        self._touch()
+        self._touch(requires_full_save=True)
 
     @_locked
     def insert_blank_pages(
@@ -390,7 +420,7 @@ class PdfEngine:
         insert_at = min(max(0, position), doc.page_count)
         for offset in range(max(0, count)):
             doc.new_page(pno=insert_at + offset, width=width, height=height)
-        self._touch()
+        self._touch(requires_full_save=True)
 
     @_locked
     def repeat_insert_pages(
@@ -429,7 +459,7 @@ class PdfEngine:
             raise PdfEngineError(
                 "The repeat interval does not create any insertion points."
             )
-        self._touch()
+        self._touch(requires_full_save=True)
 
     @_locked
     def delete_page(self, page_num: int) -> None:
@@ -446,7 +476,7 @@ class PdfEngine:
         for page_num in valid:
             doc.delete_page(page_num)
         if valid:
-            self._touch()
+            self._touch(requires_full_save=True)
 
     @_locked
     def extract_pages(
@@ -468,9 +498,10 @@ class PdfEngine:
             with fitz.open() as output:
                 for page in valid:
                     output.insert_pdf(doc, from_page=page, to_page=page)
-                output.set_metadata(doc.metadata or {})
-                output.set_toc(doc.get_toc() or [])
+                set_safe_pdf_metadata(output, doc.metadata)
+                set_safe_pdf_toc(output, doc.get_toc())
                 output.save(temp_name, garbage=4, deflate=True)
+            validate_pdf_file(temp_name, expected_page_count=len(valid))
             os.replace(temp_name, target)
         finally:
             if os.path.exists(temp_name):
@@ -491,7 +522,7 @@ class PdfEngine:
                 page.set_rotation((page.rotation + angle) % 360)
                 changed = True
         if changed:
-            self._touch()
+            self._touch(requires_full_save=True)
 
     @_locked
     def reorder_pages(self, new_order: list[int]) -> None:
@@ -499,7 +530,7 @@ class PdfEngine:
         if sorted(new_order) != list(range(doc.page_count)):
             raise PdfEngineError("The page order is incomplete or contains duplicates.")
         doc.select(new_order)
-        self._touch()
+        self._touch(requires_full_save=True)
 
     @_locked
     def organize_pages(self, new_order: list[int], rotations: dict[int, int]) -> None:
@@ -519,7 +550,7 @@ class PdfEngine:
             if amount:
                 page = doc.load_page(current_index)
                 page.set_rotation((page.rotation + amount) % 360)
-        self._touch()
+        self._touch(requires_full_save=True)
 
     @_locked
     def apply_page_plan(self, entries: Iterable[PagePlanEntry]) -> None:
@@ -621,7 +652,7 @@ class PdfEngine:
             finally:
                 self._doc = fitz.open(stream=backup, filetype="pdf")
             raise
-        self._touch()
+        self._touch(requires_full_save=True)
 
     @_locked
     def split_pdf(
@@ -670,8 +701,11 @@ class PdfEngine:
             try:
                 with fitz.open() as split:
                     split.insert_pdf(doc, from_page=first, to_page=last)
-                    split.set_metadata(doc.metadata or {})
+                    set_safe_pdf_metadata(split, doc.metadata)
                     split.save(temp_name, garbage=4, deflate=True)
+                validate_pdf_file(
+                    temp_name, expected_page_count=last - first + 1
+                )
                 os.replace(temp_name, target)
             finally:
                 if os.path.exists(temp_name):
@@ -693,7 +727,7 @@ class PdfEngine:
 
     @_locked
     def set_metadata(self, metadata: dict) -> None:
-        self._require_document().set_metadata(metadata)
+        set_safe_pdf_metadata(self._require_document(), metadata)
         self._touch()
 
     @_locked
@@ -722,6 +756,11 @@ class PdfEngine:
                 owner_pw=owner_password or secrets.token_hex(20),
                 user_pw=password,
                 permissions=permissions,
+            )
+            validate_pdf_file(
+                temp_name,
+                password=password,
+                expected_page_count=doc.page_count,
             )
             os.replace(temp_name, target)
         finally:
@@ -757,14 +796,15 @@ class PdfEngine:
                 with fitz.open() as output:
                     if doc.page_count:
                         output.insert_pdf(doc, from_page=0, to_page=doc.page_count - 1)
-                    output.set_metadata(doc.metadata or {})
-                    output.set_toc(doc.get_toc() or [])
+                    set_safe_pdf_metadata(output, doc.metadata)
+                    set_safe_pdf_toc(output, doc.get_toc())
                     output.save(
                         temp_name,
                         garbage=4,
                         deflate=True,
                         encryption=fitz.PDF_ENCRYPT_NONE,
                     )
+            validate_pdf_file(temp_name, expected_page_count=doc.page_count)
             os.replace(temp_name, target)
         finally:
             if os.path.exists(temp_name):
@@ -789,6 +829,7 @@ class PdfEngine:
                 clean=False,
                 encryption=fitz.PDF_ENCRYPT_NONE,
             )
+            validate_pdf_file(temp_name, expected_page_count=doc.page_count)
             os.replace(temp_name, target)
         finally:
             if os.path.exists(temp_name):

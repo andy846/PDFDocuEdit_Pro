@@ -15,6 +15,7 @@ from pathlib import Path
 import fitz
 
 from .capabilities import CapabilityId, detect_capabilities
+from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .platform_service import PlatformService
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -88,6 +89,7 @@ def merge_pdfs(
     if missing:
         raise ToolError(f"Source file not found: {missing}")
     temporary = _temporary_pdf_path(target)
+    expected_pages = 0
     try:
         with fitz.open() as output:
             total = len(sources)
@@ -100,6 +102,7 @@ def merge_pdfs(
                     with fitz.open(source_path) as source:
                         if first_metadata is None:
                             first_metadata = source.metadata or {}
+                        expected_pages += source.page_count
                         output.insert_pdf(source)
                 except Exception as exc:
                     raise ToolError(f"Cannot read {source_path.name}: {exc}") from exc
@@ -107,8 +110,9 @@ def merge_pdfs(
             if is_cancelled and is_cancelled():
                 raise ToolError("The merge was cancelled.")
             if first_metadata:
-                output.set_metadata(first_metadata)
+                set_safe_pdf_metadata(output, first_metadata)
             output.save(temporary, garbage=4, deflate=True)
+        validate_pdf_file(temporary, expected_page_count=expected_pages)
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -122,6 +126,7 @@ def overlay_pdf(
 ) -> Path:
     target_output = Path(output_path).expanduser().resolve()
     temporary = _temporary_pdf_path(target_output)
+    expected_pages = 0
     try:
         try:
             template = fitz.open(template_path)
@@ -137,6 +142,7 @@ def overlay_pdf(
                     raise ToolError("The overlay template has no pages.")
                 if target.page_count == 0:
                     raise ToolError("The target PDF has no pages.")
+                expected_pages = target.page_count
                 for page_number in range(target.page_count):
                     page = target.load_page(page_number)
                     template_page = min(page_number, template.page_count - 1)
@@ -148,6 +154,7 @@ def overlay_pdf(
                         keep_proportion=True,
                     )
                 target.save(temporary, garbage=4, deflate=True)
+        validate_pdf_file(temporary, expected_page_count=expected_pages)
         os.replace(temporary, target_output)
     finally:
         temporary.unlink(missing_ok=True)
@@ -169,9 +176,11 @@ def compress_pdf(
     source = Path(source_path).expanduser().resolve()
     target = Path(output_path).expanduser().resolve()
     temporary = _temporary_pdf_path(target)
+    expected_pages = 0
     try:
         try:
             with fitz.open(source) as doc:
+                expected_pages = doc.page_count
                 doc.save(
                     temporary,
                     garbage=max(0, min(4, int(garbage))),
@@ -186,6 +195,7 @@ def compress_pdf(
             raise
         except Exception as exc:
             raise ToolError(f"Cannot read {source.name}: {exc}") from exc
+        validate_pdf_file(temporary, expected_page_count=expected_pages)
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -459,8 +469,10 @@ def encrypt_pdf_file(
         prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
     )
     os.close(handle)
+    expected_pages = 0
     try:
         with fitz.open(source) as doc:
+            expected_pages = doc.page_count
             doc.save(
                 temp_name,
                 garbage=4,
@@ -474,6 +486,11 @@ def encrypt_pdf_file(
                     else fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT
                 ),
             )
+        validate_pdf_file(
+            temp_name,
+            password=user_password,
+            expected_page_count=expected_pages,
+        )
         os.replace(temp_name, target)
     finally:
         if os.path.exists(temp_name):
@@ -494,11 +511,13 @@ def decrypt_pdf_file(
         prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
     )
     os.close(handle)
+    expected_pages = 0
     try:
         with fitz.open(source) as doc:
             if doc.needs_pass:
                 if not password or not doc.authenticate(password):
                     raise ToolError("The password is not valid.")
+            expected_pages = doc.page_count
             try:
                 doc.save(
                     temp_name,
@@ -513,14 +532,15 @@ def decrypt_pdf_file(
                         output.insert_pdf(
                             doc, from_page=0, to_page=doc.page_count - 1
                         )
-                    output.set_metadata(doc.metadata or {})
-                    output.set_toc(doc.get_toc() or [])
+                    set_safe_pdf_metadata(output, doc.metadata)
+                    set_safe_pdf_toc(output, doc.get_toc())
                     output.save(
                         temp_name,
                         garbage=4,
                         deflate=True,
                         encryption=fitz.PDF_ENCRYPT_NONE,
                     )
+        validate_pdf_file(temp_name, expected_page_count=expected_pages)
         os.replace(temp_name, target)
     finally:
         if os.path.exists(temp_name):
@@ -555,6 +575,7 @@ def convert_postscript(
             raise ToolError(
                 result.stderr.strip() or "Ghostscript did not create an output file."
             )
+        validate_pdf_file(temporary)
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -650,6 +671,7 @@ def text_files_to_pdf(
             raise ToolError("Text conversion was cancelled before any pages were created.")
         if is_cancelled and is_cancelled():
             raise ToolError("The text conversion was cancelled.")
+        validate_pdf_file(temporary)
         os.replace(temporary, target)
     except Exception:
         try:

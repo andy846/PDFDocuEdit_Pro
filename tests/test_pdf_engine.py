@@ -6,10 +6,12 @@ from threading import Event, Thread
 import fitz
 import pytest
 
+import core.pdf_engine as pdf_engine_module
 import core.tools as tools_module
 from core.annotations import AnnotationOp, apply_annotation
 from core.capabilities import Capability, CapabilityId
 from core.pdf_engine import DOCUMENT_LOCK, PdfEngine, PdfEngineError, parse_page_range
+from core.pdf_io import PdfValidationError
 from core.platform_service import ProcessResult
 from core.tools import (
     ToolError,
@@ -54,6 +56,23 @@ def make_pdf(path: Path, pages: int = 3, prefix: str = "Page") -> Path:
             page = document.new_page(width=595, height=842)
             page.insert_text((72, 96), f"{prefix} {index + 1} searchable text")
         document.save(path)
+    return path
+
+
+def make_malformed_metadata_pdf(path: Path, pages: int = 1) -> Path:
+    """Create the invalid scanner metadata that PyMuPDF 1.26 exposes as surrogates."""
+
+    make_pdf(path, pages=pages, prefix="Scanner")
+    with fitz.open(path) as document:
+        document.set_metadata({"producer": "placeholder"})
+        document.saveIncr()
+    with fitz.open(path) as document:
+        kind, reference = document.xref_get_key(-1, "Info")
+        assert kind == "xref"
+        info_xref = int(reference.split()[0])
+        producer = b"Adobe PSL 1.3e for Canon" + bytes((0xC0, 0x80))
+        document.xref_set_key(info_xref, "Producer", f"<{producer.hex()}>")
+        document.saveIncr()
     return path
 
 
@@ -186,6 +205,46 @@ def test_engine_rejects_deleting_every_page(tmp_path: Path) -> None:
     engine.close()
 
 
+def test_rotation_full_save_cleans_scanner_metadata_and_reopens(tmp_path: Path) -> None:
+    source = make_malformed_metadata_pdf(tmp_path / "scanner.pdf", pages=2)
+    original_bytes = source.read_bytes()
+    engine = PdfEngine()
+    engine.open(source)
+    engine.rotate_page(0, 90)
+    engine.save()
+    engine.close()
+
+    # Page-tree changes must be fully rewritten, not appended to the scanner
+    # file as an incremental update.
+    assert not source.read_bytes().startswith(original_bytes)
+    with fitz.open(source) as document:
+        assert document.page_count == 2
+        assert document.load_page(0).rotation == 90
+        assert document.metadata["producer"] == "Adobe PSL 1.3e for Canon"
+        for page in document:
+            page.get_pixmap(matrix=fitz.Matrix(0.2, 0.2), alpha=False)
+
+
+def test_save_validation_failure_does_not_replace_original(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = make_pdf(tmp_path / "protected.pdf", pages=1)
+    original_bytes = source.read_bytes()
+    engine = PdfEngine()
+    engine.open(source)
+    engine.rotate_page(0, 90)
+
+    def reject_output(*_args, **_kwargs) -> None:
+        raise PdfValidationError("simulated invalid output")
+
+    monkeypatch.setattr(pdf_engine_module, "validate_pdf_file", reject_output)
+    with pytest.raises(PdfValidationError, match="simulated invalid output"):
+        engine.save()
+    assert source.read_bytes() == original_bytes
+    assert engine.is_modified
+    engine.close()
+
+
 def test_digital_signature_reference_is_detected() -> None:
     class SignatureWidget:
         field_type = fitz.PDF_WIDGET_TYPE_SIGNATURE
@@ -283,6 +342,24 @@ def test_document_tools(tmp_path: Path) -> None:
     assert outputs == [same_source.resolve()]
     with fitz.open(same_source) as document:
         assert document.page_count == 1
+
+
+def test_merge_and_extract_sanitize_invalid_scanner_metadata(tmp_path: Path) -> None:
+    first = make_malformed_metadata_pdf(tmp_path / "scanner.pdf", pages=2)
+    second = make_pdf(tmp_path / "normal.pdf", pages=1)
+
+    merged = merge_pdfs([first, second], tmp_path / "merged-scans.pdf")
+    with fitz.open(merged) as document:
+        assert document.page_count == 3
+        assert document.metadata["producer"] == "Adobe PSL 1.3e for Canon"
+
+    engine = PdfEngine()
+    engine.open(first)
+    extracted = engine.extract_pages([0], tmp_path / "extracted-scan.pdf")
+    engine.close()
+    with fitz.open(extracted) as document:
+        assert document.page_count == 1
+        assert document.metadata["producer"] == "Adobe PSL 1.3e for Canon"
 
 
 def test_text_to_pdf_supports_unicode(tmp_path: Path) -> None:
