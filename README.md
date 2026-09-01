@@ -1,4 +1,4 @@
-# PDFDocuEdit Pro V2.5.1
+# PDFDocuEdit Pro V2.5.2
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
 
@@ -68,8 +68,24 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：`PDFDocuEdit-Pro-v2.5.1-Setup-Windows-x64.exe`
-- 免安裝版：`PDFDocuEdit-Pro-v2.5.1-Portable-Windows-x64.zip`
+- 安裝版：`PDFDocuEdit-Pro-v2.5.2-Setup-Windows-x64.exe`
+- 免安裝版：`PDFDocuEdit-Pro-v2.5.2-Portable-Windows-x64.zip`
+
+### Windows release build
+
+在 Windows x64 安裝 Python 3.12 及 Inno Setup 6 後，可執行
+`scripts\build_windows.bat`。流程會先驗證 source、執行測試，再建立 PyInstaller
+程式、Portable ZIP、Inno Setup 安裝檔及兩份 SHA-256 checksum。
+
+正式簽署 build 可設定以下環境變數：
+
+- `PDFDOCUEDIT_SIGNTOOL`：Windows SDK `signtool.exe` 完整路徑
+- `PDFDOCUEDIT_CERT_SHA1`：Authenticode certificate thumbprint
+- `PDFDOCUEDIT_TIMESTAMP_URL`：RFC 3161 timestamp URL（可省略）
+
+設定後會簽署主程式、Setup 及 Uninstaller。Installer 會將 PDFDocuEdit Pro
+註冊為 PDF、PS、EPS 的可選開啟程式，但不會未經使用者同意改寫 Windows
+現有預設程式。
 
 
 ### PDF/A 與 PDF/UA 驗證（Windows / macOS）

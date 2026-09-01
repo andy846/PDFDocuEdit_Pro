@@ -1,6 +1,6 @@
 @echo off
-rem PDFDocuEdit Pro - Windows release build (run on a Windows x64 machine
-rem with Python 3.12 installed; the output runs on machines WITHOUT Python).
+rem PDFDocuEdit Pro - canonical Windows release build.
+rem Run on Windows x64 with Python 3.12 and Inno Setup 6 installed.
 setlocal
 cd /d "%~dp0\.."
 
@@ -10,31 +10,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo === 0/5 Preflight: required files present ===
+echo === 0/2 Preflight: required files present ===
 if not exist "PDFDocuEdit Pro.spec" (echo [ERROR] Missing "PDFDocuEdit Pro.spec" & exit /b 1)
 if not exist "Ghostscript\bin\gswin64c.exe" (echo [ERROR] Missing Ghostscript\bin\gswin64c.exe & exit /b 1)
 
-echo === 1/5 Install dependencies (base + dev + Windows COM) ===
+echo === 1/2 Install build dependencies ===
 python -m pip install --upgrade pip || exit /b 1
 python -m pip install -r requirements-windows.txt || exit /b 1
 
-echo === 2/5 Verify source assets ===
-python scripts\verify_source.py || exit /b 1
-
-echo === 3/5 Run the test suite (offscreen) ===
+echo === 2/2 Verify, test, package, sign, and create checksums ===
 set QT_QPA_PLATFORM=offscreen
-python -m pytest -q || exit /b 1
+python scripts\build.py || exit /b 1
 
-echo === 4/5 PyInstaller build (bundles PyQt6, PyMuPDF, Ghostscript, Office COM backend) ===
-python -m PyInstaller --clean --noconfirm "PDFDocuEdit Pro.spec" || exit /b 1
-
-echo === 5/5 Done ===
-echo Portable output folder : dist\PDFDocuEdit Pro\
-echo Executable             : dist\PDFDocuEdit Pro\PDFDocuEdit Pro.exe
-echo.
-echo Copy the whole "PDFDocuEdit Pro" folder to the target Windows machine
-echo (no Python or Ghostscript installation is needed there).
-echo.
-echo Optional: install Inno Setup 6 and run installer\PDFDocuEditPro.iss to
-echo produce a single setup EXE.
+echo Release artifacts are available in the release folder.
 endlocal

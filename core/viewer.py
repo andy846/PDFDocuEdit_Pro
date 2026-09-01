@@ -1182,6 +1182,10 @@ class PDFViewer(QMainWindow):
         the native main window and loading status become visible first.
         """
         self._queued_open_paths.extend((path, None) for path in paths if path)
+        self._schedule_queued_open()
+
+    def _schedule_queued_open(self) -> None:
+        """Ensure queued shell/file-association paths have an active drain."""
         if not self._queued_open_paths or self._open_queue_scheduled:
             return
         self._open_queue_scheduled = True
@@ -1260,6 +1264,11 @@ class PDFViewer(QMainWindow):
                     0,
                     (str(display_path), password),
                 )
+                # QInputDialog.exec() runs a nested event loop. The worker's
+                # finished signal may therefore have cleared the queue state
+                # while the user was entering the password. Explicitly ensure
+                # the authenticated retry has a live drain.
+                self._schedule_queued_open()
             return
         if status == "error":
             self._error("Open failed", str(value))

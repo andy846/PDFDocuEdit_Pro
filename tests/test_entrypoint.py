@@ -131,6 +131,50 @@ def test_queued_pdf_open_completes_in_background(tmp_path) -> None:
     viewer.close()
 
 
+def test_queued_encrypted_pdf_resumes_after_modal_password_prompt(
+    tmp_path, monkeypatch
+) -> None:
+    """The prompt's nested event loop may finish the first open task early."""
+    import fitz
+    from PyQt6.QtWidgets import QApplication
+
+    from core import viewer as viewer_module
+    from core.viewer import PDFViewer
+
+    app = QApplication.instance() or QApplication(
+        ["pdfdocuedit-encrypted-background-open-test"]
+    )
+    source = tmp_path / "associated-encrypted.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(
+            source,
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            owner_pw="owner-secret",
+            user_pw="open-secret",
+        )
+
+    def enter_password(*_args, **_kwargs):
+        # QInputDialog.exec() runs a nested event loop. Reproduce the important
+        # part: the worker's queued ``finished`` signal can be delivered before
+        # ask_password returns the password to _queued_pdf_prepared().
+        app.processEvents()
+        return "open-secret", True
+
+    monkeypatch.setattr(viewer_module, "ask_password", enter_password)
+    viewer = PDFViewer()
+    viewer.queue_open_files([str(source)])
+    deadline = time.monotonic() + 5
+    while not viewer.engine.is_loaded() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert viewer.engine.is_loaded()
+    assert viewer.engine.password == "open-secret"
+    assert not viewer._queued_open_paths
+    viewer.close()
+
+
 def test_single_instance_router_forwards_pdf_paths(tmp_path) -> None:
     from PyQt6.QtNetwork import QLocalServer
     from PyQt6.QtWidgets import QApplication

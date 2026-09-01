@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -224,6 +224,55 @@ def _find_inno_setup_compiler() -> str | None:
     return None
 
 
+def _windows_signing_settings() -> tuple[str, str, str] | None:
+    """Return Authenticode settings, failing fast on partial configuration."""
+    signtool = os.environ.get("PDFDOCUEDIT_SIGNTOOL")
+    certificate = os.environ.get("PDFDOCUEDIT_CERT_SHA1")
+    if bool(signtool) != bool(certificate):
+        raise RuntimeError(
+            "Set both PDFDOCUEDIT_SIGNTOOL and PDFDOCUEDIT_CERT_SHA1, "
+            "or leave both unset."
+        )
+    if not signtool or not certificate:
+        return None
+    timestamp_url = os.environ.get(
+        "PDFDOCUEDIT_TIMESTAMP_URL", "http://timestamp.digicert.com"
+    )
+    return signtool, certificate, timestamp_url
+
+
+def _sign_windows_file(path: Path, settings: tuple[str, str, str]) -> None:
+    signtool, certificate, timestamp_url = settings
+    run(
+        signtool,
+        "sign",
+        "/sha1",
+        certificate,
+        "/fd",
+        "SHA256",
+        "/tr",
+        timestamp_url,
+        "/td",
+        "SHA256",
+        "/d",
+        APP_NAME,
+        str(path),
+    )
+
+
+def _inno_signing_args(settings: tuple[str, str, str] | None) -> list[str]:
+    """Configure ISCC to sign Setup and its embedded uninstaller."""
+    if settings is None:
+        return []
+    signtool, certificate, timestamp_url = settings
+    name = "pdfdocuedit_authenticode"
+    command = (
+        f"$q{signtool}$q sign /sha1 {certificate} /fd SHA256 "
+        f"/tr {timestamp_url} /td SHA256 /d $q{APP_NAME}$q $f"
+    )
+    return [f"/S{name}={command}", f"/DMySignTool={name}"]
+
+
 def build_windows() -> tuple[Path, Path]:
     validate_tesseract_bundle()
     validate_verapdf_bundle()
@@ -235,32 +284,18 @@ def build_windows() -> tuple[Path, Path]:
         "--noconfirm",
         "PDFDocuEdit Pro.spec",
     )
+    signing = _windows_signing_settings()
+    executable = ROOT / "dist" / APP_NAME / f"{APP_NAME}.exe"
+    if signing:
+        _sign_windows_file(executable, signing)
     portable = build_portable_zip()
     compiler = _find_inno_setup_compiler()
     if not compiler:
         raise RuntimeError(
             "Inno Setup 6 (ISCC.exe) is required to build the installer."
         )
-    run(compiler, "installer/PDFDocuEditPro.iss")
+    run(compiler, *_inno_signing_args(signing), "installer/PDFDocuEditPro.iss")
     output = ROOT / "release" / f"PDFDocuEdit-Pro-v{VERSION}-Setup-Windows-x64.exe"
-    signtool = os.environ.get("PDFDOCUEDIT_SIGNTOOL")
-    certificate = os.environ.get("PDFDOCUEDIT_CERT_SHA1")
-    if signtool and certificate:
-        run(
-            signtool,
-            "sign",
-            "/sha1",
-            certificate,
-            "/fd",
-            "SHA256",
-            "/tr",
-            os.environ.get(
-                "PDFDOCUEDIT_TIMESTAMP_URL", "http://timestamp.digicert.com"
-            ),
-            "/td",
-            "SHA256",
-            str(output),
-        )
     sha256(output)
     return output, portable
 

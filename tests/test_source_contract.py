@@ -76,17 +76,35 @@ def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
     )
 
 
-def test_release_metadata_is_v2_5_1() -> None:
-    assert APP_VERSION == "2.5.1"
+def test_release_metadata_is_v2_5_2() -> None:
+    assert APP_VERSION == "2.5.2"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "2.5.1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "2.5.1"' in (
+    assert 'version = "2.5.2"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "2.5.2"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "2.5.1"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(2, 5, 1, 0)" in (
+    assert 'VERSION = "2.5.2"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(2, 5, 2, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
+
+
+def test_windows_installer_has_professional_shell_integration() -> None:
+    script = (ROOT / "installer/PDFDocuEditPro.iss").read_text(encoding="utf-8")
+    required = (
+        "SetupIconFile=..\\icon.ico",
+        "DisableWelcomePage=no",
+        "SetupLogging=yes",
+        "CloseApplications=yes",
+        "VersionInfoDescription={#MyAppName} Setup",
+        'Subkey: "Software\\Classes\\.pdf\\OpenWithProgids"',
+        'Subkey: "Software\\Classes\\.ps\\OpenWithProgids"',
+        'Subkey: "Software\\Classes\\.eps\\OpenWithProgids"',
+        'Subkey: "Software\\RegisteredApplications"',
+        "SignedUninstaller=yes",
+    )
+    assert not [entry for entry in required if entry not in script]
+    assert 'Subkey: "Software\\Classes\\.pdf"; ValueType:' not in script
 
 
 def test_windows_icon_uses_high_dpi_master_sizes() -> None:

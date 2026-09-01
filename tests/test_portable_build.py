@@ -1,4 +1,10 @@
-from scripts.build import _clean_portable_tree
+import pytest
+
+from scripts.build import (
+    _clean_portable_tree,
+    _inno_signing_args,
+    _windows_signing_settings,
+)
 
 
 def test_portable_cleanup_preserves_native_runtime_files(tmp_path):
@@ -20,3 +26,26 @@ def test_portable_cleanup_preserves_native_runtime_files(tmp_path):
     assert not bytecode.exists()
     assert not pytest_cache.exists()
     assert not debug_log.exists()
+
+
+def test_windows_signing_settings_require_complete_configuration(monkeypatch):
+    monkeypatch.setenv("PDFDOCUEDIT_SIGNTOOL", "C:/Tools/signtool.exe")
+    monkeypatch.delenv("PDFDOCUEDIT_CERT_SHA1", raising=False)
+
+    with pytest.raises(RuntimeError, match="Set both"):
+        _windows_signing_settings()
+
+
+def test_inno_signing_args_sign_setup_and_uninstaller(monkeypatch):
+    monkeypatch.setenv("PDFDOCUEDIT_SIGNTOOL", "C:/Program Files/SDK/signtool.exe")
+    monkeypatch.setenv("PDFDOCUEDIT_CERT_SHA1", "ABC123")
+    monkeypatch.setenv("PDFDOCUEDIT_TIMESTAMP_URL", "https://timestamp.example.test")
+
+    settings = _windows_signing_settings()
+    args = _inno_signing_args(settings)
+
+    assert args[1] == "/DMySignTool=pdfdocuedit_authenticode"
+    assert "$qC:/Program Files/SDK/signtool.exe$q" in args[0]
+    assert "/sha1 ABC123" in args[0]
+    assert "/tr https://timestamp.example.test" in args[0]
+    assert args[0].endswith("$f")
