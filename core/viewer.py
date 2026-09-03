@@ -55,6 +55,7 @@ from core.analysis import (
     FindingSource,
     InspectionReport,
     Severity,
+    ValidationStatus,
     inspect_and_analyze,
 )
 from core.annotation_io import (
@@ -200,14 +201,20 @@ def _perform_document_analysis(
         validation = validate_with_verapdf(
             source_path,
             request.standard_profile,
+            configured_path=request.verapdf_path,
             is_cancelled=is_cancelled,
         )
         report.standard_profile = request.standard_profile
         report.validation_summary = validation.summary
         report.standard_raw_xml = validation.raw_xml
-        if validation.compliant is True:
+        validation_status = (
+            validation.summary.status
+            if validation.summary
+            else ValidationStatus.ERROR
+        )
+        if validation_status == ValidationStatus.PASS:
             report.standard_status = "Passed"
-        elif validation.compliant is False:
+        elif validation_status == ValidationStatus.FAIL:
             unique_rules = (
                 validation.summary.failed_rule_count
                 if validation.summary
@@ -217,19 +224,29 @@ def _perform_document_analysis(
                 f"Failed  -  {unique_rules} unique rule failure"
                 f"{'s' if unique_rules != 1 else ''}"
             )
+        elif validation_status == ValidationStatus.VALIDATOR_UNAVAILABLE:
+            report.standard_status = "Validator unavailable"
         else:
-            report.standard_status = validation.message or "Unavailable"
+            report.standard_status = "Error during validation"
         report.finding_set.findings.extend(validation.findings)
         report.finding_set.normalize()
         if validation.compliant is None and validation.message:
+            unavailable = (
+                validation_status == ValidationStatus.VALIDATOR_UNAVAILABLE
+            )
             report.finding_set.findings.append(
                 Finding(
                     FindingSource.STANDARD,
-                    "verapdf.unavailable",
+                    "verapdf.unavailable" if unavailable else "verapdf.error",
                     Severity.WARNING,
                     None,
-                    "Formal validation could not be completed",
+                    (
+                        "PDF/A validation engine is unavailable."
+                        if unavailable
+                        else "PDF/A validation could not be completed."
+                    ),
                     validation.message,
+                    category="PDF/A Compliance",
                 )
             )
     return report
@@ -2800,7 +2817,14 @@ class PDFViewer(QMainWindow):
                 return
         document_id = session.engine.document_id
         revision = session.engine.revision
-        request = replace(request, original_encrypted=bool(session.engine.password))
+        configured_verapdf = self.settings.get("verapdf_path")
+        request = replace(
+            request,
+            original_encrypted=bool(session.engine.password),
+            verapdf_path=(
+                str(configured_verapdf).strip() if configured_verapdf else None
+            ),
+        )
         session.analysis_panel.set_running(True)
 
         def received(report: InspectionReport) -> None:

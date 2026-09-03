@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import fitz
+from PIL import Image
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtTest import QTest
@@ -18,11 +20,20 @@ from core.analysis import (
     InspectionReport,
     Severity,
     TextRule,
+    ValidationStatus,
+    _effective_dpi,
+    _image_classification,
     inspect_and_analyze,
 )
 from core.pdf_engine import PagePlanEntry, PdfEngine
-from core.platform_service import ProcessResult
-from core.verapdf import VeraPdfRuntime, parse_verapdf_xml, validate_with_verapdf
+from core.platform_service import PlatformService, ProcessResult
+from core.verapdf import (
+    VeraPdfRuntime,
+    command_for,
+    find_verapdf_runtime,
+    parse_verapdf_xml,
+    validate_with_verapdf,
+)
 from ui.analysis_panel import AnalysisPanel
 from ui.page_overlay import InteractionState, PageOverlay
 
@@ -183,6 +194,12 @@ def test_arrow_drag_uses_directional_endpoints_instead_of_a_marquee() -> None:
 
 def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) -> None:
     runtime_root = tmp_path / "VeraPDF"
+    java = runtime_root / "jre" / "bin" / "java.exe"
+    java.parent.mkdir(parents=True)
+    java.write_bytes(b"runtime")
+    jar = runtime_root / "bin" / "cli-1.30.2.jar"
+    jar.parent.mkdir(parents=True)
+    jar.write_bytes(b"cli")
     runtime = VeraPdfRuntime(
         str(runtime_root / "bin" / "verapdf.bat"),
         "Bundled veraPDF",
@@ -205,9 +222,308 @@ def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) ->
     result = validate_with_verapdf(source, "2b")
 
     assert result.compliant is True
+    assert captured["command"][:3] == [str(java), "-jar", str(jar)]
     environment = captured["env"]
     assert environment["JAVA_HOME"] == str(runtime_root / "jre")
     assert str(runtime_root / "jre" / "bin") in environment["PATH"]
+
+
+def _png_stream(mode: str = "RGB", size: tuple[int, int] = (300, 200)) -> bytes:
+    image = Image.new(mode, size)
+    if mode == "P":
+        palette = [value for index in range(256) for value in (index, index, index)]
+        image.putpalette(palette)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _fake_verapdf_runtime(tmp_path: Path, *, with_java: bool = True) -> VeraPdfRuntime:
+    root = tmp_path / "veraPDF runtime"
+    launcher = root / "verapdf.bat"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("@echo off", encoding="utf-8")
+    java_home = root / "jre"
+    if with_java:
+        java = java_home / "bin" / "java.exe"
+        java.parent.mkdir(parents=True, exist_ok=True)
+        java.write_bytes(b"java")
+        jar = root / "bin" / "cli-1.30.2.jar"
+        jar.parent.mkdir(parents=True, exist_ok=True)
+        jar.write_bytes(b"jar")
+    return VeraPdfRuntime(
+        str(launcher),
+        "Bundled veraPDF",
+        str(root),
+        str(java_home) if with_java else "",
+    )
+
+
+def test_effective_dpi_uses_transform_for_scale_and_rotation() -> None:
+    base = {"width": 300, "height": 200, "bbox": (0, 0, 72, 48)}
+
+    assert _effective_dpi({**base, "transform": (72, 0, 0, 48, 0, 0)}) == (
+        300.0,
+        300.0,
+    )
+    assert _effective_dpi({**base, "transform": (36, 0, 0, 24, 0, 0)}) == (
+        600.0,
+        600.0,
+    )
+    assert _effective_dpi({**base, "transform": (144, 0, 0, 96, 0, 0)}) == (
+        150.0,
+        150.0,
+    )
+    assert _effective_dpi({**base, "transform": (0, -72, 48, 0, 0, 72)}) == (
+        300.0,
+        300.0,
+    )
+    assert _effective_dpi({**base, "transform": (0, 0, 0, 0, 0, 0)}) == (
+        0.0,
+        0.0,
+    )
+
+
+def test_multiple_image_instances_use_each_placement_and_group_statistics(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "placements.pdf"
+    stream = _png_stream(size=(300, 300))
+    with fitz.open() as document:
+        page = document.new_page(width=500, height=400)
+        page.insert_image(fitz.Rect(36, 36, 108, 108), stream=stream)
+        page.insert_image(fitz.Rect(160, 36, 304, 180), stream=stream)
+        page.insert_image(
+            fitz.Rect(340, 36, 412, 108), stream=stream, rotate=90
+        )
+        document.save(source)
+
+    report = inspect_and_analyze(
+        source,
+        "placements",
+        0,
+        AnalysisRequest(preflight_profile="digital"),
+    )
+    low_dpi = [
+        item for item in report.finding_set.findings if item.rule_id == "image.low_dpi"
+    ]
+
+    assert len(report.images) == 3
+    assert [item["xdpi"] for item in report.images] == [300.0, 150.0, 300.0]
+    assert len(low_dpi) == 1
+    assert low_dpi[0].raw_data["effective_dpi"] == 150.0
+    group = next(
+        item
+        for item in report.finding_set.groups()
+        if item.rule_id == "image.low_dpi"
+    )
+    assert "Minimum: 150 DPI" in group.details
+    assert "Threshold: 200 DPI" in group.details
+    assert "Unique images: 1" in group.details
+
+
+def test_indexed_rgb_image_is_visible_artwork_with_friendly_group(tmp_path: Path) -> None:
+    source = tmp_path / "indexed.pdf"
+    with fitz.open() as document:
+        page = document.new_page()
+        page.insert_image(
+            fitz.Rect(72, 72, 144, 120),
+            stream=_png_stream("P"),
+        )
+        document.save(source)
+
+    report = inspect_and_analyze(
+        source,
+        "indexed",
+        0,
+        AnalysisRequest(preflight_profile="general"),
+    )
+
+    assert report.images[0]["classification"] == "visible raster image"
+    rgb_group = next(
+        item for item in report.finding_set.groups() if item.rule_id == "image.rgb"
+    )
+    assert rgb_group.summary == "RGB images detected"
+    assert rgb_group.details == (
+        "RGB / Indexed RGB images are present in the document."
+    )
+
+
+def test_stencil_mask_does_not_participate_in_low_dpi_rule(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "mask.pdf"
+    with fitz.open() as document:
+        page = document.new_page()
+        page.insert_image(
+            fitz.Rect(72, 72, 360, 360),
+            stream=_png_stream(size=(10, 10)),
+        )
+        document.save(source)
+    monkeypatch.setattr(
+        "core.analysis._image_classification",
+        lambda _document, _info: "stencil mask",
+    )
+
+    report = inspect_and_analyze(
+        source,
+        "mask",
+        0,
+        AnalysisRequest(preflight_profile="production"),
+    )
+
+    assert report.images[0]["classification"] == "stencil mask"
+    assert not any(
+        item.rule_id == "image.low_dpi" for item in report.finding_set.findings
+    )
+
+
+def test_image_classification_reads_pdf_imagemask_flag() -> None:
+    class StencilDocument:
+        @staticmethod
+        def xref_get_key(_xref, key):
+            assert key == "ImageMask"
+            return "bool", "true"
+
+    info = {
+        "xref": 12,
+        "width": 1,
+        "height": 1,
+        "bpc": 1,
+        "colorspace": 0,
+        "transform": (200, 0, 0, 200, 0, 0),
+    }
+
+    assert _image_classification(StencilDocument(), info) == "stencil mask"
+
+
+def test_image_inside_form_xobject_uses_composed_transform(tmp_path: Path) -> None:
+    form_source = tmp_path / "form-source.pdf"
+    with fitz.open() as source_document:
+        page = source_document.new_page(width=72, height=72)
+        page.insert_image(
+            fitz.Rect(0, 0, 72, 72),
+            stream=_png_stream(size=(300, 300)),
+        )
+        source_document.save(form_source)
+
+    target = tmp_path / "form-target.pdf"
+    with fitz.open(form_source) as source_document, fitz.open() as target_document:
+        page = target_document.new_page(width=300, height=300)
+        page.show_pdf_page(fitz.Rect(36, 36, 180, 180), source_document, 0)
+        target_document.save(target)
+
+    report = inspect_and_analyze(
+        target,
+        "form",
+        0,
+        AnalysisRequest(preflight_profile="digital"),
+    )
+
+    assert len(report.images) == 1
+    assert report.images[0]["xdpi"] == 150.0
+    assert report.images[0]["classification"] == "visible raster image"
+    assert any(
+        item.rule_id == "image.low_dpi" for item in report.finding_set.findings
+    )
+
+
+def test_verapdf_missing_executable_is_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(verapdf_module, "find_verapdf_runtime", lambda _path=None: None)
+
+    result = validate_with_verapdf(tmp_path / "source.pdf", "2b")
+
+    assert result.compliant is None
+    assert result.message == "veraPDF executable was not found."
+    assert result.summary.status == ValidationStatus.VALIDATOR_UNAVAILABLE
+
+
+def test_verapdf_missing_java_is_unavailable(tmp_path, monkeypatch) -> None:
+    runtime = _fake_verapdf_runtime(tmp_path, with_java=False)
+    monkeypatch.setattr(
+        verapdf_module, "find_verapdf_runtime", lambda _path=None: runtime
+    )
+    monkeypatch.setattr(verapdf_module.shutil, "which", lambda _name: None)
+
+    result = validate_with_verapdf(tmp_path / "source.pdf", "2b")
+
+    assert result.message == "Java runtime was not found."
+    assert result.summary.status == ValidationStatus.VALIDATOR_UNAVAILABLE
+
+
+def test_verapdf_nonzero_exit_is_validation_error(tmp_path, monkeypatch) -> None:
+    runtime = _fake_verapdf_runtime(tmp_path)
+    monkeypatch.setattr(
+        verapdf_module, "find_verapdf_runtime", lambda _path=None: runtime
+    )
+    monkeypatch.setattr(
+        verapdf_module.PlatformService,
+        "run_cancellable",
+        lambda *_args, **_kwargs: ProcessResult(7, "", "internal path omitted"),
+    )
+
+    result = validate_with_verapdf(tmp_path / "source.pdf", "2b")
+
+    assert result.message == "veraPDF exited with status code 7."
+    assert "internal path" not in result.message
+    assert result.summary.status == ValidationStatus.ERROR
+
+
+def test_windows_process_output_falls_back_from_utf8(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.platform_service.locale.getpreferredencoding",
+        lambda _do_setlocale=False: "cp1252",
+    )
+    monkeypatch.setattr("core.platform_service.platform.system", lambda: "Windows")
+
+    assert PlatformService._decode_process_output(b"caf\xe9") == "café"
+
+
+def test_packaged_verapdf_path_resolution(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "dist internal"
+    launcher = root / "verapdf" / "verapdf.bat"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("@echo off", encoding="utf-8")
+    monkeypatch.setattr(verapdf_module, "bundle_root", lambda: root)
+    monkeypatch.setattr(verapdf_module.shutil, "which", lambda _name: None)
+
+    runtime = find_verapdf_runtime()
+
+    assert runtime is not None
+    assert Path(runtime.launcher) == launcher.resolve()
+    assert runtime.backend == "Bundled veraPDF"
+
+
+def test_direct_java_command_preserves_unicode_and_spaces(tmp_path) -> None:
+    runtime = _fake_verapdf_runtime(tmp_path)
+    source = tmp_path / "文件 with spaces.pdf"
+
+    command = command_for(runtime, ["--format", "xml", str(source)])
+
+    assert command[0].endswith("java.exe")
+    assert command[1] == "-jar"
+    assert command[-1] == str(source)
+    assert "cmd.exe" not in command
+
+
+def test_external_batch_command_preserves_unicode_and_spaces(tmp_path) -> None:
+    if not PlatformService.WINDOWS:
+        return
+    root = tmp_path / "資料 folder"
+    root.mkdir()
+    launcher = root / "vera pdf.bat"
+    launcher.write_text("@echo off\necho %~1", encoding="utf-8")
+    source = root / "文件 source name.pdf"
+    runtime = VeraPdfRuntime(
+        str(launcher),
+        "External veraPDF",
+        str(root),
+    )
+
+    result = PlatformService.run(command_for(runtime, [str(source)]), cwd=root)
+
+    assert result.returncode == 0
+    assert "source name.pdf" in result.stdout
 
 
 def test_analysis_panel_populates_inspector_categories(tmp_path) -> None:
@@ -373,7 +689,7 @@ def test_analysis_panel_status_and_grouped_csv_export(
     panel._export_csv()
     text = target.read_text(encoding="utf-8-sig")
     assert text.splitlines()[0] == (
-        "Severity,Category,Source,Rule,Summary,Page,Pages,Count,Status,"
+        "Severity,Category,Source,Rule,Summary,Page,Pages,Objects,Status,"
         "Details,ObjectRef,BBox,Value"
     )
     assert text.count("blank pages detected") == 1

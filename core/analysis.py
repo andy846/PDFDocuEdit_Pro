@@ -6,6 +6,7 @@ This module deliberately has no Qt imports.  It is safe to execute through
 
 from __future__ import annotations
 
+import math
 import re
 import tempfile
 import time
@@ -27,6 +28,14 @@ class Severity(StrEnum):
     WARNING = "warning"
 
     INFO = "info"
+
+
+class ValidationStatus(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    NOT_CHECKED = "not_checked"
+    VALIDATOR_UNAVAILABLE = "validator_unavailable"
+    ERROR = "error_during_validation"
 
 
 class FindingStatus(StrEnum):
@@ -62,6 +71,7 @@ class AnalysisRequest:
     near_blank_threshold: float = 0.001
     ocr_fallback: bool = False
     standard_profile: str | None = None
+    verapdf_path: str | None = None
     original_encrypted: bool = False
 
 
@@ -115,6 +125,7 @@ class ValidationSummary:
     validator: str = "veraPDF"
     validator_version: str = ""
     message: str = ""
+    status: ValidationStatus = ValidationStatus.NOT_CHECKED
 
 
 @dataclass(frozen=True)
@@ -275,10 +286,7 @@ class FindingSet:
                 )
             )
 
-        buckets: dict[
-            tuple[str, str, str, Severity, str, FindingStatus],
-            list[Finding],
-        ] = {}
+        buckets: dict[tuple[str, str, str, FindingStatus], list[Finding]] = {}
         for item in self.findings:
             if item.rule_id in blank_rules:
                 continue
@@ -287,15 +295,22 @@ class FindingSet:
                 category,
                 str(item.source),
                 item.rule_id,
-                item.severity,
-                item.summary,
                 item.status,
             )
             buckets.setdefault(key, []).append(item)
 
         for index, (key, members) in enumerate(buckets.items()):
-            category, source, rule_id, severity, summary, status = key
+            category, source, rule_id, status = key
             member_tuple = tuple(members)
+            severity = max(
+                (item.severity for item in member_tuple),
+                key=lambda value: {
+                    Severity.INFO: 0,
+                    Severity.WARNING: 1,
+                    Severity.ERROR: 2,
+                }[value],
+            )
+            summary = member_tuple[0].summary
             pages = tuple(
                 sorted({page for item in member_tuple for page in item.all_pages()})
             )
@@ -312,6 +327,50 @@ class FindingSet:
                     if remaining > 0
                     else preview
                 )
+            if rule_id == "image.rgb":
+                summary = "RGB images detected"
+                grouped_details = (
+                    "RGB / Indexed RGB images are present in the document."
+                )
+            elif rule_id == "image.low_dpi":
+                dpi_values = [
+                    float(data["effective_dpi"])
+                    for item in member_tuple
+                    if (data := item.raw_data)
+                    and isinstance(data.get("effective_dpi"), (int, float))
+                ]
+                thresholds = [
+                    float(data["threshold"])
+                    for item in member_tuple
+                    if (data := item.raw_data)
+                    and isinstance(data.get("threshold"), (int, float))
+                ]
+                xrefs = {
+                    int(data["xref"])
+                    for item in member_tuple
+                    if (data := item.raw_data)
+                    and isinstance(data.get("xref"), int)
+                    and int(data["xref"]) > 0
+                }
+                parts = [
+                    f"{len(member_tuple)} objects across {len(pages)} "
+                    f"page{'s' if len(pages) != 1 else ''}"
+                ]
+                if dpi_values:
+                    parts.extend(
+                        (
+                            f"Minimum: {_display_number(min(dpi_values))} DPI",
+                            "Maximum below threshold: "
+                            f"{_display_number(max(dpi_values))} DPI",
+                        )
+                    )
+                if thresholds:
+                    parts.append(
+                        f"Threshold: {_display_number(max(thresholds))} DPI"
+                    )
+                if xrefs:
+                    parts.append(f"Unique images: {len(xrefs)}")
+                grouped_details = " · ".join(parts)
             object_refs = list(
                 dict.fromkeys(
                     item.object_ref for item in member_tuple if item.object_ref
@@ -439,6 +498,10 @@ def _cancelled(callback) -> bool:
 
 def _box_tuple(value: fitz.Rect) -> tuple[float, float, float, float]:
     return tuple(round(float(part), 3) for part in value)  # type: ignore[return-value]
+
+
+def _display_number(value: float) -> str:
+    return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
 def _rect_mm(value: fitz.Rect) -> tuple[float, float]:
@@ -572,14 +635,70 @@ def _font_embedded(document: fitz.Document, xref: int, extension: str) -> bool:
     return extension.casefold() not in {"", "n/a"}
 
 
-def _effective_dpi(info: dict[str, Any]) -> tuple[float, float]:
+def _rendered_image_size(info: dict[str, Any]) -> tuple[float, float]:
     try:
+        transform = info.get("transform")
+        if isinstance(transform, (tuple, list)) and len(transform) >= 4:
+            a, b, c, d = (float(transform[index]) for index in range(4))
+            return math.hypot(a, b), math.hypot(c, d)
         bbox = fitz.Rect(info.get("bbox"))
-        xdpi = float(info.get("width", 0)) * 72.0 / max(0.001, abs(bbox.width))
-        ydpi = float(info.get("height", 0)) * 72.0 / max(0.001, abs(bbox.height))
-        return round(xdpi, 1), round(ydpi, 1)
-    except Exception:
+        return abs(float(bbox.width)), abs(float(bbox.height))
+    except (TypeError, ValueError, AttributeError):
         return 0.0, 0.0
+
+
+def _effective_dpi(info: dict[str, Any]) -> tuple[float, float]:
+    """Return placement DPI using the actual image transform vectors.
+
+    get_image_info supplies a matrix that maps the image unit square to the
+    painted page parallelogram. Axis-aligned bounding-box dimensions are not
+    equivalent when an image is rotated or skewed, so they are only a fallback
+    for older PyMuPDF records without a transform.
+    """
+
+    try:
+        pixel_width = float(info.get("width", 0))
+        pixel_height = float(info.get("height", 0))
+        if not all(
+            math.isfinite(value) and value > 0
+            for value in (pixel_width, pixel_height)
+        ):
+            return 0.0, 0.0
+
+        rendered_width, rendered_height = _rendered_image_size(info)
+        if not all(
+            math.isfinite(value) and value > 1e-6
+            for value in (rendered_width, rendered_height)
+        ):
+            return 0.0, 0.0
+        xdpi = pixel_width * 72.0 / rendered_width
+        ydpi = pixel_height * 72.0 / rendered_height
+        if not all(math.isfinite(value) and value > 0 for value in (xdpi, ydpi)):
+            return 0.0, 0.0
+        return round(xdpi, 1), round(ydpi, 1)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0, 0.0
+
+
+def _image_classification(document: fitz.Document, info: dict[str, Any]) -> str:
+    """Classify image paint operations without treating masks as artwork."""
+
+    xref = int(info.get("xref", 0) or 0)
+    if xref > 0:
+        try:
+            kind, value = document.xref_get_key(xref, "ImageMask")
+            if kind == "bool" and str(value).casefold() == "true":
+                return "stencil mask"
+        except Exception:
+            return "unknown raster object"
+    elif (
+        int(info.get("bpc", 0) or 0) == 1
+        and int(info.get("colorspace", 0) or 0) <= 0
+    ):
+        return "image mask"
+    if _effective_dpi(info) == (0.0, 0.0):
+        return "unknown raster object"
+    return "visible raster image"
 
 
 def _image_compression(document: fitz.Document, xref: int) -> str:
@@ -856,13 +975,21 @@ def inspect_and_analyze(
 
             for image in components["images"]:
                 xdpi, ydpi = _effective_dpi(image)
+                classification = _image_classification(document, image)
                 colorspace = str(
                     image.get("cs-name") or image.get("colorspace") or "Unknown"
                 )
                 colors[colorspace] = colors.get(colorspace, 0) + 1
-                bbox = fitz.Rect(image.get("bbox"))
+                try:
+                    bbox = fitz.Rect(image.get("bbox"))
+                    visible_on_page = not (bbox & page.rect).is_empty
+                except (TypeError, ValueError):
+                    bbox = fitz.Rect()
+                    visible_on_page = False
+                rendered_width, rendered_height = _rendered_image_size(image)
                 image_record = {
                     "page": page_number,
+                    "number": int(image.get("number", 0) or 0),
                     "xref": int(image.get("xref", 0) or 0),
                     "width": int(image.get("width", 0) or 0),
                     "height": int(image.get("height", 0) or 0),
@@ -876,6 +1003,9 @@ def inspect_and_analyze(
                     "ydpi": ydpi,
                     "dpi": f"{xdpi:.1f}×{ydpi:.1f}",
                     "bbox": _box_tuple(bbox),
+                    "rendered_width": round(rendered_width, 3),
+                    "rendered_height": round(rendered_height, 3),
+                    "classification": classification,
                     "has_mask": bool(
                         image.get("has-mask", False) or image.get("smask", 0)
                     ),
@@ -889,16 +1019,22 @@ def inspect_and_analyze(
                             Severity.INFO,
                             page_number,
                             "Raster image detected",
-                            f"{image_record['width']}×{image_record['height']} px | {min(xdpi, ydpi):.1f} DPI",
+                            f"{image_record['width']}×{image_record['height']} px | "
+                            f"{min(xdpi, ydpi):.1f} DPI | {classification}",
                             str(image_record["xref"]),
                             image_record["bbox"],
                         )
                     )
                 if profile:
                     effective = min(xdpi, ydpi)
-                    if effective and effective < float(profile["dpi_error"]):
+                    is_printable_image = (
+                        classification == "visible raster image"
+                        and visible_on_page
+                        and effective > 0
+                    )
+                    if is_printable_image and effective < float(profile["dpi_error"]):
                         severity = Severity.ERROR
-                    elif effective and effective < float(profile["dpi_warning"]):
+                    elif is_printable_image and effective < float(profile["dpi_warning"]):
                         severity = Severity.WARNING
                     else:
                         severity = None
@@ -910,12 +1046,36 @@ def inspect_and_analyze(
                                 severity,
                                 page_number,
                                 "Low effective image resolution",
-                                f"{effective:.1f} DPI | {colorspace}",
+                                f"{effective:.1f} DPI | {xdpi:.1f}×{ydpi:.1f} DPI | "
+                                f"{image_record['width']}×{image_record['height']} px | "
+                                f"{rendered_width:.1f}×{rendered_height:.1f} pt | "
+                                f"{colorspace}",
                                 f"{effective:.1f}",
                                 image_record["bbox"],
+                                object_ref=(
+                                    f"{image_record['xref']} 0 obj / image operation "
+                                    f"{image_record['number'] + 1}"
+                                    if image_record["xref"] > 0
+                                    else f"inline image {image_record['number'] + 1}"
+                                ),
+                                category="Images",
+                                raw_data={
+                                    "effective_dpi": effective,
+                                    "effective_dpi_x": xdpi,
+                                    "effective_dpi_y": ydpi,
+                                    "width_px": image_record["width"],
+                                    "height_px": image_record["height"],
+                                    "rendered_width_pt": rendered_width,
+                                    "rendered_height_pt": rendered_height,
+                                    "colorspace": colorspace,
+                                    "classification": classification,
+                                    "xref": image_record["xref"],
+                                    "occurrence": image_record["number"],
+                                    "threshold": float(profile["dpi_warning"]),
+                                },
                             )
                         )
-                    if "RGB" in colorspace.upper():
+                    if is_printable_image and "RGB" in colorspace.upper():
                         finding_set.findings.append(
                             Finding(
                                 FindingSource.PREFLIGHT,
@@ -926,6 +1086,19 @@ def inspect_and_analyze(
                                 colorspace,
                                 str(image_record["xref"]),
                                 image_record["bbox"],
+                                category="Color",
+                                object_ref=(
+                                    f"{image_record['xref']} 0 obj / image operation "
+                                    f"{image_record['number'] + 1}"
+                                    if image_record["xref"] > 0
+                                    else f"inline image {image_record['number'] + 1}"
+                                ),
+                                raw_data={
+                                    "colorspace": colorspace,
+                                    "classification": classification,
+                                    "xref": image_record["xref"],
+                                    "occurrence": image_record["number"],
+                                },
                             )
                         )
 
@@ -1139,6 +1312,7 @@ __all__ = [
     "PREFLIGHT_PROFILES",
     "Severity",
     "TextRule",
+    "ValidationStatus",
     "ValidationSummary",
     "inspect_and_analyze",
 ]

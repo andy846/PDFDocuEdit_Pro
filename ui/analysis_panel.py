@@ -38,6 +38,7 @@ from core.analysis import (
     InspectionReport,
     Severity,
     TextRule,
+    ValidationStatus,
 )
 
 
@@ -131,6 +132,7 @@ class AnalysisPanel(QFrame):
                 "Color",
                 "BPC",
                 "Alpha",
+                "Kind",
                 "Effective DPI",
                 "Placement",
                 "XRef",
@@ -257,7 +259,7 @@ class AnalysisPanel(QFrame):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         controls = QHBoxLayout()
-        self.group_results = QCheckBox("Group repetitive page findings")
+        self.group_results = QCheckBox("Group repetitive findings")
         self.group_results.setChecked(True)
         self.group_results.toggled.connect(self._refresh_results)
         controls.addWidget(self.group_results)
@@ -277,7 +279,7 @@ class AnalysisPanel(QFrame):
                 "Rule",
                 "Summary",
                 "Page(s)",
-                "Count",
+                "Objects",
                 "Status",
                 "Details",
                 "Object Ref",
@@ -285,6 +287,8 @@ class AnalysisPanel(QFrame):
                 "Value",
             ]
         )
+        for technical_column in (2, 9, 10, 11):
+            self.results.setColumnHidden(technical_column, True)
         self.results.cellClicked.connect(self._jump_result)
         layout.addWidget(self.results, 1)
 
@@ -415,6 +419,7 @@ class AnalysisPanel(QFrame):
                 "colorspace",
                 "bpc",
                 "has_mask",
+                "classification",
                 "dpi",
                 "bbox",
                 "xref",
@@ -433,18 +438,22 @@ class AnalysisPanel(QFrame):
         summary = report.validation_summary
         if summary is None:
             self.validation_summary_label.setText(report.standard_status)
-        elif summary.compliant is True:
+        elif summary.status == ValidationStatus.PASS:
             self.validation_summary_label.setText(
                 f"{summary.standard}: PASSED ({summary.passed_rule_count} rules checked)"
             )
-        elif summary.compliant is False:
+        elif summary.status == ValidationStatus.FAIL:
             self.validation_summary_label.setText(
                 f"{summary.standard}: FAILED - {summary.failed_rule_count} unique rule "
                 f"failure(s), {summary.failed_check_count} affected object check(s)"
             )
+        elif summary.status == ValidationStatus.VALIDATOR_UNAVAILABLE:
+            self.validation_summary_label.setText(
+                f"{summary.standard}: VALIDATOR UNAVAILABLE - {summary.message}"
+            )
         else:
             self.validation_summary_label.setText(
-                f"{summary.standard}: validation unavailable - {summary.message}"
+                f"{summary.standard}: ERROR DURING VALIDATION - {summary.message}"
             )
         report.finding_set.normalize()
         self._refresh_results()
@@ -670,7 +679,7 @@ class AnalysisPanel(QFrame):
             "Summary",
             "Page",
             "Pages",
-            "Count",
+            "Objects",
             "Status",
             "Details",
             "ObjectRef",

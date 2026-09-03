@@ -11,7 +11,13 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-from .analysis import Finding, FindingSource, Severity, ValidationSummary
+from .analysis import (
+    Finding,
+    FindingSource,
+    Severity,
+    ValidationStatus,
+    ValidationSummary,
+)
 from .platform_service import PlatformService
 from .resources import bundle_root
 
@@ -106,9 +112,55 @@ def find_verapdf_runtime(configured_path: str | None = None) -> VeraPdfRuntime |
 
 def command_for(runtime: VeraPdfRuntime, arguments: list[str]) -> list[str]:
     launcher = Path(runtime.launcher)
+    java_name = "java.exe" if platform.system() == "Windows" else "java"
+    java = Path(runtime.java_home) / "bin" / java_name if runtime.java_home else None
+    jars = sorted((Path(runtime.home) / "bin").glob("cli-*.jar"))
+    if java is not None and java.is_file() and len(jars) == 1:
+        return [str(java), "-jar", str(jars[0]), *arguments]
     if launcher.suffix.casefold() in {".bat", ".cmd"}:
-        return ["cmd.exe", "/d", "/s", "/c", str(launcher), *arguments]
+        return ["cmd.exe", "/d", "/s", "/c", "call", str(launcher), *arguments]
     return [str(launcher), *arguments]
+
+
+def _result_without_validation(
+    profile: str,
+    message: str,
+    status: ValidationStatus,
+) -> VeraPdfResult:
+    standard = dict(SUPPORTED_PROFILES).get(profile, profile)
+    return VeraPdfResult(
+        profile,
+        None,
+        (),
+        "",
+        message,
+        ValidationSummary(
+            standard=standard,
+            profile=profile,
+            compliant=None,
+            message=message,
+            status=status,
+        ),
+    )
+
+
+def _java_available(runtime: VeraPdfRuntime) -> bool:
+    java_name = "java.exe" if platform.system() == "Windows" else "java"
+    if runtime.java_home:
+        return (Path(runtime.java_home) / "bin" / java_name).is_file()
+    return shutil.which("java") is not None
+
+
+def _execution_failure(stderr: str, returncode: int) -> str:
+    text = stderr.casefold()
+    if "java" in text and any(
+        token in text
+        for token in ("not found", "not recognized", "could not find", "no such file")
+    ):
+        return "Java runtime was not found."
+    if returncode:
+        return f"veraPDF exited with status code {returncode}."
+    return "veraPDF could not be started."
 
 
 def _local_name(tag: str) -> str:
@@ -233,8 +285,23 @@ def _failed(element: ET.Element) -> bool:
 def parse_verapdf_xml(xml_text: str, profile: str) -> VeraPdfResult:
     try:
         root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
-        return VeraPdfResult(profile, None, (), xml_text, f"Invalid veraPDF XML: {exc}")
+    except ET.ParseError:
+        standard = dict(SUPPORTED_PROFILES).get(profile, profile)
+        message = "veraPDF returned an unreadable validation report."
+        return VeraPdfResult(
+            profile,
+            None,
+            (),
+            xml_text,
+            message,
+            ValidationSummary(
+                standard=standard,
+                profile=profile,
+                compliant=None,
+                message=message,
+                status=ValidationStatus.ERROR,
+            ),
+        )
 
     compliant: bool | None = None
     for element in root.iter():
@@ -382,6 +449,13 @@ def parse_verapdf_xml(xml_text: str, profile: str) -> VeraPdfResult:
         failed_rule_count=len(failed_rules),
         passed_rule_count=len(passed_rules),
         failed_check_count=failed_check_count,
+        status=(
+            ValidationStatus.PASS
+            if compliant is True
+            else ValidationStatus.FAIL
+            if compliant is False
+            else ValidationStatus.ERROR
+        ),
     )
     return VeraPdfResult(profile, compliant, tuple(findings), xml_text, summary=summary)
 
@@ -395,12 +469,16 @@ def validate_with_verapdf(
 ) -> VeraPdfResult:
     runtime = find_verapdf_runtime(configured_path)
     if runtime is None:
-        return VeraPdfResult(
+        return _result_without_validation(
             profile,
-            None,
-            (),
-            "",
-            "veraPDF runtime is not available. Reinstall the validation component or configure its path.",
+            "veraPDF executable was not found.",
+            ValidationStatus.VALIDATOR_UNAVAILABLE,
+        )
+    if not _java_available(runtime):
+        return _result_without_validation(
+            profile,
+            "Java runtime was not found.",
+            ValidationStatus.VALIDATOR_UNAVAILABLE,
         )
     arguments = [
         "--format",
@@ -417,21 +495,38 @@ def validate_with_verapdf(
             + os.pathsep
             + environment.get("PATH", "")
         )
-    result = PlatformService.run_cancellable(
-        command_for(runtime, arguments),
-        is_cancelled=is_cancelled,
-        timeout=900,
-        cwd=runtime.home,
-        env=environment,
-    )
+    try:
+        result = PlatformService.run_cancellable(
+            command_for(runtime, arguments),
+            is_cancelled=is_cancelled,
+            timeout=900,
+            cwd=runtime.home,
+            env=environment,
+        )
+    except FileNotFoundError:
+        return _result_without_validation(
+            profile,
+            "veraPDF executable was not found.",
+            ValidationStatus.VALIDATOR_UNAVAILABLE,
+        )
+    except TimeoutError:
+        return _result_without_validation(
+            profile,
+            "veraPDF validation timed out.",
+            ValidationStatus.ERROR,
+        )
+    except OSError:
+        return _result_without_validation(
+            profile,
+            "veraPDF could not be started.",
+            ValidationStatus.VALIDATOR_UNAVAILABLE,
+        )
     payload = result.stdout.strip()
     if not payload:
-        return VeraPdfResult(
+        return _result_without_validation(
             profile,
-            None,
-            (),
-            "",
-            result.stderr.strip() or f"veraPDF exited with code {result.returncode}.",
+            _execution_failure(result.stderr, result.returncode),
+            ValidationStatus.ERROR,
         )
     parsed = parse_verapdf_xml(payload, profile)
     if parsed.message:
@@ -441,7 +536,7 @@ def validate_with_verapdf(
         parsed.compliant,
         parsed.findings,
         parsed.raw_xml,
-        result.stderr.strip(),
+        "",
         parsed.summary,
     )
 

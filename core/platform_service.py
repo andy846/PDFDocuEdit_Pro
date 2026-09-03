@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import locale
 import os
 import platform
 import shutil
@@ -25,6 +26,36 @@ class ProcessResult:
 class PlatformService:
     WINDOWS = platform.system() == "Windows"
     MACOS = platform.system() == "Darwin"
+
+    @staticmethod
+    def _decode_process_output(value: bytes | str | None) -> str:
+        """Decode tool output without assuming every Windows process uses UTF-8."""
+
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        encodings = ["utf-8-sig"]
+        preferred = locale.getpreferredencoding(False)
+        if preferred:
+            encodings.append(preferred)
+        if platform.system() == "Windows":
+            encodings.extend(("mbcs", "oem", "cp1252"))
+        tried: set[str] = set()
+        for encoding in encodings:
+            key = encoding.casefold()
+            if key in tried:
+                continue
+            tried.add(key)
+            try:
+                return value.decode(encoding, errors="strict")
+            except (LookupError, UnicodeDecodeError):
+                continue
+        fallback = preferred or "utf-8"
+        try:
+            return value.decode(fallback, errors="replace")
+        except LookupError:
+            return value.decode("utf-8", errors="replace")
 
     @classmethod
     def open_path(cls, path: str | os.PathLike[str]) -> bool:
@@ -83,9 +114,6 @@ class PlatformService:
                 cwd=cwd,
                 env=env,
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=timeout,
                 check=False,
                 **kwargs,
@@ -94,7 +122,11 @@ class PlatformService:
             raise TimeoutError(
                 f"The external tool did not respond within {timeout}s."
             ) from exc
-        return ProcessResult(result.returncode, result.stdout, result.stderr)
+        return ProcessResult(
+            result.returncode,
+            PlatformService._decode_process_output(result.stdout),
+            PlatformService._decode_process_output(result.stderr),
+        )
 
     @staticmethod
     def run_cancellable(
@@ -115,9 +147,6 @@ class PlatformService:
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             **kwargs,
         )
         deadline = time.monotonic() + timeout
@@ -136,7 +165,11 @@ class PlatformService:
                     )
                 try:
                     stdout, stderr = process.communicate(timeout=min(0.1, remaining))
-                    return ProcessResult(process.returncode or 0, stdout, stderr)
+                    return ProcessResult(
+                        process.returncode or 0,
+                        PlatformService._decode_process_output(stdout),
+                        PlatformService._decode_process_output(stderr),
+                    )
                 except subprocess.TimeoutExpired:
                     continue
         finally:

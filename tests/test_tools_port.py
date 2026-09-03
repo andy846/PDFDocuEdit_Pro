@@ -1020,6 +1020,45 @@ def test_file_info_tooltip_contains_path_and_pages(tmp_path, monkeypatch):
     bar.deleteLater()
 
 
+def test_bottom_bar_controls_do_not_move_when_status_text_changes():
+    from styles.tokens import D
+
+    app = _app()
+    bar = BottomBar()
+    bar.resize(1200, D.STATUSBAR_H)
+    bar.show()
+    app.processEvents()
+    controls = (bar._fit, bar._rotate, bar._layout)
+    positions = tuple(widget.geometry().x() for widget in controls)
+
+    message = (
+        "A much longer background-operation status message that must not move "
+        "the page controls"
+    )
+    bar.set_status(message)
+    app.processEvents()
+
+    assert tuple(widget.geometry().x() for widget in controls) == positions
+    assert bar._status.width() == 180
+    assert bar._status.toolTip() == message
+    assert bar._status.text().endswith("…")
+
+    bar._update_responsive_layout(960)
+    bar.layout().invalidate()
+    bar.resize(960, D.STATUSBAR_H)
+    app.processEvents()
+    compact_positions = tuple(widget.geometry().x() for widget in controls)
+    bar.set_status("Ready")
+    app.processEvents()
+    assert tuple(widget.geometry().x() for widget in controls) == compact_positions
+    assert not bar._size.isVisible()
+    assert bar._layout.geometry().right() < bar.width()
+    assert bar._status.geometry().right() < bar.width()
+    bar.hide()
+    bar.deleteLater()
+    app.processEvents()
+
+
 # --- P3: status messages (G7) --------------------------------------------
 
 

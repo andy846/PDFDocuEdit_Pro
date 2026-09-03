@@ -197,13 +197,22 @@ class BottomBar(QWidget):
         layout.addStretch(1)
         self._size = QLabel("")
         self._size.setObjectName("pageInfo")
-        self._size.setMinimumWidth(112)
+        self._size.setFixedWidth(136)
+        self._size.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         layout.addWidget(self._size)
-        layout.addWidget(separator())
+        self._size_separator = separator()
+        layout.addWidget(self._size_separator)
         layout.addSpacing(S.XS)
         self._status = QLabel("Ready")
         self._status.setObjectName("pageInfo")
-        self._status.setMinimumWidth(56)
+        self._status.setFixedWidth(180)
+        self._status.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._status_full = "Ready"
+        self._status.setToolTip(self._status_full)
         layout.addWidget(self._status)
         # Explicit per-item alignment avoids style-dependent vertical fill;
         # separators, 28 px fields and 32 px icon buttons share one centre.
@@ -211,6 +220,7 @@ class BottomBar(QWidget):
             item = layout.itemAt(index)
             if item.widget() is not None:
                 item.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self._update_responsive_layout(self.width())
         self.set_document_available(False)
 
     def _button(
@@ -277,7 +287,17 @@ class BottomBar(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._update_responsive_layout(self.width())
         self._elide_file_info()
+        self._elide_status()
+
+    def _update_responsive_layout(self, width: int) -> None:
+        compact = width < 1160
+        self._size.setVisible(not compact)
+        self._size_separator.setVisible(not compact)
+        status_width = 128 if compact else 180
+        if self._status.width() != status_width:
+            self._status.setFixedWidth(status_width)
 
     def set_current_page(self, page: int) -> None:
         self._current_page = max(0, page)
@@ -324,7 +344,18 @@ class BottomBar(QWidget):
             self._size.clear()
 
     def set_status(self, text: str) -> None:
-        self._status.setText(text)
+        self._status_full = text
+        self._status.setToolTip(text)
+        self._elide_status()
+
+    def _elide_status(self) -> None:
+        self._status.setText(
+            self._status.fontMetrics().elidedText(
+                self._status_full,
+                Qt.TextElideMode.ElideRight,
+                max(1, self._status.width() - 8),
+            )
+        )
 
     def set_animations_enabled(self, enabled: bool) -> None:
         for button in (self._prev, self._next, self._zoom_out, self._zoom_in):

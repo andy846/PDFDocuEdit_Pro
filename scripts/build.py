@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "2.5.2"
+VERSION = "2.5.3"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
