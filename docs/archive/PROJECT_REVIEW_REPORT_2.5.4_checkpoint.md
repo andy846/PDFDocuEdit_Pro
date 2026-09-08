@@ -1,21 +1,17 @@
-# PDFDocuEdit Pro stability and V2.6 architecture preparation report
+# PDFDocuEdit Pro V2.5.4 repair report
 
-Stability checkpoint: 2026-09-06. Background printing follow-up: 2026-09-07. Base source: V2.5.3. Current version metadata remains V2.5.4.
-Scope: completed stability stages A–E, background printing, page/annotation/watermark/redaction transactions, failure-safe undo/redo navigation, mutation controller extraction and shared atomic output for the migrated paths. See [V2.6 architecture report](docs/V2.6_ARCHITECTURE_REPORT.md) for the latest implementation, evidence and remaining release work.
+Date: 2026-09-06. Base source: V2.5.3. Current source: V2.5.4.
+Scope: stability stages A–E. V2.6 architectural work remains deferred as requested.
 
 ## 1. Modified files
 
 | Area | Files |
 | --- | --- |
-| Controller / atomic IO | New `ui/mutation_controller.py`, `core/io_atomic.py`, `tests/test_io_atomic.py`; migrated save/extract and annotation exports |
-| Annotation transactions | `core/annotation_io.py`, `core/viewer.py`, new `tests/test_annotation_transactions.py`; watermark and applied-redaction boundaries |
-| Undo/redo reliability | `core/undo.py`, `core/viewer.py`, `tests/test_undo_history.py`, `tests/test_ui_smoke.py`; new `docs/UNDO_REDO_RELIABILITY_REPORT.md` |
-| Mutation transactions | `core/pdf_engine.py`, `core/undo.py`, `core/viewer.py`, `ui/document_session.py`; new `tests/test_mutation_transactions.py`, extended `tests/test_ui_smoke.py` |
 | PDF integrity | `core/pdf_engine.py`, `tests/test_pdf_engine.py` |
 | OCR | New `core/ocr_language.py`; `core/ocr.py`, `core/analysis.py`, `dialogs/ocr_dialog.py`, `tests/test_ocr.py` |
 | Capabilities / validation | `core/capabilities.py`, `core/verapdf.py`, `tests/test_v2_analysis.py` |
 | Build / CI | `scripts/build.py`, `scripts/verify_source.py`, `pyproject.toml`, `.github/workflows/ci.yml`; new `tests/test_stability_contracts.py` |
-| Printing / public theme | `core/viewer.py`, new `core/printing.py` and `ui/print_controller.py`, `dialogs/batch_print_dialog.py`, `main.py`, `scripts/render_motion_qa.py`, `tests/test_ui_smoke.py`, `tests/test_tools_port.py`, new `tests/test_printing.py` |
+| Printing / public theme | `core/viewer.py`, `main.py`, `scripts/render_motion_qa.py`, `tests/test_ui_smoke.py` |
 | Associations | `core/file_association.py`, `installer/PDFDocuEditPro.iss`, `tests/test_file_association.py` |
 | Settings | `core/settings.py`, `tests/test_settings.py` |
 | Version / source contracts | `core/resources.py`, `installer/PDFDocuEditPro.version.txt`, `tests/test_source_contract.py`; version fields in the build/installer/project files above |
@@ -36,7 +32,7 @@ Fifteen historical files were moved without content changes: `backup/` (12 files
 | veraPDF discovery | Capability detection duplicated discovery and omitted `VeraPDF/`. | Capability detection calls `find_verapdf_runtime()`; both spellings work in bundle and frozen executable fallback locations. | `test_verapdf_discovery_is_shared`, both names and frozen/development cases; existing runtime/Java tests retained. |
 | Python requirement | Build and source verifier accepted 3.11–3.13 despite project metadata allowing only 3.12. | Both accept only Python 3.12.x; build main rejects unsupported versions before work starts. | Build rejection/acceptance tests and source-verifier tests; CI remains Python 3.12. |
 | macOS OCR contract | Spec already excluded OCR on macOS, but build output was not explicit. | README, build output and capability reason say: “OCR is not bundled in the macOS build.” | `test_macos_ocr_contract`; inspected existing Windows-only spec rule. |
-| Print re-entrancy | Single and batch progress callbacks pumped GUI events. | Worker preparation/rendering with one image in flight; GUI-thread printer/painter lifecycle; Event cancellation and Qt progress; registered actions and editing widgets suspended/restored. All PyMuPDF worker access retains DOCUMENT_LOCK protection. | Real asynchronous single/batch PDF output, live GUI timer during blocked rendering, worker thread checks, cancellation before spool/during preparation/after a page, error continuation, native-dialog cancellation, printer page failure, UI/dialog lifetime and source contract. |
+| Print re-entrancy | Single and batch progress callbacks pumped GUI events. | No event pumping; registered application actions are suspended and restored in `finally`; painting holds DOCUMENT_LOCK; open/close/repeated print entry points are guarded. | Existing real PDF print tests, in-paint action assertions, close rejection, exception restoration, cancellation output page count and source contract. |
 | Association lookup | UserChoice followed only by merged HKCR lookup. | UserChoice retains priority, then explicit HKCU, HKCR and HKLM classes fallback. | Existing precedence test and `test_default_lookup_reaches_machine_classes`. |
 | Association removal | Runtime registration lacked a symmetric remover. | `unregister_default_app()` removes matching own values, leaves UserChoice and foreign values intact, and deletes shared keys only when empty. Installer OpenWith values also use empty-key cleanup. | Mock-registry register/unregister round trip, foreign defaults/values, UserChoice preservation, empty key removal and idempotence. No real registry writes during tests. |
 | Settings null fallback | An explicit null bypassed a supplied default. | Null follows fallback handling; false, zero and empty strings remain values. | `test_get_defaults_for_null_and_missing_preserves_false_values`; existing settings tests. Caller audit found no dependence on distinguishing missing from null through `.get()`. |
@@ -45,13 +41,13 @@ Fifteen historical files were moved without content changes: `backup/` (12 files
 
 ## 3. Architectural changes
 
-Shared boundaries include the rollback restore helper, OCR language contract and veraPDF finder. The follow-up adds immutable print inputs/settings and a GUI-owned PrintController with one cancellable FunctionTask at a time. No general mutation transaction framework, automatic low-level undo snapshots, viewer decomposition or shared atomic-IO migration was introduced. Existing DOCUMENT_LOCK coverage is retained. Worker PDF preparation and rasterization hold the lock; no GUI-owned lock is held while waiting for a worker.
+Only small shared boundaries were introduced: a private rollback restore helper, the OCR language contract, reuse of the existing veraPDF finder, and a scoped native-print guard. No general mutation transaction framework, automatic low-level undo snapshots, viewer decomposition or shared atomic-IO migration was introduced. Existing DOCUMENT_LOCK coverage was retained and print painting now additionally holds it.
 
-Production single/batch rendering is now asynchronous; the synchronous `_paint_documents()` compatibility helper is retained. The guard uses registered application actions plus editing widgets, without traversing Qt-internal actions. Printer/dialog operations remain on the GUI thread. Batch confirmation settings carry across files; source-driven page layout remains per file unless explicitly overridden.
+Print rendering remains synchronous under the plan's permitted minimum safety option. The guard uses only `_registered_shortcut_actions`; it does not traverse or mutate Qt-internal actions. Printer/dialog thread placement and existing scaling/page-layout behavior are retained.
 
 ## 4. New/updated tests
 
-There are 34 additional collected cases relative to the 296-case base, giving 330 cases across 31 test modules. New modules `tests/test_stability_contracts.py` and `tests/test_printing.py` cover stability contracts and the background print lifecycle; both are included in the existing Linux/macOS core CI selection. The other tests are additions or strengthened assertions in the files listed above.
+There are 26 additional collected cases relative to the 296-case base, giving 322 cases across 30 test modules. One new module, `tests/test_stability_contracts.py`, covers OCR platform/build and shared veraPDF contracts; it is also included in the existing Linux/macOS core CI selection. The other tests are additions or strengthened assertions in the files listed above.
 
 Regression tests cover fault recovery, failed rollback, order/duplicates, language normalization, bundle discovery, unsupported Python versions, macOS OCR messaging, print action/state restoration and cancellation, registry preservation, settings defaults and the public theme call.
 
@@ -70,18 +66,12 @@ Validated on Windows with project-pinned PyQt6 6.8.1 / Qt 6.8.2 and PyMuPDF 1.26
 | Updated print/task/build tests, Python 3.12 | 20 passed |
 | Full functional suite, Python 3.12.14 | 322 passed in 144.57 seconds |
 | Final metadata/source/build contracts after archiving | 18 passed |
-| V2.5.4 stability checkpoint, Python 3.12.14 | 322 passed in 151.12 seconds; 30 modules |
-| Background printing follow-up, Python 3.12.14 | **330 passed in 157.72 seconds; 31 modules; zero failures/errors** |
-| Mutation transaction follow-up, Python 3.12.14 | **341 passed in 147.81 seconds; 32 modules; zero failures/errors** |
-| Undo/redo reliability checkpoint | 359 passed in 164.65 seconds; 32 modules |
-| Annotation transaction checkpoint | 378 passed in 247.87 seconds; 33 modules |
-| Final controller/atomic-IO architecture validation | **386 passed in 290.04 seconds; 34 modules; zero failures/errors** |
-| Redaction save follow-up | **389 passed in 255.95 seconds; 35 modules; zero failures/errors** |
+| Final V2.5.4 full suite, Python 3.12.14 | **322 passed in 151.12 seconds; 30 test modules; zero failures/errors** |
 | Source verification | Passed |
 | Archive integrity | All 15 moved files match original Git blobs |
 | Annotation plan encoding | Valid UTF-8, intact Chinese text, no replacement characters |
 
-Earlier print-guard iterations produced native Windows access violations in the full suite. A test monkeypatch lifetime issue was corrected, and the production guard was narrowed from recursive Qt action discovery to the existing application action registry. Those failed runs were not counted as passing validation. The stability checkpoint passed 322 cases. The background printing checkpoint passed 330 cases in 157.72 seconds across 31 modules. The page transaction checkpoint passed 341 cases in 147.81 seconds across 32 modules. The final architecture follow-up passed 386 cases in 290.04 seconds across 34 modules, with zero failures/errors. The intermediate interrupted quiet annotation run is recorded in the architecture report and is not counted as passing validation.
+Earlier print-guard iterations produced native Windows access violations in the full suite. A test monkeypatch lifetime issue was corrected, and the production guard was narrowed from recursive Qt action discovery to the existing application action registry. Those failed runs were not counted as passing validation. The final V2.5.4 run passed all 322 cases in 151.12 seconds, with zero failures/errors; its JUnit report confirms 30 test modules.
 
 The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. Actual remote CI jobs were not triggered from this session; local results do not claim execution on macOS or Linux.
 
@@ -97,12 +87,12 @@ The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. A
 
 | Item / reason | Risk or limitation | Next step |
 | --- | --- | --- |
-| Cancellation is cooperative; the initial live-document snapshot and native printer calls still run on the GUI thread. | Cancel cannot interrupt an active PyMuPDF/native call; already-spooled pages may not be retractable. Very large initial snapshots can briefly pause the UI. | Validate real printer drivers and large documents; evaluate snapshot cost in the future transaction architecture. |
+| Synchronous native printing was retained to keep this stability patch scoped. | GUI repaint and interactive Cancel cannot run while rendering. Cooperative cancellation is checked before/between pages, but this is not a responsive worker implementation. | In V2.6, prepare immutable print jobs in a worker with progress signals and Event cancellation; retain GUI-thread printer interaction. |
 | Real platform integrations were not executed here. | Physical printer drivers, macOS packaged runtime and actual external-binary workflows remain unverified by this repair. | Run target-platform smoke tests and optional binary integration CI before release packaging. |
 | macOS OCR is not bundled by the existing product contract. | OCR remains unavailable on macOS. | Bundle and validate a supported native runtime if product scope expands. |
-| Page, annotation, watermark and applied-redaction tools now use the transaction boundary. | Direct headless callers need an explicit transaction; legacy history/import APIs retain their defaults. | Extend controller and atomic-IO use incrementally as further paths are changed. |
+| V2.6 architecture is intentionally deferred. | Other mutations still rely on their current caller/undo discipline; this patch does not promise transaction semantics for every engine method. | Introduce one logical-action transaction/undo abstraction, then gradual viewer and atomic-IO extraction. |
 | Rollback requires a PDF backup in memory. | Large documents can require substantial temporary memory; a restore failure requires reopening. | Evaluate a disk-backed backup policy in the future transaction layer. |
-| Windows V2.5.4 Setup and Portable were built and verified for release. | Unsigned, matching V2.5.3; clean-machine install/uninstall and physical printer checks remain unverified. | See the release-build report for artifacts and validation scope. |
+| No installer was built, signed or published. | Source version is V2.5.4; README download filenames still identify the existing V2.5.3 release. | Run the native release build and platform validation before publishing new artifacts. |
 
 ## 8. Any behaviour/API changes
 
@@ -112,13 +102,7 @@ The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. A
 - Python 3.11 and 3.13+ are rejected for builds/source verification; only 3.12.x is supported.
 - `SettingsManager.get()` now uses fallback behavior for null values. No settings file format change.
 - Added `unregister_default_app()` and public `PDFViewer.apply_theme()`; the existing private theme method remains available.
-- Single and batch printing now return to the event loop while workers prepare/render pages. Commands and editing widgets remain unavailable until completion/cancellation. Closing the batch dialog cancels safely. Cancel respects the safe-checkpoint limitations above.
+- Printing no longer processes nested GUI events; commands are unavailable while painting. The synchronous responsiveness limitation is explicit above.
 - veraPDF capability backend descriptions now come from the shared runtime finder. Successful compliant validation has a normalized user-facing message.
 
 PDF save/encryption format, page ordering, undo granularity, shortcuts, icons, UI layout and theme visual design were not redesigned.
-
-The V2.6 preparation adds an explicit `mutation_transaction()` API and migrates all viewer page actions to a single successful-action undo entry. Failed actions restore document state without clearing redo. Annotation, watermark and redaction migration plus controller/atomic-IO extraction have now followed. See [latest architecture validation](docs/V2.6_ARCHITECTURE_REPORT.md).
-
-Latest follow-up: applied redactions now require a full garbage-collected save to remove unreachable old content streams, including encrypted and repeated outputs. See [redaction save validation](docs/REDACTION_SAVE_REPORT.md), including the test-lifecycle investigation and final 389-case pass.
-
-Windows release build completed on 2026-09-08: [build and artifact verification](docs/RELEASE_BUILD_2.5.4.md). Earlier checkpoint reports describe their original pre-release status.

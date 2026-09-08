@@ -19,6 +19,7 @@ import fitz
 import numpy as np
 
 from .capabilities import CapabilityId, detect_capabilities
+from .ocr_language import OCR_LANGUAGE, normalize_ocr_language
 from .platform_service import PlatformService
 from .tools import scan_barcodes
 
@@ -611,7 +612,7 @@ def _ocr_page_text(page: fitz.Page, dpi: int, is_cancelled=None) -> str:
             str(image),
             "stdout",
             "-l",
-            "eng+chi_tra",
+            normalize_ocr_language(OCR_LANGUAGE),
             "--tessdata-dir",
             str(tessdata),
         ]

@@ -12,6 +12,7 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
+from .ocr_language import OCR_LANGUAGE, normalize_ocr_language
 from .platform_service import PlatformService
 from .settings import SettingsManager
 
@@ -169,6 +170,8 @@ def _barcode_capability() -> Capability:
 
 def bundled_tesseract_runtime() -> tuple[Path | None, Path | None, str]:
     """Return the bundled Windows x64 Tesseract executable and tessdata."""
+    if platform.system() == "Darwin":
+        return None, None, "OCR is not bundled in the macOS build."
     if platform.system() != "Windows":
         return None, None, "OCR is currently supported only on Windows x64."
     if platform.machine().casefold() not in {"amd64", "x86_64"}:
@@ -184,8 +187,8 @@ def bundled_tesseract_runtime() -> tuple[Path | None, Path | None, str]:
     missing_by_root: list[str] = []
     required = (
         Path("tesseract.exe"),
-        Path("tessdata/eng.traineddata"),
-        Path("tessdata/chi_tra.traineddata"),
+        *(Path(f"tessdata/{language}.traineddata")
+          for language in normalize_ocr_language(OCR_LANGUAGE).split("+")),
         Path("tessdata/configs/pdf"),
     )
     for root in roots:
@@ -233,38 +236,11 @@ def _module_capability(
 
 
 def _verapdf_capability() -> Capability:
-    names = (
-        ("verapdf.bat", "bin/verapdf.bat")
-        if platform.system() == "Windows"
-        else ("verapdf", "bin/verapdf")
-    )
-    roots: list[Path] = []
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", None)
-        if base:
-            roots.append(Path(base) / "verapdf")
-        roots.append(Path(sys.executable).resolve().parent / "verapdf")
-    else:
-        roots.append(Path(__file__).resolve().parent.parent / "verapdf")
-    launcher = _configured_executable("verapdf_path")
-    backend = "Configured veraPDF" if launcher else ""
-    if not launcher:
-        for root in roots:
-            for name in names:
-                candidate = root / name
-                if candidate.is_file() and (
-                    platform.system() == "Windows" or os.access(candidate, os.X_OK)
-                ):
-                    launcher = str(candidate.resolve())
-                    backend = "Bundled veraPDF + Java"
-                    break
-            if launcher:
-                break
-    if not launcher:
-        launcher = PlatformService.find_executable(
-            ("verapdf.bat", "verapdf"), ()
-        )
-        backend = "System veraPDF" if launcher else ""
+    from .verapdf import find_verapdf_runtime
+
+    runtime = find_verapdf_runtime(_configured_executable("verapdf_path"))
+    launcher = runtime.launcher if runtime else ""
+    backend = runtime.backend if runtime else ""
     return Capability(
         CapabilityId.VERAPDF,
         "PDF/A and PDF/UA validation",

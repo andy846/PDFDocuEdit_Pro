@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 
 import fitz
@@ -14,7 +13,9 @@ from .annotations import (
     AnnotationStyle,
     apply_annotation,
     list_document_annotations,
+    validate_annotation_op,
 )
+from .io_atomic import atomic_output
 from .pdf_engine import DOCUMENT_LOCK
 from .pdf_io import validate_pdf_file
 
@@ -68,11 +69,9 @@ def export_annotations_json(
     doc: fitz.Document, output_path: str | os.PathLike[str]
 ) -> Path:
     target = Path(output_path).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(annotation_payload(doc), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps(annotation_payload(doc), ensure_ascii=False, indent=2)
+    with atomic_output(target) as staged:
+        staged.write_text(payload, encoding="utf-8")
     return target
 
 
@@ -144,8 +143,15 @@ def _op_from_record(record: dict) -> AnnotationOp | None:
 
 
 def import_annotations_json(
-    doc: fitz.Document, input_path: str | os.PathLike[str]
+    doc: fitz.Document, input_path: str | os.PathLike[str],
+    *, strict_mutations: bool = False,
 ) -> dict[str, object]:
+    """Import supported records; strict callers must own a document transaction.
+
+    Invalid records are skipped before mutation. Strict mode propagates actual
+    mutation failures so an outer transaction can restore the complete batch.
+    The default preserves the legacy best-effort import API.
+    """
     source = Path(input_path).expanduser().resolve()
     payload = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema") != SCHEMA:
@@ -173,9 +179,17 @@ def import_annotations_json(
                     }
                 )
                 continue
+            with DOCUMENT_LOCK:
+                op = validate_annotation_op(doc, op)
+        except Exception as exc:
+            skipped.append({"index": index, "reason": str(exc)})
+            continue
+        try:
             apply_annotation(doc, op)
             imported += 1
         except Exception as exc:
+            if strict_mutations:
+                raise
             skipped.append({"index": index, "reason": str(exc)})
     return {"imported": imported, "skipped": skipped}
 
@@ -204,7 +218,8 @@ def export_annotation_summary(
         detail = f" — {text}" if text else ""
         attribution = f" ({author})" if author else ""
         lines.append(f"- {kind}{attribution}{detail}")
-    target.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    with atomic_output(target) as staged:
+        staged.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return target
 
 
@@ -217,12 +232,8 @@ def flatten_annotations(
     """Bake annotations into a separate PDF, never replacing the live document."""
 
     target = Path(output_path).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(
-        prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
-    )
-    os.close(handle)
-    try:
+    with atomic_output(target, suffix=".pdf") as staged:
+        temp_name = str(staged)
         with DOCUMENT_LOCK:
             source = doc.tobytes(garbage=0, deflate=False)
             expected_page_count = doc.page_count
@@ -232,8 +243,4 @@ def flatten_annotations(
         validate_pdf_file(
             temp_name, expected_page_count=expected_page_count
         )
-        os.replace(temp_name, target)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
     return target

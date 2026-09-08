@@ -128,7 +128,8 @@ class SettingsManager:
                     pass
 
     def get(self, key: str, default: Any = None) -> Any:
-        if key in self._settings:
+        """Return the fallback for missing/null values; preserve false, zero and empty values."""
+        if key in self._settings and self._settings[key] is not None:
             return self._settings[key]
         if default is not None:
             return default

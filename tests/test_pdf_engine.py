@@ -701,3 +701,76 @@ def test_open_password_failure_keeps_current_document(tmp_path: Path) -> None:
         engine.open(str(encrypted), "wrong")
     assert engine.is_loaded()
     assert "Still here" in engine.document.load_page(0).get_text()
+
+
+@pytest.mark.parametrize("operation", ["plan", "insert"])
+@pytest.mark.parametrize("restore_fails", [False, True])
+def test_mutation_rollback_integrity(tmp_path, monkeypatch, operation, restore_fails):
+    from core.pdf_engine import PagePlanEntry
+
+    source = make_pdf(tmp_path / "source.pdf", 6, "Source")
+    engine = PdfEngine()
+    engine.open(make_pdf(tmp_path / "destination.pdf", 3, "Original"))
+    engine.rotate_pages([0], 90)
+    before = [(p.get_text(), p.rotation) for p in engine.document]
+    context = (engine.original_path, engine.password, engine.is_modified,
+               engine.document_id, engine.revision, engine._saved_permissions,
+               engine._reencrypt_on_save, engine._requires_full_save)
+    real_insert = fitz.Document.insert_pdf
+    real_open = fitz.open
+    calls = 0
+
+    def fail_second_insert(doc, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("injected mutation failure")
+        return real_insert(doc, *args, **kwargs)
+
+    def fail_restore(*args, **kwargs):
+        if restore_fails and calls == 2 and "stream" in kwargs:
+            raise RuntimeError("injected restore failure")
+        return real_open(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fitz.Document, "insert_pdf", fail_second_insert)
+        patch.setattr(fitz, "open", fail_restore)
+        message = "broken state; reopen" if restore_fails else "state was restored"
+        with pytest.raises(PdfEngineError, match=message) as error:
+            if operation == "insert":
+                engine.insert_pages(str(source), [5, 2], 1)
+            else:
+                engine.apply_page_plan([
+                    PagePlanEntry("original", "current", 0),
+                    PagePlanEntry("one", "external", 5, str(source)),
+                    PagePlanEntry("two", "external", 2, str(source)),
+                ])
+        assert isinstance(error.value.__cause__, RuntimeError)
+    if restore_fails:
+        assert not engine.is_loaded()
+        engine.open(source)
+        assert engine.page_count == 6
+    else:
+        assert engine.page_count == 3
+        assert [(p.get_text(), p.rotation) for p in engine.document] == before
+        assert context == (engine.original_path, engine.password, engine.is_modified,
+                           engine.document_id, engine.revision, engine._saved_permissions,
+                           engine._reencrypt_on_save, engine._requires_full_save)
+        output = engine.save_as(tmp_path / "restored.pdf")
+        with fitz.open(output) as saved:
+            assert [(p.get_text(), p.rotation) for p in saved] == before
+        engine.insert_pages(str(source), [0], 0)
+        assert engine.page_count == 4
+    engine.close()
+
+
+def test_insert_pages_preserves_caller_order_and_duplicates(tmp_path):
+    source = make_pdf(tmp_path / "source.pdf", 6, "Source")
+    engine = PdfEngine()
+    engine.open(make_pdf(tmp_path / "destination.pdf", 1, "Original"))
+    engine.insert_pages(str(source), [5, 2, 5], 0)
+    assert [page.get_text().splitlines()[0] for page in engine.document] == [
+        "Source 6 searchable text", "Source 3 searchable text",
+        "Source 6 searchable text", "Original 1 searchable text",
+    ]
+    engine.close()

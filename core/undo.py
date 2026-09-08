@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +24,10 @@ class _Snapshot:
     modified: bool = False
 
     def cleanup(self) -> None:
-        self.path.unlink(missing_ok=True)
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).warning("Cannot remove undo snapshot %s", self.path, exc_info=True)
 
 
 class UndoStack(QObject):
@@ -39,6 +44,7 @@ class UndoStack(QObject):
         self._undo: deque[_Snapshot] = deque()
         self._redo: list[_Snapshot] = []
         self._restored_modified = False
+        self._restoring = False
 
     @property
     def can_undo(self) -> bool:
@@ -77,10 +83,78 @@ class UndoStack(QObject):
         """Whether the state returned by the latest pop was unsaved."""
         return self._restored_modified
 
+    def _require_idle(self) -> None:
+        if self._restoring:
+            raise RuntimeError("History cannot change during a restore.")
+
+    def restore(
+        self,
+        direction: str,
+        current_data: bytes,
+        *,
+        modified: bool,
+        apply: Callable[[Path, bool], bool],
+    ) -> bool:
+        """Stage the inverse snapshot, apply the target, then commit both stacks.
+
+        The callback must retain the current document when it fails or returns
+        False. Target history stays owned by this stack until success.
+        """
+        self._require_idle()
+        if direction not in {"undo", "redo"}:
+            raise ValueError("History direction must be undo or redo.")
+        source = self._undo if direction == "undo" else self._redo
+        if not source:
+            return False
+        target = source[-1]
+        handle, temp_name = tempfile.mkstemp(prefix=".history-", suffix=".pdf")
+        os.close(handle)
+        inverse = _Snapshot(Path(temp_name), target.description, modified)
+        committed = False
+        self._restoring = True
+        try:
+            inverse.path.write_bytes(current_data)
+            if not apply(target.path, target.modified):
+                return False
+            source.pop()
+            if direction == "undo":
+                self._redo.append(inverse)
+            else:
+                self._append_undo(inverse)
+            self._restored_modified = target.modified
+            committed = True
+            target.cleanup()
+        finally:
+            self._restoring = False
+            if not committed:
+                inverse.cleanup()
+        self.changed.emit()
+        return True
+
+    def push_bytes(self, data: bytes, description: str, modified: bool = False) -> None:
+        """Commit a transaction snapshot; storage failure leaves history intact.
+
+        Unlike the legacy file-copy API, failure propagates to the transaction
+        so the document can roll back instead of losing its undo point.
+        """
+        self._require_idle()
+        handle, temp_name = tempfile.mkstemp(prefix=".undo-", suffix=".pdf")
+        os.close(handle)
+        snapshot = _Snapshot(Path(temp_name), description, modified)
+        try:
+            snapshot.path.write_bytes(data)
+        except BaseException:
+            snapshot.cleanup()
+            raise
+        self._append_undo(snapshot)
+        self._clear_redo()
+        self.changed.emit()
+
     def push(
         self, source_path: str, description: str, *, modified: bool = False
     ) -> None:
         """Copy the current document file as a snapshot before a change."""
+        self._require_idle()
         source = Path(source_path)
         if not source.is_file():
             return
@@ -101,6 +175,7 @@ class UndoStack(QObject):
 
     def pop_undo(self) -> Path | None:
         """Pop the most recent snapshot. Caller must push current state to redo first."""
+        self._require_idle()
         if not self._undo:
             return None
         snapshot = self._undo.pop()
@@ -110,6 +185,7 @@ class UndoStack(QObject):
 
     def pop_redo(self) -> Path | None:
         """Pop the most recent redo snapshot. Caller must push current state to undo first."""
+        self._require_idle()
         if not self._redo:
             return None
         snapshot = self._redo.pop()
@@ -121,6 +197,7 @@ class UndoStack(QObject):
         self, source_path: str, description: str, *, modified: bool = True
     ) -> None:
         """Save the current document to the redo stack."""
+        self._require_idle()
         source = Path(source_path)
         if not source.is_file():
             return
@@ -143,6 +220,7 @@ class UndoStack(QObject):
         self, source_path: str, description: str, *, modified: bool = True
     ) -> None:
         """Save the current document to the undo stack (used during redo)."""
+        self._require_idle()
         source = Path(source_path)
         if not source.is_file():
             return
@@ -173,6 +251,7 @@ class UndoStack(QObject):
         self._redo.clear()
 
     def clear(self) -> None:
+        self._require_idle()
         for snapshot in self._undo:
             snapshot.cleanup()
         self._undo.clear()

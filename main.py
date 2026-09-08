@@ -334,7 +334,7 @@ def main() -> int:
     instance_router.pathsReceived.connect(accept_forwarded_paths)
     try:
         app.styleHints().colorSchemeChanged.connect(
-            lambda _scheme: viewer._apply_theme("system")
+            lambda _scheme: viewer.apply_theme("system")
             if viewer.settings.get_theme() == "system"
             else None
         )

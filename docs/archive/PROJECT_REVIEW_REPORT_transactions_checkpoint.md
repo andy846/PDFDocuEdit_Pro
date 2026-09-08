@@ -1,15 +1,12 @@
-# PDFDocuEdit Pro stability and V2.6 architecture preparation report
+# PDFDocuEdit Pro stability, printing and mutation transaction report
 
 Stability checkpoint: 2026-09-06. Background printing follow-up: 2026-09-07. Base source: V2.5.3. Current version metadata remains V2.5.4.
-Scope: completed stability stages A–E, background printing, page/annotation/watermark/redaction transactions, failure-safe undo/redo navigation, mutation controller extraction and shared atomic output for the migrated paths. See [V2.6 architecture report](docs/V2.6_ARCHITECTURE_REPORT.md) for the latest implementation, evidence and remaining release work.
+Scope: completed stability stages A–E, background printing, and the V2.6 mutation transaction foundation with all viewer page actions migrated. See [transaction report](docs/MUTATION_TRANSACTIONS_REPORT.md) for the latest implementation and validation; the [background printing report](docs/BACKGROUND_PRINTING_REPORT.md) preserves that earlier checkpoint.
 
 ## 1. Modified files
 
 | Area | Files |
 | --- | --- |
-| Controller / atomic IO | New `ui/mutation_controller.py`, `core/io_atomic.py`, `tests/test_io_atomic.py`; migrated save/extract and annotation exports |
-| Annotation transactions | `core/annotation_io.py`, `core/viewer.py`, new `tests/test_annotation_transactions.py`; watermark and applied-redaction boundaries |
-| Undo/redo reliability | `core/undo.py`, `core/viewer.py`, `tests/test_undo_history.py`, `tests/test_ui_smoke.py`; new `docs/UNDO_REDO_RELIABILITY_REPORT.md` |
 | Mutation transactions | `core/pdf_engine.py`, `core/undo.py`, `core/viewer.py`, `ui/document_session.py`; new `tests/test_mutation_transactions.py`, extended `tests/test_ui_smoke.py` |
 | PDF integrity | `core/pdf_engine.py`, `tests/test_pdf_engine.py` |
 | OCR | New `core/ocr_language.py`; `core/ocr.py`, `core/analysis.py`, `dialogs/ocr_dialog.py`, `tests/test_ocr.py` |
@@ -73,15 +70,11 @@ Validated on Windows with project-pinned PyQt6 6.8.1 / Qt 6.8.2 and PyMuPDF 1.26
 | V2.5.4 stability checkpoint, Python 3.12.14 | 322 passed in 151.12 seconds; 30 modules |
 | Background printing follow-up, Python 3.12.14 | **330 passed in 157.72 seconds; 31 modules; zero failures/errors** |
 | Mutation transaction follow-up, Python 3.12.14 | **341 passed in 147.81 seconds; 32 modules; zero failures/errors** |
-| Undo/redo reliability checkpoint | 359 passed in 164.65 seconds; 32 modules |
-| Annotation transaction checkpoint | 378 passed in 247.87 seconds; 33 modules |
-| Final controller/atomic-IO architecture validation | **386 passed in 290.04 seconds; 34 modules; zero failures/errors** |
-| Redaction save follow-up | **389 passed in 255.95 seconds; 35 modules; zero failures/errors** |
 | Source verification | Passed |
 | Archive integrity | All 15 moved files match original Git blobs |
 | Annotation plan encoding | Valid UTF-8, intact Chinese text, no replacement characters |
 
-Earlier print-guard iterations produced native Windows access violations in the full suite. A test monkeypatch lifetime issue was corrected, and the production guard was narrowed from recursive Qt action discovery to the existing application action registry. Those failed runs were not counted as passing validation. The stability checkpoint passed 322 cases. The background printing checkpoint passed 330 cases in 157.72 seconds across 31 modules. The page transaction checkpoint passed 341 cases in 147.81 seconds across 32 modules. The final architecture follow-up passed 386 cases in 290.04 seconds across 34 modules, with zero failures/errors. The intermediate interrupted quiet annotation run is recorded in the architecture report and is not counted as passing validation.
+Earlier print-guard iterations produced native Windows access violations in the full suite. A test monkeypatch lifetime issue was corrected, and the production guard was narrowed from recursive Qt action discovery to the existing application action registry. Those failed runs were not counted as passing validation. The stability checkpoint passed 322 cases. The background printing checkpoint passed 330 cases in 157.72 seconds across 31 modules. The latest mutation transaction follow-up passed 341 cases in 147.81 seconds across 32 modules, with zero failures/errors and no native exception diagnostics in the full-run log.
 
 The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. Actual remote CI jobs were not triggered from this session; local results do not claim execution on macOS or Linux.
 
@@ -100,9 +93,9 @@ The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. A
 | Cancellation is cooperative; the initial live-document snapshot and native printer calls still run on the GUI thread. | Cancel cannot interrupt an active PyMuPDF/native call; already-spooled pages may not be retractable. Very large initial snapshots can briefly pause the UI. | Validate real printer drivers and large documents; evaluate snapshot cost in the future transaction architecture. |
 | Real platform integrations were not executed here. | Physical printer drivers, macOS packaged runtime and actual external-binary workflows remain unverified by this repair. | Run target-platform smoke tests and optional binary integration CI before release packaging. |
 | macOS OCR is not bundled by the existing product contract. | OCR remains unavailable on macOS. | Bundle and validate a supported native runtime if product scope expands. |
-| Page, annotation, watermark and applied-redaction tools now use the transaction boundary. | Direct headless callers need an explicit transaction; legacy history/import APIs retain their defaults. | Extend controller and atomic-IO use incrementally as further paths are changed. |
+| Page actions now use the V2.6 transaction boundary. | Annotation, watermark and other legacy edits still use their existing snapshot discipline; direct engine calls need an explicit transaction. | Migrate remaining mutation callers, then continue viewer and atomic-IO extraction. |
 | Rollback requires a PDF backup in memory. | Large documents can require substantial temporary memory; a restore failure requires reopening. | Evaluate a disk-backed backup policy in the future transaction layer. |
-| Windows V2.5.4 Setup and Portable were built and verified for release. | Unsigned, matching V2.5.3; clean-machine install/uninstall and physical printer checks remain unverified. | See the release-build report for artifacts and validation scope. |
+| No installer was built, signed or published. | Source version is V2.5.4; README download filenames still identify the existing V2.5.3 release. | Run the native release build and platform validation before publishing new artifacts. |
 
 ## 8. Any behaviour/API changes
 
@@ -117,8 +110,4 @@ The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. A
 
 PDF save/encryption format, page ordering, undo granularity, shortcuts, icons, UI layout and theme visual design were not redesigned.
 
-The V2.6 preparation adds an explicit `mutation_transaction()` API and migrates all viewer page actions to a single successful-action undo entry. Failed actions restore document state without clearing redo. Annotation, watermark and redaction migration plus controller/atomic-IO extraction have now followed. See [latest architecture validation](docs/V2.6_ARCHITECTURE_REPORT.md).
-
-Latest follow-up: applied redactions now require a full garbage-collected save to remove unreachable old content streams, including encrypted and repeated outputs. See [redaction save validation](docs/REDACTION_SAVE_REPORT.md), including the test-lifecycle investigation and final 389-case pass.
-
-Windows release build completed on 2026-09-08: [build and artifact verification](docs/RELEASE_BUILD_2.5.4.md). Earlier checkpoint reports describe their original pre-release status.
+The V2.6 preparation adds an explicit `mutation_transaction()` API and migrates all viewer page actions to a single successful-action undo entry. Failed actions restore document state without clearing redo. Annotation and other legacy mutation paths remain separate follow-up work. See [transaction validation](docs/MUTATION_TRANSACTIONS_REPORT.md).

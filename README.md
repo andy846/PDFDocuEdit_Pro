@@ -1,6 +1,25 @@
-# PDFDocuEdit Pro V2.5.3
+# PDFDocuEdit Pro V2.5.4
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
+
+## V2.5.4 stability update
+
+- Atomic rollback for page plans and page insertion; insertion preserves caller order and duplicates.
+- Shared OCR language normalization and veraPDF discovery, including `VeraPDF/` and `verapdf/`.
+- Runtime/build contract: Python 3.12.x. OCR is not bundled in the macOS build.
+- Single and batch printing now prepare/rasterize pages in cancellable workers, with live progress. One page image is in flight at a time; printer interaction stays on the GUI thread. Cancel stops at the next safe checkpoint.
+- Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
+- Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
+
+The Windows x64 release is V2.5.4. Download the Setup or Portable ZIP from the Releases section below, with matching SHA-256 files.
+
+See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
+
+## Background printing follow-up (2026-09-07)
+
+The next development step is complete on this source tree: background preparation/rendering, cooperative Cancel, one job per batch file, and automatic UI/resource restoration. Application editing controls are suspended while printing. Closing the batch dialog requests cancellation and hides it safely. The initial snapshot of an unsaved live document and native printer calls can still briefly block; pages already accepted by the driver may not be retractable.
+
+See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The background-printing report records its development checkpoint; the current release also includes the subsequent transaction and history improvements.
 
 ## 主要功能
 
@@ -68,8 +87,8 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：`PDFDocuEdit-Pro-v2.5.3-Setup-Windows-x64.exe`
-- 免安裝版：`PDFDocuEdit-Pro-v2.5.3-Portable-Windows-x64.zip`
+- 安裝版：`PDFDocuEdit-Pro-v2.5.4-Setup-Windows-x64.exe`
+- 免安裝版：`PDFDocuEdit-Pro-v2.5.4-Portable-Windows-x64.zip`
 
 ### Windows release build
 
@@ -109,6 +128,16 @@ Conversion 面板提供 bundled Tesseract 5.5.3 英文／繁中 OCR，可抽取 
 必要資產時建置會直接失敗。
 
 開發、測試及封裝可使用專案內的 `scripts/build.py` 建置腳本。
+
+### Redaction save follow-up
+
+Applied redactions now require a full garbage-collected save, including encrypted outputs and repeated saves. See the [redaction save report](docs/REDACTION_SAVE_REPORT.md) for reproduction and validation.
+
+### V2.6 architecture preparation
+
+Page, annotation, watermark and applied-redaction actions now use a shared transaction boundary. Undo/redo preserves the live document and history when preparation or restoration fails. Mutation/history coordination lives in `ui/mutation_controller.py`; migrated PDF and annotation outputs share `core/io_atomic.py`.
+
+Windows Python 3.12.14 validation: **389 passed across 35 modules**, plus Ruff and source verification. See the [architecture report](docs/V2.6_ARCHITECTURE_REPORT.md) for detailed scope and remaining packaging/platform checks. Source version metadata remains V2.5.4.
 
 ## 版權
 

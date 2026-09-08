@@ -10,12 +10,14 @@ import tempfile
 import threading
 import uuid
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 
 import fitz
 
+from .io_atomic import atomic_output
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 
 # Serializes every operation on the shared live document between the GUI
@@ -28,7 +30,12 @@ def _locked(function):
     @wraps(function)
     def wrapper(self, *args, **kwargs):
         with DOCUMENT_LOCK:
-            return function(self, *args, **kwargs)
+            try:
+                return function(self, *args, **kwargs)
+            except BaseException as exc:
+                if self._transaction_depth:
+                    self._transaction_error = exc
+                raise
 
     return wrapper
 
@@ -67,7 +74,10 @@ class PagePlanEntry:
 
 
 class PdfEngine:
-    def __init__(self):
+    def __init__(self, *, on_commit: Callable[[bytes, str, bool], None] | None = None):
+        self._on_commit = on_commit
+        self._transaction_depth = 0
+        self._transaction_error: BaseException | None = None
         self._doc: fitz.Document | None = None
         self._original_path: Path | None = None
         self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
@@ -77,11 +87,63 @@ class PdfEngine:
         self._reencrypt_on_save = False
         self._saved_permissions: int | None = None
         self._requires_full_save = False
+        self._requires_sanitized_save = False
         self._document_id = uuid.uuid4().hex
         self._revision = 0
 
+    def set_mutation_recorder(self, recorder: Callable[[bytes, str, bool], None]) -> None:
+        """Attach the owning session's undo recorder after document replacement."""
+        self._require_outside_transaction()
+        self._on_commit = recorder
+
+    @contextmanager
+    def mutation_transaction(self, description: str):
+        """Group live-document mutations; only the outer scope commits history.
+
+        A caught nested failure poisons the outer scope. Callers must mark raw
+        document edits with mark_modified(). File IO and document replacement
+        are deliberately excluded from this live-document transaction.
+        """
+        with DOCUMENT_LOCK:
+            if self._transaction_depth:
+                self._transaction_depth += 1
+                try:
+                    yield self
+                except BaseException as exc:
+                    self._transaction_error = exc
+                    raise
+                finally:
+                    self._transaction_depth -= 1
+                return
+            doc = self._require_document()
+            backup = doc.tobytes(garbage=3, deflate=True)
+            state = (self._is_modified, self._requires_full_save, self._revision,
+                     self._requires_sanitized_save)
+            self._transaction_depth = 1
+            self._transaction_error = None
+            try:
+                yield self
+                if self._transaction_error is not None:
+                    raise PdfEngineError("A nested mutation failed; transaction cancelled.") from self._transaction_error
+                if self._revision != state[2]:
+                    if self._on_commit is not None:
+                        self._on_commit(backup, description, state[0])
+                    self._revision = state[2] + 1
+            except BaseException as exc:
+                (self._is_modified, self._requires_full_save, self._revision,
+                 self._requires_sanitized_save) = state
+                self._restore_failed_mutation(backup, exc)
+            finally:
+                self._transaction_depth = 0
+                self._transaction_error = None
+
+    def _require_outside_transaction(self) -> None:
+        if self._transaction_depth:
+            raise PdfEngineError("Save or document replacement is not allowed inside a mutation transaction.")
+
     @_locked
     def open(self, path: str | os.PathLike[str], password: str | None = None) -> None:
+        self._require_outside_transaction()
         source = Path(path).expanduser().resolve()
         if not source.is_file():
             raise PdfEngineError(f"File not found: {source}")
@@ -129,6 +191,7 @@ class PdfEngine:
         self._reencrypt_on_save = reencrypt
         self._saved_permissions = saved_permissions
         self._requires_full_save = False
+        self._requires_sanitized_save = False
         self._document_id = uuid.uuid4().hex
         self._revision = 0
 
@@ -178,6 +241,7 @@ class PdfEngine:
 
     @_locked
     def close(self) -> None:
+        self._require_outside_transaction()
         if self._doc:
             self._doc.close()
         if self._temp_dir:
@@ -191,20 +255,18 @@ class PdfEngine:
         self._reencrypt_on_save = False
         self._saved_permissions = None
         self._requires_full_save = False
+        self._requires_sanitized_save = False
 
     @_locked
     def save(self, path: str | os.PathLike[str] | None = None) -> Path:
+        self._require_outside_transaction()
         if not self._doc:
             raise PdfEngineError("No PDF is open.")
         target = Path(path).expanduser().resolve() if path else self._original_path
         if target is None:
             raise PdfEngineError("No save location is available.")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        handle, temp_name = tempfile.mkstemp(
-            prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
-        )
-        os.close(handle)
-        try:
+        with atomic_output(target, suffix=".pdf") as staged:
+            temp_name = str(staged)
             if self._reencrypt_on_save:
                 # MuPDF cannot preserve the original owner password when only
                 # the user password is known (a full re-save must generate
@@ -213,7 +275,7 @@ class PdfEngine:
                 set_safe_pdf_metadata(self._doc, self._doc.metadata)
                 self._doc.save(
                     temp_name,
-                    garbage=0,
+                    garbage=4 if self._requires_sanitized_save else 0,
                     deflate=False,
                     clean=False,
                     encryption=fitz.PDF_ENCRYPT_AES_256,
@@ -224,6 +286,13 @@ class PdfEngine:
                         if self._saved_permissions is not None
                         else int(fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT)
                     ),
+                )
+            elif self._requires_sanitized_save:
+                # Incremental saves retain old content streams. Redaction output
+                # must be fully rewritten and unreachable objects discarded.
+                self._doc.save(
+                    temp_name, garbage=4, deflate=False, clean=False,
+                    encryption=fitz.PDF_ENCRYPT_KEEP,
                 )
             elif self._requires_full_save:
                 # Page-tree changes such as rotation, insertion and reorder are
@@ -260,11 +329,6 @@ class PdfEngine:
                 password=self._password if self._reencrypt_on_save else None,
                 expected_page_count=self._doc.page_count,
             )
-            os.replace(temp_name, target)
-        except Exception:
-            if os.path.exists(temp_name):
-                os.unlink(temp_name)
-            raise
         self._original_path = target
         self._is_modified = False
         return target
@@ -273,10 +337,15 @@ class PdfEngine:
     def save_as(self, path: str | os.PathLike[str]) -> Path:
         return self.save(path)
 
-    def mark_modified(self) -> None:
-        """Flag the open document as modified (used by canvas editing)."""
+    def mark_modified(self, *, requires_sanitized_save: bool = False) -> None:
+        """Flag a live edit; destructive redaction requires clean full output.
+
+        Keep the sanitization requirement until close: the live working copy
+        may still contain old objects even after one successful output save.
+        """
         if self._doc:
-            self._touch()
+            self._requires_sanitized_save |= requires_sanitized_save
+            self._touch(requires_full_save=requires_sanitized_save)
 
     def _touch(self, *, requires_full_save: bool = False) -> None:
         """Record one logical mutation for stale-analysis detection."""
@@ -288,6 +357,7 @@ class PdfEngine:
 
     def detach_save_target(self) -> None:
         """Require the next save to choose a PDF path (used for converted input)."""
+        self._require_outside_transaction()
         self._original_path = None
 
     def inherit_save_context(
@@ -301,10 +371,12 @@ class PdfEngine:
         Preserve the destination and encryption policy from the live engine,
         along with whether the restored state still has unsaved edits.
         """
+        self._require_outside_transaction()
         self._original_path = source._original_path
         self._password = source._password
         self._reencrypt_on_save = source._reencrypt_on_save
         self._saved_permissions = source._saved_permissions
+        self._requires_sanitized_save = source._requires_sanitized_save
         self._requires_full_save = source._requires_full_save
         self._document_id = source._document_id
         self._revision = source._revision + 1
@@ -390,6 +462,7 @@ class PdfEngine:
 
     @_locked
     def insert_pages(self, source_path: str, pages: list[int], position: int) -> None:
+        """Insert zero-based pages atomically, preserving caller order and duplicates."""
         doc = self._require_document()
         with fitz.open(source_path) as source:
             insert_at = min(max(0, position), doc.page_count)
@@ -403,13 +476,20 @@ class PdfEngine:
             valid = [page for page in pages if 0 <= page < source.page_count]
             if not valid:
                 raise PdfEngineError("No valid source pages were selected.")
-            for offset, page_num in enumerate(valid):
-                doc.insert_pdf(
-                    source,
-                    from_page=page_num,
-                    to_page=page_num,
-                    start_at=insert_at + offset,
-                )
+            backup = None if self._transaction_depth else doc.tobytes(garbage=3, deflate=True)
+            try:
+                for offset, page_num in enumerate(valid):
+                    doc.insert_pdf(
+                        source,
+                        from_page=page_num,
+                        to_page=page_num,
+                        start_at=insert_at + offset,
+                    )
+            except Exception as exc:
+                if self._transaction_depth:
+                    self._transaction_error = exc
+                    raise
+                self._restore_failed_mutation(backup, exc)
         self._touch(requires_full_save=True)
 
     @_locked
@@ -489,12 +569,8 @@ class PdfEngine:
         if not valid:
             raise PdfEngineError("No valid pages were selected.")
         target = Path(output_path).expanduser().resolve()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        handle, temp_name = tempfile.mkstemp(
-            prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
-        )
-        os.close(handle)
-        try:
+        with atomic_output(target, suffix=".pdf") as staged:
+            temp_name = str(staged)
             with fitz.open() as output:
                 for page in valid:
                     output.insert_pdf(doc, from_page=page, to_page=page)
@@ -502,10 +578,6 @@ class PdfEngine:
                 set_safe_pdf_toc(output, doc.get_toc())
                 output.save(temp_name, garbage=4, deflate=True)
             validate_pdf_file(temp_name, expected_page_count=len(valid))
-            os.replace(temp_name, target)
-        finally:
-            if os.path.exists(temp_name):
-                os.unlink(temp_name)
         return target
 
     @_locked
@@ -519,8 +591,10 @@ class PdfEngine:
         for page_num in pages:
             if 0 <= page_num < doc.page_count:
                 page = doc.load_page(page_num)
-                page.set_rotation((page.rotation + angle) % 360)
-                changed = True
+                rotation = (page.rotation + angle) % 360
+                if rotation != page.rotation:
+                    page.set_rotation(rotation)
+                    changed = True
         if changed:
             self._touch(requires_full_save=True)
 
@@ -529,8 +603,9 @@ class PdfEngine:
         doc = self._require_document()
         if sorted(new_order) != list(range(doc.page_count)):
             raise PdfEngineError("The page order is incomplete or contains duplicates.")
-        doc.select(new_order)
-        self._touch(requires_full_save=True)
+        if new_order != list(range(doc.page_count)):
+            doc.select(new_order)
+            self._touch(requires_full_save=True)
 
     @_locked
     def organize_pages(self, new_order: list[int], rotations: dict[int, int]) -> None:
@@ -646,13 +721,38 @@ class PdfEngine:
             doc.select(desired)
             for index, entry in enumerate(plan):
                 doc.load_page(index).set_rotation(int(entry.final_rotation) % 360)
-        except Exception:
-            try:
-                doc.close()
-            finally:
-                self._doc = fitz.open(stream=backup, filetype="pdf")
-            raise
+        except Exception as exc:
+            if self._transaction_depth:
+                self._transaction_error = exc
+                raise
+            self._restore_failed_mutation(backup, exc)
         self._touch(requires_full_save=True)
+
+    def _restore_failed_mutation(self, backup: bytes, original_exc: Exception) -> None:
+        """Restore under DOCUMENT_LOCK without resetting the engine's save context."""
+        damaged = self._doc
+        try:
+            restored = fitz.open(stream=backup, filetype="pdf")
+        except Exception as rollback_exc:
+            self._doc = None
+            if damaged is not None:
+                try:
+                    damaged.close()
+                except Exception:
+                    pass
+            raise PdfEngineError(
+                "PDF operation failed and rollback also failed. "
+                "The engine is in a broken state; reopen the document."
+            ) from rollback_exc
+        self._doc = restored
+        if damaged is not None:
+            try:
+                damaged.close()
+            except Exception:
+                pass
+        raise PdfEngineError(
+            "PDF operation failed; original document state was restored."
+        ) from original_exc
 
     @_locked
     def split_pdf(

@@ -39,6 +39,7 @@ from .print_profile import collect_print_profile, quality_changed, restore_print
 
 
 class BatchPrintDialog(ToolDialog):
+    cancelRequested = pyqtSignal()
     printRequested = pyqtSignal(object)  # details dict
 
     def __init__(self, parent=None):
@@ -452,6 +453,7 @@ class BatchPrintDialog(ToolDialog):
         self._cancel_requested = True
         self.cancel_button.setEnabled(False)
         self.log_message("Cancelling after the current page…")
+        self.cancelRequested.emit()
 
     def cancel_requested(self) -> bool:
         return self._cancel_requested
@@ -465,11 +467,15 @@ class BatchPrintDialog(ToolDialog):
 
     def closeEvent(self, event) -> None:
         if self._printing:
-            self.log_message("Print job continues in the system print queue.")
+            self._cancel_request()
+            self.hide()
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def reject(self) -> None:
         if self._printing:
+            self._cancel_request()
             self.hide()
             return
         super().reject()

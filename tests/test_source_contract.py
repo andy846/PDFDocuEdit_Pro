@@ -76,15 +76,15 @@ def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
     )
 
 
-def test_release_metadata_is_v2_5_3() -> None:
-    assert APP_VERSION == "2.5.3"
+def test_release_metadata_is_v2_5_4() -> None:
+    assert APP_VERSION == "2.5.4"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "2.5.3"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "2.5.3"' in (
+    assert 'version = "2.5.4"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "2.5.4"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "2.5.3"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(2, 5, 3, 0)" in (
+    assert 'VERSION = "2.5.4"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(2, 5, 4, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 
@@ -112,3 +112,8 @@ def test_windows_icon_uses_high_dpi_master_sizes() -> None:
     assert "GetDpiForWindow" in source
     assert "round(32 * dpi / 96)" in source
     assert "128, 256" in source
+
+
+def test_print_paths_do_not_pump_gui_events():
+    source = (ROOT / "core/viewer.py").read_text(encoding="utf-8")
+    assert "QApplication.processEvents()" not in source

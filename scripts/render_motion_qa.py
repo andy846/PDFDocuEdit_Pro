@@ -38,7 +38,7 @@ def main() -> int:
         window = viewer_module.PDFViewer()
         window.resize(1440, 900)
         window.show()
-        window._apply_theme("light")
+        window.apply_theme("light")
         QTest.qWait(220)
 
         hover_button = window.side_panel._buttons["office_to_pdf"]
@@ -55,7 +55,7 @@ def main() -> int:
         source = temporary / "visual-qa.pdf"
         _make_pdf(source)
         window.load_file(str(source))
-        window._apply_theme("dark")
+        window.apply_theme("dark")
         window._show_context("rotate")
         QTest.qWait(260)
         window.info_bar.show_message("Rotate options opened in the live context panel.", "info", 0)

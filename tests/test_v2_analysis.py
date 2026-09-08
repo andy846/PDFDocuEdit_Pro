@@ -211,7 +211,7 @@ def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) ->
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured.update(kwargs)
-        return ProcessResult(0, '<report isCompliant="true" />', "")
+        return ProcessResult(0, '<report isCompliant="true" />', "private diagnostic path")
 
     monkeypatch.setattr(
         verapdf_module, "find_verapdf_runtime", lambda _path=None: runtime
@@ -222,6 +222,8 @@ def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) ->
     result = validate_with_verapdf(source, "2b")
 
     assert result.compliant is True
+    assert result.message == "veraPDF validation completed successfully."
+    assert "private diagnostic" not in result.message
     assert captured["command"][:3] == [str(java), "-jar", str(jar)]
     environment = captured["env"]
     assert environment["JAVA_HOME"] == str(runtime_root / "jre")

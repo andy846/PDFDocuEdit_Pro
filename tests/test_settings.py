@@ -175,3 +175,14 @@ def test_non_object_legacy_config_is_ignored(tmp_path: Path, monkeypatch) -> Non
     settings = SettingsManager()
     assert settings.get_theme() == "system"
     assert not settings.path.exists()
+
+
+def test_get_defaults_for_null_and_missing_preserves_false_values(tmp_path):
+    settings = SettingsManager(tmp_path / "settings.json")
+    settings.update({"null": None, "false": False, "zero": 0, "empty": ""})
+    assert settings.get("missing", "fallback") == "fallback"
+    assert settings.get("null", "fallback") == "fallback"
+    assert settings.get("null") is None
+    assert settings.get("false", True) is False
+    assert settings.get("zero", 99) == 0
+    assert settings.get("empty", "fallback") == ""

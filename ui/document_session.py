@@ -109,8 +109,8 @@ class DocumentSession(QObject):
 
     def __init__(self, animations_enabled: bool = True, parent=None):
         super().__init__(parent)
-        self.engine = PdfEngine()
         self.undo_stack = UndoStack(self)
+        self.engine = PdfEngine(on_commit=self.undo_stack.push_bytes)
         self.display_path: Path | None = None
         self.page = 0
         self.split_orientation = "horizontal"

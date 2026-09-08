@@ -53,8 +53,9 @@ def main() -> int:
         ROOT / "Ghostscript" / "bin" / "gswin64c.exe",
     ]
     errors.extend(f"Missing resource: {path.relative_to(ROOT)}" for path in required if not path.exists())
-    if sys.version_info[:2] < (3, 11) or sys.version_info[:2] > (3, 13):
-        errors.append(f"Builds require Python 3.11-3.13; running {sys.version_info.major}.{sys.version_info.minor}")
+    if sys.version_info[:2] != (3, 12):
+        current = ".".join(map(str, sys.version_info[:3]))
+        errors.append(f"Builds require Python 3.12.x; running {current}")
     if errors:
         print("Source verification failed:")
         print("\n".join(f"- {error}" for error in errors))

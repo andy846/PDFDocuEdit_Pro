@@ -12,6 +12,7 @@ from pathlib import Path
 import fitz
 
 from .capabilities import bundled_tesseract_runtime
+from .ocr_language import OCR_LANGUAGE, normalize_ocr_language
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .platform_service import PlatformService
 from .tasks import TaskCancelled
@@ -30,7 +31,7 @@ class OCRRequest:
     source_path: str
     pages: tuple[int, ...]
     mode: OCRMode = OCRMode.EXTRACT_TEXT
-    language: str = "chi_tra+eng"
+    language: str = OCR_LANGUAGE
     dpi: int = 300
     output_path: str | None = None
     password: str | None = None
@@ -62,8 +63,10 @@ def run_ocr(
     source = Path(request.source_path).expanduser().resolve()
     if not source.is_file():
         raise OCRError(f"Source PDF does not exist: {source}")
-    if request.language not in {"eng", "chi_tra", "chi_tra+eng"}:
-        raise OCRError(f"Unsupported OCR language: {request.language}")
+    try:
+        language = normalize_ocr_language(request.language)
+    except ValueError as exc:
+        raise OCRError(str(exc)) from exc
     if not 72 <= request.dpi <= 600:
         raise OCRError("OCR DPI must be between 72 and 600.")
 
@@ -118,7 +121,7 @@ def run_ocr(
                     str(image),
                     str(output_base),
                     "-l",
-                    request.language,
+                    language,
                     "--dpi",
                     str(request.dpi),
                 ]

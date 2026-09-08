@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.ocr import OCRMode, OCRRequest, OCRResult
+from core.ocr_language import OCR_LANGUAGE_OPTIONS, normalize_ocr_language
 from core.pdf_engine import parse_page_range
 
 
@@ -70,9 +71,8 @@ class OCRDialog(QDialog):
         form.addRow("Custom range", self.custom_pages)
 
         self.language = QComboBox()
-        self.language.addItem("Traditional Chinese + English", "chi_tra+eng")
-        self.language.addItem("Traditional Chinese", "chi_tra")
-        self.language.addItem("English", "eng")
+        for label, language in OCR_LANGUAGE_OPTIONS:
+            self.language.addItem(label, normalize_ocr_language(language))
         form.addRow("Language", self.language)
 
         self.dpi = QSpinBox()

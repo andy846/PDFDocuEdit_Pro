@@ -150,3 +150,40 @@ def test_missing_bundle_and_output_conflict_are_reported(tmp_path, monkeypatch) 
         )
     assert output.read_text(encoding="utf-8") == "keep"
 
+
+
+@pytest.mark.parametrize("language", ["chi_tra+eng", "eng+chi_tra", "eng", "chi_tra"])
+def test_shared_language_contract(tmp_path, monkeypatch, language):
+    import core.analysis as analysis
+    from core.capabilities import Capability, CapabilityId
+    from core.ocr_language import OCR_LANGUAGE, normalize_ocr_language
+
+    canonical = OCR_LANGUAGE if "+" in language else language
+    assert normalize_ocr_language(language) == canonical
+    fake_runtime(tmp_path, monkeypatch)
+    source = make_pdf(tmp_path / "language.pdf", 1)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command[2] == "stdout":
+            return ProcessResult(0, "analysis text", "")
+        return fake_tesseract(command, **kwargs)
+
+    monkeypatch.setattr(ocr_module.PlatformService, "run_cancellable", run)
+    run_ocr(OCRRequest(str(source), (0,), language=language))
+    assert commands[-1][commands[-1].index("-l") + 1] == canonical
+    monkeypatch.setattr(analysis, "detect_capabilities", lambda: {
+        CapabilityId.OCR: Capability(CapabilityId.OCR, "OCR", True,
+                                     path=str(tmp_path / "tesseract.exe"))
+    })
+    with fitz.open(source) as doc:
+        assert analysis._ocr_page_text(doc[0], 150) == "analysis text"
+    assert commands[-1][commands[-1].index("-l") + 1] == OCR_LANGUAGE
+
+
+def test_language_contract_rejects_unknown_language():
+    from core.ocr_language import normalize_ocr_language
+
+    with pytest.raises(ValueError, match="Unsupported OCR language"):
+        normalize_ocr_language("eng+fra")

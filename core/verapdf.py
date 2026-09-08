@@ -68,7 +68,10 @@ def find_verapdf_runtime(configured_path: str | None = None) -> VeraPdfRuntime |
         candidates.append(Path(configured_path).expanduser())
     roots = [bundle_root() / "verapdf", bundle_root() / "VeraPDF"]
     if getattr(sys, "frozen", False):
-        roots.append(Path(sys.executable).resolve().parent / "verapdf")
+        roots.extend(
+            Path(sys.executable).resolve().parent / name
+            for name in ("verapdf", "VeraPDF")
+        )
     names = (
         "verapdf.bat",
         "verapdf",
@@ -536,7 +539,7 @@ def validate_with_verapdf(
         parsed.compliant,
         parsed.findings,
         parsed.raw_xml,
-        "",
+        "veraPDF validation completed successfully." if parsed.compliant is True else "",
         parsed.summary,
     )
 

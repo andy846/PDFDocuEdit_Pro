@@ -84,16 +84,22 @@ jobs:
       - name: Run platform-neutral core tests
         run: >-
           python -m pytest
+          tests/test_annotation_transactions.py
           tests/test_annotations.py
           tests/test_bookmarks.py
           tests/test_commands.py
           tests/test_deep_search.py
           tests/test_font_inspector.py
           tests/test_ocr.py
+          tests/test_io_atomic.py
+          tests/test_mutation_transactions.py
           tests/test_pdf_engine.py
+          tests/test_printing.py
+          tests/test_redaction_save.py
           tests/test_search_detailed.py
           tests/test_settings.py
           tests/test_source_contract.py
+          tests/test_stability_contracts.py
           tests/test_tasks.py
           tests/test_toc.py
           tests/test_undo_history.py

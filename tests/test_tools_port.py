@@ -159,16 +159,24 @@ def test_print_pdf_confirms_system_dialog_and_names_job(tmp_path, monkeypatch):
             return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(viewer_module, "QPrintDialog", FakeNativeDialog)
-    painted: list = []
-    monkeypatch.setattr(
-        window,
-        "_paint_documents",
-        lambda printer, docs, details, **kwargs: painted.append(docs),
-    )
+    from PyQt6.QtPrintSupport import QPrinter
+    create_printer = window._create_printer
+
+    def create(details):
+        printer = create_printer(details)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(str(tmp_path / "confirmed-output.pdf"))
+        printer.setResolution(72)
+        return printer
+
+    monkeypatch.setattr(window, "_create_printer", create)
     window.print_pdf()
+    _wait_for_print(window)
     assert captured["title"] == "System Print"
     assert captured["printer"].docName() == "printme.pdf"
-    assert painted and painted[0][0][2] == "printme.pdf"
+    with fitz.open(tmp_path / "confirmed-output.pdf") as output:
+        assert output.page_count == 2
+    assert window.command_bar.isEnabled() and window.workspace.isEnabled()
     window.close()
 
 
@@ -208,14 +216,22 @@ def test_print_pdf_prints_directly_without_system_dialog(tmp_path, monkeypatch):
             raise AssertionError("the system dialog must not open for direct printing")
 
     monkeypatch.setattr(viewer_module, "QPrintDialog", ExplodingNativeDialog)
-    painted: list = []
-    monkeypatch.setattr(
-        window,
-        "_paint_documents",
-        lambda printer, docs, details, **kwargs: painted.append(docs),
-    )
+    from PyQt6.QtPrintSupport import QPrinter
+    create_printer = window._create_printer
+
+    def create(details):
+        printer = create_printer(details)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(str(tmp_path / "direct-output.pdf"))
+        printer.setResolution(72)
+        return printer
+
+    monkeypatch.setattr(window, "_create_printer", create)
     window.print_pdf()
-    assert painted and painted[0][0][2] == "direct.pdf"
+    _wait_for_print(window)
+    with fitz.open(tmp_path / "direct-output.pdf") as output:
+        assert output.page_count == 1
+    assert window.command_bar.isEnabled() and window.workspace.isEnabled()
     window.close()
 
 
@@ -359,27 +375,29 @@ def test_batch_print_skips_unreadable_files(tmp_path, monkeypatch):
 
     class FakeNativeDialog:
         def __init__(self, printer, parent):
-            pass
+            self.printer = printer
 
         def setWindowTitle(self, title):
             pass
 
         def exec(self):
+            self.printer.setCopyCount(3)
             return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(viewer_module, "QPrintDialog", FakeNativeDialog)
-    painted: list = []
+    from PyQt6.QtPrintSupport import QPrinter
+    printers = []
+    create_printer = window._create_printer
 
-    def fake_paint(
-        printer, documents, details, log=None, progress=None, should_cancel=None
-    ):
-        painted.append((printer.docName(), documents))
-        for index, (_document, pages, name) in enumerate(documents):
-            log(f"Printing {name} ({len(pages)} page(s))…")
-            for page in pages:
-                progress(index, page, len(pages))
+    def create(details):
+        printer = create_printer(details)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(str(tmp_path / f"output-{len(printers)}.pdf"))
+        printer.setResolution(72)
+        printers.append(printer)
+        return printer
 
-    monkeypatch.setattr(window, "_paint_documents", fake_paint)
+    monkeypatch.setattr(window, "_create_printer", create)
     details = {
         "paths": [str(good1), str(bad), str(good2)],
         "printer": "",
@@ -394,12 +412,16 @@ def test_batch_print_skips_unreadable_files(tmp_path, monkeypatch):
         "center": True,
         "offset_x": 0.0,
         "offset_y": 0.0,
+        "confirm_system_dialog": True,
     }
     window._run_batch_print(fake, details)
-    # One print job per file, named after the file (legacy parity).
-    assert [doc_name for doc_name, _docs in painted] == ["good1.pdf", "good2.pdf"]
-    assert [entry[2] for entry in painted[0][1]] == ["good1.pdf"]
-    assert [entry[2] for entry in painted[1][1]] == ["good2.pdf"]
+    _wait_for_print(window)
+    # One actual PDF output job per readable file, named after its source.
+    assert [printer.docName() for printer in printers] == ["good1.pdf", "good2.pdf"]
+    assert [printer.copyCount() for printer in printers] == [3, 3]
+    for index in range(2):
+        with fitz.open(tmp_path / f"output-{index}.pdf") as output:
+            assert output.page_count == 2
     assert any("Skipped bad.pdf" in line for line in fake.logs)
     assert fake.status[str(bad)] == "Error"
     assert fake.status[str(good1)] == "Done"
@@ -456,19 +478,17 @@ def test_batch_print_cancel_marks_partial_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(viewer_module, "QPrintDialog", FakeNativeDialog)
 
-    def fake_paint(
-        printer, documents, details, log=None, progress=None, should_cancel=None
-    ):
-        # The user cancels while the first page is being drawn.
-        for index, (_document, pages, name) in enumerate(documents):
-            log(f"Printing {name} ({len(pages)} page(s))…")
-            for page in pages:
-                progress(index, page, len(pages))
-                fake.cancelled = True
-                if should_cancel and should_cancel():
-                    return
+    from PyQt6.QtPrintSupport import QPrinter
+    create_printer = window._create_printer
 
-    monkeypatch.setattr(window, "_paint_documents", fake_paint)
+    def create(details):
+        printer = create_printer(details)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(str(tmp_path / "cancelled-print.pdf"))
+        printer.setResolution(72)
+        return printer
+
+    monkeypatch.setattr(window, "_create_printer", create)
     details = {
         "paths": [str(good1), str(good2)],
         "printer": "",
@@ -485,6 +505,12 @@ def test_batch_print_cancel_marks_partial_file(tmp_path, monkeypatch):
         "offset_y": 0.0,
     }
     window._run_batch_print(fake, details)
+    window._print_controller.progress.connect(
+        lambda _key, current, _total: setattr(fake, "cancelled", current >= 1)
+    )
+    _wait_for_print(window)
+    with fitz.open(tmp_path / "cancelled-print.pdf") as output:
+        assert output.page_count == 1
     assert any("Batch print cancelled." in line for line in fake.logs)
     assert fake.status.get(str(good1)) == "Cancelled"
     assert str(good2) not in fake.status  # never started
@@ -1600,3 +1626,14 @@ def test_combobox_stylesheet_supplies_visible_theme_arrow_assets():
             assert "width: 30px;" in css
     finally:
         apply_theme(app, original)
+
+
+def _wait_for_print(window):
+    import time
+
+    from PyQt6.QtTest import QTest
+
+    deadline = time.monotonic() + 10
+    while window._printing and time.monotonic() < deadline:
+        QTest.qWait(10)
+    assert not window._printing, "Background printing did not finish"

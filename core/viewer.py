@@ -8,7 +8,7 @@ import tempfile
 import textwrap
 import uuid
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -29,7 +29,6 @@ from PyQt6.QtGui import (
     QPainter,
     QPen,
     QShortcut,
-    QTransform,
 )
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrinterInfo
 from PyQt6.QtWidgets import (
@@ -98,9 +97,10 @@ from core.pdf_engine import (
     search_pdf_file,
 )
 from core.platform_service import PlatformService
+from core.printing import PrintJob, PrintRenderSettings, render_page_image
 from core.resources import APP_VERSION, COPYRIGHT_NOTICE
 from core.settings import SettingsManager
-from core.tasks import FunctionTask
+from core.tasks import FunctionTask, TaskCancelled
 from core.tools import (
     compress_pdfs,
     convert_office_files,
@@ -150,6 +150,8 @@ from ui.diagnostics_dialog import DiagnosticsDialog, PreferencesDialog
 from ui.document_session import DocumentSession
 from ui.icons import clear_icon_cache
 from ui.infobar import InfoBar
+from ui.mutation_controller import MutationController
+from ui.print_controller import PrintController
 from ui.side_panel import SHORTCUT_HINTS, SidePanel
 from ui.task_bar import TaskBar
 from ui.window_chrome import FramelessResizeHandles
@@ -262,6 +264,7 @@ class PDFViewer(QMainWindow):
         self._sessions: list[DocumentSession] = []
         self._session: DocumentSession | None = None
         self._idle_engine = PdfEngine()
+        self._mutation_controller = MutationController(self)
         self._last_context_key: str | None = None
         self._tasks: set[FunctionTask] = set()
         self._search_tasks: dict[int, FunctionTask] = {}
@@ -1077,11 +1080,12 @@ class PDFViewer(QMainWindow):
         ):
             self._reload_thumbnails(session)
             return
-        if not self._snapshot_before("Reorder Pages"):
-            self._reload_thumbnails(session)
-            return
         try:
-            session.engine.reorder_pages(order)
+            with self._page_transaction("Reorder Pages") as allowed:
+                if not allowed:
+                    self._reload_thumbnails(session)
+                    return
+                session.engine.reorder_pages(order)
         except Exception as exc:
             self.info_bar.show_message(f"Reorder failed: {exc}", "error", 0)
             self._reload_thumbnails(session)
@@ -1154,6 +1158,8 @@ class PDFViewer(QMainWindow):
         self.close_document(session)
 
     def open_in_new_tab(self, path: str) -> DocumentSession | None:
+        if self._printing:
+            return
         session = self._create_session()
         try:
             loaded = self._load_path(session, path)
@@ -1451,6 +1457,10 @@ class PDFViewer(QMainWindow):
         self.split_open_document_action.setEnabled(session.has_split)
 
     # --- Theme and window state -----------------------------------------
+    def apply_theme(self, value: str) -> None:
+        """Apply a theme through the supported public viewer API."""
+        self._apply_theme(value)
+
     def _apply_theme(self, value: str) -> None:
         app = QApplication.instance()
         if not isinstance(app, QApplication):
@@ -1913,18 +1923,19 @@ class PDFViewer(QMainWindow):
     ) -> None:
         self.workspace.set_current_session(session)
         self._session = session
-        if not self._snapshot_before("Move/Resize Annotation"):
-            return
         try:
-            new_xref = update_annotation_geometry(
-                session.engine.document.load_page(page),
-                xref,
-                rect=payload.get("rect"),
-                points=tuple(payload.get("points") or ()),
-            )
-            if new_xref is None:
-                raise ValueError("This annotation cannot be moved or resized.")
-            session.engine.mark_modified()
+            with self._mutation_transaction("Move/Resize Annotation") as allowed:
+                if not allowed:
+                    return
+                new_xref = update_annotation_geometry(
+                    session.engine.document.load_page(page),
+                    xref,
+                    rect=payload.get("rect"),
+                    points=tuple(payload.get("points") or ()),
+                )
+                if new_xref is None:
+                    raise ValueError("This annotation cannot be moved or resized.")
+                session.engine.mark_modified()
         except Exception as exc:
             self.info_bar.show_message(f"Move/resize failed: {exc}", "error", 0)
             return
@@ -1943,14 +1954,15 @@ class PDFViewer(QMainWindow):
     ) -> None:
         self.workspace.set_current_session(session)
         self._session = session
-        if not self._snapshot_before("Edit Annotation Text"):
-            return
         try:
-            if not update_annotation_text(
-                session.engine.document.load_page(page), xref, text
-            ):
-                raise ValueError("The annotation no longer exists or is not editable.")
-            session.engine.mark_modified()
+            with self._mutation_transaction("Edit Annotation Text") as allowed:
+                if not allowed:
+                    return
+                if not update_annotation_text(
+                    session.engine.document.load_page(page), xref, text
+                ):
+                    raise ValueError("The annotation no longer exists or is not editable.")
+                session.engine.mark_modified()
         except Exception as exc:
             self.info_bar.show_message(f"Inline edit failed: {exc}", "error", 0)
             return
@@ -1990,6 +2002,8 @@ class PDFViewer(QMainWindow):
             self.load_file(dialog.selected_path)
 
     def load_file(self, path: str) -> None:
+        if self._printing:
+            return
         if self._session is not None and self._session.engine.is_loaded():
             if not self._confirm_discard_changes():
                 return
@@ -2080,6 +2094,8 @@ class PDFViewer(QMainWindow):
         self,
         session: DocumentSession,
         opened: PdfEngine,
+        *,
+        close_previous: bool = True,
     ) -> None:
         """Release all old-document readers before deleting its temp copy."""
         dependent_hosts = [
@@ -2098,8 +2114,10 @@ class PDFViewer(QMainWindow):
             session.split_canvas.clear()
         session.nav_panel.thumbnails.quiesce_renders()
         previous = session.engine
+        opened.set_mutation_recorder(session.undo_stack.push_bytes)
         session.engine = opened
-        previous.close()
+        if close_previous:
+            previous.close()
         for host in dependent_hosts:
             host.set_split_source(session)
 
@@ -2199,6 +2217,8 @@ class PDFViewer(QMainWindow):
             self._error("Save failed", str(exc))
 
     def close_document(self, session: DocumentSession | None = None) -> None:
+        if self._printing:
+            return
         target = session or self._session
         if target is None:
             return
@@ -2396,6 +2416,13 @@ class PDFViewer(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _page_transaction(self, description: str):
+        """Compatibility name for page-action callers."""
+        return self._mutation_transaction(description)
+
+    def _mutation_transaction(self, description: str):
+        return self._mutation_controller.transaction(description)
+
     def _snapshot_before(self, description: str) -> bool:
         """Save a snapshot of the current *in-memory* document before a change.
 
@@ -2444,97 +2471,21 @@ class PDFViewer(QMainWindow):
         )
         self.command_bar.set_undo_redo_enabled(can_undo, can_redo)
 
-    def _undo(self) -> None:
-        stack = self._undo_stack
-        if stack is None or self.engine is None:
-            return
-        temp = self.engine.temp_path
-        if not temp or not temp.is_file():
-            return
-        snapshot_path = self._pop_undo()
-        if snapshot_path:
-            self._reopen_from_snapshot(
-                snapshot_path, modified=stack.restored_modified
-            )
+    def _undo(self) -> bool:
+        return self._move_history("undo")
 
-    def _redo(self) -> None:
-        stack = self._undo_stack
-        if stack is None or self.engine is None:
-            return
-        temp = self.engine.temp_path
-        if not temp or not temp.is_file():
-            return
-        snapshot_path = self._pop_redo()
-        if snapshot_path:
-            self._reopen_from_snapshot(
-                snapshot_path, modified=stack.restored_modified
-            )
+    def _redo(self) -> bool:
+        return self._move_history("redo")
 
-    def _pop_undo(self) -> Path | None:
-        stack = self._undo_stack
-        if stack is None or self.engine is None:
-            return None
-        self._push_current_history_snapshot(
-            stack.push_redo, stack.undo_description
+    def _move_history(self, direction: str) -> bool:
+        return self._mutation_controller.move_history(direction)
+
+    def _restore_history_snapshot(
+        self, session: DocumentSession, snapshot_path: Path, *, modified: bool
+    ) -> bool:
+        return self._mutation_controller.restore_history_snapshot(
+            session, snapshot_path, modified=modified
         )
-        path = stack.pop_undo()
-        if path:
-            self._update_undo_actions()
-        return path
-
-    def _pop_redo(self) -> Path | None:
-        stack = self._undo_stack
-        if stack is None or self.engine is None:
-            return None
-        self._push_current_history_snapshot(
-            stack.push_undo, stack.redo_description
-        )
-        path = stack.pop_redo()
-        if path:
-            self._update_undo_actions()
-        return path
-
-    def _push_current_history_snapshot(self, push, description: str) -> None:
-        """Serialize the live document before moving through undo history."""
-        handle, temp_name = tempfile.mkstemp(prefix=".snapshot-", suffix=".pdf")
-        os.close(handle)
-        try:
-            self.engine.snapshot(temp_name)
-            push(
-                temp_name,
-                description,
-                modified=self.engine.is_modified,
-            )
-        finally:
-            Path(temp_name).unlink(missing_ok=True)
-
-    def _reopen_from_snapshot(
-        self, snapshot_path: Path, *, modified: bool
-    ) -> None:
-        """Re-open the document from a snapshot file."""
-        session = self._session
-        if session is None:
-            return
-        view_state = self._capture_session_view_state(session)
-        try:
-            session.canvas.wait_for_renders()
-            restored = self._open_pdf(
-                session,
-                str(snapshot_path),
-                display_path=session.display_path or snapshot_path,
-                reset_history=False,
-                announce=False,
-                preserve_save_context=True,
-                restored_modified=modified,
-            )
-            if not restored:
-                return
-            self._restore_session_view_state(session, view_state)
-            self.info_bar.show_message("Undo applied.", "success")
-        except Exception as exc:
-            self._error("Undo failed", str(exc))
-        finally:
-            snapshot_path.unlink(missing_ok=True)
 
     @staticmethod
     def _capture_canvas_view_state(canvas) -> dict[str, object]:
@@ -2587,9 +2538,10 @@ class PDFViewer(QMainWindow):
     def _rotate_pages(self, pages: str, angle: int) -> None:
         try:
             selected = self._pages_from_text(pages)
-            if not self._snapshot_before("Rotate Pages"):
-                return
-            self.engine.rotate_pages(selected, angle)
+            with self._page_transaction("Rotate Pages") as allowed:
+                if not allowed:
+                    return
+                self.engine.rotate_pages(selected, angle)
             self.workspace.canvas.refresh()
             self._sync_modified_state()
             self.info_bar.show_message(
@@ -2614,9 +2566,10 @@ class PDFViewer(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            if not self._snapshot_before("Delete Pages"):
-                return
-            self.engine.delete_pages(pages)
+            with self._page_transaction("Delete Pages") as allowed:
+                if not allowed:
+                    return
+                self.engine.delete_pages(pages)
             self._after_page_count_change()
             self.info_bar.show_message(
                 f"🗑 Deleted {len(pages)} page(s). Save the document to keep the change.",
@@ -2699,9 +2652,10 @@ class PDFViewer(QMainWindow):
         try:
             with fitz.open(source) as document:
                 pages = list(range(document.page_count))
-            if not self._snapshot_before("Insert Pages"):
-                return
-            self.engine.insert_pages(source, pages, position - 1)
+            with self._page_transaction("Insert Pages") as allowed:
+                if not allowed:
+                    return
+                self.engine.insert_pages(source, pages, position - 1)
             self._after_page_count_change()
             self.info_bar.show_message(
                 "Pages inserted. Save the document to keep the change.", "success"
@@ -2718,9 +2672,10 @@ class PDFViewer(QMainWindow):
                 order = [
                     int(part.strip()) - 1 for part in value.split(",") if part.strip()
                 ]
-            if not self._snapshot_before("Reorder Pages"):
-                return
-            self.engine.reorder_pages(order)
+            with self._page_transaction("Reorder Pages") as allowed:
+                if not allowed:
+                    return
+                self.engine.reorder_pages(order)
             self.workspace.canvas.set_page(0)
             self._reload_thumbnails(self._session)
             self._sync_modified_state()
@@ -2878,6 +2833,8 @@ class PDFViewer(QMainWindow):
         self._organize_pages(preselected_pages=finding_set.pages())
 
     def print_pdf(self) -> None:
+        if self._printing or self._tasks:
+            return
         doc = self.engine.document
         if not doc:
             return
@@ -2897,32 +2854,15 @@ class PDFViewer(QMainWindow):
             native_dialog.setWindowTitle("System Print")
             if native_dialog.exec() != QDialog.DialogCode.Accepted:
                 return
-        if self._printing:
-            self.info_bar.show_message("A print job is already in progress.", "warning")
-            return
-        self._printing = True
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-
-            def progress(_document_index, page, total):
-                self.bottom_bar.set_status(f"Printing page {page + 1} of {total}…")
-                QApplication.processEvents()
-
-            self._paint_documents(
-                printer,
-                [(doc, list(details["pages"]), Path(doc.name).name)],
-                details,
-                progress=progress,
-            )
-            self.info_bar.show_message(
-                "The document was sent to the printer.", "success"
+            with DOCUMENT_LOCK:
+                snapshot = doc.tobytes()
+            self._start_print_jobs(
+                [PrintJob(snapshot, Path(doc.name).name, Path(doc.name).name,
+                          tuple(details["pages"]))], details, printer=printer,
             )
         except Exception as exc:
             self._error("Print failed", str(exc))
-        finally:
-            QApplication.restoreOverrideCursor()
-            self.bottom_bar.set_status("Ready")
-            self._printing = False
 
     @staticmethod
     def _create_printer(details: dict[str, object]) -> QPrinter:
@@ -2953,6 +2893,148 @@ class PDFViewer(QMainWindow):
             printer.setDuplex(duplex_modes[int(details["duplex"])])
         return printer
 
+    @contextmanager
+    def _suspend_print_actions(self):
+        """Hold application commands and editing widgets while an async job owns the UI."""
+        printing = self._printing
+        actions = [(action, action.isEnabled()) for action in self._registered_shortcut_actions]
+        widgets = [(widget, widget.isEnabled())
+                   for widget in (self.command_bar, self.side_panel, self.workspace)]
+        self._printing = True
+        try:
+            for action, _ in actions:
+                action.setEnabled(False)
+            for widget, _ in widgets:
+                widget.setEnabled(False)
+            yield
+        finally:
+            for widget, was_enabled in widgets:
+                widget.setEnabled(was_enabled)
+            for action, was_enabled in actions:
+                action.setEnabled(was_enabled)
+            self._printing = printing
+
+    @contextmanager
+    def _print_operation(self):
+        """Compatibility path for synchronous native painting; never pump GUI events."""
+        with self._suspend_print_actions(), DOCUMENT_LOCK:
+            yield
+
+    @staticmethod
+    def _print_render_settings(printer, details):
+        rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+        size = rect.size().toSize()
+        return PrintRenderSettings(
+            printer.resolution(), size.width(), size.height(), rect.x(), rect.y(),
+            int(details["scale_mode"]), float(details["scale"]), bool(details["center"]),
+            float(details["offset_x"]), float(details["offset_y"]),
+        )
+
+    def _start_print_jobs(self, jobs, details, *, printer=None, dialog=None):
+        if self._printing or self._tasks:
+            return
+        details = dict(details)
+        guard = ExitStack()
+        guard.enter_context(self._suspend_print_actions())
+        confirmed = False
+        native_layout = None
+
+        def make_printer(job, prepared):
+            nonlocal confirmed, native_layout
+            if printer is not None:
+                return printer
+            result = self._create_printer(details)
+            result.setDocName(job.name)
+            self._configure_print_layout(result, fitz.Rect(0, 0, *prepared.first_size), details)
+            if native_layout is not None:
+                result.setPageLayout(native_layout)
+            if not confirmed and details.get("confirm_system_dialog"):
+                original_layout = result.pageLayout()
+                native = QPrintDialog(result, self)
+                native.setWindowTitle("Confirm Batch Print")
+                if native.exec() != QDialog.DialogCode.Accepted:
+                    raise TaskCancelled
+                # Carry user-confirmed device settings to every file in the batch.
+                details.update({
+                    "printer": result.printerName(), "dpi": result.resolution(),
+                    "copies": result.copyCount(), "collate": result.collateCopies(),
+                    "colour": 0 if result.colorMode() == QPrinter.ColorMode.Color else 1,
+                    "duplex": {QPrinter.DuplexMode.DuplexNone: 1,
+                               QPrinter.DuplexMode.DuplexLongSide: 2,
+                               QPrinter.DuplexMode.DuplexShortSide: 3}.get(result.duplex(), 0),
+                })
+                if result.pageLayout() != original_layout:
+                    native_layout = result.pageLayout()
+            confirmed = True
+            return result
+
+        def progress(key, current, total):
+            message = (f"Printing {Path(key).name}: page {current} of {total}"
+                       if total else f"Preparing {Path(key).name}…")
+            self.task_bar.update_progress(current, total, message)
+            self.bottom_bar.set_status(message)
+            if dialog is not None:
+                dialog.set_file_status(key, message)
+
+        def file_finished(key, status, message):
+            if dialog is not None:
+                if status == "sent":
+                    dialog.mark_file_printed(key)
+                elif status == "cancelled":
+                    dialog.set_file_status(key, "Cancelled")
+                    dialog.log_message("Batch print cancelled.")
+                else:
+                    dialog.mark_file_error(key)
+                    label = "Skipped" if status == "skipped" else "Failed"
+                    dialog.log_message(f"{label} {Path(key).name}: {message}")
+            elif status in {"failed", "skipped"}:
+                self._error("Print failed", message)
+
+        def finished(sent, failed, skipped, cancelled):
+            self._print_controller = None
+            try:
+                if dialog is not None:
+                    if isinstance(dialog, BatchPrintDialog):
+                        dialog.cancelRequested.disconnect(self._cancel_tasks)
+                    dialog.set_printing(False)
+                self.task_bar.clear()
+                self.bottom_bar.set_status("Ready")
+                self.command_bar.set_work_status("Ready")
+            finally:
+                guard.close()
+                controller.deleteLater()
+            summary = f"Sent {sent} PDF file(s); {failed} failed; {skipped} skipped"
+            if cancelled:
+                summary += ", cancelled before completion"
+            if dialog is not None:
+                dialog.log_message(summary + ".")
+            self.info_bar.show_message(summary + ".", "warning" if cancelled or failed or skipped else "success")
+
+        try:
+            controller = PrintController(
+                jobs, make_printer, lambda value: self._print_render_settings(value, details),
+                parent=self, thread_pool=self._thread_pool,
+                should_cancel=dialog.cancel_requested if dialog is not None else None,
+            )
+            self._print_controller = controller
+            controller.progress.connect(progress)
+            controller.file_finished.connect(file_finished)
+            controller.finished.connect(finished)
+            if dialog is not None:
+                dialog.set_printing(True)
+                if isinstance(dialog, BatchPrintDialog):
+                    dialog.cancelRequested.connect(self._cancel_tasks)
+            self.task_bar.start("Printing", cancellable=True)
+            self.command_bar.set_work_status("Printing")
+            controller.start()
+        except Exception:
+            self._print_controller = None
+            guard.close()
+            self.task_bar.clear()
+            if dialog is not None:
+                dialog.set_printing(False)
+            raise
+
     def _paint_documents(
         self,
         printer: QPrinter,
@@ -2969,31 +3051,34 @@ class PDFViewer(QMainWindow):
         drawn. ``should_cancel`` is polled between pages; returning True
         stops the job after the current page.
         """
-        painter = QPainter(printer)
-        if not painter.isActive():
-            raise RuntimeError("The selected printer could not start a print job.")
-        try:
-            output_index = 0
-            for document_index, (document, pages, name) in enumerate(documents):
-                if log:
-                    log(f"Printing {name} ({len(pages)} page(s))…")
-                for page_number in pages:
-                    page = document.load_page(page_number)
-                    if progress:
-                        progress(document_index, page_number, len(pages))
-                    # Qt applies one page layout per print job; the caller
-                    # configures it before the first page, so mid-job changes
-                    # would be ignored anyway.
-                    if output_index and not printer.newPage():
-                        raise RuntimeError(
-                            "The printer could not create the next page."
-                        )
-                    self._draw_print_page(painter, printer, page, details)
-                    output_index += 1
-                    if should_cancel is not None and should_cancel():
-                        return
-        finally:
-            painter.end()
+        with self._print_operation():
+            painter = QPainter(printer)
+            if not painter.isActive():
+                raise RuntimeError("The selected printer could not start a print job.")
+            try:
+                output_index = 0
+                for document_index, (document, pages, name) in enumerate(documents):
+                    if log:
+                        log(f"Printing {name} ({len(pages)} page(s))…")
+                    for page_number in pages:
+                        if should_cancel is not None and should_cancel():
+                            return
+                        page = document.load_page(page_number)
+                        if progress:
+                            progress(document_index, page_number, len(pages))
+                        # Qt applies one page layout per print job; the caller
+                        # configures it before the first page, so mid-job changes
+                        # would be ignored anyway.
+                        if output_index and not printer.newPage():
+                            raise RuntimeError(
+                                "The printer could not create the next page."
+                            )
+                        self._draw_print_page(painter, printer, page, details)
+                        output_index += 1
+                        if should_cancel is not None and should_cancel():
+                            return
+            finally:
+                painter.end()
 
     @staticmethod
     def _draw_print_page(
@@ -3002,65 +3087,15 @@ class PDFViewer(QMainWindow):
         page: fitz.Page,
         details: dict[str, object],
     ) -> None:
-        rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-        # Respect the effective QPrinter resolution. The dialog constrains
-        # custom values to 72–600 DPI so high quality remains practical for
-        # large pages while Draft mode materially reduces time and memory.
-        render_dpi = min(600, max(72, printer.resolution()))
-        pix = page.get_pixmap(dpi=render_dpi, alpha=False)
-        image = QImage(
-            pix.samples,
-            pix.width,
-            pix.height,
-            pix.stride,
-            QImage.Format.Format_RGB888,
-        ).copy()
-        mode = int(details["scale_mode"])
-        if mode == 0:
-            # Qt applies one page layout per print job, so pages whose
-            # orientation differs from the job's are rotated: their content
-            # still fills the paper upright instead of being squashed.
-            # (An A4 page rotated 90 degrees is physically an A4 page, so
-            # mixed landscape/portrait documents print correctly.)
-            job_landscape = rect.width() > rect.height()
-            page_landscape = page.rect.width > page.rect.height
-            if page_landscape != job_landscape:
-                image = image.transformed(
-                    QTransform().rotate(90),
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            scaled = image.scaled(
-                rect.size().toSize(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        else:
-            factor = 1.0 if mode == 1 else float(details["scale"]) / 100.0
-            target_width = max(
-                1, int(page.rect.width / 72 * printer.resolution() * factor)
-            )
-            target_height = max(
-                1, int(page.rect.height / 72 * printer.resolution() * factor)
-            )
-            scaled = image.scaled(
-                target_width,
-                target_height,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        if bool(details["center"]):
-            x = rect.x() + (rect.width() - scaled.width()) / 2
-            y = rect.y() + (rect.height() - scaled.height()) / 2
-        else:
-            x, y = rect.x(), rect.y()
-        x += float(details["offset_x"]) / 25.4 * printer.resolution()
-        y += float(details["offset_y"]) / 25.4 * printer.resolution()
-        painter.drawImage(int(x), int(y), scaled)
+        settings = PDFViewer._print_render_settings(printer, details)
+        image, x, y = render_page_image(page, settings)
+        painter.drawImage(x, y, image)
 
     @staticmethod
     def _configure_print_layout(
-        printer: QPrinter, page: fitz.Page, details: dict[str, object]
+        printer: QPrinter, page: fitz.Page | fitz.Rect, details: dict[str, object]
     ) -> None:
+        page_rect = page if isinstance(page, fitz.Rect) else page.rect
         paper = str(details["paper"])
         sizes = {
             "A4": QPageSize.PageSizeId.A4,
@@ -3072,7 +3107,7 @@ class PDFViewer(QMainWindow):
             # QPageSize stores sizes in portrait convention, so the shorter
             # side must be the width; the orientation below then produces
             # the correct full-page rectangle for landscape pages.
-            width, height = page.rect.width, page.rect.height
+            width, height = page_rect.width, page_rect.height
             if width > height:
                 width, height = height, width
             printer.setPageSize(
@@ -3086,7 +3121,7 @@ class PDFViewer(QMainWindow):
             printer.setPageSize(QPageSize(sizes[paper]))
         orientation = int(details["orientation"])
         if orientation == 0:
-            landscape = page.rect.width > page.rect.height
+            landscape = page_rect.width > page_rect.height
         else:
             landscape = orientation == 2
         printer.setPageOrientation(
@@ -3532,11 +3567,12 @@ class PDFViewer(QMainWindow):
         except AnnotationValidationError as exc:
             self.info_bar.show_message(str(exc), "warning")
             return
-        if not self._snapshot_before(op.description()):
-            return
         try:
-            apply_annotation(session.engine.document, op)
-            session.engine.mark_modified()
+            with self._mutation_transaction(op.description()) as allowed:
+                if not allowed:
+                    return
+                apply_annotation(session.engine.document, op)
+                session.engine.mark_modified()
         except Exception as exc:
             self.info_bar.show_message(f"{op.description()} failed: {exc}", "error", 0)
             return
@@ -3577,15 +3613,16 @@ class PDFViewer(QMainWindow):
             return
         page = session.page if xref is None else int(page_or_xref)
         target_xref = int(page_or_xref) if xref is None else int(xref)
-        if not self._snapshot_before("Remove Annotation"):
-            return
         try:
-            changed = remove_annotation(
-                session.engine.document.load_page(page), target_xref
-            )
-            if not changed:
-                raise ValueError("The annotation no longer exists.")
-            session.engine.mark_modified()
+            with self._mutation_transaction("Remove Annotation") as allowed:
+                if not allowed:
+                    return
+                changed = remove_annotation(
+                    session.engine.document.load_page(page), target_xref
+                )
+                if not changed:
+                    raise ValueError("The annotation no longer exists.")
+                session.engine.mark_modified()
         except Exception as exc:
             self.info_bar.show_message(f"Remove annotation failed: {exc}", "error", 0)
             return
@@ -3617,11 +3654,12 @@ class PDFViewer(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        if not self._snapshot_before("Apply Redactions"):
-            return
         try:
-            count = apply_redaction_marks(session.engine.document)
-            session.engine.mark_modified()
+            with self._mutation_transaction("Apply Redactions") as allowed:
+                if not allowed:
+                    return
+                count = apply_redaction_marks(session.engine.document)
+                session.engine.mark_modified(requires_sanitized_save=True)
         except Exception as exc:
             self.info_bar.show_message(f"Apply redactions failed: {exc}", "error", 0)
             return
@@ -3649,18 +3687,19 @@ class PDFViewer(QMainWindow):
             font_size=float(values.get("font_size", 11.0)),
             alignment=int(values.get("alignment", 0)),
         )
-        if not self._snapshot_before("Edit Annotation Properties"):
-            return
         try:
-            changed = update_annotation(
-                session.engine.document.load_page(page),
-                xref,
-                style,
-                text=str(values.get("text", "")),
-            )
-            if not changed:
-                raise ValueError("The annotation no longer exists.")
-            session.engine.mark_modified()
+            with self._mutation_transaction("Edit Annotation Properties") as allowed:
+                if not allowed:
+                    return
+                changed = update_annotation(
+                    session.engine.document.load_page(page),
+                    xref,
+                    style,
+                    text=str(values.get("text", "")),
+                )
+                if not changed:
+                    raise ValueError("The annotation no longer exists.")
+                session.engine.mark_modified()
         except Exception as exc:
             self.info_bar.show_message(f"Edit annotation failed: {exc}", "error", 0)
             return
@@ -3711,14 +3750,20 @@ class PDFViewer(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "Import annotations", "", "JSON (*.json)"
         )
-        if not path or not self._snapshot_before("Import Annotations"):
+        if not path:
             return
         try:
-            result = import_annotations_json(session.engine.document, path)
-            imported = int(result["imported"])
-            skipped = list(result["skipped"])
+            with self._mutation_transaction("Import Annotations") as allowed:
+                if not allowed:
+                    return
+                result = import_annotations_json(
+                    session.engine.document, path, strict_mutations=True
+                )
+                imported = int(result["imported"])
+                skipped = list(result["skipped"])
+                if imported:
+                    session.engine.mark_modified()
             if imported:
-                session.engine.mark_modified()
                 self._refresh_session_canvases(session)
                 self._sync_modified_state()
                 self._refresh_annotate_list()
@@ -3774,30 +3819,31 @@ class PDFViewer(QMainWindow):
         if not pages:
             self.info_bar.show_message("Choose a valid page range.", "warning")
             return
-        if not self._snapshot_before("Watermark"):
-            return
         try:
-            if details["mode"] == "text":
-                add_watermark_text(
-                    self.engine.document,
-                    pages,
-                    str(details["text"]),
-                    fontsize=int(details["fontsize"]),
-                    opacity=float(details["opacity"]),
-                    rotation=float(details["rotation"]),
-                )
-            else:
-                add_watermark_image(
-                    self.engine.document,
-                    pages,
-                    str(details["image"]),
-                    opacity=float(details["opacity"]),
-                )
-            self.engine.mark_modified()
+            with self._mutation_transaction("Watermark") as allowed:
+                if not allowed:
+                    return
+                if details["mode"] == "text":
+                    add_watermark_text(
+                        self.engine.document,
+                        pages,
+                        str(details["text"]),
+                        fontsize=int(details["fontsize"]),
+                        opacity=float(details["opacity"]),
+                        rotation=float(details["rotation"]),
+                    )
+                else:
+                    add_watermark_image(
+                        self.engine.document,
+                        pages,
+                        str(details["image"]),
+                        opacity=float(details["opacity"]),
+                    )
+                self.engine.mark_modified()
         except Exception as exc:
             self._error("Watermark failed", str(exc))
             return
-        self.workspace.canvas.refresh()
+        self._refresh_session_canvases(self._session)
         self._sync_modified_state()
         self.info_bar.show_message(
             "Watermark applied. Save to keep the change.", "success"
@@ -4584,14 +4630,16 @@ class PDFViewer(QMainWindow):
         for _ in range(steps):
             if stack is None or not stack.can_undo:
                 break
-            self._undo()
+            if not self._undo():
+                break
 
     def _redo_to(self, steps: int) -> None:
         stack = self._undo_stack
         for _ in range(steps):
             if stack is None or not stack.can_redo:
                 break
-            self._redo()
+            if not self._redo():
+                break
 
     def _batch_print(self) -> None:
         existing = getattr(self, "_batch_print_dialog", None)
@@ -4611,110 +4659,11 @@ class PDFViewer(QMainWindow):
     def _run_batch_print(
         self, dialog: BatchPrintDialog, details: dict[str, object]
     ) -> None:
-        dialog.set_printing(True)
+        if self._printing or self._tasks:
+            return
         self.settings.set_print_profile(details)
-        try:
-            printer = self._create_printer(details)
-            paths: list[str] = list(details["paths"])
-            with ExitStack() as stack:
-                # Open each file individually so one unreadable PDF skips
-                # instead of aborting the whole batch (legacy behaviour).
-                documents: list[fitz.Document] = []
-                printed_paths: list[str] = []
-                for path in paths:
-                    try:
-                        documents.append(stack.enter_context(fitz.open(path)))
-                        printed_paths.append(path)
-                    except Exception as exc:
-                        dialog.mark_file_error(str(path))
-                        dialog.log_message(
-                            f"Skipped {Path(path).name}: could not open it ({exc})."
-                        )
-                if not documents:
-                    dialog.log_message("No documents to print.")
-                    return
-                first_page = documents[0].load_page(0)
-                self._configure_print_layout(printer, first_page, details)
-                if details.get("confirm_system_dialog"):
-                    native_dialog = QPrintDialog(printer, self)
-                    native_dialog.setWindowTitle("Confirm Batch Print")
-                    if native_dialog.exec() != QDialog.DialogCode.Accepted:
-                        dialog.log_message("Print job cancelled.")
-                        return
-                # One print job per file (legacy behaviour): each job gets
-                # its own paper size and orientation from that file's first
-                # page and is named after the file in the print queue.
-                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-                try:
-                    sent = 0
-                    skipped = len(paths) - len(documents)
-                    failed = 0
-                    cancelled = False
-                    for path, document in zip(printed_paths, documents, strict=True):
-                        if dialog.cancel_requested():
-                            cancelled = True
-                            break
-                        try:
-                            job = self._create_printer(details)
-                            job.setDocName(Path(path).name)
-                            self._configure_print_layout(
-                                job, document.load_page(0), details
-                            )
-                            self._paint_documents(
-                                job,
-                                [
-                                    (
-                                        document,
-                                        list(range(document.page_count)),
-                                        Path(path).name,
-                                    )
-                                ],
-                                details,
-                                log=dialog.log_message,
-                                progress=lambda i, page, total, p=path: (
-                                    dialog.set_file_status(
-                                        p, f"Printing page {page + 1} of {total}"
-                                    ),
-                                    self.bottom_bar.set_status(
-                                        f"Printing {Path(p).name}: page {page + 1} of {total}…"
-                                    ),
-                                    QApplication.processEvents(),
-                                ),
-                                should_cancel=dialog.cancel_requested,
-                            )
-                        except Exception as exc:
-                            failed += 1
-                            dialog.mark_file_error(str(path))
-                            dialog.log_message(f"Failed {Path(path).name}: {exc}")
-                            continue
-                        if dialog.cancel_requested():
-                            cancelled = True
-                            dialog.set_file_status(str(path), "Cancelled")
-                            dialog.log_message("Batch print cancelled.")
-                            break
-                        dialog.mark_file_printed(str(path))
-                        sent += 1
-
-                    summary = (
-                        f"Sent {sent} PDF file(s); {failed} failed; {skipped} skipped"
-                    )
-                    if cancelled:
-                        summary += ", cancelled before completion"
-                    dialog.log_message(summary + ".")
-                    self.info_bar.show_message(
-                        summary + ".", "warning" if failed or cancelled else "success"
-                    )
-                finally:
-                    QApplication.restoreOverrideCursor()
-                    self.bottom_bar.set_status("Ready")
-        except Exception as exc:
-            dialog.log_message(f"Batch print failed: {exc}")
-            dialog.mark_printing_as_error()
-            self._error("Batch print failed", str(exc))
-        finally:
-            QApplication.restoreOverrideCursor()
-            self.bottom_bar.set_status("Ready")
-            dialog.set_printing(False)
+        jobs = [PrintJob(str(path), Path(path).name, str(path)) for path in details["paths"]]
+        self._start_print_jobs(jobs, details, dialog=dialog)
 
     def _extract_pages_dialog(self) -> None:
         if not self.engine.is_loaded():
@@ -4769,9 +4718,10 @@ class PDFViewer(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            if not self._snapshot_before("Delete Pages"):
-                return
-            self.engine.delete_pages(pages)
+            with self._page_transaction("Delete Pages") as allowed:
+                if not allowed:
+                    return
+                self.engine.delete_pages(pages)
             self._after_page_count_change()
             self.info_bar.show_message(
                 f"🗑 Deleted {len(pages)} page(s). Save the document to keep the change.",
@@ -4789,40 +4739,41 @@ class PDFViewer(QMainWindow):
             return
         details = dialog.details
         try:
-            if not self._snapshot_before("Insert Pages"):
-                return
-            if details["mode"] == "single":
-                self.engine.insert_pages(
-                    str(details["source"]),
-                    list(details["pages"]),
-                    int(details["position"]),
-                )
-            elif details["mode"] == "repeat":
-                self.engine.repeat_insert_pages(
-                    str(details["source"]),
-                    list(details["pages"]),
-                    int(details["interval"]),
-                )
-            else:
-                sizes = {
-                    "A4": (595.0, 842.0),
-                    "A3": (842.0, 1191.0),
-                    "Letter": (612.0, 792.0),
-                }
-                if details["size"] == "Same as current page":
-                    width, height = self.engine.get_page_size(self._page)
+            with self._page_transaction("Insert Pages") as allowed:
+                if not allowed:
+                    return
+                if details["mode"] == "single":
+                    self.engine.insert_pages(
+                        str(details["source"]),
+                        list(details["pages"]),
+                        int(details["position"]),
+                    )
+                elif details["mode"] == "repeat":
+                    self.engine.repeat_insert_pages(
+                        str(details["source"]),
+                        list(details["pages"]),
+                        int(details["interval"]),
+                    )
                 else:
-                    width, height = sizes[str(details["size"])]
-                if details["orientation"] == "Landscape" and width < height:
-                    width, height = height, width
-                elif details["orientation"] == "Portrait" and width > height:
-                    width, height = height, width
-                self.engine.insert_blank_pages(
-                    int(details["count"]),
-                    int(details["position"]),
-                    width,
-                    height,
-                )
+                    sizes = {
+                        "A4": (595.0, 842.0),
+                        "A3": (842.0, 1191.0),
+                        "Letter": (612.0, 792.0),
+                    }
+                    if details["size"] == "Same as current page":
+                        width, height = self.engine.get_page_size(self._page)
+                    else:
+                        width, height = sizes[str(details["size"])]
+                    if details["orientation"] == "Landscape" and width < height:
+                        width, height = height, width
+                    elif details["orientation"] == "Portrait" and width > height:
+                        width, height = height, width
+                    self.engine.insert_blank_pages(
+                        int(details["count"]),
+                        int(details["position"]),
+                        width,
+                        height,
+                    )
             self._after_page_count_change()
             self.info_bar.show_message(
                 "Pages inserted. Save to keep the change.", "success"
@@ -4868,13 +4819,14 @@ class PDFViewer(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            if not self._snapshot_before("Organize Pages"):
-                return
-            plan = getattr(dialog, "page_plan", None)
-            if plan:
-                self.engine.apply_page_plan(plan)
-            else:
-                self.engine.organize_pages(dialog.order, dialog.rotations)
+            with self._page_transaction("Organize Pages") as allowed:
+                if not allowed:
+                    return
+                plan = getattr(dialog, "page_plan", None)
+                if plan:
+                    self.engine.apply_page_plan(plan)
+                else:
+                    self.engine.organize_pages(dialog.order, dialog.rotations)
             self._after_page_count_change()
             self.info_bar.show_message(
                 "The page plan was applied as one undoable transaction. "
@@ -5427,7 +5379,7 @@ class PDFViewer(QMainWindow):
         on_finished: Callable[[], None] | None = None,
         **kwargs,
     ) -> FunctionTask | None:
-        if self._tasks:
+        if self._tasks or self._printing:
             self.info_bar.show_message(
                 "Wait for the current background operation to finish or cancel it first.",
                 "warning",
@@ -5503,6 +5455,12 @@ class PDFViewer(QMainWindow):
         return task
 
     def _cancel_tasks(self) -> None:
+        controller = getattr(self, "_print_controller", None)
+        if controller is not None:
+            controller.cancel()
+            self.task_bar.set_cancelling()
+            self.bottom_bar.set_status("Cancelling…")
+            return
         if not self._tasks:
             return
         for task in list(self._tasks):
@@ -5598,10 +5556,11 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
-        if not self._snapshot_before("Rotate Page"):
-            return
         try:
-            session.engine.rotate_pages([session.page], angle)
+            with self._page_transaction("Rotate Page") as allowed:
+                if not allowed:
+                    return
+                session.engine.rotate_pages([session.page], angle)
         except Exception as exc:
             self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
             return
@@ -5629,10 +5588,11 @@ class PDFViewer(QMainWindow):
                 0,
             )
             return
-        if not self._snapshot_before("Rotate Pages"):
-            return
         try:
-            session.engine.rotate_pages(pages, angle)
+            with self._page_transaction("Rotate Pages") as allowed:
+                if not allowed:
+                    return
+                session.engine.rotate_pages(pages, angle)
         except Exception as exc:
             self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
             return
@@ -5660,11 +5620,12 @@ class PDFViewer(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            if not self._snapshot_before("Delete Page"):
-                return
             page_number = session.page + 1
             try:
-                session.engine.delete_page(session.page)
+                with self._page_transaction("Delete Page") as allowed:
+                    if not allowed:
+                        return
+                    session.engine.delete_page(session.page)
             except Exception as exc:
                 self.info_bar.show_message(f"Delete failed: {exc}", "error", 0)
                 return
@@ -5827,6 +5788,9 @@ class PDFViewer(QMainWindow):
             self.open_in_new_tab(extra)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._printing:
+            event.ignore()
+            return
         self._closing = True
         for session in list(self._sessions):
             self._session = session
