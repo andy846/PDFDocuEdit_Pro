@@ -26,7 +26,7 @@ def test_verapdf_discovery_is_shared(tmp_path, monkeypatch, name, frozen):
     runtime = verapdf.find_verapdf_runtime()
     capability = capabilities._verapdf_capability()
     assert runtime is not None
-    assert Path(runtime.launcher) == launcher.resolve()
+    assert Path(runtime.launcher).samefile(launcher)
     assert capability.available
     assert capability.path == runtime.launcher
 
