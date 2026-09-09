@@ -647,6 +647,7 @@ class PDFViewer(QMainWindow):
         navigate_menu.addAction(self._action("Last Page", "End", self._goto_last_page))
 
         help_menu = menu.addMenu("&Help")
+        help_menu.addAction(self._action("Check for Updates…", None, self._check_for_updates))
         help_menu.addAction(self._action("README", None, self._show_readme))
         help_menu.addAction(
             self._action("Command Palette…", "Ctrl+K", self._show_command_palette)
@@ -5725,6 +5726,16 @@ class PDFViewer(QMainWindow):
         if answer == QMessageBox.StandardButton.Yes:
             self._set_default_app()
 
+    def _check_for_updates(self) -> None:
+        from ui.update_dialog import UpdateDialog
+
+        dialog = getattr(self, "_update_dialog", None)
+        if dialog is None:
+            dialog = self._update_dialog = UpdateDialog(self)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def show_about(self) -> None:
         QMessageBox.about(
             self,
@@ -5788,6 +5799,12 @@ class PDFViewer(QMainWindow):
             self.open_in_new_tab(extra)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        dialog = getattr(self, "_update_dialog", None)
+        if dialog is not None and dialog.busy():
+            dialog.reject()
+            self.info_bar.show_message("Cancelling the update download. Please close again when it finishes.", "info", 0)
+            event.ignore()
+            return
         if self._printing:
             event.ignore()
             return

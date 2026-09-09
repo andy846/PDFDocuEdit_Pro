@@ -3,6 +3,7 @@
 from pathlib import Path
 import os
 import sys
+from PyInstaller.utils.hooks import copy_metadata
 
 ROOT = Path(SPECPATH)
 APP_NAME = "PDFDocuEdit Pro"
@@ -17,6 +18,10 @@ datas = [
     (str(ROOT / "icon.png"), "."),
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
 ]
+for _package in ("cryptography", "cffi", "pycparser"):
+    datas.extend(copy_metadata(_package))
+if (ROOT / "build_assets" / "update_build.json").exists():
+    datas.append((str(ROOT / "build_assets" / "update_build.json"), "."))
 if _win_icon_alt.exists():
     datas.append((str(_win_icon_alt), "."))
 datas.extend(
@@ -213,12 +218,12 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="2.5.4",
+        version="2.5.5",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "2.5.4",
-            "CFBundleVersion": "254",
-            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.5.4",
+            "CFBundleShortVersionString": "2.5.5",
+            "CFBundleVersion": "255",
+            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.5.5",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

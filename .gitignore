@@ -49,3 +49,6 @@ extracted_hicon.png
 probe_*.py
 probe_*.txt
 pytest_out*.txt
+
+# Local update signing key: never distribute
+.update-keys/

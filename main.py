@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +19,7 @@ from core.settings import SettingsManager
 from core.viewer import PDFViewer
 from styles.components import global_style
 from styles.theme import ThemeMode, apply_theme
+from updates.runtime import RESTART_EXIT_CODE, ROOT_ENV, TOKEN_ENV, FileLock, managed_root
 
 
 class PDFDocuEditApplication(QApplication):
@@ -283,6 +287,10 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
     app.setOrganizationDomain("pdfdocuedit.local")
     app.setApplicationVersion(APP_VERSION)
     app.setWindowIcon(_application_icon())
+    if managed_root() is not None:
+        from updates.app_session import import_settings
+
+        import_settings()
     settings = SettingsManager()
     apply_theme(app, ThemeMode(settings.get_theme()))
     app.setStyleSheet(global_style())
@@ -300,16 +308,44 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
 
 
 def main() -> int:
+    if getattr(sys, "frozen", False) and sys.platform == "win32":
+        folder = Path(sys.executable).resolve().parent
+        if folder.parent.name == "versions" and not os.environ.get(TOKEN_ENV):
+            environment = os.environ.copy()
+            environment.pop(ROOT_ENV, None)
+            environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            subprocess.Popen([str(folder.parent.parent / "Launcher.exe"), *sys.argv[1:]], env=environment)
+            return 0
+    root = managed_root()
+    app_lock = None
+    if root is not None:
+        from updates.protocol import read_json
+
+        launch = read_json(root / "launch.json")
+        if launch.get("token") != os.environ.get(TOKEN_ENV) or launch.get("version") != APP_VERSION:
+            return 1
+        app_lock = FileLock(root / "app.lock")
+        if not app_lock.acquire():
+            return 1
+    try:
+        return _run_application(root)
+    finally:
+        if app_lock is not None:
+            app_lock.release()
+
+
+def _run_application(root: Path | None) -> int:
     app = create_application()
     # A file association starts the executable again. Forward those paths to
     # the existing process before creating a splash or a second main window.
     paths = pdf_arguments(sys.argv[1:])
-    if SingleInstanceRouter.forward_to_primary(paths):
+    server_name = SINGLE_INSTANCE_KEY if root is None else SINGLE_INSTANCE_KEY + "-" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    if SingleInstanceRouter.forward_to_primary(paths, server_name):
         return 0
-    instance_router = SingleInstanceRouter(parent=app)
+    instance_router = SingleInstanceRouter(server_name, parent=app)
     if not instance_router.listen():
         # Cover the narrow race where two processes start at the same time.
-        if SingleInstanceRouter.forward_to_primary(paths):
+        if SingleInstanceRouter.forward_to_primary(paths, server_name):
             return 0
 
     splash = _create_splash()
@@ -343,7 +379,7 @@ def main() -> int:
 
     viewer.show()
     splash.finish(viewer)
-    if paths:
+    if paths and root is None:
         viewer.queue_open_files([str(path) for path in paths])
     # Qt's HICON mask renders the title-bar icon as a white square; hand
     # Windows a correctly-masked icon once the native window exists.
@@ -351,8 +387,22 @@ def main() -> int:
     # The frame theme needs the native window too.
     QTimer.singleShot(200, viewer._update_title_bar)
     # Ask once (installed builds only) whether to become the default app.
-    QTimer.singleShot(600, viewer.offer_default_app)
-    return app.exec()
+    if root is None:
+        QTimer.singleShot(600, viewer.offer_default_app)
+    else:
+        from updates.app_session import activate
+
+        viewer.setEnabled(False)
+        pending_paths = [str(path) for path in paths]
+
+        def managed_open(incoming):
+            incoming = [*pending_paths, *incoming]
+            pending_paths.clear()
+            accept_forwarded_paths(incoming)
+
+        QTimer.singleShot(300, lambda: activate(viewer, managed_open))
+    result = app.exec()
+    return RESTART_EXIT_CODE if getattr(viewer, "_update_restart", False) else result
 
 
 if __name__ == "__main__":

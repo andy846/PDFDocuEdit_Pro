@@ -26,6 +26,11 @@ def is_installed() -> bool:
 
 
 def _executable() -> str:
+    from updates.runtime import managed_root
+
+    root = managed_root()
+    if root is not None:
+        return str(root / "Launcher.exe")
     return str(Path(sys.executable).resolve())
 
 

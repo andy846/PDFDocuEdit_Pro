@@ -14,7 +14,7 @@ from PyQt6.QtCore import QStandardPaths
 
 APP_NAME = "PDFDocuEdit Pro"
 APP_SLUG = "PDFDocuEditPro"
-APP_VERSION = "2.5.4"
+APP_VERSION = "2.5.5"
 COPYRIGHT_NOTICE = (
     "Copyright © 2026 Andy Leung. All rights reserved. "
     "PDFDocuEdit Pro is proprietary software. Unauthorized copying, "
@@ -52,11 +52,17 @@ def config_dir_path() -> Path:
     Read-only consumers (capability detection, settings reads) should not
     create directories on disk; only actual saves need ``config_dir``.
     """
+    if os.environ.get("PDFDOCUEDIT_UPDATE_ROOT"):
+        return Path(os.environ["PDFDOCUEDIT_UPDATE_ROOT"]) / "data" / "config"
     value = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
     return Path(value) if value else Path.home() / f".config/{APP_SLUG}"
 
 
 def cache_dir() -> Path:
+    if os.environ.get("PDFDOCUEDIT_UPDATE_ROOT"):
+        path = Path(os.environ["PDFDOCUEDIT_UPDATE_ROOT"]) / "cache"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
     return _writable_location(
         QStandardPaths.StandardLocation.CacheLocation,
         f".cache/{APP_SLUG}",
@@ -64,6 +70,10 @@ def cache_dir() -> Path:
 
 
 def data_dir() -> Path:
+    if os.environ.get("PDFDOCUEDIT_UPDATE_ROOT"):
+        path = Path(os.environ["PDFDOCUEDIT_UPDATE_ROOT"]) / "data"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
     return _writable_location(
         QStandardPaths.StandardLocation.AppLocalDataLocation,
         f".local/share/{APP_SLUG}",

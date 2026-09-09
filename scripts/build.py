@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -14,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "2.5.4"
+VERSION = "2.5.5"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -274,7 +275,7 @@ def _inno_signing_args(settings: tuple[str, str, str] | None) -> list[str]:
     return [f"/S{name}={command}", f"/DMySignTool={name}"]
 
 
-def build_windows() -> tuple[Path, Path]:
+def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
     validate_tesseract_bundle()
     validate_verapdf_bundle()
     run(
@@ -290,6 +291,8 @@ def build_windows() -> tuple[Path, Path]:
     if signing:
         _sign_windows_file(executable, signing)
     portable = build_portable_zip()
+    if portable_only:
+        return None, portable
     compiler = _find_inno_setup_compiler()
     if not compiler:
         raise RuntimeError(
@@ -301,7 +304,10 @@ def build_windows() -> tuple[Path, Path]:
     return output, portable
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
+    args = parser.parse_args(argv or [])
     if sys.version_info[:2] != (3, 12):
         current = ".".join(map(str, sys.version_info[:3]))
         raise RuntimeError(
@@ -322,6 +328,8 @@ def main() -> int:
         "styles",
         "tests",
         "scripts",
+        "updates",
+        "launcher.py",
     )
     test_environment = os.environ.copy()
     test_environment.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -331,8 +339,9 @@ def main() -> int:
         output = build_macos()
         print(f"Created {output}")
     elif system == "Windows":
-        setup_exe, portable_zip = build_windows()
-        print(f"Created {setup_exe}")
+        setup_exe, portable_zip = build_windows(portable_only=True) if args.portable_only else build_windows()
+        if setup_exe is not None:
+            print(f"Created {setup_exe}")
         print(f"Created {portable_zip}")
     else:
         raise RuntimeError("Release builds are supported only on Windows and macOS.")
@@ -340,4 +349,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

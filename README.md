@@ -1,6 +1,17 @@
-# PDFDocuEdit Pro V2.5.4
+# PDFDocuEdit Pro V2.5.5
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
+
+## V2.5.5 portable updates
+
+Windows managed portable builds now support **Help → Check for Updates**:
+signed GitHub ZIP downloads, a fixed launcher, isolated versions, and automatic
+startup rollback without an installer. The first deployment requires extracting
+the Managed Portable ZIP and switching the shortcut to Launcher.exe.
+See [免 Installer 更新與發佈指南](docs/PORTABLE_UPDATES.md).
+
+Download the [V2.5.5 managed portable release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.5).
+Existing installations need the one-time managed portable transition before using in-app updates.
 
 ## V2.5.4 stability update
 
@@ -11,7 +22,7 @@ PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間�
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
 
-The Windows x64 release is V2.5.4. Download the Setup or Portable ZIP from the Releases section below, with matching SHA-256 files.
+The current Windows x64 release is V2.5.5. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -87,8 +98,9 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：`PDFDocuEdit-Pro-v2.5.4-Setup-Windows-x64.exe`
-- 免安裝版：`PDFDocuEdit-Pro-v2.5.4-Portable-Windows-x64.zip`
+- 首次部署：[Managed Portable V2.5.5](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.5/PDFDocuEdit-Pro-v2.5.5-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。
+- 每個 ZIP 均附有同名 .sha256 校驗檔。V2.5.5 採用免 installer 發佈。
 
 ### Windows release build
 
@@ -137,7 +149,7 @@ Applied redactions now require a full garbage-collected save, including encrypte
 
 Page, annotation, watermark and applied-redaction actions now use a shared transaction boundary. Undo/redo preserves the live document and history when preparation or restoration fails. Mutation/history coordination lives in `ui/mutation_controller.py`; migrated PDF and annotation outputs share `core/io_atomic.py`.
 
-Windows Python 3.12.14 validation: **389 passed across 35 modules**, plus Ruff and source verification. See the [architecture report](docs/V2.6_ARCHITECTURE_REPORT.md) for detailed scope and remaining packaging/platform checks. Source version metadata remains V2.5.4.
+Windows Python 3.12.14 validation: **389 passed across 35 modules**, plus Ruff and source verification. See the [architecture report](docs/V2.6_ARCHITECTURE_REPORT.md) for detailed scope and remaining packaging/platform checks. These are historical V2.5.4 validation results.
 
 ## 版權
 

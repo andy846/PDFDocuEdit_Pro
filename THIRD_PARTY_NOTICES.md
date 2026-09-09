@@ -66,3 +66,10 @@ Release and source information: https://adoptium.net/temurin/releases/
 
 The applicable GPLv2 and Classpath Exception texts, notices, and source offer
 requirements must accompany binary releases.
+
+## Cryptography (PyCA)
+
+The portable updater uses cryptography 46.0.7 for Ed25519 signature verification.
+It is distributed under the Apache License 2.0 or BSD 3-Clause license.
+The bundled cryptography distribution metadata includes its license texts and
+notices for its OpenSSL and Rust dependencies. Source: https://github.com/pyca/cryptography
