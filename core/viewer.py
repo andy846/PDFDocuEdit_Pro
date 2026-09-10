@@ -851,7 +851,9 @@ class PDFViewer(QMainWindow):
     def _canvas_page_changed(
         self, session: DocumentSession, canvas, page: int
     ) -> None:
-        if self._external_split_source(session, canvas) is None:
+        # Shared navigation belongs to the primary pane. A synchronized
+        # secondary pane already forwards its page through the primary signal.
+        if canvas is session.canvas:
             self._session_page_changed(session, page)
 
     def _canvas_zoom_changed(
@@ -2696,7 +2698,9 @@ class PDFViewer(QMainWindow):
         canvas = session.canvas
         # The cached page renders are keyed by page index, which is now
         # stale, so the canvas must re-render before scrolling.
-        canvas.refresh()
+        # Rebuild every pane before primary navigation emits synchronization
+        # signals; a secondary layout may still reference pages just deleted.
+        self._refresh_session_canvases(session)
         canvas.set_page(max(0, session.page))
         name = session.document_name
         path = session.display_path or session.engine.original_path

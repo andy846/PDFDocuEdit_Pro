@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 5, 6, 0),
-    prodvers=(2, 5, 6, 0),
+    filevers=(2, 5, 7, 0),
+    prodvers=(2, 5, 7, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,7 +16,7 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Andy Leung'),
           StringStruct('FileDescription', 'PDFDocuEdit Pro'),
-          StringStruct('FileVersion', '2.5.6.0'),
+          StringStruct('FileVersion', '2.5.7.0'),
           StringStruct('InternalName', 'PDFDocuEdit Pro'),
           StringStruct(
             'LegalCopyright',
@@ -24,7 +24,7 @@ VSVersionInfo(
           ),
           StringStruct('OriginalFilename', 'PDFDocuEdit Pro.exe'),
           StringStruct('ProductName', 'PDFDocuEdit Pro'),
-          StringStruct('ProductVersion', '2.5.6')
+          StringStruct('ProductVersion', '2.5.7')
         ]
       )
     ]),

@@ -297,6 +297,10 @@ class PdfCanvas(QScrollArea):
         self._selected_annotation = None
         self._teardown_views()
         self._relayout()
+        self.horizontalScrollBar().setValue(0)
+        self.verticalScrollBar().setValue(0)
+        if self._layout_mode != LayoutMode.SINGLE:
+            self._scroll_to_page(0)
 
     def clear(self) -> None:
         self.wait_for_renders()
@@ -410,6 +414,11 @@ class PdfCanvas(QScrollArea):
         self._layout_mode = value
         self._teardown_views()
         self._relayout()
+        if self._doc:
+            if self._layout_mode != LayoutMode.SINGLE:
+                self._scroll_to_page(self._page)
+            else:
+                self.verticalScrollBar().setValue(0)
         if emit:
             self.pageChanged.emit(self._page)
 
@@ -544,6 +553,7 @@ class PdfCanvas(QScrollArea):
             self._generation += 1
             self._teardown_views()
             self._relayout()
+            self.verticalScrollBar().setValue(0)
         else:
             self._scroll_to_page(page)
         if emit:
@@ -552,10 +562,14 @@ class PdfCanvas(QScrollArea):
     def _scroll_to_page(self, page: int) -> None:
         rect = self._page_rect_in_layout(page)
         if rect.isValid():
-            target = max(0, int(rect.top()) - MARGIN)
-            self.verticalScrollBar().setValue(target)
+            # Center a fitting page; start at its top when it needs scrolling.
+            spare = self.viewport().height() - rect.height() - CAPTION_H
+            target = rect.top() - (spare / 2 if spare >= 0 else MARGIN)
+            self.verticalScrollBar().setValue(max(0, round(target)))
+        # Explicit navigation owns the page identity. A delayed scroll callback
+        # must not replace it with a neighbouring page near the viewport centre.
+        self._scroll_timer.stop()
         self._sync_views()
-        self._update_current_from_scroll()
 
     # --- zoom ------------------------------------------------------------
     def set_zoom(self, ratio: float, *, emit: bool = True) -> None:
@@ -569,6 +583,8 @@ class PdfCanvas(QScrollArea):
         if self._doc:
             self._relayout()
             self._restore_view_anchor(anchor)
+            self._scroll_timer.stop()
+            self._sync_views()
         if emit:
             self.zoomChanged.emit(value)
 
@@ -994,10 +1010,16 @@ class PdfCanvas(QScrollArea):
     def _relayout(self) -> None:
         if not self._doc:
             return
+        self._page = max(0, min(self._page, self._doc.page_count - 1))
         self._rows = self._compute_rows()
-        self._pager.setFixedSize(self._total_size())
+        size = self._total_size()
+        spare = max(0, self.viewport().height() - size.height())
+        if spare:
+            self._rows = [(y + spare // 2, pages) for y, pages in self._rows]
+            size.setHeight(self.viewport().height())
+        self._pager.setFixedSize(size)
+        self._scroll_timer.stop()
         self._sync_views()
-        self._update_current_from_scroll()
 
     @_document_locked
     def _visible_pages(self, buffer_pages: int | None = None) -> list[int]:
@@ -1208,8 +1230,9 @@ class PdfCanvas(QScrollArea):
             return
         center = self.verticalScrollBar().value() + self.viewport().height() / 2
         best_page = self._page
-        best_distance = float("inf")
-        for page_num in self._visible_pages():
+        current_rect = self._page_rect_in_layout(self._page)
+        best_distance = abs(current_rect.center().y() - center) if current_rect.isValid() else float("inf")
+        for page_num in self._visible_pages(buffer_pages=0):
             rect = self._page_rect_in_layout(page_num)
             distance = abs(rect.center().y() - center)
             if distance < best_distance:
@@ -1240,9 +1263,14 @@ class PdfCanvas(QScrollArea):
     def _apply_pending_relayout(self) -> None:
         if not self._doc:
             return
+        scroll_pending = self._scroll_timer.isActive()
         anchor = self._view_anchor()
         self._relayout()
         self._restore_view_anchor(anchor)
+        self._scroll_timer.stop()
+        self._sync_views()
+        if scroll_pending:
+            self._update_current_from_scroll()
 
     def wheelEvent(self, event) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
