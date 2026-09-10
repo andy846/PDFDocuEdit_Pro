@@ -1,8 +1,14 @@
-# PDFDocuEdit Pro V2.5.5
+# PDFDocuEdit Pro V2.5.6
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
 
-## V2.5.5 portable updates
+## V2.5.6 Advanced Page Organizer
+
+智慧選頁、Reverse、Interleave、空白頁、批次裁切及 Extract／Split，整合暫存預覽與 Undo／Redo。修正旋轉內容、縮圖比例、空白頁崩潰及匯入圖層顯示問題。
+
+詳見 [版本說明](docs/RELEASE_NOTES_2.5.6.md) 及 [Organizer 操作指南](docs/ADVANCED_ORGANIZER.md)。
+
+## Portable updates
 
 Windows managed portable builds now support **Help → Check for Updates**:
 signed GitHub ZIP downloads, a fixed launcher, isolated versions, and automatic
@@ -10,7 +16,7 @@ startup rollback without an installer. The first deployment requires extracting
 the Managed Portable ZIP and switching the shortcut to Launcher.exe.
 See [免 Installer 更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V2.5.5 managed portable release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.5).
+Download the [V2.5.6 managed portable release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.6).
 Existing installations need the one-time managed portable transition before using in-app updates.
 
 ## V2.5.4 stability update
@@ -22,7 +28,7 @@ Existing installations need the one-time managed portable transition before usin
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V2.5.5. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
+The current Windows x64 release is V2.5.6. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -98,9 +104,9 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 首次部署：[Managed Portable V2.5.5](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.5/PDFDocuEdit-Pro-v2.5.5-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 首次部署：[Managed Portable V2.5.6](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.6/PDFDocuEdit-Pro-v2.5.6-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
 - 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。
-- 每個 ZIP 均附有同名 .sha256 校驗檔。V2.5.5 採用免 installer 發佈。
+- 每個 ZIP 均附有同名 .sha256 校驗檔。V2.5.6 採用免 installer 發佈。已有 v2.5.5 Managed Portable 的使用者可從 Launcher.exe 啟動後檢查更新。
 
 ### Windows release build
 

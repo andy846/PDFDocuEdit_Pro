@@ -18,6 +18,7 @@ from pathlib import Path
 import fitz
 
 from .io_atomic import atomic_output
+from .page_plan import PagePlanEntry, apply_plan_to_document
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 
 # Serializes every operation on the shared live document between the GUI
@@ -59,18 +60,6 @@ class SearchHit:
     page: int
     rects: list[fitz.Rect]
     context: str
-
-
-@dataclass(frozen=True)
-class PagePlanEntry:
-    """One stable page reference used by the visual organizer transaction."""
-
-    entry_id: str
-    source_kind: str
-    source_page: int
-    source_path: str = ""
-    final_rotation: int = 0
-    password: str = ""
 
 
 class PdfEngine:
@@ -116,7 +105,7 @@ class PdfEngine:
                     self._transaction_depth -= 1
                 return
             doc = self._require_document()
-            backup = doc.tobytes(garbage=3, deflate=True)
+            backup = doc.tobytes(garbage=0, deflate=False, clean=False, no_new_id=True)
             state = (self._is_modified, self._requires_full_save, self._revision,
                      self._requires_sanitized_save)
             self._transaction_depth = 1
@@ -476,7 +465,7 @@ class PdfEngine:
             valid = [page for page in pages if 0 <= page < source.page_count]
             if not valid:
                 raise PdfEngineError("No valid source pages were selected.")
-            backup = None if self._transaction_depth else doc.tobytes(garbage=3, deflate=True)
+            backup = None if self._transaction_depth else doc.tobytes(garbage=0, deflate=False, clean=False, no_new_id=True)
             try:
                 for offset, page_num in enumerate(valid):
                     doc.insert_pdf(
@@ -635,92 +624,16 @@ class PdfEngine:
         plan = list(entries)
         if not plan:
             raise PdfEngineError("A PDF must contain at least one page.")
-        original_count = doc.page_count
-        external_keys: list[tuple[str, int, str]] = []
-        for entry in plan:
-            if entry.source_kind == "current":
-                if not 0 <= entry.source_page < original_count:
-                    raise PdfEngineError(
-                        "The page plan references an invalid current page."
-                    )
-                continue
-            if entry.source_kind != "external":
-                raise PdfEngineError(f"Unknown page source: {entry.source_kind}")
-            source = Path(entry.source_path).expanduser().resolve()
-            if not source.is_file():
-                raise PdfEngineError(f"Source PDF no longer exists: {source}")
-            key = (str(source), int(entry.source_page), entry.password)
-            if key not in external_keys:
-                external_keys.append(key)
-
-        # Validate every external document before touching the live document.
-        validated: dict[str, tuple[int, str]] = {}
-        for path, page_number, password in external_keys:
-            if path not in validated:
-                with fitz.open(path) as source:
-                    if source.needs_pass and (
-                        not password or not source.authenticate(password)
-                    ):
-                        raise PdfEngineError(
-                            f"A password is required for {Path(path).name}."
-                        )
-                    validated[path] = (source.page_count, password)
-            if not 0 <= page_number < validated[path][0]:
-                raise PdfEngineError(
-                    f"Source page {page_number + 1} is outside {Path(path).name}."
-                )
-
-        backup = doc.tobytes(garbage=3, deflate=True)
-        appended: dict[str, int] = {}
+        if len({entry.entry_id for entry in plan}) == len(plan) == doc.page_count and all(
+            entry.source_kind == "current" and entry.source_page == index
+            and entry.final_rotation % 360 == doc[index].rotation
+            and (entry.crop_box is None or fitz.Rect(entry.crop_box) == doc[index].cropbox)
+            for index, entry in enumerate(plan)
+        ):
+            return
+        backup = doc.tobytes(garbage=0, deflate=False, clean=False, no_new_id=True)
         try:
-            # Document.select reuses the same page object when an index is
-            # repeated. Append an independent copy for every duplicate entry
-            # so rotations and later annotations never leak between copies.
-            with fitz.open(stream=backup, filetype="pdf") as original:
-                seen_current: set[int] = set()
-                for entry in plan:
-                    if entry.source_kind == "current":
-                        if entry.source_page not in seen_current:
-                            seen_current.add(entry.source_page)
-                            continue
-                        destination = doc.page_count
-                        doc.insert_pdf(
-                            original,
-                            from_page=entry.source_page,
-                            to_page=entry.source_page,
-                            start_at=destination,
-                        )
-                        appended[entry.entry_id] = destination
-                        continue
-                    path = str(Path(entry.source_path).expanduser().resolve())
-                    with fitz.open(path) as source:
-                        if source.needs_pass and not source.authenticate(
-                            entry.password
-                        ):
-                            raise PdfEngineError(f"Cannot unlock {Path(path).name}.")
-                        destination = doc.page_count
-                        doc.insert_pdf(
-                            source,
-                            from_page=entry.source_page,
-                            to_page=entry.source_page,
-                            start_at=destination,
-                        )
-                        appended[entry.entry_id] = destination
-
-            desired: list[int] = []
-            used_current: set[int] = set()
-            for entry in plan:
-                if (
-                    entry.source_kind == "current"
-                    and entry.source_page not in used_current
-                ):
-                    used_current.add(entry.source_page)
-                    desired.append(entry.source_page)
-                else:
-                    desired.append(appended[entry.entry_id])
-            doc.select(desired)
-            for index, entry in enumerate(plan):
-                doc.load_page(index).set_rotation(int(entry.final_rotation) % 360)
+            apply_plan_to_document(doc, plan)
         except Exception as exc:
             if self._transaction_depth:
                 self._transaction_error = exc

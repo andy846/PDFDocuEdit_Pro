@@ -2,7 +2,7 @@
 
 ## 公司首次使用
 
-1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.5-Managed-Portable-Windows-x64.zip`，核對同名 `.sha256`。
+1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.6-Managed-Portable-Windows-x64.zip`，核對同名 `.sha256`。
 2. 將整個 `PDFDocuEditPro` 資料夾解壓到 `%LOCALAPPDATA%` 或公司允許寫入及執行的資料夾。請勿覆蓋既有部署資料夾。
 3. 執行 `Launcher.exe`，並建立指向它的桌面捷徑。`launcher_runtime` 是啟動器依賴，必須保留。
 4. 首次啟動可選擇複製現有 Windows 使用者設定。舊設定及 PDF 不會被移動。歷史便攜版的設定如不在 Windows 設定位置，可在關閉程式後把其 `config.json` 中的設定匯入新部署的 `data/config/settings.json`；先保留原檔備份。
@@ -75,3 +75,9 @@ python -m ruff check .
 請在公司標準帳戶驗證：可寫入部署資料夾、可執行新版 EXE／DLL、可下載 GitHub Release 附件（包括重新導向的資產網域）、取消未儲存文件時不更新，以及一次真正跨版本更新。
 
 更新紀錄在 `logs/updater.log`（輪替保留）。下載錯誤在更新視窗顯示；啟動／還原錯誤由啟動器提示。網絡被封鎖不會變更目前版本，也不會停用 TLS 驗證。開發環境測試不能替代公司端防毒及應用程式執行政策的實機驗收。
+
+## v2.5.5 → v2.5.6 實測
+
+先從現有 v2.5.5 的 Launcher.exe 啟動，使用 Help → Check for Updates → Download Update → Update and Restart。確認版本變成 2.5.6，Advanced Page Organizer 可插入空白頁及旋轉，再關閉並重新從同一個 Launcher.exe 開啟。檢查設定、PDF 開啟及 logs/updater.log；未儲存文件應仍提供儲存／取消機會。首次直接部署 v2.5.6 無法測試這次跨版本升級。
+
+Installer 本身不阻止 auto update。現有 Setup 使用直接主程式目錄與捷徑，沒有 managed 的 versions/state/launcher 結構；因此這次仍需一次 Managed Portable 過渡。未來 Setup 可安裝相同的 managed 結構並將捷徑／檔案關聯指向 Launcher。這屬另一項安裝、卸載及既有使用者遷移工作，v2.5.6 未修改 Setup 部署結構。

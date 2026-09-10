@@ -66,7 +66,7 @@ class MutationController:
             return False
         try:
             with DOCUMENT_LOCK:
-                current = session.engine.document.tobytes(garbage=3, deflate=True)
+                current = session.engine.document.tobytes(garbage=0, deflate=False, clean=False, no_new_id=True)
             changed = stack.restore(
                 direction, current, modified=session.engine.is_modified,
                 apply=lambda path, modified: viewer._restore_history_snapshot(

@@ -12,7 +12,7 @@ from pathlib import Path
 
 @contextmanager
 def atomic_output(
-    output_path: str | os.PathLike[str], *, suffix: str | None = None
+    output_path: str | os.PathLike[str], *, suffix: str | None = None, overwrite: bool = True
 ) -> Iterator[Path]:
     """Yield a temporary path, then atomically replace the destination.
 
@@ -29,7 +29,15 @@ def atomic_output(
     staged = Path(temp_name)
     try:
         yield staged
-        os.replace(staged, target)
+        if overwrite:
+            os.replace(staged, target)
+        elif os.name == "nt":
+            # Windows rename fails atomically if another writer created target.
+            os.rename(staged, target)
+        else:
+            # Same-filesystem link publishes the complete file without replacing
+            # an existing name. The staging link is removed in finally.
+            os.link(staged, target)
     finally:
         try:
             staged.unlink(missing_ok=True)

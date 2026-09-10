@@ -34,6 +34,43 @@ def global_style() -> str:
         QWidget#commandBar, QWidget#statusBar {{
             background: {c['bg_surface']};
         }}
+        QLabel#organizerTitle {{
+            font-size: 20px;
+            font-weight: 700;
+        }}
+        QScrollArea#organizerToolsScroll, QWidget#organizerToolsPanel {{
+            background: transparent;
+        }}
+        QDialog#advancedOrganizer QGroupBox {{
+            border: 1px solid {c['border']};
+            border-radius: 8px;
+            margin-top: 10px;
+            padding: 6px 8px 6px 8px;
+            font-weight: 600;
+        }}
+        QDialog#advancedOrganizer QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 12px;
+            padding: 0 4px;
+            color: {c['text_secondary']};
+        }}
+        QPushButton#organizerAction {{
+            background: {c['bg_elevated']};
+            border: 1px solid {c['border']};
+            border-radius: 6px;
+            padding: 5px 9px;
+            min-height: 22px;
+            font-size: 12px;
+        }}
+        QPushButton#organizerAction:hover {{
+            background: {c['primary_soft']};
+            border-color: {c['primary']};
+        }}
+        QPushButton#organizerAction:disabled {{
+            color: {c['text_secondary']};
+            background: transparent;
+        }}
         QWidget#organizerGridContainer {{
             background: transparent;
         }}

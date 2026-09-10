@@ -4817,10 +4817,14 @@ class PDFViewer(QMainWindow):
             )
         else:
             dialog = VisualOrganizerDialog(document, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
         try:
-            with self._page_transaction("Organize Pages") as allowed:
+            if hasattr(dialog, "protected_paths"):
+                dialog.protected_paths.update(
+                    session.engine.original_path for session in self._sessions
+                    if session.engine.original_path)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            with self._page_transaction("Advanced Page Organizer") as allowed:
                 if not allowed:
                     return
                 plan = getattr(dialog, "page_plan", None)
@@ -4835,7 +4839,11 @@ class PDFViewer(QMainWindow):
                 "success",
             )
         except Exception as exc:
-            self._error("Organize pages failed", str(exc))
+            self._error("Advanced Page Organizer failed", str(exc))
+        finally:
+            release = getattr(dialog, "release_sources", None)
+            if release:
+                release()
 
     def _require_source(self) -> Path | None:
         if not self.engine.is_loaded() or not self.engine.original_path:

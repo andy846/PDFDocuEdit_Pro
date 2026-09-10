@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 import uuid
+from collections import OrderedDict
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QImage, QPainter, QPixmap, QTransform
+from PyQt6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtPrintSupport import QPrinterInfo
 from PyQt6.QtWidgets import (
     QApplication,
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -47,10 +47,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.pdf_engine import PagePlanEntry, parse_page_range
-from core.pdf_io import validate_pdf_file
+from core.page_plan import (
+    PlanReader,
+    SourceStore,
+    blank_entry,
+    duplicate_entries,
+    export_plan,
+    parse_page_selection,
+    reverse_selected,
+)
+from core.pdf_engine import DOCUMENT_LOCK, PagePlanEntry, parse_page_range
 
 from .base import SortableTableWidget, ToolDialog
+from .organizer_tools import BlankPagesDialog, CropDialog, InterleaveDialog, SplitPlanDialog, run_job
 from .print_profile import collect_print_profile, quality_changed, restore_print_profile, selected_quality_dpi
 
 
@@ -64,7 +73,7 @@ def _fitz_pixmap_image(pixmap: fitz.Pixmap) -> QImage:
 ORGANIZER_CELL_W = 164
 ORGANIZER_CELL_H = 228
 ORGANIZER_THUMB_W = 132
-ORGANIZER_THUMB_H = 176
+ORGANIZER_THUMB_H = 160
 ORGANIZER_MARGIN = 12
 ORGANIZER_SPACING = 8
 
@@ -91,12 +100,21 @@ class OrganizerPageWidget(QWidget):
         self._thumb = QLabel()
         self._thumb.setObjectName("organizerPageThumb")
         self._thumb.setFixedSize(ORGANIZER_THUMB_W, ORGANIZER_THUMB_H)
+        self._thumb_slot = QWidget()
+        self._thumb_slot.setFixedSize(ORGANIZER_THUMB_W, ORGANIZER_THUMB_H)
+        slot_layout = QVBoxLayout(self._thumb_slot)
+        slot_layout.setContentsMargins(0, 0, 0, 0)
+        slot_layout.addWidget(self._thumb, 0, Qt.AlignmentFlag.AlignCenter)
         self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._thumb, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._thumb_slot, 0, Qt.AlignmentFlag.AlignHCenter)
         self._caption = QLabel(self._label())
         self._caption.setObjectName("organizerPageCaption")
         self._caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._caption)
+        self._dimensions = QLabel()
+        self._dimensions.setObjectName("organizerPageCaption")
+        self._dimensions.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._dimensions)
         self._badge = QLabel("✓", self)
         self._badge.setObjectName("organizerSelectionBadge")
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -105,12 +123,17 @@ class OrganizerPageWidget(QWidget):
         self._badge.hide()
 
     def _label(self) -> str:
+        if self.entry.source_kind == "blank":
+            return "Blank page"
         if self.entry.source_kind == "external":
-            source = Path(self.entry.source_path).name
+            source = self.entry.source_label or Path(self.entry.source_path).name
             return f"{source} · p{self.entry.source_page + 1}"
         return f"Page {self.entry.source_page + 1}"
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
+        if not pixmap.isNull():
+            self._thumb.setFixedSize(round(pixmap.width() / pixmap.devicePixelRatio()),
+                                     round(pixmap.height() / pixmap.devicePixelRatio()))
         self._thumb.setPixmap(pixmap)
 
     def set_rotation(self, rotation: int) -> None:
@@ -159,6 +182,8 @@ class OrganizerGrid(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._document = document
+        self.reader = PlanReader(document)
+        self._thumb_cache = OrderedDict()
         # State is initialized before setWidget: QScrollArea delivers events
         # to the content widget during setWidget, and eventFilter() reads it.
         self._widgets: list[OrganizerPageWidget] = []
@@ -172,9 +197,9 @@ class OrganizerGrid(QScrollArea):
         self._press_pos = QPoint()
         self._dragging = False
         self._drag_slot: int | None = None
-        self._thumb_queue: list[int] = []
+        self._thumb_queue: list[str] = []
         self._thumb_timer = QTimer(self)
-        self._thumb_timer.setInterval(0)
+        self._thumb_timer.setInterval(10)
         self._thumb_timer.timeout.connect(self._load_thumbnail_batch)
         self._container = QWidget()
         self._container.setObjectName("organizerGridContainer")
@@ -190,6 +215,7 @@ class OrganizerGrid(QScrollArea):
         for index in range(document.page_count):
             self._add_widget(index)
         self._relayout()
+        self.verticalScrollBar().valueChanged.connect(self._queue_visible)
 
     # --- construction and layout -----------------------------------------
     def _add_widget(self, original_index: int) -> None:
@@ -203,7 +229,7 @@ class OrganizerGrid(QScrollArea):
         self._widgets.append(widget)
         widget.installEventFilter(self)
         widget.show()
-        self._thumb_queue.append(original_index)
+
 
     def _widget_by_original(self, original_index: int) -> OrganizerPageWidget | None:
         for widget in self._widgets:
@@ -234,6 +260,15 @@ class OrganizerGrid(QScrollArea):
         self._container.setFixedSize(viewport_width, height)
         for slot, widget in enumerate(self._widgets):
             widget.move(self._slot_rect(slot).topLeft())
+            widget._caption.setText(f"{slot + 1} · {widget._label()}")
+            width, height = self.reader.size(widget.entry)
+            widget._dimensions.setText(f"{width * 25.4 / 72:.0f} × {height * 25.4 / 72:.0f} mm · {widget.entry.final_rotation % 360}°")
+            widget.setToolTip(f"{widget._caption.text()}\n{widget._dimensions.text()}")
+            scale = min(ORGANIZER_THUMB_W / width, ORGANIZER_THUMB_H / height)
+            widget._thumb.setFixedSize(max(1, round(width * scale)), max(1, round(height * scale)))
+            if getattr(widget, "_thumbnail_key", None) != widget.entry:
+                widget._thumb.clear()
+        self._queue_visible()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -373,6 +408,7 @@ class OrganizerGrid(QScrollArea):
         self._drag_slot = None
         self._drag = None
         self._insertion_line.hide()
+        self._relayout()
         self.orderChanged.emit()
         return True
 
@@ -403,50 +439,93 @@ class OrganizerGrid(QScrollArea):
             bar.setValue(bar.value() + 28)
 
     # --- thumbnails --------------------------------------------------------
+    def _queue_visible(self, *_args) -> None:
+        if not hasattr(self, "_thumb_timer") or not self.isVisible():
+            return
+        area = self.viewport().rect().translated(0, self.verticalScrollBar().value()).adjusted(0, -228, 0, 228)
+        self._thumb_queue = []
+        for widget in self._widgets:
+            if widget.geometry().intersects(area):
+                if getattr(widget, "_thumbnail_key", None) != widget.entry:
+                    self._thumb_queue.append(widget.entry.entry_id)
+            else:
+                widget._thumb.clear()
+                widget._thumbnail_key = None
+        if self._thumb_queue:
+            self._thumb_timer.start()
+
     def _load_thumbnail_batch(self) -> None:
-        for _ in range(6):
+        for _ in range(2):
             if not self._thumb_queue:
                 self._thumb_timer.stop()
                 return
-            original = self._thumb_queue.pop(0)
-            widget = self._widget_by_original(original)
+            entry_id = self._thumb_queue.pop(0)
+            widget = next((w for w in self._widgets if w.entry.entry_id == entry_id), None)
             if widget is not None:
                 self._render_thumbnail(widget)
 
     def _render_thumbnail(self, widget: OrganizerPageWidget) -> None:
-        if widget.entry.source_kind == "external":
-            with fitz.open(widget.entry.source_path) as source:
-                if source.needs_pass:
-                    source.authenticate(widget.entry.password)
-                page = source.load_page(widget.entry.source_page)
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(0.22, 0.22), alpha=False)
-        else:
-            page = self._document.load_page(widget.entry.source_page)
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(0.22, 0.22), alpha=False)
-        image = _fitz_pixmap_image(pixmap)
-        if widget.rotation_delta:
-            image = image.transformed(QTransform().rotate(widget.rotation_delta))
-        thumbnail = QPixmap.fromImage(image).scaled(
-            ORGANIZER_THUMB_W,
-            ORGANIZER_THUMB_H,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        canvas = QPixmap(ORGANIZER_THUMB_W, ORGANIZER_THUMB_H)
-        canvas.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(canvas)
-        painter.drawPixmap(
-            (canvas.width() - thumbnail.width()) // 2,
-            (canvas.height() - thumbnail.height()) // 2,
-            thumbnail,
-        )
-        painter.end()
-        widget.set_thumbnail(canvas)
+        key = widget.entry
+        cached = self._thumb_cache.get(key)
+        if cached is None:
+            try:
+                with DOCUMENT_LOCK:
+                    image = _fitz_pixmap_image(self.reader.render(key, ORGANIZER_THUMB_H))
+                cached = QPixmap.fromImage(image).scaled(
+                    ORGANIZER_THUMB_W, ORGANIZER_THUMB_H,
+                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
+                )
+                self._thumb_cache[key] = cached
+                while len(self._thumb_cache) > 128:
+                    self._thumb_cache.popitem(last=False)
+            except Exception as exc:
+                widget._thumb.setText("Preview unavailable")
+                widget.setToolTip(str(exc))
+                return
+        self._thumb_cache.move_to_end(key)
+        widget.set_thumbnail(cached)
+        widget._thumbnail_key = key
+
+    def set_plan(self, entries: list[PagePlanEntry], selected_ids=None) -> None:
+        self._thumb_timer.stop()
+        self._cancel_drag()
+        for animation in self._animations.values():
+            animation.stop()
+        previous = {w.entry.entry_id: w for w in self._widgets}
+        selected_ids = set(selected_ids if selected_ids is not None else (w.entry.entry_id for w in self._selected))
+        self._selected.clear()
+        widgets = []
+        for entry in entries:
+            widget = previous.pop(entry.entry_id, None)
+            if widget is None:
+                widget = OrganizerPageWidget(entry, self._container)
+                widget.installEventFilter(self)
+            widget.entry = entry
+            widget.original_index = entry.source_page if entry.source_kind == "current" else -1
+            widget.set_selected(False)
+            widget.show()
+            widgets.append(widget)
+        for widget in previous.values():
+            widget.setParent(None)
+            widget.deleteLater()
+        self._widgets = widgets
+        self._selection_anchor = None
+        self._rotations = {}
+        self._relayout()
+        self._set_selection(w for w in widgets if w.entry.entry_id in selected_ids)
+        self.orderChanged.emit()
+
+    def selected_positions(self) -> list[int]:
+        return [i for i, w in enumerate(self._widgets) if w in self._selected]
+
+    def select_positions(self, positions) -> None:
+        selected = [self._widgets[i] for i in positions]
+        self._set_selection(selected)
+        self._selection_anchor = selected[0] if selected else None
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if self._thumb_queue:
-            self._thumb_timer.start()
+        self._queue_visible()
 
     def stop_timer(self) -> None:
         self._thumb_timer.stop()
@@ -482,7 +561,7 @@ class OrganizerGrid(QScrollArea):
             widget.rotate(amount)
             if widget.entry.source_kind == "current":
                 self._rotations[widget.original_index] = widget.rotation_delta
-            self._render_thumbnail(widget)
+        self._relayout()
         self.orderChanged.emit()
 
     def duplicate_selected(self) -> bool:
@@ -492,7 +571,7 @@ class OrganizerGrid(QScrollArea):
         insertion = self._widgets.index(selected[-1]) + 1
         copies: list[OrganizerPageWidget] = []
         for original in selected:
-            entry = replace(original.entry, entry_id=uuid.uuid4().hex)
+            entry = duplicate_entries([original.entry])[0]
             widget = OrganizerPageWidget(entry, self._container)
             widget.rotation_delta = original.rotation_delta
             widget.set_rotation(original.rotation_delta)
@@ -515,7 +594,6 @@ class OrganizerGrid(QScrollArea):
             widget = OrganizerPageWidget(entry, self._container)
             widget.installEventFilter(self)
             widget.show()
-            self._render_thumbnail(widget)
             widgets.append(widget)
         selected = self.selected_widgets()
         if position == "beginning":
@@ -539,20 +617,9 @@ class OrganizerGrid(QScrollArea):
         positions = [self._widgets.index(widget) for widget in selected]
         if positions != list(range(min(positions), max(positions) + 1)):
             return False
-        insertion = positions[0]
-        for widget in selected:
-            self._widgets.remove(widget)
-            widget.setParent(None)
-            widget.deleteLater()
-        self._selected.clear()
-        self.add_external_pages(entries, "end")
-        added = self.selected_widgets()
-        for widget in added:
-            self._widgets.remove(widget)
-        self._widgets[insertion:insertion] = added
-        self._relayout()
-        self._set_selection(added)
-        self.orderChanged.emit()
+        plan = self.page_plan()
+        plan[positions[0]:positions[-1] + 1] = entries
+        self.set_plan(plan, {entry.entry_id for entry in entries})
         return True
 
     def remove_selected(self) -> bool:
@@ -684,71 +751,156 @@ class VisualOrganizerDialog(ToolDialog):
         *,
         preselected_pages: tuple[int, ...] = (),
     ):
-        super().__init__("Organize Pages", "organize-pages", parent)
+        super().__init__("Advanced Page Organizer", "organize-pages", parent)
         self.document = document
         self.rotations: dict[int, int] = {}
         self.order: list[int] = []
         self.page_plan: list[PagePlanEntry] = []
         self._preselected_pages = preselected_pages
+        self.sources = SourceStore()
+        self.protected_paths = {Path(document.name).resolve()} if document.name else set()
+        self._busy = False
+        self._history = []
+        self._history_index = -1
+        self._replaying = False
 
-        intro = QLabel(
-            "Build a page plan by dragging or using the toolbar. Nothing changes "
-            "until Apply; destructive actions require this final confirmation."
-        )
+        self.setObjectName("advancedOrganizer")
+        self.setMinimumSize(780, 620)
+        self.resize(max(self.width(), 1000), max(self.height(), 740))
+        title = QLabel("Advanced Page Organizer")
+        title.setObjectName("organizerTitle")
+        self._root.addWidget(title)
+        intro = QLabel("Select pages, build your preview, then Apply. The original document stays unchanged until you apply.")
         intro.setObjectName("secondary")
         intro.setWordWrap(True)
         self._root.addWidget(intro)
 
-        toolbar = QHBoxLayout()
-        self.insert_position = QComboBox()
-        for label, value in (
-            ("After selection", "after"),
-            ("Before selection", "before"),
-            ("Beginning", "beginning"),
-            ("End", "end"),
-        ):
-            self.insert_position.addItem(label, value)
-        toolbar.addWidget(self.insert_position)
+        selection = QGroupBox("Select pages")
+        selection_layout = QVBoxLayout(selection)
+        select_row = QHBoxLayout()
+        self.selection_input = QLineEdit()
+        self.selection_input.setPlaceholderText("1-10,15  |  odd  |  every 4th page  |  last 10 pages")
+        self.selection_input.returnPressed.connect(self._select_expression)
+        select_row.addWidget(self.selection_input, 1)
+        select_row.addWidget(self._action_button("Select", self._select_expression))
+        selection_layout.addLayout(select_row)
+        shortcuts = QHBoxLayout()
+        for label, expression in (("All", "all"), ("Odd", "odd"), ("Even", "even")):
+            shortcuts.addWidget(self._action_button(label, lambda checked=False, value=expression: self._select_expression(value)))
+        shortcuts.addSpacing(10)
+        shortcuts.addWidget(QLabel("N"))
+        self.selection_n = QSpinBox()
+        self.selection_n.setRange(1, 1000000)
+        self.selection_n.setValue(4)
+        self.selection_n.setFixedWidth(82)
+        shortcuts.addWidget(self.selection_n)
         for label, callback in (
-            ("Insert", self._insert_external),
-            ("Replace", self._replace_external),
-            ("Duplicate", self._duplicate),
-            ("Extract", self._extract_selected),
-            ("Delete", self._remove_selected),
-            ("Rotate left", lambda: self._rotate_selected(-90)),
-            ("Rotate right", lambda: self._rotate_selected(90)),
-            ("Restore", self._restore),
-        ):
-            button = QPushButton(label)
-            button.clicked.connect(callback)
-            toolbar.addWidget(button)
-        toolbar.addStretch(1)
-        self._root.addLayout(toolbar)
+            ("Every N", lambda: self._select_expression(f"every {self.selection_n.value()} pages")),
+            ("Last N", lambda: self._select_expression(f"last {self.selection_n.value()} pages")),
+            ("Invert", self._invert), ("Clear", lambda: self._select_expression(""))):
+            shortcuts.addWidget(self._action_button(label, callback))
+        shortcuts.addStretch(1)
+        selection_layout.addLayout(shortcuts)
+        self._root.addWidget(selection)
 
+        body = QHBoxLayout()
+        sidebar = QWidget()
+        sidebar.setObjectName("organizerToolsPanel")
+        sidebar.setFixedWidth(232)
+        tools_layout = QVBoxLayout(sidebar)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(10)
+        self._selection_buttons = []
+        for heading, actions in (
+            ("Arrange pages", (("Reverse", self._reverse), ("Duplicate", self._duplicate), ("Delete", self._remove_selected))),
+            ("Rotate / crop", (("Rotate left", lambda: self._rotate_selected(-90)), ("Rotate right", lambda: self._rotate_selected(90)), ("Crop", self._crop))),
+            ("Add / replace", (("Insert", self._insert_external), ("Blank pages", self._blank), ("Replace", self._replace_external), ("Interleave", self._interleave))),
+            ("Export copies", (("Extract", self._extract_selected), ("Split", self._split))),
+        ):
+            group = QGroupBox(heading)
+            group_layout = QGridLayout(group)
+            group_layout.setSpacing(6)
+            for index, (label, callback) in enumerate(actions):
+                button = self._action_button(label, callback)
+                group_layout.addWidget(button, index // 2, index % 2)
+                if label in {"Reverse", "Duplicate", "Delete", "Rotate left", "Rotate right", "Crop", "Replace", "Extract"}:
+                    self._selection_buttons.append(button)
+            if heading == "Add / replace":
+                self.insert_position = QComboBox()
+                for label, value in (("After selection", "after"), ("Before selection", "before"), ("Beginning", "beginning"), ("End", "end")):
+                    self.insert_position.addItem(label, value)
+                self.insert_position.setToolTip("Insertion position for pages from another PDF")
+                group_layout.addWidget(self.insert_position, 2, 0, 1, 2)
+            if heading == "Export copies":
+                note = QLabel("Saves new PDF files.")
+                note.setToolTip("Exported PDFs remain even if you cancel this preview.")
+                note.setWordWrap(True)
+                note.setObjectName("secondary")
+                group_layout.addWidget(note, 1, 0, 1, 2)
+            tools_layout.addWidget(group)
+        tools_layout.addStretch(1)
+        tools_scroll = QScrollArea()
+        tools_scroll.setObjectName("organizerToolsScroll")
+        tools_scroll.setWidgetResizable(True)
+        tools_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        tools_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tools_scroll.setFixedWidth(250)
+        tools_scroll.setWidget(sidebar)
+        body.addWidget(tools_scroll)
+        preview = QVBoxLayout()
+        preview_header = QHBoxLayout()
+        preview_label = QLabel("PAGE PREVIEW")
+        preview_label.setObjectName("secondary")
+        preview_header.addWidget(preview_label)
+        preview_header.addStretch(1)
+        self.summary = QLabel()
+        preview_header.addWidget(self.summary)
+        preview.addLayout(preview_header)
         self.pages = OrganizerGrid(document)
+        self.pages.orderChanged.connect(self._record_history)
         self.pages.orderChanged.connect(self._update_summary)
         self.pages.selectionChanged.connect(lambda _entries: self._update_summary())
-        self._root.addWidget(self.pages, 1)
-
-        actions = QHBoxLayout()
-        self.summary = QLabel()
-        self.summary.setMinimumWidth(210)
-        actions.addStretch(1)
-        actions.addWidget(self.summary)
-        self._root.addLayout(actions)
+        preview.addWidget(self.pages, 1)
+        body.addLayout(preview, 1)
+        self._root.addLayout(body, 1)
         self.add_validation()
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Cancel
-        )
+        footer = QHBoxLayout()
+        self.undo_plan_button = self._action_button("Undo plan", self._undo)
+        self.redo_plan_button = self._action_button("Redo plan", self._redo)
+        footer.addWidget(self.undo_plan_button)
+        footer.addWidget(self.redo_plan_button)
+        footer.addWidget(self._action_button("Restore", self._restore))
+        footer.addStretch(1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Cancel)
         self.apply_button = buttons.button(QDialogButtonBox.StandardButton.Apply)
         self.apply_button.setText("Apply Page Plan")
+        self.apply_button.setObjectName("primary")
         self.apply_button.clicked.connect(self._accept_changes)
         buttons.rejected.connect(self.reject)
-        self._root.addWidget(buttons)
+        footer.addWidget(buttons)
+        self._root.addLayout(footer)
         self._restore()
         if preselected_pages:
             self.pages.select_source_pages(preselected_pages)
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+        for key, callback in (("Ctrl+Z", self._undo), ("Ctrl+Shift+Z", self._redo), ("Ctrl+Y", self._redo)):
+            shortcut = QShortcut(QKeySequence(key), self.pages)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(callback)
+
+    def _action_button(self, label, callback):
+        button = QPushButton(label)
+        button.setObjectName("organizerAction")
+        button.setAutoDefault(False)
+        def invoke():
+            try:
+                callback()
+            except Exception as exc:
+                self.show_error(f"{label} failed: {exc}")
+        button.clicked.connect(invoke)
+        return button
 
     def _restore(self) -> None:
         self.pages.restore()
@@ -779,46 +931,35 @@ class VisualOrganizerDialog(ToolDialog):
         if not path:
             return []
         password = ""
+        snapshot = None
+        confirmed = False
         try:
-            with fitz.open(path) as source:
-                if source.needs_pass:
-                    password, accepted = QInputDialog.getText(
-                        self,
-                        "Encrypted source PDF",
-                        "Password",
-                        QLineEdit.EchoMode.Password,
-                    )
-                    if not accepted:
-                        return []
-                    if not source.authenticate(password):
-                        self.show_error("The source PDF password is not valid.")
-                        return []
-                value, accepted = QInputDialog.getText(
-                    self,
-                    "Source pages",
-                    f"Pages (1-{source.page_count})",
-                    text=f"1-{source.page_count}",
-                )
+            with fitz.open(path) as probe:
+                encrypted = probe.needs_pass
+            if encrypted:
+                password, accepted = QInputDialog.getText(
+                    self, "Encrypted source PDF", "Password", QLineEdit.EchoMode.Password)
                 if not accepted:
                     return []
-                pages = parse_page_range(value, source.page_count)
-                if not pages:
-                    self.show_error("Choose at least one valid source page.")
-                    return []
-                return [
-                    PagePlanEntry(
-                        uuid.uuid4().hex,
-                        "external",
-                        page,
-                        str(Path(path).resolve()),
-                        int(source.load_page(page).rotation),
-                        password,
-                    )
-                    for page in pages
-                ]
+            snapshot, rotations = run_job(self, "Import source PDF",
+                lambda **kwargs: self.sources.snapshot(path, password, **kwargs))
+            value, accepted = QInputDialog.getText(
+                self, "Source pages", f"Pages (1-{len(rotations)})", text="all")
+            if not accepted:
+                return []
+            pages = parse_page_selection(value, len(rotations))
+            if not pages:
+                raise ValueError("Choose at least one source page.")
+            confirmed = True
+            return [PagePlanEntry(uuid.uuid4().hex, "external", page, snapshot,
+                                  rotations[page], password, source_label=Path(path).name)
+                    for page in pages]
         except Exception as exc:
-            self.show_error(f"Cannot read source PDF: {exc}")
+            self.show_error(f"Cannot import source PDF: {exc}")
             return []
+        finally:
+            if snapshot is not None and not confirmed:
+                self.sources.discard(snapshot)
 
     def _insert_external(self) -> None:
         entries = self._source_entries()
@@ -849,42 +990,113 @@ class VisualOrganizerDialog(ToolDialog):
             return
         if not path.casefold().endswith(".pdf"):
             path += ".pdf"
-        target = Path(path).expanduser().resolve()
-        handle, temp_name = tempfile.mkstemp(
-            prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent
-        )
-        os.close(handle)
+        self._export([(Path(path), [widget.entry for widget in selected])])
+
+    def _export(self, jobs):
         try:
-            with fitz.open() as output:
-                for widget in selected:
-                    entry = widget.entry
-                    if entry.source_kind == "current":
-                        output.insert_pdf(
-                            self.document,
-                            from_page=entry.source_page,
-                            to_page=entry.source_page,
-                        )
-                    else:
-                        with fitz.open(entry.source_path) as source:
-                            if source.needs_pass:
-                                source.authenticate(entry.password)
-                            output.insert_pdf(
-                                source,
-                                from_page=entry.source_page,
-                                to_page=entry.source_page,
-                            )
-                output.save(temp_name, garbage=3, deflate=True)
-            validate_pdf_file(
-                temp_name, expected_page_count=len(selected)
-            )
-            os.replace(temp_name, target)
+            with DOCUMENT_LOCK:
+                current_bytes = self.document.tobytes()
+            result = run_job(self, "Export page plan", lambda **kwargs: export_plan(
+                current_bytes, jobs, protected=self.protected_paths | self.sources.originals, **kwargs))
+            message = f"Completed {len(result.completed)} file(s)."
+            if result.completed:
+                message += "\n" + "\n".join(str(path) for path in result.completed)
+            if result.error:
+                message += "\n" + result.error
+            message += "\nExported files remain even if you cancel Organizer."
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Export result", message)
         except Exception as exc:
-            self.show_error(f"Extract failed: {exc}")
+            self.show_error(f"Export failed: {exc}")
+
+    def _split(self):
+        dialog = SplitPlanDialog(self.pages.page_plan(), self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Choose output folder")
+        if folder:
+            self._export([(Path(folder) / name, entries) for name, entries in dialog.groups])
+
+    def _select_expression(self, expression=None):
+        if not isinstance(expression, str):
+            expression = self.selection_input.text()
+        try:
+            positions = parse_page_selection(expression, self.pages.count())
+        except ValueError as exc:
+            self.show_error(str(exc))
+            return
+        self.pages.select_positions(positions)
+        self._validation.hide()
+
+    def _invert(self):
+        selected = set(self.pages.selected_positions())
+        self.pages.select_positions([i for i in range(self.pages.count()) if i not in selected])
+
+    def _reverse(self):
+        self.pages.set_plan(reverse_selected(self.pages.page_plan(), self.pages.selected_positions()),
+                            {w.entry.entry_id for w in self.pages.selected_widgets()})
+
+    def _blank(self):
+        positions = self.pages.selected_positions()
+        reference = self.pages.page_plan()[positions[-1] if positions else -1]
+        dialog = BlankPagesDialog(self.pages.reader.size(reference), self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.pages.add_external_pages([blank_entry(*dialog.page_size()) for _ in range(dialog.count.value())],
+                                          dialog.position.currentData())
+
+    def _interleave(self):
+        entries = self._source_entries()
+        if entries:
+            dialog = InterleaveDialog(self.pages.page_plan(), entries, self.pages.reader, self)
+            if dialog.exec() == dialog.DialogCode.Accepted:
+                self.pages.set_plan(dialog.plan)
+
+    def _crop(self):
+        positions = self.pages.selected_positions()
+        if not positions:
+            self.show_error("Select one or more pages to crop.")
+            return
+        dialog = CropDialog(self.pages.page_plan(), positions, self.pages.reader, self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.pages.set_plan(dialog.plan, {w.entry.entry_id for w in self.pages.selected_widgets()})
+
+    def _record_history(self):
+        if self._replaying:
+            return
+        plan = self.pages.page_plan()
+        if self._history_index >= 0 and plan == self._history[self._history_index]:
+            return
+        del self._history[self._history_index + 1:]
+        self._history.append(plan)
+        self._history_index = len(self._history) - 1
+
+    def _undo(self):
+        self._navigate_history(-1)
+
+    def _redo(self):
+        self._navigate_history(1)
+
+    def _navigate_history(self, step):
+        index = self._history_index + step
+        if not 0 <= index < len(self._history):
+            return
+        self._replaying = True
+        try:
+            self._history_index = index
+            self.pages.set_plan(self._history[index])
         finally:
-            Path(temp_name).unlink(missing_ok=True)
+            self._replaying = False
+
+    def release_sources(self):
+        self.pages.reader.close()
+        self.sources.close()
 
     def _update_summary(self) -> None:
         selected = len(self.pages.selected_widgets())
+        for button in self._selection_buttons:
+            button.setEnabled(selected > 0)
+        self.undo_plan_button.setEnabled(self._history_index > 0)
+        self.redo_plan_button.setEnabled(self._history_index < len(self._history) - 1)
         self.summary.setText(
             f"{selected} page{'s' if selected != 1 else ''} selected · "
             f"{self.pages.count()} final pages"
@@ -900,14 +1112,23 @@ class VisualOrganizerDialog(ToolDialog):
         self.accept()
 
     def done(self, result: int) -> None:
+        if self._busy:
+            return
         self.pages.shutdown()
         super().done(result)
+        if result != self.DialogCode.Accepted:
+            self.release_sources()
 
     def reject(self) -> None:
+        if self._busy:
+            return
         self.pages.shutdown()
         super().reject()
 
     def closeEvent(self, event) -> None:
+        if self._busy:
+            event.ignore()
+            return
         self.pages.shutdown()
         super().closeEvent(event)
 

@@ -228,7 +228,7 @@ class SidePanel(QFrame):
                 ToolItem("delete", "Delete pages", "trash", "delete.png"),
                 ToolItem("extract", "Extract pages", "scissors", "Extract-page.png"),
                 ToolItem("order", "Order pages", "list-tree", "sorting.png"),
-                ToolItem("sort", "Organize pages", "layers", "visual_organize.png"),
+                ToolItem("sort", "Advanced Page Organizer", "layers", "visual_organize.png"),
                 ToolItem("split", "Split PDF", "scissors", "Split.png"),
                 ToolItem("rotate", "Rotate pages", "rotate-cw", "rotate_pages.png"),
                 ToolItem("info", "Document information", "info", "info.png"),
