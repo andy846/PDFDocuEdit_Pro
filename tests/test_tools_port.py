@@ -1195,7 +1195,7 @@ def test_command_bar_more_menu_is_grouped_and_routes_page_tools(tmp_path, monkey
     window.close()
 
 
-def test_legacy_shortcuts_installed_with_window_context(tmp_path, monkeypatch):
+def test_legacy_shortcuts_keep_keys_and_use_declared_scope(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     assert window._shortcut_rotate_left.key().toString() == "Ctrl+L"
     assert window._shortcut_rotate_right.key().toString() == "Ctrl+R"
@@ -1204,10 +1204,11 @@ def test_legacy_shortcuts_installed_with_window_context(tmp_path, monkeypatch):
     for shortcut in (
         window._shortcut_rotate_left,
         window._shortcut_rotate_right,
-        window._shortcut_extract,
         window._shortcut_delete,
     ):
-        assert shortcut.context() == Qt.ShortcutContext.WindowShortcut
+        assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+        assert shortcut.parent() is window.workspace
+    assert window._shortcut_extract.context() == Qt.ShortcutContext.WindowShortcut
     window.close()
 
 

@@ -1,6 +1,18 @@
-# PDFDocuEdit Pro V2.5.6
+# PDFDocuEdit Pro V2.5.8
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
+
+## V2.5.8 表單、比較與快捷鍵
+
+- **Utilities → Fill PDF form**：填寫既有 AcroForm、預覽常見公式計算、套用後一次 Undo；支援圖片及手寫簽名外觀。
+- **Utilities → Compare PDFs**：並排查看文字／視覺差異、插刪頁、手動配對，以及背景運算與取消。
+- **Preferences → Keyboard shortcuts**：自訂命令按鍵及作用範圍，檢查重複與多段快捷鍵前綴衝突。
+
+簽名外觀不構成數位簽章；XFA 及未支援的腳本不會執行。詳見 [操作與實作說明](docs/IMPLEMENTATION_STAGES.md)。
+
+## V2.5.7 navigation fixes
+
+Page thumbnails, viewer navigation and page counts stay synchronized; fitting PDF pages are centered. See [fix details](docs/PAGE_NAVIGATION_FIX.md).
 
 ## V2.5.6 Advanced Page Organizer
 
@@ -16,7 +28,7 @@ startup rollback without an installer. The first deployment requires extracting
 the Managed Portable ZIP and switching the shortcut to Launcher.exe.
 See [免 Installer 更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V2.5.6 managed portable release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.6).
+Download the [V2.5.8 update release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.8). First deployments use the V2.5.6 Managed Portable package below, then update through Launcher.exe.
 Existing installations need the one-time managed portable transition before using in-app updates.
 
 ## V2.5.4 stability update
@@ -28,7 +40,7 @@ Existing installations need the one-time managed portable transition before usin
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V2.5.6. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
+The current Windows x64 release is V2.5.8. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 

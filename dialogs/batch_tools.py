@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.diagnostics import log_failure
+
 from .base import (
     ToolDialog,
     remember_save_directory,
@@ -360,6 +362,7 @@ class MergePDFDialog(ToolDialog):
                 with fitz.open(path) as document:
                     self._page_counts[path] = document.page_count
             except Exception:
+                log_failure('batch_tools._page_count: fallback after failure', 10)
                 self._page_counts[path] = 0
         return self._page_counts[path]
 

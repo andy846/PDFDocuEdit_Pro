@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.diagnostics import log_failure
+
 
 def password_line_edit(placeholder: str = "") -> QLineEdit:
     """Password field that disables input-method (IME) input.
@@ -270,6 +272,7 @@ class NumericSortItem(QTableWidgetItem):
                 }.get(match.group(2), 1)
                 return (0, value * multiplier)
             except ValueError:
+                log_failure('base._key: fallback after failure', 10)
                 pass
         return (1, text.casefold())
 

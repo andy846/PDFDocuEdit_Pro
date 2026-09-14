@@ -14,6 +14,8 @@ from pathlib import Path
 
 import fitz
 
+from core.diagnostics import log_failure
+
 from .capabilities import CapabilityId, detect_capabilities
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .platform_service import PlatformService
@@ -434,16 +436,19 @@ def convert_office_files(
                     try:
                         document.Close(SaveChanges=False)
                     except Exception:
+                        log_failure('tools.convert_office_files: fallback after failure', 10)
                         pass
                     document = None
                 if app is not None:
                     try:
                         app.Quit()
                     except Exception:
+                        log_failure('tools.convert_office_files: fallback after failure', 10)
                         pass
                     try:
                         app.Release()
                     except Exception:
+                        log_failure('tools.convert_office_files: fallback after failure', 10)
                         pass
                     app = None
             _progress(progress, index, len(sources), source.name)
@@ -526,6 +531,7 @@ def decrypt_pdf_file(
                     encryption=fitz.PDF_ENCRYPT_NONE,
                 )
             except Exception:
+                log_failure('tools.decrypt_pdf_file: fallback after failure', 10)
                 Path(temp_name).unlink(missing_ok=True)
                 with fitz.open() as output:
                     if doc.page_count:
@@ -678,6 +684,7 @@ def text_files_to_pdf(
             if writer is not None:
                 writer.close()
         except Exception:
+            log_failure('tools.text_files_to_pdf: fallback after failure', 10)
             pass
         raise
     finally:
@@ -758,6 +765,7 @@ def create_page_count_report(
                 )
                 rows.append((path.name, doc.page_count, path.stat().st_size, paper, str(path)))
         except Exception:
+            log_failure('tools.create_page_count_report: fallback after failure', 10)
             rows.append((path.name, "Error", path.stat().st_size, "—", str(path)))
         _progress(progress, index, len(paths), path.name)
     target = Path(output_path).expanduser().resolve()
@@ -816,6 +824,7 @@ def deep_search(
                         {"path": str(path), "filename": path.name, "pages": pages, "snippets": snippets}
                     )
         except Exception as exc:
+            log_failure('tools.deep_search: fallback after failure', 10)
             results.append(
                 {
                     "path": str(path),
@@ -871,9 +880,11 @@ def _page_barcode_data(page) -> str:
             try:
                 parts.append(value.data.decode("utf-8", errors="replace"))
             except Exception:
+                log_failure('tools._page_barcode_data: fallback after failure', 10)
                 continue
         return " ".join(parts)
     except Exception:
+        log_failure('tools._page_barcode_data: fallback after failure', 10)
         return ""
 
 
@@ -973,6 +984,7 @@ def merge_spreadsheets(
                 try:
                     return int(text)
                 except ValueError:
+                    log_failure('tools.csv_value: fallback after failure', 10)
                     pass
         if re.fullmatch(
             r"[+-]?(?:[0-9]+[.][0-9]*|[.][0-9]+|"
@@ -983,6 +995,7 @@ def merge_spreadsheets(
             try:
                 return float(text)
             except ValueError:
+                log_failure('tools.csv_value: fallback after failure', 10)
                 pass
         return value
 

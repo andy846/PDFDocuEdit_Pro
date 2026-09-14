@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
 )
 
+from core.diagnostics import log_failure
+
 from .base import SortableTableWidget, ToolDialog, remember_save_directory, start_in_save_directory
 from .conversion_dialogs import FileListDialog
 
@@ -225,4 +227,5 @@ class BarcodeResultsDialog(ToolDialog):
             sheet.column_dimensions["E"].width = 72
             workbook.save(value)
         except Exception as exc:
+            log_failure('barcode_dialogs._export_excel: fallback after failure', 10)
             self.show_error(f"Excel export failed: {exc}")

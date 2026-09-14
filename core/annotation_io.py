@@ -8,6 +8,8 @@ from pathlib import Path
 
 import fitz
 
+from core.diagnostics import log_failure
+
 from .annotations import (
     AnnotationOp,
     AnnotationStyle,
@@ -182,12 +184,14 @@ def import_annotations_json(
             with DOCUMENT_LOCK:
                 op = validate_annotation_op(doc, op)
         except Exception as exc:
+            log_failure('annotation_io.import_annotations_json: fallback after failure', 10)
             skipped.append({"index": index, "reason": str(exc)})
             continue
         try:
             apply_annotation(doc, op)
             imported += 1
         except Exception as exc:
+            log_failure('annotation_io.import_annotations_json: fallback after failure', 10)
             if strict_mutations:
                 raise
             skipped.append({"index": index, "reason": str(exc)})

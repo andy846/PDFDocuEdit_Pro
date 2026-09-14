@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.diagnostics import connect_interrupts, log_failure
 from core.page_plan import POINTS_PER_MM, crop_entries, interleave_entries, parse_page_selection
 
 from .base import ToolDialog
@@ -62,6 +63,7 @@ def plan_rows(entries):
 
 
 class OrganizerWorker(QThread):
+    interrupted = pyqtSignal(str)
     result = pyqtSignal(object)
     failed = pyqtSignal(object)
     progress = pyqtSignal(object, object)
@@ -69,6 +71,7 @@ class OrganizerWorker(QThread):
     def __init__(self, function, parent=None):
         super().__init__(parent)
         self.function = function
+        connect_interrupts(self)
         self.cancelled = threading.Event()
 
     def run(self):
@@ -78,7 +81,12 @@ class OrganizerWorker(QThread):
             with DOCUMENT_LOCK:
                 value = self.function(cancelled=self.cancelled.is_set, progress=self.progress.emit)
             self.result.emit(value)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            self.cancelled.set()
+            self.failed.emit(InterruptedError("Operation interrupted"))
+            self.interrupted.emit(type(exc).__name__)
         except Exception as exc:
+            log_failure('organizer_tools.run: fallback after failure', 10)
             self.failed.emit(exc)
 
 
@@ -191,6 +199,7 @@ class InterleaveDialog(ToolDialog):
             self.ok.setEnabled(True)
             self._validation.hide()
         except Exception as exc:
+            log_failure('organizer_tools.refresh: fallback after failure', 10)
             self.plan = []
             self.model.reset_rows([])
             self.ok.setEnabled(False)
@@ -377,6 +386,7 @@ class CropDialog(ToolDialog):
             self.plan = crop_entries(self.entries, self.positions, tuple(field.value() for field in self.inputs), self.reader)
             self.accept()
         except Exception as exc:
+            log_failure('organizer_tools._apply: fallback after failure', 10)
             self.show_error(str(exc))
 
 

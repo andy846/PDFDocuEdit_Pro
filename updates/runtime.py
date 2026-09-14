@@ -29,6 +29,39 @@ def managed_root() -> Path | None:
     return Path(value).resolve() if value else None
 
 
+def managed_launcher(executable: Path) -> Path | None:
+    """Resolve a verified versioned EXE to its fixed launcher, without writes.
+
+    An unrelated directory called versions is not a managed deployment. A
+    marked deployment must be complete; never silently start it unmanaged.
+    """
+    executable = executable.resolve()
+    folder = executable.parent
+    if folder.parent.name.casefold() != "versions":
+        return None
+    root = folder.parent.parent
+    marker = folder / ".managed-update"
+    state_path = root / "state.json"
+    if not marker.exists() and not state_path.exists():
+        return None
+    try:
+        version(folder.name)
+        if marker.read_text(encoding="utf-8").strip() != folder.name:
+            raise UpdateError("The managed version marker does not match.")
+        state = read_json(state_path)
+        version(state["current"])
+        if state.get("phase") not in {"stable", "trial", "rollback"}:
+            raise UpdateError("The managed update state is invalid.")
+        if not (root / "versions" / state["current"] / EXECUTABLE).is_file():
+            raise UpdateError("The active managed application is missing.")
+        launcher = root / "Launcher.exe"
+        if not launcher.is_file():
+            raise UpdateError("Launcher.exe is missing.")
+        return launcher
+    except (OSError, KeyError, ValueError, TypeError, UpdateError) as exc:
+        raise UpdateError("Managed installation is incomplete. Restore the whole deployment folder, including Launcher.exe.") from exc
+
+
 class FileLock:
     """OS-owned lock: process death releases it without stale-PID guessing."""
 

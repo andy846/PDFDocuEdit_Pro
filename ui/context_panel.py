@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.annotations import STAMP_IDS
+from core.diagnostics import log_failure
 from core.pdf_engine import parse_page_range
 from styles.tokens import D, S
 
@@ -1181,6 +1182,7 @@ class ContextPanel(QFrame):
                 label.style().polish(label)
                 label.show()
         except Exception as exc:
+            log_failure('context_panel._validate_pages_input: fallback after failure', 10)
             edit.setProperty("invalid", True)
             label = self._find_validation_label(edit)
             if label:

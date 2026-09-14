@@ -79,7 +79,9 @@ class CommandPalette(QDialog):
         footer.addStretch(1)
         layout.addLayout(footer)
 
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.reject)
+        palette_command = next((c for c in commands if c.id == "command_palette"), None)
+        if palette_command and palette_command.shortcut:
+            QShortcut(QKeySequence(palette_command.shortcut), self, activated=self.reject)
         self._refresh("")
 
     def showEvent(self, event) -> None:

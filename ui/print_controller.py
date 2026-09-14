@@ -1,3 +1,5 @@
+
+
 """GUI-owned printer lifecycle with one cancellable worker page in flight."""
 
 from threading import Event
@@ -6,6 +8,7 @@ from PyQt6.QtCore import QObject, QThreadPool, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QPainter
 from PyQt6.QtPrintSupport import QPrinter
 
+from core.diagnostics import log_failure
 from core.printing import prepare_print_job, render_print_page
 from core.tasks import FunctionTask, TaskCancelled
 
@@ -107,6 +110,7 @@ class PrintController(QObject):
             self._cancel.set()
             self._finish()
         except Exception as exc:
+            log_failure('print_controller._worker_finished: fallback after failure', 10)
             self._fail(str(exc))
 
     @pyqtSlot()
@@ -136,6 +140,7 @@ class PrintController(QObject):
             try:
                 self._end_painter()
             except Exception as exc:
+                log_failure('print_controller._next_page: fallback after failure', 10)
                 self._fail(str(exc))
                 return
             self._sent += 1

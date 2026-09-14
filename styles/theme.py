@@ -112,7 +112,9 @@ def _install_round_menu_style(app: QApplication) -> None:
             _round_style = None
             _platform_style = None
     keys = QStyleFactory.keys()
-    _platform_style = QStyleFactory.create(keys[0] if keys else "Fusion")
+    # The UI is styled by QSS. Fusion supplies a deterministic base and avoids
+    # native Windows polish callbacks on partly constructed/offscreen widgets.
+    _platform_style = QStyleFactory.create("Fusion" if "Fusion" in keys else keys[0])
     _round_style = _RoundMenuStyle(_platform_style)
     app.setStyle(_round_style)
 

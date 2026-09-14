@@ -7,6 +7,7 @@ import threading
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout
 
+from core.diagnostics import log_failure
 from core.resources import APP_VERSION
 from updates.protocol import Cancelled, check_release, download
 from updates.runtime import managed_root, request_restart
@@ -38,6 +39,7 @@ class UpdateWorker(QThread):
                 raise Cancelled("Update cancelled.")
             self.result.emit(result)
         except Exception as exc:
+            log_failure('update_dialog.run: fallback after failure', 10)
             self.failed.emit(str(exc))
 
 

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.diagnostics import connect_interrupts, log_failure
 from styles.tokens import D, S
 
 from .motion import MotionIconButton
@@ -52,7 +53,10 @@ class ReorderListWidget(QListWidget):
         self.orderDropped.emit(order)
 
 
+
+
 class _RenderSignals(QObject):
+    interrupted = pyqtSignal(str)
     finished = pyqtSignal(int, object, int)
     failed = pyqtSignal(int, int)
 
@@ -78,6 +82,7 @@ class _RenderTask(QRunnable):
         self._password = password
         self._generation = generation
         self.signals = _RenderSignals()
+        connect_interrupts(self.signals)
 
     def run(self) -> None:
         try:
@@ -85,7 +90,7 @@ class _RenderTask(QRunnable):
                 if self._password and doc.needs_pass:
                     doc.authenticate(self._password)
                 if self._page_num >= doc.page_count:
-                    return
+                    raise ValueError("Thumbnail page is unavailable")
                 page = doc.load_page(self._page_num)
                 matrix = fitz.Matrix(self._scale, self._scale)
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False)
@@ -97,9 +102,11 @@ class _RenderTask(QRunnable):
                     QImage.Format.Format_RGB888,
                 ).copy()
                 self.signals.finished.emit(self._page_num, image, self._generation)
-        except BaseException:
-            # Never let an exception escape QRunnable.run(): PyQt6 aborts the
-            # process, and a thumbnail task failing must not kill the app.
+        except (KeyboardInterrupt, SystemExit) as exc:
+            self.signals.failed.emit(self._page_num, self._generation)
+            self.signals.interrupted.emit(type(exc).__name__)
+        except Exception:
+            log_failure("Thumbnail render failed")
             self.signals.failed.emit(self._page_num, self._generation)
 
 

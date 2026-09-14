@@ -9,6 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from core.diagnostics import log_failure
+
 from .resources import config_dir_path, legacy_config_paths
 
 
@@ -125,6 +127,7 @@ class SettingsManager:
                 try:
                     os.unlink(temp_name)
                 except OSError:
+                    log_failure('settings._save: fallback after failure', 10)
                     pass
 
     def get(self, key: str, default: Any = None) -> Any:

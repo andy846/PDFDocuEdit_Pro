@@ -351,13 +351,17 @@ class PreferencesDialog(QDialog):
         if command_id is None:
             self.shortcut_status.setText("Select a command first.")
             return False
+        from core.commands import scopes_overlap, shortcut_conflict
         candidate = self._canonical_shortcut(self.shortcut_editor.keySequence())
         if candidate:
             conflict_id = next(
                 (
                     other_id
                     for other_id, value in self._shortcut_values.items()
-                    if other_id != command_id and value == candidate
+                    if other_id != command_id and shortcut_conflict(value, candidate)
+                    and scopes_overlap(
+                        next(c.scope for c in self._commands if c.id == command_id),
+                        next(c.scope for c in self._commands if c.id == other_id))
                 ),
                 None,
             )
@@ -438,6 +442,11 @@ class PreferencesDialog(QDialog):
             edit.setText(value)
 
     def accept(self) -> None:
+        from core.commands import find_shortcut_conflict
+        conflict = find_shortcut_conflict(self._commands, self._shortcut_values)
+        if conflict:
+            self.shortcut_status.setText(f"Shortcut conflict: {conflict[0].label} / {conflict[1].label}.")
+            return
         self.settings.update(
             {
                 "theme": str(self.theme.currentData()),

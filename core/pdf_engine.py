@@ -17,6 +17,8 @@ from pathlib import Path
 
 import fitz
 
+from core.diagnostics import log_failure
+
 from .io_atomic import atomic_output
 from .page_plan import PagePlanEntry, apply_plan_to_document
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
@@ -33,6 +35,7 @@ def _locked(function):
         with DOCUMENT_LOCK:
             try:
                 return function(self, *args, **kwargs)
+            # Preserve cancellation/exit: restore ownership/history, then re-raise.
             except BaseException as exc:
                 if self._transaction_depth:
                     self._transaction_error = exc
@@ -98,6 +101,7 @@ class PdfEngine:
                 self._transaction_depth += 1
                 try:
                     yield self
+                # Preserve cancellation/exit: restore ownership/history, then re-raise.
                 except BaseException as exc:
                     self._transaction_error = exc
                     raise
@@ -113,11 +117,14 @@ class PdfEngine:
             try:
                 yield self
                 if self._transaction_error is not None:
+                    if not isinstance(self._transaction_error, Exception):
+                        raise self._transaction_error
                     raise PdfEngineError("A nested mutation failed; transaction cancelled.") from self._transaction_error
                 if self._revision != state[2]:
                     if self._on_commit is not None:
                         self._on_commit(backup, description, state[0])
                     self._revision = state[2] + 1
+            # Preserve cancellation/exit: restore ownership/history, then re-raise.
             except BaseException as exc:
                 (self._is_modified, self._requires_full_save, self._revision,
                  self._requires_sanitized_save) = state
@@ -161,6 +168,7 @@ class PdfEngine:
                 try:
                     saved_permissions = int(doc.permissions)
                 except Exception:
+                    log_failure('pdf_engine.open: fallback after failure', 10)
                     saved_permissions = None
                 # MuPDF's in-memory decryption state on encrypted documents
                 # corrupts unpredictably across the app's many readers, so
@@ -205,6 +213,7 @@ class PdfEngine:
             except Exception:
                 # Direct stripping can fail when only the *user* password is
                 # known, so rebuild instead.
+                log_failure('pdf_engine._decrypted_working_copy: fallback after failure', 10)
                 Path(temp_name).unlink(missing_ok=True)
                 with fitz.open() as working:
                     if source_doc.page_count:
@@ -412,6 +421,7 @@ class PdfEngine:
             try:
                 widgets = list(self._doc.load_page(page_number).widgets() or [])
             except Exception:
+                log_failure('pdf_engine.has_digital_signatures: fallback after failure', 10)
                 continue
             for widget in widgets:
                 if widget.field_type != fitz.PDF_WIDGET_TYPE_SIGNATURE:
@@ -424,6 +434,7 @@ class PdfEngine:
                     ):
                         return True
                 except Exception:
+                    log_failure('pdf_engine.has_digital_signatures: fallback after failure', 10)
                     continue
         return False
 
@@ -475,6 +486,7 @@ class PdfEngine:
                         start_at=insert_at + offset,
                     )
             except Exception as exc:
+                log_failure('pdf_engine.insert_pages: fallback after failure', 10)
                 if self._transaction_depth:
                     self._transaction_error = exc
                     raise
@@ -635,13 +647,14 @@ class PdfEngine:
         try:
             apply_plan_to_document(doc, plan)
         except Exception as exc:
+            log_failure('pdf_engine.apply_page_plan: fallback after failure', 10)
             if self._transaction_depth:
                 self._transaction_error = exc
                 raise
             self._restore_failed_mutation(backup, exc)
         self._touch(requires_full_save=True)
 
-    def _restore_failed_mutation(self, backup: bytes, original_exc: Exception) -> None:
+    def _restore_failed_mutation(self, backup: bytes, original_exc: BaseException) -> None:
         """Restore under DOCUMENT_LOCK without resetting the engine's save context."""
         damaged = self._doc
         try:
@@ -652,6 +665,7 @@ class PdfEngine:
                 try:
                     damaged.close()
                 except Exception:
+                    log_failure('pdf_engine._restore_failed_mutation: fallback after failure', 10)
                     pass
             raise PdfEngineError(
                 "PDF operation failed and rollback also failed. "
@@ -662,7 +676,10 @@ class PdfEngine:
             try:
                 damaged.close()
             except Exception:
+                log_failure('pdf_engine._restore_failed_mutation: fallback after failure', 10)
                 pass
+        if not isinstance(original_exc, Exception):
+            raise original_exc
         raise PdfEngineError(
             "PDF operation failed; original document state was restored."
         ) from original_exc
@@ -805,6 +822,7 @@ class PdfEngine:
                 # Direct stripping can fail when only the *user* password is
                 # known, so rebuild instead: insert_pdf re-encodes every page
                 # through the authenticated session and yields a clean file.
+                log_failure('pdf_engine.decrypt: fallback after failure', 10)
                 Path(temp_name).unlink(missing_ok=True)
                 with fitz.open() as output:
                     if doc.page_count:
@@ -1051,6 +1069,7 @@ def _context_for(page: fitz.Page, rect: fitz.Rect, width: float = 320.0) -> str:
     try:
         text = page.get_textbox(expanded) or page.get_text()
     except Exception:
+        log_failure('pdf_engine._context_for: fallback after failure', 10)
         text = ""
     return " ".join(text.split())
 

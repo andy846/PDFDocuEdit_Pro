@@ -18,7 +18,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtPrintSupport import QPrinterInfo
 from PyQt6.QtWidgets import (
     QApplication,
@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.diagnostics import log_failure
 from core.page_plan import (
     PlanReader,
     SourceStore,
@@ -479,6 +480,7 @@ class OrganizerGrid(QScrollArea):
                 while len(self._thumb_cache) > 128:
                     self._thumb_cache.popitem(last=False)
             except Exception as exc:
+                log_failure('document_dialogs._render_thumbnail: fallback after failure', 10)
                 widget._thumb.setText("Preview unavailable")
                 widget.setToolTip(str(exc))
                 return
@@ -675,7 +677,7 @@ class OrganizerGrid(QScrollArea):
         toggle_modifier = modifiers & (
             Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
         )
-        if toggle_modifier and event.key() == Qt.Key.Key_A:
+        if toggle_modifier and event.key() == Qt.Key.Key_A and not getattr(self, "_command_selection_bound", False):
             self._set_selection(self._widgets)
             self._selection_anchor = self._widgets[0] if self._widgets else None
             event.accept()
@@ -885,10 +887,10 @@ class VisualOrganizerDialog(ToolDialog):
             self.pages.select_source_pages(preselected_pages)
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
-        for key, callback in (("Ctrl+Z", self._undo), ("Ctrl+Shift+Z", self._redo), ("Ctrl+Y", self._redo)):
-            shortcut = QShortcut(QKeySequence(key), self.pages)
-            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(callback)
+        from ui.shortcut_bindings import bind_organizer
+        settings = getattr(parent, "settings", None)
+        overrides = settings.get_shortcut_overrides() if settings else {}
+        bind_organizer(self, {button.text(): button for button in self.findChildren(QPushButton)}, overrides)
 
     def _action_button(self, label, callback):
         button = QPushButton(label)
@@ -898,6 +900,7 @@ class VisualOrganizerDialog(ToolDialog):
             try:
                 callback()
             except Exception as exc:
+                log_failure('document_dialogs.invoke: fallback after failure', 10)
                 self.show_error(f"{label} failed: {exc}")
         button.clicked.connect(invoke)
         return button
@@ -955,6 +958,7 @@ class VisualOrganizerDialog(ToolDialog):
                                   rotations[page], password, source_label=Path(path).name)
                     for page in pages]
         except Exception as exc:
+            log_failure('document_dialogs._source_entries: fallback after failure', 10)
             self.show_error(f"Cannot import source PDF: {exc}")
             return []
         finally:
@@ -1007,6 +1011,7 @@ class VisualOrganizerDialog(ToolDialog):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(self, "Export result", message)
         except Exception as exc:
+            log_failure('document_dialogs._export: fallback after failure', 10)
             self.show_error(f"Export failed: {exc}")
 
     def _split(self):

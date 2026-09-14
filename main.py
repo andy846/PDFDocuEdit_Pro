@@ -309,13 +309,23 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
 
 def main() -> int:
     if getattr(sys, "frozen", False) and sys.platform == "win32":
-        folder = Path(sys.executable).resolve().parent
-        if folder.parent.name == "versions" and not os.environ.get(TOKEN_ENV):
-            environment = os.environ.copy()
-            environment.pop(ROOT_ENV, None)
-            environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-            subprocess.Popen([str(folder.parent.parent / "Launcher.exe"), *sys.argv[1:]], env=environment)
-            return 0
+        if not os.environ.get(TOKEN_ENV):
+            from updates.protocol import UpdateError
+            from updates.runtime import managed_launcher
+            try:
+                launcher_path = managed_launcher(Path(sys.executable))
+                if launcher_path is not None:
+                    environment = os.environ.copy()
+                    environment.pop(ROOT_ENV, None)
+                    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                    subprocess.Popen([str(launcher_path), *sys.argv[1:]], env=environment)
+                    return 0
+            except (OSError, UpdateError):
+                from core.diagnostics import log_failure
+                from launcher import notify
+                log_failure("Managed launcher could not start")
+                notify("Cannot start the managed application. Restore the complete deployment folder and open Launcher.exe.")
+                return 1
     root = managed_root()
     app_lock = None
     if root is not None:

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from core.diagnostics import log_failure
 from core.pdf_engine import DOCUMENT_LOCK, PdfEngine, PdfEngineError
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ class MutationController:
         try:
             with session.engine.mutation_transaction(description):
                 yield True
+        # Preserve cancellation/exit: restore ownership/history, then re-raise.
         except BaseException:
             if session.engine.document is not original:
                 for canvas, state in states:
@@ -74,6 +76,7 @@ class MutationController:
                 ),
             )
         except Exception as exc:
+            log_failure('mutation_controller.move_history: fallback after failure', 10)
             viewer._error(f"{direction.title()} failed", str(exc))
             return False
         if changed:
@@ -115,6 +118,7 @@ class MutationController:
             viewer._restore_session_view_state(session, view_state)
             for canvas, state in canvas_states:
                 viewer._restore_canvas_view_state(canvas, state)
+        # Preserve cancellation/exit: restore ownership/history, then re-raise.
         except BaseException:
             try:
                 if installing:

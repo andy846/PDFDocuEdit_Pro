@@ -33,6 +33,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.diagnostics import log_failure
+
 from .base import ToolDialog
 from .batch_tools import PdfFileTable
 from .print_profile import collect_print_profile, quality_changed, restore_print_profile
@@ -275,6 +277,7 @@ class BatchPrintDialog(ToolDialog):
             printer.setPrinterName(name)
             QPrintDialog(printer, self).exec()
         except Exception as exc:
+            log_failure('batch_print_dialog._printer_preferences: fallback after failure', 10)
             self.show_error(f"Could not open printer preferences: {exc}")
 
     # --- file list ---------------------------------------------------------
@@ -320,6 +323,7 @@ class BatchPrintDialog(ToolDialog):
                 with fitz.open(path) as document:
                     self._page_counts[path] = document.page_count
             except Exception:
+                log_failure('batch_print_dialog._page_count: fallback after failure', 10)
                 self._page_counts[path] = 0
         return self._page_counts[path]
 

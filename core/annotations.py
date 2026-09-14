@@ -11,6 +11,8 @@ from pathlib import Path
 
 import fitz
 
+from core.diagnostics import log_failure
+
 from .pdf_engine import DOCUMENT_LOCK
 from .system_fonts import is_pdf_base_font, resolve_system_font
 
@@ -152,6 +154,7 @@ def freetext_visual_metrics(
         ascender = float(font.ascender)
         descender = float(font.descender)
     except Exception:
+        log_failure('annotations.freetext_visual_metrics: fallback after failure', 10)
         ascender, descender = 1.075, -0.299
         system_path = None
     line_height = max(size, (ascender - descender) * size)
@@ -329,6 +332,7 @@ def _appearance_xref(doc: fitz.Document, annot_xref: int) -> int | None:
         if kind == "xref":
             return int(value.split()[0])
     except (IndexError, RuntimeError, TypeError, ValueError):
+        log_failure('annotations._appearance_xref: fallback after failure', 10)
         pass
     return None
 
@@ -805,6 +809,7 @@ def list_annotations(page: fitz.Page) -> list[dict]:
                 kind = str(annot.type[1])
                 rect = annot.rect
             except Exception:
+                log_failure('annotations.list_annotations: fallback after failure', 10)
                 continue  # stale xref after a page rebuild
             info = dict(annot.info or {})
             border = dict(annot.border or {})
@@ -834,6 +839,7 @@ def list_annotations(page: fitz.Page) -> list[dict]:
                             for value in parts[color_index - 3 : color_index]
                         )
                 except (AttributeError, RuntimeError, TypeError, ValueError):
+                    log_failure('annotations.list_annotations: fallback after failure', 10)
                     pass
                 font = _system_font_family(page.parent, annot.xref) or font
                 try:
@@ -874,6 +880,7 @@ def list_annotations(page: fitz.Page) -> list[dict]:
                 }
             )
     except Exception:
+        log_failure('annotations.list_annotations: fallback after failure', 10)
         pass  # the annotation list itself is stale
     return results
 
@@ -902,6 +909,7 @@ def remove_annotation(page: fitz.Page, xref: int) -> bool:
         try:
             annots = list(page.annots())
         except Exception:
+            log_failure('annotations.remove_annotation: fallback after failure', 10)
             return False  # stale annotation list after a page rebuild
         target = next((annot for annot in annots if int(annot.xref) == int(xref)), None)
         if target is not None:
@@ -909,6 +917,7 @@ def remove_annotation(page: fitz.Page, xref: int) -> bool:
                 page.delete_annot(target)
                 return True
             except Exception:
+                log_failure('annotations.remove_annotation: fallback after failure', 10)
                 return False  # the xref vanished mid-operation
         return False
 
@@ -950,11 +959,13 @@ def update_annotation_geometry(
             try:
                 new_annot.set_line_ends(*target.line_ends)
             except (RuntimeError, TypeError, ValueError):
+                log_failure('annotations.update_annotation_geometry: fallback after failure', 10)
                 pass
             new_annot.set_opacity(max(0.0, min(1.0, float(target.opacity))))
             try:
                 new_annot.set_info(**dict(target.info or {}))
             except (RuntimeError, TypeError, ValueError):
+                log_failure('annotations.update_annotation_geometry: fallback after failure', 10)
                 pass
             new_annot.update()
             new_xref = int(new_annot.xref)
@@ -1053,6 +1064,7 @@ def _freetext_style(doc: fitz.Document, target: fitz.Annot) -> AnnotationStyle:
         color_index = parts.index("rg")
         stroke = tuple(float(value) for value in parts[color_index - 3 : color_index])
     except (IndexError, RuntimeError, TypeError, ValueError):
+        log_failure('annotations._freetext_style: fallback after failure', 10)
         pass
     try:
         alignment = int(doc.xref_get_key(target.xref, "Q")[1])
@@ -1142,10 +1154,12 @@ def update_annotation(
             try:
                 target.set_colors(**colors)
             except (RuntimeError, ValueError):
+                log_failure('annotations.update_annotation: fallback after failure', 10)
                 pass
         try:
             target.set_border(width=max(0.0, style.width))
         except (RuntimeError, ValueError):
+            log_failure('annotations.update_annotation: fallback after failure', 10)
             pass
         target.set_opacity(max(0.0, min(1.0, style.opacity)))
         if text is not None:

@@ -18,6 +18,8 @@ from typing import Any
 import fitz
 import numpy as np
 
+from core.diagnostics import log_failure
+
 from .capabilities import CapabilityId, detect_capabilities
 from .ocr_language import OCR_LANGUAGE, normalize_ocr_language
 from .platform_service import PlatformService
@@ -526,6 +528,7 @@ def _iter_annots(page: fitz.Page) -> list[Any]:
     try:
         return list(page.annots() or [])
     except Exception:
+        log_failure('analysis._iter_annots: fallback after failure', 10)
         return []
 
 
@@ -533,6 +536,7 @@ def _iter_widgets(page: fitz.Page) -> list[Any]:
     try:
         return list(page.widgets() or [])
     except Exception:
+        log_failure('analysis._iter_widgets: fallback after failure', 10)
         return []
 
 
@@ -541,10 +545,12 @@ def _page_components(page: fitz.Page) -> dict[str, Any]:
     try:
         images = list(page.get_image_info(xrefs=True))
     except Exception:
+        log_failure('analysis._page_components: fallback after failure', 10)
         images = []
     try:
         drawings = list(page.get_drawings())
     except Exception:
+        log_failure('analysis._page_components: fallback after failure', 10)
         drawings = []
     annots = _iter_annots(page)
     widgets = _iter_widgets(page)
@@ -632,6 +638,7 @@ def _font_embedded(document: fitz.Document, xref: int, extension: str) -> bool:
         if isinstance(info, tuple) and len(info) > 1:
             return str(info[1]).casefold() not in {"", "n/a"}
     except Exception:
+        log_failure('analysis._font_embedded: fallback after failure', 10)
         pass
     return extension.casefold() not in {"", "n/a"}
 
@@ -691,6 +698,7 @@ def _image_classification(document: fitz.Document, info: dict[str, Any]) -> str:
             if kind == "bool" and str(value).casefold() == "true":
                 return "stencil mask"
         except Exception:
+            log_failure('analysis._image_classification: fallback after failure', 10)
             return "unknown raster object"
     elif (
         int(info.get("bpc", 0) or 0) == 1
@@ -708,6 +716,7 @@ def _image_compression(document: fitz.Document, xref: int) -> str:
     try:
         kind, value = document.xref_get_key(xref, "Filter")
     except Exception:
+        log_failure('analysis._image_compression: fallback after failure', 10)
         return "Unknown"
     if kind == "null" or not value:
         return "Unfiltered"
@@ -724,6 +733,7 @@ def _document_feature_flags(document: fitz.Document) -> dict[str, bool]:
         try:
             raw = document.xref_object(xref, compressed=True)
         except Exception:
+            log_failure('analysis._document_feature_flags: fallback after failure', 10)
             continue
         javascript = javascript or "/JavaScript" in raw or "/JS" in raw
         launch = launch or "/Launch" in raw
@@ -732,6 +742,7 @@ def _document_feature_flags(document: fitz.Document) -> dict[str, bool]:
     try:
         attachments = document.embfile_count() > 0
     except Exception:
+        log_failure('analysis._document_feature_flags: fallback after failure', 10)
         attachments = False
     return {"javascript": javascript, "launch": launch, "attachments": attachments}
 
@@ -740,6 +751,7 @@ def _claimed_standard(document: fitz.Document) -> str:
     try:
         xmp = document.get_xml_metadata() or ""
     except Exception:
+        log_failure('analysis._claimed_standard: fallback after failure', 10)
         return ""
     part = re.search(r"pdfaid:part[^>]*>\s*([1-4])\s*<", xmp, re.IGNORECASE)
     conformance = re.search(
@@ -1106,6 +1118,7 @@ def inspect_and_analyze(
             try:
                 fonts = document.get_page_fonts(page_number, full=True)
             except Exception:
+                log_failure('analysis.inspect_and_analyze: fallback after failure', 10)
                 fonts = []
             for font in fonts:
                 xref = int(font[0] or 0)
@@ -1193,6 +1206,7 @@ def inspect_and_analyze(
                         try:
                             kind, _value = document.xref_get_key(page.xref, key_name)
                         except Exception:
+                            log_failure('analysis.inspect_and_analyze: fallback after failure', 10)
                             kind = "null"
                         if kind == "null":
                             finding_set.findings.append(

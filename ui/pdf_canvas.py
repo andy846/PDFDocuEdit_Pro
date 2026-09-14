@@ -32,6 +32,7 @@ from core.annotations import (
     freetext_visual_metrics,
     list_annotations,
 )
+from core.diagnostics import connect_interrupts, log_failure
 from core.pdf_engine import DOCUMENT_LOCK
 from styles.theme import get_colors
 from styles.tokens import S
@@ -144,7 +145,10 @@ def callout_line_points(
     return (tip, knee, attach)
 
 
+
+
 class _RenderSignals(QObject):
+    interrupted = pyqtSignal(str)
     finished = pyqtSignal(int, int, tuple, object)
 
 
@@ -167,20 +171,20 @@ class _RenderTask(QRunnable):
         self._key = key
         self._generation = generation
         self.signals = _RenderSignals()
+        connect_interrupts(self.signals)
 
     def run(self) -> None:
-        # PyQt6 aborts the process when *any* exception escapes QRunnable.run(),
-        # so catch BaseException and keep the pool alive.
+        image = None
         try:
             with DOCUMENT_LOCK:
-                image = render_page_image(
-                    self._doc, self._page_num, self._zoom, self._dpr
-                )
-            self.signals.finished.emit(
-                self._page_num, self._generation, self._key, image
-            )
-        except BaseException:
-            return
+                image = render_page_image(self._doc, self._page_num, self._zoom, self._dpr)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            log_failure("Page render interrupted")
+            self.signals.interrupted.emit(type(exc).__name__)
+        except Exception:
+            log_failure("Page render failed")
+        finally:
+            self.signals.finished.emit(self._page_num, self._generation, self._key, image)
 
 
 class PdfCanvas(QScrollArea):
@@ -1165,8 +1169,12 @@ class PdfCanvas(QScrollArea):
                 view = self._page_views.get(page_num)
                 if view is not None:
                     view.set_pixmap(quick)
-            except BaseException:
-                pass
+            except (KeyboardInterrupt, SystemExit) as exc:
+                from core.diagnostics import _InterruptBridge
+                _InterruptBridge().handle(type(exc).__name__)
+                return
+            except Exception:
+                log_failure("Quick page preview failed")
             finally:
                 DOCUMENT_LOCK.release()
         # Encrypted documents: MuPDF's per-document decryption state is not
@@ -1176,7 +1184,12 @@ class PdfCanvas(QScrollArea):
             try:
                 with DOCUMENT_LOCK:
                     pixmap = render_page_pixmap(self._doc, page_num, self._zoom, dpr)
-            except BaseException:
+            except (KeyboardInterrupt, SystemExit) as exc:
+                from core.diagnostics import _InterruptBridge
+                _InterruptBridge().handle(type(exc).__name__)
+                return
+            except Exception:
+                log_failure("Encrypted page render failed")
                 return
             self._cache.put(key, pixmap)
             view = self._page_views.get(page_num)
@@ -1198,7 +1211,7 @@ class PdfCanvas(QScrollArea):
         image: QImage,
     ) -> None:
         self._pending.discard((generation, page_num))
-        if generation != self._generation or not self._doc:
+        if generation != self._generation or not self._doc or image is None:
             return
         # QPixmap is a GUI resource and must only be created on this thread.
         pixmap = QPixmap.fromImage(image)
@@ -1382,6 +1395,14 @@ class PdfCanvas(QScrollArea):
         return False
 
     def _viewport_key_press(self, event) -> bool:
+        from PyQt6.QtGui import QKeySequence
+        owner = self.window()
+        sequence = (owner._shortcut_sequence("copy_selection") if hasattr(owner, "_shortcut_sequence")
+                    else QKeySequence(QKeySequence.StandardKey.Copy))
+        if not sequence.isEmpty() and QKeySequence(event.keyCombination()) == sequence:
+            self.copy_selection()
+            event.accept()
+            return True
         if (
             event.key() == Qt.Key.Key_Space
             and not event.isAutoRepeat()
@@ -1390,13 +1411,6 @@ class PdfCanvas(QScrollArea):
             self._temp_hand = True
             self._refresh_cursors()
             return True
-        if (
-            event.key() == Qt.Key.Key_C
-            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
-        ):
-            if self._selection:
-                self.textCopied.emit(self._selection[1])
-                return True
         return False
 
     def _viewport_key_release(self, event) -> bool:
@@ -1477,6 +1491,7 @@ class PdfCanvas(QScrollArea):
         try:
             pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False)
         except Exception:
+            log_failure('pdf_canvas._update_magnifier: fallback after failure', 10)
             return
         image = QImage(
             pix.samples,

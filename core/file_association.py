@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from core.diagnostics import log_failure
+
 PROG_ID = "PDFDocuEditPro.Document"
 ASSOCIATED_EXTENSIONS = (".pdf", ".ps", ".eps")
 
@@ -149,6 +151,7 @@ def unregister_default_app(
                 if value == expected:
                     winreg.DeleteValue(key, name)
         except FileNotFoundError:
+            log_failure('file_association.remove_value: fallback after failure', 10)
             pass
 
     def remove_empty_key(path: str) -> None:
@@ -158,6 +161,7 @@ def unregister_default_app(
             if not subkeys and not values:
                 winreg.DeleteKey(root, path)
         except FileNotFoundError:
+            log_failure('file_association.remove_empty_key: fallback after failure', 10)
             pass
 
     try:
@@ -188,4 +192,5 @@ def open_default_apps_settings() -> None:
 
         subprocess.Popen(["explorer.exe", "ms-settings:defaultapps"])
     except OSError:
+        log_failure('file_association.open_default_apps_settings: fallback after failure', 10)
         pass

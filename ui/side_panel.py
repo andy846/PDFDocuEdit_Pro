@@ -305,6 +305,8 @@ class SidePanel(QFrame):
             "tools",
             "Utilities",
             (
+                ToolItem("fill_form", "Fill PDF form", "file-text"),
+                ToolItem("compare_pdf", "Compare PDFs", "files"),
                 ToolItem("find_file", "Find and open PDF", "search", "search_pdf.png"),
                 ToolItem(
                     "page_report",

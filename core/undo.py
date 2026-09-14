@@ -12,6 +12,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core.diagnostics import log_failure
+
 MAX_UNDO_DEPTH = 20
 
 
@@ -143,6 +145,7 @@ class UndoStack(QObject):
         snapshot = _Snapshot(Path(temp_name), description, modified)
         try:
             snapshot.path.write_bytes(data)
+        # Preserve cancellation/exit: restore ownership/history, then re-raise.
         except BaseException:
             snapshot.cleanup()
             raise
@@ -164,6 +167,7 @@ class UndoStack(QObject):
             target = Path(temp_name)
             target.write_bytes(source.read_bytes())
         except Exception:
+            log_failure('undo.push: fallback after failure', 10)
             Path(temp_name).unlink(missing_ok=True)
             return
         snapshot = _Snapshot(
@@ -207,6 +211,7 @@ class UndoStack(QObject):
             target = Path(temp_name)
             target.write_bytes(source.read_bytes())
         except Exception:
+            log_failure('undo.push_redo: fallback after failure', 10)
             Path(temp_name).unlink(missing_ok=True)
             return
         self._redo.append(
@@ -230,6 +235,7 @@ class UndoStack(QObject):
             target = Path(temp_name)
             target.write_bytes(source.read_bytes())
         except Exception:
+            log_failure('undo.push_undo: fallback after failure', 10)
             Path(temp_name).unlink(missing_ok=True)
             return
         self._append_undo(

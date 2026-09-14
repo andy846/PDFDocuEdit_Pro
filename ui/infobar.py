@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel
 
+from core.diagnostics import log_failure
 from styles.components import _rgba
 from styles.theme import get_colors
 from styles.tokens import D, S
@@ -78,6 +79,7 @@ class InfoBar(QFrame):
             try:
                 self._overlay_anchor.removeEventFilter(self)
             except RuntimeError:
+                log_failure('infobar.set_overlay_anchor: fallback after failure', 10)
                 pass
         self._overlay_anchor = anchor
         self._overlay_top_offset = max(0, int(top_offset))

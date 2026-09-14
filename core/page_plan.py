@@ -12,6 +12,8 @@ from pathlib import Path
 
 import fitz
 
+from core.diagnostics import log_failure
+
 from .io_atomic import atomic_output
 from .pdf_io import validate_pdf_file
 
@@ -417,5 +419,6 @@ def export_plan(current_bytes: bytes, jobs: list[tuple[Path, list[PagePlanEntry]
     except InterruptedError as exc:
         result.cancelled, result.error = True, str(exc)
     except Exception as exc:
+        log_failure('page_plan.export_plan: fallback after failure', 10)
         result.error = str(exc)
     return result

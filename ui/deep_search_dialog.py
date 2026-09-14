@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 
+from core.diagnostics import log_failure
 from core.tasks import FunctionTask
 from core.tools import deep_search, export_search_results_csv
 from dialogs.base import SortableTableWidget, ToolDialog, remember_save_directory, start_in_save_directory
@@ -507,6 +508,7 @@ class DeepSearchDialog(ToolDialog):
                 export_search_results_csv(self._results, path)
             self.status.setText(f"Export successful: {path}")
         except Exception as exc:
+            log_failure('deep_search_dialog._export: fallback after failure', 10)
             self.status.setText(f"Export failed: {exc}")
 
     def _export_html(self, path: str) -> None:

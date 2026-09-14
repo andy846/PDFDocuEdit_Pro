@@ -15,6 +15,8 @@ from pathlib import Path
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 
+from core.diagnostics import log_failure
+
 
 @dataclass(frozen=True)
 class ProcessResult:
@@ -188,4 +190,5 @@ class PlatformService:
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
+                log_failure('platform_service._stop_process: fallback after failure', 10)
                 pass

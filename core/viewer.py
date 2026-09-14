@@ -32,18 +32,14 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrinterInfo
 from PyQt6.QtWidgets import (
-    QAbstractSpinBox,
     QApplication,
-    QComboBox,
     QDialog,
     QFileDialog,
     QInputDialog,
-    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
     QSplitter,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -80,6 +76,7 @@ from core.annotations import (
 )
 from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
 from core.commands import Command
+from core.diagnostics import log_failure
 from core.file_association import (
     is_default_app,
     is_installed,
@@ -173,6 +170,7 @@ def _prepare_pdf_engine(
         engine.close()
         return ("invalid_password", None)
     except Exception as exc:
+        log_failure('viewer._prepare_pdf_engine: fallback after failure', 10)
         engine.close()
         return ("error", str(exc) or exc.__class__.__name__)
     return ("ok", engine)
@@ -364,10 +362,7 @@ class PDFViewer(QMainWindow):
         self.command_bar.set_integrated_chrome(self._integrated_chrome)
         if self._integrated_chrome:
             self.menuBar().hide()
-            self._main_menu_shortcut = QShortcut(QKeySequence("Alt+M"), self)
-            self._main_menu_shortcut.activated.connect(
-                self.command_bar.open_application_menu
-            )
+
         self._connect_signals()
         self._load_custom_stamps()
         self._commands: list[Command] = []
@@ -385,35 +380,35 @@ class PDFViewer(QMainWindow):
         file_menu = menu.addMenu("&File")
         self.open_action = self._action(
             "Open…", QKeySequence.StandardKey.Open, self._open_dialog
-        )
+        , command_id='open')
         self.search_open_action = self._action(
             "Search and Open PDF…", "Ctrl+Shift+O", self._search_and_open
-        )
+        , command_id='search_open')
         self.save_action = self._action(
             "Save", QKeySequence.StandardKey.Save, self.save_file
-        )
+        , command_id='save')
         self.save_as_action = self._action(
             "Save As…", QKeySequence.StandardKey.SaveAs, self.save_as_file
-        )
+        , command_id='save_as')
         self.print_action = self._action(
             "Print…", QKeySequence.StandardKey.Print, self.print_pdf
-        )
+        , command_id='print')
         self.close_action = self._action(
             "Close Document", "Ctrl+W", self.close_document
-        )
+        , command_id='close')
         file_menu.addAction(self.open_action)
         self.open_postscript_action = self._action(
             "Open PostScript…", None, self._open_postscript
-        )
+        , command_id='open_postscript')
         file_menu.addAction(self.open_postscript_action)
         file_menu.addAction(self.search_open_action)
         file_menu.addSeparator()
-        self.save_all_action = self._action("Save All", None, self.save_all_files)
+        self.save_all_action = self._action("Save All", None, self.save_all_files, command_id='save_all')
         for action in (self.save_action, self.save_as_action, self.save_all_action):
             file_menu.addAction(action)
         file_menu.addSeparator()
-        self.encrypt_action = self._action("Encrypt PDF…", None, self._encrypt_pdf)
-        self.decrypt_action = self._action("Decrypt PDF…", None, self._decrypt_pdf)
+        self.encrypt_action = self._action("Encrypt PDF…", None, self._encrypt_pdf, command_id='encrypt')
+        self.decrypt_action = self._action("Decrypt PDF…", None, self._decrypt_pdf, command_id='decrypt')
         file_menu.addAction(self.encrypt_action)
         file_menu.addAction(self.decrypt_action)
         file_menu.addSeparator()
@@ -421,11 +416,11 @@ class PDFViewer(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.close_action)
         file_menu.addSeparator()
-        file_menu.addAction(self._action("Quit", "Ctrl+Q", self.close))
+        file_menu.addAction(self._action("Quit", "Ctrl+Q", self.close, command_id='quit'))
 
         edit_menu = menu.addMenu("&Edit")
-        self.undo_action = self._action("Undo", "Ctrl+Z", self._undo)
-        self.redo_action = self._action("Redo", "Ctrl+Y", self._redo)
+        self.undo_action = self._action("Undo", "Ctrl+Z", self._undo, command_id='undo')
+        self.redo_action = self._action("Redo", "Ctrl+Y", self._redo, command_id='redo')
         self.redo_action.setShortcuts(
             [QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")]
         )
@@ -436,22 +431,22 @@ class PDFViewer(QMainWindow):
         edit_menu.addSeparator()
         self.find_action = self._action(
             "Search…", QKeySequence.StandardKey.Find, self.search_document
-        )
+        , command_id='search')
         edit_menu.addAction(self.find_action)
         edit_menu.addSeparator()
         self.rotate_action = self._action(
             "Rotate Pages…", "F6", lambda: self._show_context("rotate")
-        )
+        , command_id='rotate')
         self.insert_action = self._action(
             "Insert Pages…", "F7", self._insert_pages_dialog
-        )
+        , command_id='insert')
         self.delete_action = self._action(
             "Delete Pages…", "F8", self._delete_pages_dialog
-        )
+        , command_id='delete')
         self.extract_action = self._action(
             "Extract Pages…", "F9", self._extract_pages_dialog
-        )
-        self.split_pages_action = self._action("Split PDF…", "F10", self._split_dialog)
+        , command_id='extract')
+        self.split_pages_action = self._action("Split PDF…", "F10", self._split_dialog, command_id='split')
         edit_menu.addAction(self.rotate_action)
         edit_menu.addAction(self.insert_action)
         edit_menu.addAction(self.delete_action)
@@ -460,7 +455,7 @@ class PDFViewer(QMainWindow):
         edit_menu.addSeparator()
         self.undo_history_action = self._action(
             "Undo History…", None, self._show_undo_history
-        )
+        , command_id='undo_history')
         edit_menu.addAction(self.undo_history_action)
 
         tools_menu = menu.addMenu("&Tools")
@@ -476,34 +471,34 @@ class PDFViewer(QMainWindow):
                     label,
                     None,
                     lambda _checked=False, value=key: self._tool_requested(value),
-                )
+                 command_id=key)
             )
 
         view_menu = menu.addMenu("&View")
         view_menu.addAction(
-            self._action("Toggle Tools Panel", "Ctrl+\\", self._toggle_side_panel)
+            self._action("Toggle Tools Panel", "Ctrl+\\", self._toggle_side_panel, command_id='toggle_tools')
         )
         view_menu.addAction(
-            self._action("Toggle Context Panel", "Ctrl+.", self._toggle_context_panel)
+            self._action("Toggle Context Panel", "Ctrl+.", self._toggle_context_panel, command_id='toggle_context')
         )
         view_menu.addAction(
-            self._action("Toggle Page Thumbnails", "Ctrl+T", self._toggle_thumbnails)
+            self._action("Toggle Page Thumbnails", "Ctrl+T", self._toggle_thumbnails, command_id='toggle_thumbnails')
         )
         view_menu.addSeparator()
         view_menu.addAction(
             self._action(
                 "Show Outline Panel", None, lambda: self._show_nav_tab("outline")
-            )
+            , command_id='nav_outline')
         )
         view_menu.addAction(
             self._action(
                 "Show Bookmarks Panel", None, lambda: self._show_nav_tab("bookmarks")
-            )
+            , command_id='nav_bookmarks')
         )
         view_menu.addAction(
             self._action(
                 "Show Search Panel", None, lambda: self._show_nav_tab("search")
-            )
+            , command_id='nav_search')
         )
         view_menu.addSeparator()
 
@@ -516,10 +511,15 @@ class PDFViewer(QMainWindow):
             ("Continuous Pages", "Ctrl+2", "continuous"),
             ("Facing Pages", "Ctrl+3", "facing"),
         ):
-            action = QAction(label, self)
+            from ui.shortcut_bindings import CommandAction
+            action = CommandAction(label, self)
             action.setCheckable(True)
             action.setShortcut(shortcut)
             action.setData(mode)
+            action.setProperty("commandId", "view_" + mode)
+            action.setProperty("shortcutBaseLabel", label)
+            action.setProperty("shortcutDefault", shortcut)
+            self._registered_shortcut_actions.append(action)
             action.triggered.connect(
                 lambda _checked=False, value=mode: self._set_layout_mode(value)
             )
@@ -530,13 +530,13 @@ class PDFViewer(QMainWindow):
 
         self.fit_width_action = self._action(
             "Fit Page Width", "Ctrl+0", self._canvas_call("fit_width")
-        )
+        , command_id='fit_width')
         self.fit_page_action = self._action(
             "Fit Whole Page", "Ctrl+9", self._canvas_call("fit_page")
-        )
+        , command_id='fit_page')
         self.actual_size_action = self._action(
             "Actual Size", "Ctrl+8", self._canvas_call("actual_size")
-        )
+        , command_id='actual_size')
         view_menu.addAction(self.fit_width_action)
         view_menu.addAction(self.fit_page_action)
         view_menu.addAction(self.actual_size_action)
@@ -552,9 +552,14 @@ class PDFViewer(QMainWindow):
             ("Select Text", "select"),
             ("Magnifier", "magnifier"),
         ):
-            action = QAction(label, self)
+            from ui.shortcut_bindings import CommandAction
+            action = CommandAction(label, self)
             action.setCheckable(True)
             action.setData(mode)
+            action.setProperty("commandId", "tool_" + mode)
+            action.setProperty("shortcutBaseLabel", label)
+            action.setProperty("shortcutDefault", "")
+            self._registered_shortcut_actions.append(action)
             action.triggered.connect(
                 lambda _checked=False, value=mode: self._set_canvas_tool(value)
             )
@@ -583,7 +588,8 @@ class PDFViewer(QMainWindow):
             ("Side by side", "horizontal"),
             ("Stacked", "vertical"),
         ):
-            action = QAction(label, self)
+            from ui.shortcut_bindings import CommandAction
+            action = CommandAction(label, self)
             action.setCheckable(True)
             action.setData(value)
             action.setChecked(
@@ -625,47 +631,49 @@ class PDFViewer(QMainWindow):
 
         self.zoom_in_action = self._action(
             "Zoom In", "Ctrl+=", self._canvas_call("zoom_in")
-        )
+        , command_id='zoom_in')
         self.zoom_out_action = self._action(
             "Zoom Out", "Ctrl+-", self._canvas_call("zoom_out")
-        )
+        , command_id='zoom_out')
         view_menu.addAction(self.zoom_in_action)
         view_menu.addAction(self.zoom_out_action)
         view_menu.addSeparator()
         view_menu.addAction(
-            self._action("Toggle Full Screen", "F11", self._toggle_fullscreen)
+            self._action("Toggle Full Screen", "F11", self._toggle_fullscreen, command_id='full_screen')
         )
 
         navigate_menu = menu.addMenu("&Navigate")
         navigate_menu.addAction(
-            self._action("Previous Page", "Ctrl+Left", self.previous_page)
+            self._action("Previous Page", "Ctrl+Left", self.previous_page, command_id='prev_page')
         )
-        navigate_menu.addAction(self._action("Next Page", "Ctrl+Right", self.next_page))
+        navigate_menu.addAction(self._action("Next Page", "Ctrl+Right", self.next_page, command_id='next_page'))
         navigate_menu.addAction(
-            self._action("First Page", "Home", self._goto_first_page)
+            self._action("First Page", "Home", self._goto_first_page, command_id='first_page')
         )
-        navigate_menu.addAction(self._action("Last Page", "End", self._goto_last_page))
+        navigate_menu.addAction(self._action("Last Page", "End", self._goto_last_page, command_id='last_page'))
 
         help_menu = menu.addMenu("&Help")
-        help_menu.addAction(self._action("Check for Updates…", None, self._check_for_updates))
-        help_menu.addAction(self._action("README", None, self._show_readme))
+        help_menu.addAction(self._action("Check for Updates…", None, self._check_for_updates, command_id='check_updates'))
+        help_menu.addAction(self._action("README", None, self._show_readme, command_id='readme'))
         help_menu.addAction(
-            self._action("Command Palette…", "Ctrl+K", self._show_command_palette)
+            self._action("Command Palette…", "Ctrl+K", self._show_command_palette, command_id='command_palette')
         )
         help_menu.addAction(
-            self._action("Keyboard Shortcuts", "Ctrl+/", self._show_shortcuts)
-        )
-        help_menu.addSeparator()
-        help_menu.addAction(
-            self._action("Set as Default App…", None, self._set_default_app)
+            self._action("Keyboard Shortcuts", "Ctrl+/", self._show_shortcuts, command_id='shortcuts')
         )
         help_menu.addSeparator()
         help_menu.addAction(
-            self._action("About PDFDocuEdit Pro", None, self.show_about)
+            self._action("Set as Default App…", None, self._set_default_app, command_id='default_app')
+        )
+        help_menu.addSeparator()
+        help_menu.addAction(
+            self._action("About PDFDocuEdit Pro", None, self.show_about, command_id='about')
         )
 
-    def _action(self, label: str, shortcut, callback: Callable) -> QAction:
-        action = QAction(label, self)
+    def _action(self, label: str, shortcut, callback: Callable, *, command_id: str | None = None) -> QAction:
+        from ui.shortcut_bindings import CommandAction
+        action = CommandAction(label, self)
+        action.setProperty("commandId", command_id)
         if shortcut:
             action.setShortcut(shortcut)
         action.setProperty("shortcutBaseLabel", label)
@@ -1090,6 +1098,7 @@ class PDFViewer(QMainWindow):
                     return
                 session.engine.reorder_pages(order)
         except Exception as exc:
+            log_failure('viewer._handle_thumbnail_reorder: fallback after failure', 10)
             self.info_bar.show_message(f"Reorder failed: {exc}", "error", 0)
             self._reload_thumbnails(session)
             return
@@ -1112,6 +1121,7 @@ class PDFViewer(QMainWindow):
         try:
             session.engine.snapshot(temp_name)
         except Exception:
+            log_failure('viewer._reload_thumbnails: fallback after failure', 10)
             fallback = session.engine.temp_path
             if fallback:
                 temp_name = str(fallback)
@@ -1167,6 +1177,7 @@ class PDFViewer(QMainWindow):
         try:
             loaded = self._load_path(session, path)
         except Exception as exc:
+            log_failure('viewer.open_in_new_tab: fallback after failure', 10)
             loaded = False
             self._error("Open failed", str(exc))
         if not loaded and not session.engine.is_loaded():
@@ -1530,6 +1541,7 @@ class PDFViewer(QMainWindow):
                         hwnd, attribute, ctypes.byref(ctypes.c_int(none)), 4
                     )
         except Exception:
+            log_failure('viewer._update_title_bar: fallback after failure', 10)
             pass
 
     def _theme_changed(self, value: str) -> None:
@@ -1701,6 +1713,10 @@ class PDFViewer(QMainWindow):
     def _copy_text_to_clipboard(self, text: str) -> None:
         QApplication.clipboard().setText(text)
 
+    def _shortcut_sequence(self, command_id):
+        command = next((c for c in self._commands if c.id == command_id), None)
+        return QKeySequence(command.shortcut if command is not None else "")
+
     def _show_canvas_menu(
         self, global_pos, session: DocumentSession, canvas=None
     ) -> None:
@@ -1718,7 +1734,7 @@ class PDFViewer(QMainWindow):
             self._session = session
 
         copy_action = menu.addAction("Copy Text", canvas.copy_selection)
-        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.setShortcut(self._shortcut_sequence("copy_selection"))
         copy_action.setEnabled(loaded and bool(canvas.selected_text()))
         menu.addSeparator()
 
@@ -1733,49 +1749,49 @@ class PDFViewer(QMainWindow):
             "Previous Page",
             activate_then(lambda: canvas.set_page(canvas.current_page - 1)),
         )
-        previous.setShortcut("Ctrl+Left")
+        previous.setShortcut(self._shortcut_sequence("prev_page"))
         previous.setEnabled(loaded)
         next_page = menu.addAction(
             "Next Page",
             activate_then(lambda: canvas.set_page(canvas.current_page + 1)),
         )
-        next_page.setShortcut("Ctrl+Right")
+        next_page.setShortcut(self._shortcut_sequence("next_page"))
         next_page.setEnabled(loaded)
         first = menu.addAction(
             "First Page", activate_then(lambda: canvas.set_page(0))
         )
-        first.setShortcut("Home")
+        first.setShortcut(self._shortcut_sequence("first_page"))
         first.setEnabled(loaded)
         last = menu.addAction(
             "Last Page",
             activate_then(lambda: canvas.set_page(session.engine.page_count - 1)),
         )
-        last.setShortcut("End")
+        last.setShortcut(self._shortcut_sequence("last_page"))
         last.setEnabled(loaded)
         menu.addSeparator()
 
         zoom_in = menu.addAction("Zoom In", activate_then(canvas.zoom_in))
-        zoom_in.setShortcut("Ctrl+=")
+        zoom_in.setShortcut(self._shortcut_sequence("zoom_in"))
         zoom_in.setEnabled(loaded)
         zoom_out = menu.addAction(
             "Zoom Out", activate_then(canvas.zoom_out)
         )
-        zoom_out.setShortcut("Ctrl+-")
+        zoom_out.setShortcut(self._shortcut_sequence("zoom_out"))
         zoom_out.setEnabled(loaded)
         fit_width = menu.addAction(
             "Fit Page Width", activate_then(canvas.fit_width)
         )
-        fit_width.setShortcut("Ctrl+0")
+        fit_width.setShortcut(self._shortcut_sequence("fit_width"))
         fit_width.setEnabled(loaded)
         fit_page = menu.addAction(
             "Fit Whole Page", activate_then(canvas.fit_page)
         )
-        fit_page.setShortcut("Ctrl+9")
+        fit_page.setShortcut(self._shortcut_sequence("fit_page"))
         fit_page.setEnabled(loaded)
         actual = menu.addAction(
             "Actual Size", activate_then(canvas.actual_size)
         )
-        actual.setShortcut("Ctrl+8")
+        actual.setShortcut(self._shortcut_sequence("actual_size"))
         actual.setEnabled(loaded)
 
         layout_menu = menu.addMenu("Page Layout")
@@ -1795,12 +1811,12 @@ class PDFViewer(QMainWindow):
         rotate_left = menu.addAction(
             "Rotate Left", activate_then(lambda: self._rotate_current(-90))
         )
-        rotate_left.setShortcut("Ctrl+L")
+        rotate_left.setShortcut(self._shortcut_sequence("rotate_left"))
         rotate_left.setEnabled(loaded)
         rotate_right = menu.addAction(
             "Rotate Right", activate_then(lambda: self._rotate_current(90))
         )
-        rotate_right.setShortcut("Ctrl+R")
+        rotate_right.setShortcut(self._shortcut_sequence("rotate_right"))
         rotate_right.setEnabled(loaded)
         extract = menu.addAction(
             "Extract Current Page…",
@@ -1810,20 +1826,20 @@ class PDFViewer(QMainWindow):
         insert = menu.addAction(
             "Insert Pages…", activate_then(self._insert_pages_dialog)
         )
-        insert.setShortcut("F7")
+        insert.setShortcut(self._shortcut_sequence("insert"))
         insert.setEnabled(loaded)
         delete = menu.addAction(
             "Delete Pages…", activate_then(self._delete_pages_dialog)
         )
-        delete.setShortcut("F8")
+        delete.setShortcut(self._shortcut_sequence("delete"))
         delete.setEnabled(loaded)
         menu.addSeparator()
 
         bookmark = menu.addAction("Add Bookmark", lambda: self._add_bookmark(session))
-        bookmark.setShortcut("Ctrl+D")
+        bookmark.setShortcut(self._shortcut_sequence("add_bookmark"))
         bookmark.setEnabled(loaded)
         print_action = menu.addAction("Print…", activate_then(self.print_pdf))
-        print_action.setShortcut("Ctrl+P")
+        print_action.setShortcut(self._shortcut_sequence("print"))
         print_action.setEnabled(loaded)
         info = menu.addAction(
             "Document Info",
@@ -1851,7 +1867,7 @@ class PDFViewer(QMainWindow):
         )
         menu.addSeparator()
         copy_action = menu.addAction("Copy Text", canvas.copy_selection)
-        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.setShortcut(self._shortcut_sequence("copy_selection"))
         copy_action.setEnabled(bool(canvas.selected_text()))
         previous = menu.addAction(
             "Previous Page", lambda: canvas.set_page(canvas.current_page - 1)
@@ -1940,6 +1956,7 @@ class PDFViewer(QMainWindow):
                     raise ValueError("This annotation cannot be moved or resized.")
                 session.engine.mark_modified()
         except Exception as exc:
+            log_failure('viewer._change_annotation_geometry: fallback after failure', 10)
             self.info_bar.show_message(f"Move/resize failed: {exc}", "error", 0)
             return
         self._refresh_session_canvases(session, {page})
@@ -1967,6 +1984,7 @@ class PDFViewer(QMainWindow):
                     raise ValueError("The annotation no longer exists or is not editable.")
                 session.engine.mark_modified()
         except Exception as exc:
+            log_failure('viewer._inline_edit_annotation: fallback after failure', 10)
             self.info_bar.show_message(f"Inline edit failed: {exc}", "error", 0)
             return
         self._refresh_session_canvases(session, {page})
@@ -2016,6 +2034,7 @@ class PDFViewer(QMainWindow):
             loaded = self._load_path(session, path)
         except Exception as exc:
             # Never let an unexpected open failure escape the slot (qFatal).
+            log_failure('viewer.load_file: fallback after failure', 10)
             loaded = False
             self._error("Open failed", str(exc))
         if not loaded and created and not session.engine.is_loaded():
@@ -2040,6 +2059,7 @@ class PDFViewer(QMainWindow):
                 convert_postscript(source, temp_name)
                 return self._open_pdf(session, temp_name, display_path=source)
             except Exception as exc:
+                log_failure('viewer._load_path: fallback after failure', 10)
                 self._error("PostScript conversion failed", str(exc))
                 return False
             finally:
@@ -2078,6 +2098,7 @@ class PDFViewer(QMainWindow):
                 self.info_bar.show_message("The password is not valid.", "error")
                 password = None
             except Exception as exc:
+                log_failure('viewer._open_pdf: fallback after failure', 10)
                 opened.close()
                 self._error("Open failed", str(exc))
                 return False
@@ -2188,6 +2209,7 @@ class PDFViewer(QMainWindow):
             self._sync_modified_state()
             self.info_bar.show_message(f"💾 Saved: {target.name}", "success")
         except Exception as exc:
+            log_failure('viewer.save_file: fallback after failure', 10)
             self._error("Save failed", str(exc))
 
     def save_as_file(self) -> None:
@@ -2217,6 +2239,7 @@ class PDFViewer(QMainWindow):
             self._sync_modified_state()
             self.info_bar.show_message(f"💾 Saved as: {target.name}", "success")
         except Exception as exc:
+            log_failure('viewer.save_as_file: fallback after failure', 10)
             self._error("Save failed", str(exc))
 
     def close_document(self, session: DocumentSession | None = None) -> None:
@@ -2553,6 +2576,7 @@ class PDFViewer(QMainWindow):
             )
             self._hide_context()
         except Exception as exc:
+            log_failure('viewer._rotate_pages: fallback after failure', 10)
             self._error("Rotate failed", str(exc))
 
     def _delete_pages(self, value: str) -> None:
@@ -2580,6 +2604,7 @@ class PDFViewer(QMainWindow):
             )
             self._hide_context()
         except Exception as exc:
+            log_failure('viewer._delete_pages: fallback after failure', 10)
             self._error("Delete failed", str(exc))
 
     def _extract_pages(self, value: str) -> None:
@@ -2616,6 +2641,7 @@ class PDFViewer(QMainWindow):
                 self.info_bar.show_message(f"📄 Created {target.name}", "success")
                 self._hide_context()
         except Exception as exc:
+            log_failure('viewer._extract_pages: fallback after failure', 10)
             self._error("Extract failed", str(exc))
 
     def _split_pdf(self, every: int) -> None:
@@ -2636,6 +2662,7 @@ class PDFViewer(QMainWindow):
             self.info_bar.show_message(f"Created {len(outputs)} PDF files.", "success")
             self._hide_context()
         except Exception as exc:
+            log_failure('viewer._split_pdf: fallback after failure', 10)
             self._error("Split failed", str(exc))
 
     def _insert_pages(self, mode: str, source: str, position: int) -> None:
@@ -2665,6 +2692,7 @@ class PDFViewer(QMainWindow):
             )
             self._hide_context()
         except Exception as exc:
+            log_failure('viewer._insert_pages: fallback after failure', 10)
             self._error("Insert failed", str(exc))
 
     def _order_pages(self, value: str) -> None:
@@ -2688,6 +2716,7 @@ class PDFViewer(QMainWindow):
             )
             self._hide_context()
         except Exception as exc:
+            log_failure('viewer._order_pages: fallback after failure', 10)
             self._error("Reorder failed", str(exc))
 
     def _after_page_count_change(self) -> None:
@@ -2771,6 +2800,7 @@ class PDFViewer(QMainWindow):
                 snapshot = directory
                 source = analysis_path
             except Exception as exc:
+                log_failure('viewer._run_analysis_request: fallback after failure', 10)
                 if snapshot:
                     snapshot.cleanup()
                 self._error("Analysis failed", str(exc))
@@ -2867,6 +2897,7 @@ class PDFViewer(QMainWindow):
                           tuple(details["pages"]))], details, printer=printer,
             )
         except Exception as exc:
+            log_failure('viewer.print_pdf: fallback after failure', 10)
             self._error("Print failed", str(exc))
 
     @staticmethod
@@ -3171,6 +3202,8 @@ class PDFViewer(QMainWindow):
             "extract": self._extract_pages_dialog,
             "order": lambda: self._show_context("sort"),
             "sort": self._organize_pages,
+            "fill_form": self._fill_form,
+            "compare_pdf": self._compare_pdf,
             "split": self._split_dialog,
             "info": self.show_document_info,
             "smart_detection": self.show_smart_detection,
@@ -3579,6 +3612,7 @@ class PDFViewer(QMainWindow):
                 apply_annotation(session.engine.document, op)
                 session.engine.mark_modified()
         except Exception as exc:
+            log_failure('viewer._handle_annotation: fallback after failure', 10)
             self.info_bar.show_message(f"{op.description()} failed: {exc}", "error", 0)
             return
         self._refresh_session_canvases(session, {op.page})
@@ -3629,6 +3663,7 @@ class PDFViewer(QMainWindow):
                     raise ValueError("The annotation no longer exists.")
                 session.engine.mark_modified()
         except Exception as exc:
+            log_failure('viewer._handle_remove_annotation: fallback after failure', 10)
             self.info_bar.show_message(f"Remove annotation failed: {exc}", "error", 0)
             return
         self._refresh_session_canvases(session, {page})
@@ -3666,6 +3701,7 @@ class PDFViewer(QMainWindow):
                 count = apply_redaction_marks(session.engine.document)
                 session.engine.mark_modified(requires_sanitized_save=True)
         except Exception as exc:
+            log_failure('viewer._apply_redactions: fallback after failure', 10)
             self.info_bar.show_message(f"Apply redactions failed: {exc}", "error", 0)
             return
         self._refresh_session_canvases(session)
@@ -3706,6 +3742,7 @@ class PDFViewer(QMainWindow):
                     raise ValueError("The annotation no longer exists.")
                 session.engine.mark_modified()
         except Exception as exc:
+            log_failure('viewer._edit_annotation: fallback after failure', 10)
             self.info_bar.show_message(f"Edit annotation failed: {exc}", "error", 0)
             return
         self._refresh_session_canvases(session, {page})
@@ -3746,6 +3783,7 @@ class PDFViewer(QMainWindow):
             target = export_annotations_json(self.engine.document, path)
             self.info_bar.show_message(f"Annotations exported: {target.name}", "success")
         except Exception as exc:
+            log_failure('viewer._export_annotations: fallback after failure', 10)
             self.info_bar.show_message(f"Export annotations failed: {exc}", "error", 0)
 
     def _import_annotations(self) -> None:
@@ -3778,6 +3816,7 @@ class PDFViewer(QMainWindow):
                 0 if skipped else 3000,
             )
         except Exception as exc:
+            log_failure('viewer._import_annotations: fallback after failure', 10)
             self.info_bar.show_message(f"Import annotations failed: {exc}", "error", 0)
 
     def _export_annotation_summary(self) -> None:
@@ -3792,6 +3831,7 @@ class PDFViewer(QMainWindow):
             target = export_annotation_summary(self.engine.document, path)
             self.info_bar.show_message(f"Summary exported: {target.name}", "success")
         except Exception as exc:
+            log_failure('viewer._export_annotation_summary: fallback after failure', 10)
             self.info_bar.show_message(f"Summary export failed: {exc}", "error", 0)
 
     def _flatten_annotations(self) -> None:
@@ -3808,6 +3848,7 @@ class PDFViewer(QMainWindow):
                 f"Flattened copy created: {target.name}", "success", 5000
             )
         except Exception as exc:
+            log_failure('viewer._flatten_annotations: fallback after failure', 10)
             self.info_bar.show_message(f"Flatten failed: {exc}", "error", 0)
 
     def _show_watermark_dialog(self) -> None:
@@ -3846,6 +3887,7 @@ class PDFViewer(QMainWindow):
                     )
                 self.engine.mark_modified()
         except Exception as exc:
+            log_failure('viewer._show_watermark_dialog: fallback after failure', 10)
             self._error("Watermark failed", str(exc))
             return
         self._refresh_session_canvases(self._session)
@@ -4001,6 +4043,7 @@ class PDFViewer(QMainWindow):
                 )
                 self._finish_search(hits, session, query, generation)
             except Exception as exc:
+                log_failure('viewer._run_search: fallback after failure', 10)
                 panel.show_error(str(exc))
             return
         if self._tasks:
@@ -4112,6 +4155,7 @@ class PDFViewer(QMainWindow):
                     handler,
                     enabled,
                     default_shortcut=default,
+                    scope="canvas" if key in {"copy_selection", "quick_delete", "rotate_left", "rotate_right"} else "window",
                 )
             )
 
@@ -4421,6 +4465,18 @@ class PDFViewer(QMainWindow):
         )
         make("shortcuts", "Keyboard Shortcuts", "Ctrl+/", "Help", self._show_shortcuts)
 
+        make("main_menu", "Open Application Menu", "Alt+M", "Window", self.command_bar.open_application_menu)
+        make("copy_selection", "Copy Selected PDF Text", "Ctrl+C", "Canvas", self._canvas_call("copy_selection"), document)
+        known = {command.id for command in commands}
+        for action in self._registered_shortcut_actions:
+            key = action.property("commandId")
+            if key and key not in known:
+                make(key, str(action.property("shortcutBaseLabel")), str(action.property("shortcutDefault") or ""),
+                     "Window", action.trigger, action.isEnabled)
+                known.add(key)
+        from ui.shortcut_bindings import dialog_commands, organizer_commands
+        scoped = organizer_commands(overrides) + dialog_commands(overrides)
+
         override_shortcuts = {
             QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText)
             for value in overrides.values()
@@ -4445,52 +4501,11 @@ class PDFViewer(QMainWindow):
             if sequence:
                 used_shortcuts.add(sequence)
             resolved_commands.append(replace(command, shortcut=sequence))
-        self._commands = resolved_commands
+        self._commands = resolved_commands + scoped
 
-    @staticmethod
-    def _shortcut_label_key(value: str) -> str:
-        return (
-            value.replace("&", "")
-            .replace("…", "")
-            .replace("...", "")
-            .strip()
-            .casefold()
-        )
-
-    def _command_action(
-        self, command: Command, claimed: set[QAction]
-    ) -> QAction | None:
-        if command.id in {
-            "rotate_left",
-            "rotate_right",
-            "quick_extract",
-            "quick_delete",
-            "escape_browse",
-        }:
-            return None
-        label_key = self._shortcut_label_key(command.label)
-        label_matches = [
-            action
-            for action in self._registered_shortcut_actions
-            if action not in claimed
-            and self._shortcut_label_key(
-                str(action.property("shortcutBaseLabel") or action.text())
-            )
-            == label_key
-        ]
-        if len(label_matches) == 1:
-            return label_matches[0]
-        if command.default_shortcut:
-            shortcut_matches = [
-                action
-                for action in self._registered_shortcut_actions
-                if action not in claimed
-                and str(action.property("shortcutDefault") or "")
-                == command.default_shortcut
-            ]
-            if len(shortcut_matches) == 1:
-                return shortcut_matches[0]
-        return None
+    def _command_action(self, command: Command, claimed: set[QAction]) -> QAction | None:
+        return next((action for action in self._registered_shortcut_actions
+                     if action not in claimed and action.property("commandId") == command.id), None)
 
     def _run_shortcut_command(self, command_id: str) -> None:
         command = next((item for item in self._commands if item.id == command_id), None)
@@ -4536,6 +4551,8 @@ class PDFViewer(QMainWindow):
             "quick_delete": "_shortcut_delete",
         }
         for command in self._commands:
+            if command.scope not in {"window", "canvas"}:
+                continue
             sequence = QKeySequence(command.shortcut)
             action = self._command_action(command, claimed)
             if action is not None:
@@ -4545,8 +4562,8 @@ class PDFViewer(QMainWindow):
                 continue
             if sequence.isEmpty():
                 continue
-            shortcut = QShortcut(sequence, self)
-            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut = QShortcut(sequence, self.workspace if command.scope == "canvas" else self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut if command.scope == "canvas" else Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(
                 lambda command_id=command.id: self._run_shortcut_command(command_id)
             )
@@ -4567,8 +4584,8 @@ class PDFViewer(QMainWindow):
         self._apply_command_shortcuts()
 
     def _editing_focused(self) -> bool:
-        widget = QApplication.focusWidget()
-        return isinstance(widget, (QLineEdit, QAbstractSpinBox, QComboBox, QTextEdit))
+        from ui.shortcut_bindings import editing_focused
+        return editing_focused()
 
     def _delete_pages_shortcut(self) -> None:
         """Delete a selected annotation first, otherwise open page deletion."""
@@ -4703,6 +4720,7 @@ class PDFViewer(QMainWindow):
                     "success",
                 )
             except Exception as exc:
+                log_failure('viewer._extract_pages_dialog: fallback after failure', 10)
                 self._error("Extract failed", str(exc))
 
     def _delete_pages_dialog(self) -> None:
@@ -4733,6 +4751,7 @@ class PDFViewer(QMainWindow):
                 "success",
             )
         except Exception as exc:
+            log_failure('viewer._delete_pages_dialog: fallback after failure', 10)
             self._error("Delete failed", str(exc))
 
     def _insert_pages_dialog(self) -> None:
@@ -4784,6 +4803,7 @@ class PDFViewer(QMainWindow):
                 "Pages inserted. Save to keep the change.", "success"
             )
         except Exception as exc:
+            log_failure('viewer._insert_pages_dialog: fallback after failure', 10)
             self._error("Insert failed", str(exc))
 
     def _split_dialog(self) -> None:
@@ -4808,6 +4828,7 @@ class PDFViewer(QMainWindow):
                 f"Created {len(outputs)} PDF file(s).", "success"
             )
         except Exception as exc:
+            log_failure('viewer._split_dialog: fallback after failure', 10)
             self._error("Split failed", str(exc))
 
     def _organize_pages(self, preselected_pages: tuple[int, ...] = ()) -> None:
@@ -4843,11 +4864,66 @@ class PDFViewer(QMainWindow):
                 "success",
             )
         except Exception as exc:
+            log_failure('viewer._organize_pages: fallback after failure', 10)
             self._error("Advanced Page Organizer failed", str(exc))
         finally:
             release = getattr(dialog, "release_sources", None)
             if release:
                 release()
+
+    def _compare_pdf(self):
+        from dialogs.comparison_dialog import ComparisonDialog
+
+        if not self.engine.is_loaded():
+            return
+        def source(session):
+            def snapshot():
+                if not session.engine.is_loaded():
+                    raise ValueError("The source document has been closed.")
+                with DOCUMENT_LOCK:
+                    return session.engine.document.tobytes(garbage=0, clean=False, no_new_id=True)
+            def revision():
+                engine = session.engine
+                return (engine.document_id, engine.revision, engine.is_loaded())
+            return (str(session.engine.original_path or "Unsaved PDF"), snapshot, revision)
+        dialog = ComparisonDialog(source(self._session),
+                                  [source(s) for s in self._sessions if s is not self._session and s.engine.is_loaded()], self)
+        if not hasattr(self, "_comparison_dialogs"):
+            self._comparison_dialogs = []
+        self._comparison_dialogs.append(dialog)
+        dialog.finished.connect(lambda: self._comparison_dialogs.remove(dialog) if dialog in self._comparison_dialogs else None)
+        dialog.show()
+
+    def _fill_form(self):
+        from core.forms import apply_values
+        from dialogs.form_dialog import FormDialog
+
+        if not self.engine.is_loaded():
+            return
+        dialog = None
+        try:
+            with DOCUMENT_LOCK:
+                revision = (self.engine.document_id, self.engine.revision)
+                data = self.engine.document.tobytes(garbage=0, clean=False, no_new_id=True)
+            dialog = FormDialog(data, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            if revision != (self.engine.document_id, self.engine.revision):
+                raise ValueError("The document changed while the form was open. Reopen the form to edit the current revision.")
+            with self._page_transaction("Fill form") as allowed:
+                if not allowed:
+                    return
+                apply_values(self.engine.document, dialog.staged, dialog.signatures,
+                             acknowledge_scripts=dialog.acknowledge_scripts)
+                self.engine.mark_modified()
+            self._after_page_count_change()
+            self.info_bar.show_message("Form values applied. Save to keep the changes.", "success")
+        except Exception as exc:
+            log_failure("Form editing failed")
+            self._error("Form editing failed", str(exc))
+        finally:
+            if dialog is not None:
+                dialog.release()
 
     def _require_source(self) -> Path | None:
         if not self.engine.is_loaded() or not self.engine.original_path:
@@ -4866,6 +4942,7 @@ class PDFViewer(QMainWindow):
             try:
                 directory.cleanup()
             except Exception:
+                log_failure('viewer.cleanup: fallback after failure', 10)
                 pass
 
         return cleanup
@@ -4941,6 +5018,7 @@ class PDFViewer(QMainWindow):
                 snapshot, working = self._working_snapshot(source)
                 request = replace(request, source_path=str(working))
             except Exception as exc:
+                log_failure('viewer._ocr: fallback after failure', 10)
                 self._error("OCR failed", str(exc))
                 return
         self._run_task(
@@ -5003,6 +5081,7 @@ class PDFViewer(QMainWindow):
                 try:
                     snapshot, input_source = self._working_snapshot(source)
                 except Exception as exc:
+                    log_failure('viewer._pdf_to_word: fallback after failure', 10)
                     self._error("PDF to Word failed", str(exc))
                     return
             self._run_task(
@@ -5107,6 +5186,7 @@ class PDFViewer(QMainWindow):
         try:
             self.engine.snapshot(extraction_source)
         except Exception as exc:
+            log_failure('viewer._extract_text: fallback after failure', 10)
             snapshot_directory.cleanup()
             self._error("Text extraction failed", str(exc))
             return
@@ -5166,6 +5246,7 @@ class PDFViewer(QMainWindow):
             try:
                 snapshot, working = self._working_snapshot(current)
             except Exception as exc:
+                log_failure('viewer._overlay_pdf: fallback after failure', 10)
                 self._error("PDF overlay failed", str(exc))
                 return
             targets = [working if value == current else value for value in targets]
@@ -5206,6 +5287,7 @@ class PDFViewer(QMainWindow):
             try:
                 snapshot, working = self._working_snapshot(current)
             except Exception as exc:
+                log_failure('viewer._compress_pdf: fallback after failure', 10)
                 self._error("Compression failed", str(exc))
                 return
             paths = [working if value == current else value for value in paths]
@@ -5291,6 +5373,7 @@ class PDFViewer(QMainWindow):
             try:
                 snapshot, working = self._working_snapshot(current)
             except Exception as exc:
+                log_failure('viewer._scan_barcodes: fallback after failure', 10)
                 self._error("Barcode scan failed", str(exc))
                 return
             paths = [working if value == current else value for value in paths]
@@ -5338,6 +5421,7 @@ class PDFViewer(QMainWindow):
             try:
                 snapshot, input_source = self._working_snapshot(source)
             except Exception as exc:
+                log_failure('viewer._encrypt_pdf: fallback after failure', 10)
                 self._error("Encryption failed", str(exc))
                 return
         self._run_task(
@@ -5370,6 +5454,7 @@ class PDFViewer(QMainWindow):
             try:
                 snapshot, input_source = self._working_snapshot(source)
             except Exception as exc:
+                log_failure('viewer._decrypt_pdf: fallback after failure', 10)
                 self._error("Decryption failed", str(exc))
                 return
         self._run_task(
@@ -5401,6 +5486,7 @@ class PDFViewer(QMainWindow):
                 try:
                     on_finished()
                 except OSError:
+                    log_failure('viewer._run_task: fallback after failure', 10)
                     pass
             return None
         self._task_had_error = False
@@ -5442,6 +5528,7 @@ class PDFViewer(QMainWindow):
                 try:
                     on_finished()
                 except OSError:
+                    log_failure('viewer.finished: fallback after failure', 10)
                     pass
             if self._closing:
                 return  # the window is gone: never touch its widgets again
@@ -5500,6 +5587,8 @@ class PDFViewer(QMainWindow):
             self._apply_theme(self.settings.get_theme())
             self._build_command_registry()
             self._apply_command_shortcuts()
+            for comparison in getattr(self, "_comparison_dialogs", []):
+                comparison.refresh_shortcuts()
             palette = getattr(self, "_command_palette", None)
             if palette is not None:
                 palette.close()
@@ -5541,6 +5630,7 @@ class PDFViewer(QMainWindow):
                 try:
                     target = session.engine.save_as(path)
                 except Exception as exc:
+                    log_failure('viewer.save_all_files: fallback after failure', 10)
                     self._error("Save failed", f"{session.document_name}: {exc}")
                     continue
                 remember_save_directory(self, target)
@@ -5554,6 +5644,7 @@ class PDFViewer(QMainWindow):
                 self.workspace.update_tab_title(session)
                 saved += 1
             except Exception as exc:
+                log_failure('viewer.save_all_files: fallback after failure', 10)
                 self._error("Save failed", f"{session.document_name}: {exc}")
         if saved:
             self.info_bar.show_message(f"💾 Saved {saved} file(s).", "success")
@@ -5575,6 +5666,7 @@ class PDFViewer(QMainWindow):
                     return
                 session.engine.rotate_pages([session.page], angle)
         except Exception as exc:
+            log_failure('viewer._rotate_current: fallback after failure', 10)
             self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
             return
         session.canvas.refresh()
@@ -5607,6 +5699,7 @@ class PDFViewer(QMainWindow):
                     return
                 session.engine.rotate_pages(pages, angle)
         except Exception as exc:
+            log_failure('viewer._rotate_box_pages: fallback after failure', 10)
             self.info_bar.show_message(f"Rotate failed: {exc}", "error", 0)
             return
         session.canvas.refresh()
@@ -5640,6 +5733,7 @@ class PDFViewer(QMainWindow):
                         return
                     session.engine.delete_page(session.page)
             except Exception as exc:
+                log_failure('viewer._handle_thumbnail_action: fallback after failure', 10)
                 self.info_bar.show_message(f"Delete failed: {exc}", "error", 0)
                 return
             self._after_page_count_change()
@@ -5684,6 +5778,7 @@ class PDFViewer(QMainWindow):
                     target = session.engine.extract_pages([session.page], path)
                     self.info_bar.show_message(f"📄 Created {target.name}", "success")
                 except Exception as exc:
+                    log_failure('viewer._handle_thumbnail_action: fallback after failure', 10)
                     self.info_bar.show_message(f"Extract failed: {exc}", "error", 0)
         elif key == "rotate":
             self._show_context("rotate")
@@ -5811,6 +5906,13 @@ class PDFViewer(QMainWindow):
             self.open_in_new_tab(extra)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        comparisons = list(getattr(self, "_comparison_dialogs", []))
+        for comparison in comparisons:
+            comparison.close()
+        if any(comparison._task is not None for comparison in comparisons):
+            event.ignore()
+            QTimer.singleShot(150, self.close)
+            return
         dialog = getattr(self, "_update_dialog", None)
         if dialog is not None and dialog.busy():
             dialog.reject()

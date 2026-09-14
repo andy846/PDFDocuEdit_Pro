@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.diagnostics import connect_interrupts, log_failure
 from core.platform_service import PlatformService
 
 from .base import SortableTableWidget, ToolDialog
@@ -29,7 +30,11 @@ from .base import SortableTableWidget, ToolDialog
 SYSTEM_NAME = platform.system()
 
 
+
+
 class _SearchSignals(QObject):
+    interrupted = pyqtSignal(str)
+    failed = pyqtSignal(str)
     found = pyqtSignal(object)  # Path
     finished = pyqtSignal(int, int)  # found, scanned
 
@@ -54,6 +59,7 @@ class _SearchTask(QRunnable):
         self._exact = exact
         self._cancelled = False
         self.signals = _SearchSignals()
+        connect_interrupts(self.signals)
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -86,10 +92,14 @@ class _SearchTask(QRunnable):
                 if matched:
                     self.signals.found.emit(path)
                     found += 1
-        except BaseException:
-            # Never let an exception escape QRunnable.run().
-            pass
-        self.signals.finished.emit(found, scanned)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            self.signals.failed.emit("Search interrupted.")
+            self.signals.interrupted.emit(type(exc).__name__)
+        except Exception:
+            log_failure("Filename search failed")
+            self.signals.failed.emit("Search could not finish. Check folder access.")
+        finally:
+            self.signals.finished.emit(found, scanned)
 
 
 class SearchOpenDialog(ToolDialog):
@@ -205,6 +215,7 @@ class SearchOpenDialog(ToolDialog):
         self.table.setRowCount(0)
         task.signals.found.connect(self._append_result)
         task.signals.finished.connect(self._search_finished)
+        task.signals.failed.connect(self.show_error)
         QThreadPool.globalInstance().start(task)
 
     def _cancel_pending_search(self) -> None:

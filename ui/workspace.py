@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.diagnostics import connect_interrupts, log_failure
 from core.platform_service import PlatformService
 from styles.theme import get_color
 from styles.tokens import D, S
@@ -49,7 +50,10 @@ RECENT_ICON_W = 32
 RECENT_ICON_H = 44
 
 
+
+
 class _RecentSignals(QObject):
+    interrupted = pyqtSignal(str)
     finished = pyqtSignal(str, object)  # (path, QPixmap)
 
 
@@ -62,6 +66,7 @@ class _RecentThumbTask(QRunnable):
         self._path = path
         self._scale = scale
         self.signals = _RecentSignals()
+        connect_interrupts(self.signals)
 
     def run(self) -> None:
         try:
@@ -76,9 +81,11 @@ class _RecentThumbTask(QRunnable):
                     pix.stride,
                     QImage.Format.Format_RGB888,
                 ).copy()
-                self.signals.finished.emit(self._path, QPixmap.fromImage(image))
-        except BaseException:
-            return
+                self.signals.finished.emit(self._path, image)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            self.signals.interrupted.emit(type(exc).__name__)
+        except Exception:
+            log_failure("Recent document thumbnail unavailable")
 
 
 class EmptyState(QWidget):
@@ -178,10 +185,11 @@ class EmptyState(QWidget):
         task.signals.finished.connect(self._on_recent_thumb)
         self._recent_pool.start(task)
 
-    def _on_recent_thumb(self, path: str, pixmap: QPixmap) -> None:
+    def _on_recent_thumb(self, path: str, image: QImage) -> None:
         item = self._recent_items.get(path)
         if item is None or self._recent.row(item) < 0:
             return  # stale result for a list that has since changed
+        pixmap = QPixmap.fromImage(image)
         self._thumb_done.add(path)
         item.setIcon(
             QIcon(
