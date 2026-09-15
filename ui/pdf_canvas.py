@@ -954,11 +954,8 @@ class PdfCanvas(QScrollArea):
                 rect = self._doc.load_page(page_num).rect
                 y += round(rect.height * self._zoom) + CAPTION_H + PAGE_SPACING
             return rows
-        # Facing: page 0 alone and centred, then pairs.
-        rows.append((y, [0]))
-        rect = self._doc.load_page(0).rect
-        y += round(rect.height * self._zoom) + CAPTION_H + PAGE_SPACING
-        for first in range(1, self._doc.page_count, 2):
+        # Facing starts with pages 1 and 2; only an odd final page stands alone.
+        for first in range(0, self._doc.page_count, 2):
             pages = [first] + ([first + 1] if first + 1 < self._doc.page_count else [])
             rows.append((y, pages))
             row_height = max(
@@ -1037,6 +1034,8 @@ class PdfCanvas(QScrollArea):
         bottom = scroll + viewport_height + probe * buffer
         visible: list[int] = []
         for row_y, pages in self._rows:
+            if row_y > bottom:
+                break
             row_height = max(
                 round(self._doc.load_page(p).rect.height * self._zoom) for p in pages
             )
@@ -1058,7 +1057,7 @@ class PdfCanvas(QScrollArea):
                 view = self._page_views.pop(page_num)
                 view.setParent(None)
                 view.deleteLater()
-        for page_num in needed:
+        for page_num in sorted(needed, key=lambda page: (page not in focused, page)):
             if page_num in self._page_views:
                 page = self._doc.load_page(page_num)
                 rect = self._page_rect_in_layout(page_num)
@@ -1138,9 +1137,15 @@ class PdfCanvas(QScrollArea):
                 selected[1] if selected is not None and selected[0] == page_num else None
             )
             self._page_views[page_num] = view
-            self._request_render(page_num, page_num in focused)
+        self._fill_render_queue(focused)
         self._apply_search_hits()
         self._apply_font_inspection()
+
+    def _fill_render_queue(self, focused: set[int] | None = None) -> None:
+        if focused is None:
+            focused = set(self._visible_pages(buffer_pages=0))
+        for page_num in sorted(self._page_views, key=lambda page: (page not in focused, page)):
+            self._request_render(page_num, page_num in focused)
 
     @_document_locked
     def _request_render(self, page_num: int, high: bool = False) -> None:
@@ -1219,6 +1224,8 @@ class PdfCanvas(QScrollArea):
         view = self._page_views.get(page_num)
         if view is not None:
             view.set_pixmap(pixmap, self._doc.load_page(page_num))
+        # Refill pages skipped by the prefetch limit without another gesture.
+        self._fill_render_queue()
 
     def _view_anchor(self) -> tuple[float, float]:
         """Return the viewport centre as normalized pager coordinates."""
@@ -1318,7 +1325,10 @@ class PdfCanvas(QScrollArea):
             self._schedule_scroll_sync()
 
     def _schedule_scroll_sync(self) -> None:
-        self._scroll_timer.start()
+        # Throttle instead of debounce: a continuous stream of wheel events
+        # must not postpone painting until scrolling stops.
+        if not self._scroll_timer.isActive():
+            self._scroll_timer.start()
 
     def _apply_scroll_sync(self) -> None:
         if self._layout_mode != LayoutMode.SINGLE and self._doc:

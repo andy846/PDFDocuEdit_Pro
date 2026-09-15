@@ -1,6 +1,13 @@
-# PDFDocuEdit Pro V2.5.8
+# PDFDocuEdit Pro V2.5.9
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
+
+## V2.5.9 閱覽與縮圖修正
+
+- 移除文件分頁列上方額外白線。
+- 大量頁面的縮圖介面按需建立，快速捲動優先載入可見頁並自動補齊。
+- Continuous / Facing 持續捲動時定時刷新，不再等停止捲動。
+- Facing 從第 1、2 頁開始並排；單數末頁獨立顯示。
 
 ## V2.5.8 表單、比較與快捷鍵
 
@@ -28,7 +35,7 @@ startup rollback without an installer. The first deployment requires extracting
 the Managed Portable ZIP and switching the shortcut to Launcher.exe.
 See [免 Installer 更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V2.5.8 update release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.8). First deployments use the V2.5.6 Managed Portable package below, then update through Launcher.exe.
+Download the [V2.5.9 update release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.9). First deployments use the V2.5.6 Managed Portable package below, then update through Launcher.exe.
 Existing installations need the one-time managed portable transition before using in-app updates.
 
 ## V2.5.4 stability update
@@ -40,7 +47,7 @@ Existing installations need the one-time managed portable transition before usin
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V2.5.8. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
+The current Windows x64 release is V2.5.9. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 

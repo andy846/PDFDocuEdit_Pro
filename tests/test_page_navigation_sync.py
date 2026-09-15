@@ -147,3 +147,43 @@ def test_large_single_page_remains_scrollable_and_next_page_starts_at_top(canvas
     view.set_page(1)
     assert view.verticalScrollBar().value() == 0
     assert view.current_page == 1
+
+
+@pytest.mark.parametrize("mode", [LayoutMode.CONTINUOUS, LayoutMode.FACING])
+def test_continuous_scroll_events_do_not_starve_refresh(canvas, monkeypatch, mode):
+    view, app = canvas
+    view.set_layout_mode(mode)
+    QTest.qWait(150)
+    updates = []
+    monkeypatch.setattr(view, "_sync_views", lambda: updates.append(True))
+    # Faster than the 60 ms refresh interval, without ever pausing to settle.
+    for _ in range(25):
+        view._schedule_scroll_sync()
+        QTest.qWait(10)
+    assert len(updates) >= 2
+
+
+def test_facing_pairs_from_first_page_and_centers_odd_tail(canvas):
+    view, app = canvas
+    view.set_layout_mode(LayoutMode.FACING)
+    assert [pages for _, pages in view._rows] == [[0, 1], [2, 3], [4]]
+    left = view._page_rect_in_layout(0)
+    right = view._page_rect_in_layout(1)
+    assert left.top() == right.top()
+    assert left.right() < right.left()
+    tail = view._page_rect_in_layout(4)
+    assert abs(tail.center().x() - view._pager.width() / 2) < 2
+
+
+def test_existing_unrendered_views_are_rescheduled_visible_first(canvas, monkeypatch):
+    view, app = canvas
+    view.set_layout_mode(LayoutMode.CONTINUOUS)
+    view.set_page(2)
+    QTest.qWait(150)
+    requested = []
+    monkeypatch.setattr(view, "_request_render", lambda page, high=False: requested.append((page, high)))
+    existing = set(view._page_views)
+    view._sync_views()
+    assert {page for page, _ in requested} == existing
+    priorities = [high for _, high in requested]
+    assert priorities == sorted(priorities, reverse=True)

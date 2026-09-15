@@ -63,9 +63,9 @@ def test_layout_modes_and_page_sync(tmp_path: Path, monkeypatch) -> None:
 
     window._set_layout_mode("facing")
     assert canvas.layout_mode == LayoutMode.FACING
-    assert canvas._rows[0][1] == [0]
-    assert canvas._rows[1][1] == [1, 2]
-    assert canvas._rows[2][1] == [3, 4]
+    assert canvas._rows[0][1] == [0, 1]
+    assert canvas._rows[1][1] == [2, 3]
+    assert canvas._rows[2][1] == [4, 5]
     window.close()
 
 def test_horizontal_scroll_at_400_percent_all_layouts_and_split(

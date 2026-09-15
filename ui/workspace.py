@@ -351,6 +351,8 @@ class DocumentWorkspace(QFrame):
         self._tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self._tabs.currentChanged.connect(self._on_current_changed)
         tab_bar = self._tabs.tabBar()
+        # QSS owns the separator; the native base adds a bright extra line.
+        tab_bar.setDrawBase(False)
         tab_bar.setUsesScrollButtons(True)
         tab_bar.setExpanding(False)
         tab_bar.setElideMode(Qt.TextElideMode.ElideMiddle)

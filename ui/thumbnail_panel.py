@@ -6,6 +6,7 @@ from collections import OrderedDict
 
 import fitz
 from PyQt6.QtCore import (
+    QEvent,
     QObject,
     QPoint,
     QRunnable,
@@ -129,6 +130,7 @@ class ThumbnailPanel(QFrame):
         self._tasks: dict[int, _RenderTask] = {}
         self._failures: dict[int, int] = {}
         self._cache: OrderedDict[int, QPixmap] = OrderedDict()
+        self._widget_rows: set[int] = set()
         self._generation = 0
         # A panel-owned pool lets a document wait for only its own thumbnail
         # readers before deleting the editable temporary PDF on Windows.
@@ -151,6 +153,7 @@ class ThumbnailPanel(QFrame):
 
         self._list = ReorderListWidget()
         self._list.setObjectName("thumbnailList")
+        self._list.viewport().installEventFilter(self)
         self._list.setIconSize(QSize(THUMBNAIL_WIDTH, int(THUMBNAIL_WIDTH * 1.414)))
         self._list.setSpacing(S.XS)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -158,6 +161,7 @@ class ThumbnailPanel(QFrame):
         # to per-item scrollbar units on Windows, so a jump to page 70 could
         # still be misread as only a few pixels from page 1.
         self._list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._list.setUniformItemSizes(True)
         self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self._list.setDragEnabled(True)
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
@@ -169,6 +173,11 @@ class ThumbnailPanel(QFrame):
         self._list.customContextMenuRequested.connect(self._show_context_menu)
         self._list.verticalScrollBar().valueChanged.connect(self._render_visible_thumbnails)
         layout.addWidget(self._list, 1)
+
+    def eventFilter(self, watched, event):
+        if watched is self._list.viewport() and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            QTimer.singleShot(0, self._render_visible_thumbnails)
+        return super().eventFilter(watched, event)
 
     def _show_context_menu(self, position) -> None:
         from PyQt6.QtWidgets import QMenu
@@ -204,6 +213,7 @@ class ThumbnailPanel(QFrame):
         self._pending.clear()
         self._tasks.clear()
         self._failures.clear()
+        self._widget_rows.clear()
         self._list.clear()
 
         for page_num in range(page_count):
@@ -211,8 +221,6 @@ class ThumbnailPanel(QFrame):
             item.setData(Qt.ItemDataRole.UserRole, page_num)
             item.setSizeHint(QSize(THUMBNAIL_WIDTH + S.MD, int(THUMBNAIL_WIDTH * 1.414) + 28))
             self._list.addItem(item)
-            widget = self._make_thumbnail_widget(page_num)
-            self._list.setItemWidget(item, widget)
 
         self._render_visible_thumbnails()
 
@@ -228,6 +236,7 @@ class ThumbnailPanel(QFrame):
         image_label.setFixedSize(THUMBNAIL_WIDTH, int(THUMBNAIL_WIDTH * 1.414))
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image_label.setProperty("placeholder", True)
+        image_label.setText(f"Page {page_num + 1}\nLoading…")
         outer.addWidget(image_label, 0, Qt.AlignmentFlag.AlignCenter)
 
         page_label = QLabel(str(page_num + 1))
@@ -255,6 +264,7 @@ class ThumbnailPanel(QFrame):
         self._stop_renders()
         self._page_count = 0
         self._cache.clear()
+        self._widget_rows.clear()
         self._list.clear()
 
     def _stop_renders(self) -> None:
@@ -281,21 +291,38 @@ class ThumbnailPanel(QFrame):
             return
         first, last = self._visible_range()
         wanted = set(range(first, last + 1))
+        visible_first, visible_last = self._visible_range(overscan=0)
+        focused = set(range(visible_first, visible_last + 1))
+        # Keep page rows lightweight: widgets exist only around the viewport.
+        for index in self._widget_rows - wanted:
+            self._list.removeItemWidget(self._list.item(index))
+        for index in wanted - self._widget_rows:
+            item = self._list.item(index)
+            self._list.setItemWidget(item, self._make_thumbnail_widget(index))
+            if index in self._cache:
+                self._display_thumbnail(index, self._cache[index])
+        self._widget_rows = wanted
         # Rapid scrolling should not wait behind pages that have not started
         # rendering for the old viewport. Running workers finish normally;
         # queued stale workers are removed and their slots reused at once.
-        for page_num in list(self._pending - wanted):
+        for page_num in list(self._pending - focused):
             task = self._tasks.get(page_num)
             if task is not None and self._pool.tryTake(task):
                 self._tasks.pop(page_num, None)
                 self._pending.discard(page_num)
-        for index in range(first, last + 1):
+        # Render actual screen pages before prefetch pages above/below them.
+        order = sorted(wanted, key=lambda page: (
+            page not in focused,
+            min(abs(page - visible_first), abs(page - visible_last)),
+            page,
+        ))
+        for index in order:
             if len(self._pending) >= MAX_PENDING_RENDERS:
                 return
-            if index not in self._cache:
-                self._schedule_render(index)
+            if index not in self._cache and self._failures.get(index, 0) == 0:
+                self._schedule_render(index, priority=10 if index in focused else 0)
 
-    def _visible_range(self) -> tuple[int, int]:
+    def _visible_range(self, overscan: int = OVERSCAN) -> tuple[int, int]:
         first_item = self._list.item(0)
         if first_item is None:
             return (0, 0)
@@ -315,15 +342,15 @@ class ThumbnailPanel(QFrame):
             if bottom_index.isValid()
             else first_visible + max(1, viewport_height // max(1, item_height))
         )
-        first = max(0, first_visible - OVERSCAN)
+        first = max(0, first_visible - overscan)
         last = min(
             self._list.count() - 1,
-            last_visible + OVERSCAN,
+            last_visible + overscan,
         )
         return first, last
 
-    def _schedule_render(self, page_num: int) -> None:
-        if page_num in self._pending or not self._doc_path:
+    def _schedule_render(self, page_num: int, priority: int = 5) -> None:
+        if page_num in self._pending or not self._doc_path or self._failures.get(page_num, 0) >= 2:
             return
         self._pending.add(page_num)
         task = _RenderTask(
@@ -332,7 +359,7 @@ class ThumbnailPanel(QFrame):
         task.signals.finished.connect(self._on_thumbnail_rendered)
         task.signals.failed.connect(self._on_thumbnail_failed)
         self._tasks[page_num] = task
-        self._pool.start(task, 5)
+        self._pool.start(task, priority)
 
     def _on_thumbnail_rendered(self, page_num: int, image: QImage, generation: int) -> None:
         if generation != self._generation:
@@ -348,9 +375,19 @@ class ThumbnailPanel(QFrame):
             oldest = next(iter(self._cache))
             del self._cache[oldest]
 
+        self._display_thumbnail(page_num, pixmap)
+
+        # A scroll event can initially fill the pending-task cap with pages
+        # from the old viewport. Keep refilling from the *current* visible
+        # range as tasks finish; otherwise later thumbnails remain blank until
+        # the user nudges the scrollbar again.
+        self._render_visible_thumbnails()
+
+    def _display_thumbnail(self, page_num: int, pixmap: QPixmap) -> None:
         item = self._list.item(page_num)
         widget = self._list.itemWidget(item)
         if widget:
+            self._cache.move_to_end(page_num)
             label = widget.image_label  # type: ignore[attr-defined]
             label.setPixmap(pixmap.scaled(
                 label.size(),
@@ -360,12 +397,6 @@ class ThumbnailPanel(QFrame):
             label.setProperty("placeholder", False)
             label.style().unpolish(label)
             label.style().polish(label)
-
-        # A scroll event can initially fill the pending-task cap with pages
-        # from the old viewport. Keep refilling from the *current* visible
-        # range as tasks finish; otherwise later thumbnails remain blank until
-        # the user nudges the scrollbar again.
-        self._render_visible_thumbnails()
 
     def _on_thumbnail_failed(self, page_num: int, generation: int) -> None:
         if generation != self._generation:
