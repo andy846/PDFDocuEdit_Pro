@@ -41,7 +41,7 @@ def test_main_window_constructs_and_loads_document(tmp_path: Path, monkeypatch) 
     window.side_panel._search.clear()
 
     source = make_pdf(tmp_path / "smoke.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     app.processEvents()
     assert window.engine.page_count == 1
     assert "smoke.pdf" in window.windowTitle()
@@ -144,7 +144,7 @@ def test_motion_states_and_reduced_motion_behaviour(tmp_path: Path, monkeypatch)
     assert button.property("hovered") is False
 
     source = make_pdf(tmp_path / "motion.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert window.context_panel.show_tool("rotate", "Rotate Pages")
     assert window.context_panel.panelWidth == D.CONTEXT_W
     window._hide_context()
@@ -243,7 +243,7 @@ def test_print_guard_restores_state_on_failure_and_cancel(tmp_path, monkeypatch)
                 event = QCloseEvent()
                 window.closeEvent(event)
                 assert not event.isAccepted()
-                assert window.open_in_new_tab("missing.pdf") is None
+                assert window._open_in_new_tab_sync("missing.pdf") is None
                 raise RuntimeError("injected")
         assert window.isEnabled()
         assert enabled.isEnabled()
@@ -295,7 +295,7 @@ def test_background_print_cancel_restores_ui_and_keeps_dialog_alive(tmp_path, mo
         assert not window.workspace.isEnabled()
         assert not window.command_bar.isEnabled()
         assert window.task_bar._cancel.isEnabled()
-        assert window.open_in_new_tab(str(source)) is None
+        assert window._open_in_new_tab_sync(str(source)) is None
         dialog.cancel_button.click()
         assert window._print_controller._cancel.is_set()
         dialog.close()  # hiding/cancelling must not destroy progress signal targets
@@ -323,7 +323,7 @@ def test_page_transaction_undo_redo_and_rollback_rebind(tmp_path, monkeypatch):
     monkeypatch.setattr(viewer_module, "SettingsManager",
                         lambda: SettingsManager(tmp_path / "transaction-settings.json"))
     window = viewer_module.PDFViewer()
-    window.load_file(str(make_pdf(tmp_path / "transaction.pdf")))
+    window._load_file_sync(str(make_pdf(tmp_path / "transaction.pdf")))
     session = window._session
     session.set_split(True)
     try:
@@ -374,7 +374,7 @@ def test_history_failure_keeps_live_document_and_all_history(tmp_path, monkeypat
     window = viewer_module.PDFViewer()
     errors = []
     monkeypatch.setattr(window, "_error", lambda *args: errors.append(args))
-    window.load_file(str(make_pdf(tmp_path / "history.pdf")))
+    window._load_file_sync(str(make_pdf(tmp_path / "history.pdf")))
     session = window._session
     session.set_split(True)
     try:

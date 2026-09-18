@@ -43,7 +43,7 @@ def _wait(app, predicate, timeout: float = 15.0) -> bool:
 def test_thumbnail_reorder_flow(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "reorder.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
 
     session = window._session
@@ -64,27 +64,25 @@ def test_thumbnail_reorder_flow(tmp_path: Path, monkeypatch) -> None:
     window.close()
 
 
-def test_recent_thumbnail_task(tmp_path: Path, monkeypatch) -> None:
+def test_recent_previews_reuse_opened_page_cache(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "recent-a.pdf", pages=1)
     second = make_pdf(tmp_path / "recent-b.pdf", pages=1)
-    window.workspace.set_recent_files([str(first), str(second)])
-    app.processEvents()
+    window.load_file(str(first))
+    assert _wait(app, lambda: str(first) in window.workspace._empty._thumb_done)
+    window.open_in_new_tab(str(second))
+    assert _wait(app, lambda: window.workspace._empty._thumb_done == {str(first), str(second)})
     assert window.workspace._empty._recent.count() == 2
-
-    def done() -> bool:
-        return window.workspace._empty._thumb_done == {str(first), str(second)}
-
-    assert _wait(app, done)
+    assert window.settings.get("recent_file_info")[str(first)]["thumbnail"]
     for item_index in range(2):
         item = window.workspace._empty._recent.item(item_index)
         assert not item.icon().isNull()
 
     # Stale results for replaced lists must be ignored silently.
-    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtGui import QImage
 
     window.workspace.set_recent_files([str(first)])
-    window.workspace._empty._on_recent_thumb(str(second), QPixmap(8, 8))
+    window.workspace._empty._on_recent_thumb(str(second), QImage(8, 8, QImage.Format.Format_RGB888))
     assert str(second) not in window.workspace._empty._thumb_done
     window.close()
 
@@ -92,7 +90,7 @@ def test_recent_thumbnail_task(tmp_path: Path, monkeypatch) -> None:
 def test_zoom_coalescing(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "zoom.pdf", pages=5)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
 
     canvas = window.workspace.canvas
@@ -114,7 +112,7 @@ def test_zoom_coalescing(tmp_path: Path, monkeypatch) -> None:
 def test_scroll_sync_coalescing(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "scroll.pdf", pages=8)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
 
     canvas = window.workspace.canvas

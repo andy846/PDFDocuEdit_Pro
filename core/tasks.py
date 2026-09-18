@@ -32,6 +32,7 @@ class FunctionTask(QRunnable):
         *args,
         progress_argument: str | None = None,
         cancel_argument: str | None = None,
+        discard_result: Callable[[Any], None] | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -40,6 +41,7 @@ class FunctionTask(QRunnable):
         self.kwargs = kwargs
         self.progress_argument = progress_argument
         self.cancel_argument = cancel_argument
+        self.discard_result = discard_result
         self.signals = TaskSignals()
         connect_interrupts(self.signals)
         self._cancelled = Event()
@@ -63,6 +65,8 @@ class FunctionTask(QRunnable):
                 raise TaskCancelled
             value = self.function(*self.args, **self.kwargs)
             if self.is_cancelled():
+                if self.discard_result is not None:
+                    self.discard_result(value)
                 self.signals.cancelled.emit()
             else:
                 self.signals.result.emit(value)

@@ -6,10 +6,11 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import wraps
 from math import hypot
+from threading import Event
+from time import perf_counter
 
 import fitz
 from PyQt6.QtCore import (
-    QElapsedTimer,
     QEvent,
     QEventLoop,
     QObject,
@@ -34,9 +35,12 @@ from core.annotations import (
 )
 from core.diagnostics import connect_interrupts, log_failure
 from core.pdf_engine import DOCUMENT_LOCK
+from core.reader_lifetime import ReaderLease
+from core.tasks import FunctionTask
 from styles.theme import get_colors
 from styles.tokens import S
 
+from .page_geometry import PageRows
 from .page_overlay import PageOverlay, words_intersecting
 from .page_view import (
     CAPTION_H,
@@ -44,8 +48,6 @@ from .page_view import (
     PageRenderCache,
     PageView,
     render_page_image,
-    render_page_pixmap,
-    render_page_pixmap_quick,
 )
 
 MARGIN = S.XL
@@ -56,10 +58,31 @@ MAGNIFIER_ZOOM = 2.5
 
 def _document_locked(function):
     @wraps(function)
-    def wrapper(*args, **kwargs):
-        with DOCUMENT_LOCK:
-            return function(*args, **kwargs)
-
+    def wrapper(self, *args, **kwargs):
+        deferred = function.__name__ in {
+            "set_page", "fit_width", "fit_page", "_on_selection", "_relayout",
+            "_sync_views", "_request_render", "_update_magnifier",
+            "_apply_scroll_sync", "_apply_pending_relayout", "set_layout_mode",
+            "_scroll_to_page", "_fill_render_queue",
+        }
+        if not DOCUMENT_LOCK.acquire(blocking=not deferred):
+            pending = getattr(self, "_deferred_pdf_calls", None)
+            if pending is None:
+                pending = self._deferred_pdf_calls = {}
+            name = function.__name__
+            already_queued = name in pending
+            pending[name] = (self._generation, args, kwargs)
+            if not already_queued:
+                def retry():
+                    generation, latest_args, latest_kwargs = pending.pop(name)
+                    if generation == self._generation and self._doc is not None:
+                        wrapper(self, *latest_args, **latest_kwargs)
+                QTimer.singleShot(16, retry)
+            return
+        try:
+            return function(self, *args, **kwargs)
+        finally:
+            DOCUMENT_LOCK.release()
     return wrapper
 MAGNIFIER_SIZE = 200
 
@@ -163,7 +186,8 @@ class _RenderTask(QRunnable):
         generation: int,
     ):
         super().__init__()
-        self.setAutoDelete(True)
+        self.setAutoDelete(False)
+        self.done = Event()
         self._doc = doc
         self._page_num = page_num
         self._zoom = zoom
@@ -177,19 +201,23 @@ class _RenderTask(QRunnable):
         image = None
         try:
             with DOCUMENT_LOCK:
+                started = perf_counter()
                 image = render_page_image(self._doc, self._page_num, self._zoom, self._dpr)
+                self.render_ms = (perf_counter() - started) * 1000
         except (KeyboardInterrupt, SystemExit) as exc:
             log_failure("Page render interrupted")
             self.signals.interrupted.emit(type(exc).__name__)
         except Exception:
             log_failure("Page render failed")
         finally:
+            self.done.set()
             self.signals.finished.emit(self._page_num, self._generation, self._key, image)
 
 
 class PdfCanvas(QScrollArea):
     """Page canvas preserving the pre-P2 API while adding layout/tool modes."""
 
+    pageRendered = pyqtSignal(int)
     pageChanged = pyqtSignal(int)
     zoomChanged = pyqtSignal(float)
     selectionChanged = pyqtSignal(str)
@@ -216,6 +244,7 @@ class PdfCanvas(QScrollArea):
         # (generation, page) tokens keep stale tasks from an earlier zoom or
         # rapid page change from clearing/replacing a newer render.
         self._pending: set[tuple[int, int]] = set()
+        self._render_jobs = {}
         self._page_views: dict[int, PageView] = {}
         self._rows: list[tuple[int, list[int]]] = []
         self._cache = PageRenderCache()
@@ -229,6 +258,8 @@ class PdfCanvas(QScrollArea):
         self._hand_anchor: QPoint | None = None
         self._temp_hand = False
         self._magnifier_popup: QLabel | None = None
+        self._magnifier_task = None
+        self._pending_magnifier_position = None
         self._annot_options: dict = {
             "color": "yellow",
             "width": 1.5,
@@ -291,6 +322,7 @@ class PdfCanvas(QScrollArea):
     # --- document lifecycle ----------------------------------------------
     def load_doc(self, doc: fitz.Document, zoom: float = 1.0) -> None:
         self._doc = doc
+        self._large_sizes = {}
         self._page = 0
         self._zoom = min(self._max_zoom, max(self._min_zoom, zoom))
         self._generation += 1
@@ -306,8 +338,20 @@ class PdfCanvas(QScrollArea):
         if self._layout_mode != LayoutMode.SINGLE:
             self._scroll_to_page(0)
 
-    def clear(self) -> None:
-        self.wait_for_renders()
+    def reader_events(self):
+        tasks = list(self._render_jobs.values())
+        if self._magnifier_task is not None:
+            tasks.append(self._magnifier_task)
+        return [ReaderLease(task) for task in tasks]
+
+    def clear(self, wait=True) -> None:
+        for token, task in list(self._render_jobs.items()):
+            if self._pool.tryTake(task):
+                task.done.set()
+                self._render_jobs.pop(token, None)
+                self._pending.discard(token)
+        if wait:
+            self.wait_for_renders()
         self._doc = None
         self._page = 0
         self._zoom = 1.0
@@ -321,19 +365,21 @@ class PdfCanvas(QScrollArea):
         self._pager.setFixedSize(QSize(0, 0))
 
     def wait_for_renders(self, timeout_ms: int = 3000) -> None:
-        """Block until in-flight render tasks finish so the document can be
-        closed safely (background tasks hold a live fitz.Document reference)."""
+        """Drain readers for explicit mutations while Qt continues dispatching.
+
+        Close/open use asynchronous retirement instead. The legacy timeout
+        argument is accepted, but cannot authorize closing a still-read document.
+        """
         self._generation += 1  # discard results of in-flight tasks
-        if not self._pending:
+        readers = self.reader_events()
+        if all(reader.is_set() for reader in readers):
             return
-        timer = QElapsedTimer()
-        timer.start()
         loop = QEventLoop(self)
         poll = QTimer(self)
         poll.setInterval(20)
 
         def check() -> None:
-            if not self._pending or timer.elapsed() > timeout_ms:
+            if all(reader.is_set() for reader in readers):
                 poll.stop()
                 loop.quit()
 
@@ -345,6 +391,7 @@ class PdfCanvas(QScrollArea):
         """Re-render everything after the document content changed."""
         self._generation += 1
         self._cache.clear()
+        self._large_sizes = {}
         self._teardown_views()
         if self._doc:
             self._relayout()
@@ -411,6 +458,7 @@ class PdfCanvas(QScrollArea):
         )
 
     # --- layout modes ----------------------------------------------------
+    @_document_locked
     def set_layout_mode(self, mode: LayoutMode | str, emit: bool = True) -> None:
         value = mode if isinstance(mode, LayoutMode) else LayoutMode(str(mode))
         if value == self._layout_mode:
@@ -563,6 +611,7 @@ class PdfCanvas(QScrollArea):
         if emit:
             self.pageChanged.emit(page)
 
+    @_document_locked
     def _scroll_to_page(self, page: int) -> None:
         rect = self._page_rect_in_layout(page)
         if rect.isValid():
@@ -948,20 +997,14 @@ class PdfCanvas(QScrollArea):
         if self._layout_mode == LayoutMode.SINGLE:
             rows.append((y, [self._page]))
             return rows
-        if self._layout_mode == LayoutMode.CONTINUOUS:
-            for page_num in range(self._doc.page_count):
-                rows.append((y, [page_num]))
-                rect = self._doc.load_page(page_num).rect
-                y += round(rect.height * self._zoom) + CAPTION_H + PAGE_SPACING
-            return rows
-        # Facing starts with pages 1 and 2; only an odd final page stands alone.
-        for first in range(0, self._doc.page_count, 2):
-            pages = [first] + ([first + 1] if first + 1 < self._doc.page_count else [])
-            rows.append((y, pages))
-            row_height = max(
-                round(self._doc.load_page(p).rect.height * self._zoom) for p in pages
-            )
-            y += row_height + CAPTION_H + PAGE_SPACING
+        rect = self._doc.load_page(0).rect
+        self._large_sizes[0] = (rect.width, rect.height)
+        rows = PageRows(self._doc.page_count, self._layout_mode == LayoutMode.FACING,
+                        round(rect.height * self._zoom) + CAPTION_H + PAGE_SPACING, MARGIN)
+        for page_num in self._large_sizes:
+            row = page_num // rows.stride
+            heights = [self._large_sizes.get(p, (rect.width, rect.height))[1] for p in rows[row][1]]
+            rows.measure(row, round(max(heights) * self._zoom) + CAPTION_H + PAGE_SPACING)
         return rows
 
     @_document_locked
@@ -972,7 +1015,8 @@ class PdfCanvas(QScrollArea):
         width = round(page.rect.width * self._zoom)
         height = round(page.rect.height * self._zoom)
         layout_width = max(1, self.viewport().width(), self._pager.width())
-        for row_y, pages in self._rows:
+        candidates = [self._rows[page_num // self._rows.stride]] if isinstance(self._rows, PageRows) else self._rows
+        for row_y, pages in candidates:
             if page_num not in pages:
                 continue
             if len(pages) == 1:
@@ -992,6 +1036,11 @@ class PdfCanvas(QScrollArea):
     def _total_size(self) -> QSize:
         if not self._doc or not self._rows:
             return QSize(0, 0)
+        if isinstance(self._rows, PageRows):
+            width = max((size[0] for size in self._large_sizes.values()), default=595)
+            width = round(width * self._zoom) * self._rows.stride + PAGE_SPACING * (self._rows.stride - 1)
+            return QSize(max(self.viewport().width(), width + MARGIN * 2),
+                         self._rows.offset(len(self._rows)) - PAGE_SPACING + MARGIN)
         widest_row = 0
         for _row_y, pages in self._rows:
             row_width = sum(
@@ -1033,6 +1082,12 @@ class PdfCanvas(QScrollArea):
         top = scroll - probe * buffer
         bottom = scroll + viewport_height + probe * buffer
         visible: list[int] = []
+        if isinstance(self._rows, PageRows):
+            first = self._rows.row_at(top)
+            last = self._rows.row_at(bottom)
+            for row in range(first, last + 1):
+                visible.extend(self._rows[row][1])
+            return visible
         for row_y, pages in self._rows:
             if row_y > bottom:
                 break
@@ -1048,6 +1103,20 @@ class PdfCanvas(QScrollArea):
         if not self._doc:
             return
         needed = set(self._visible_pages())
+        if isinstance(self._rows, PageRows):
+            scroll_before = self.verticalScrollBar().value()
+            anchor = self._rows.row_at(scroll_before)
+            before = self._rows.offset(anchor)
+            for page_num in needed:
+                if page_num not in self._large_sizes:
+                    rect = self._doc.load_page(page_num).rect
+                    self._large_sizes[page_num] = (rect.width, rect.height)
+            for row in {page // self._rows.stride for page in needed}:
+                heights = [self._large_sizes[p][1] for p in self._rows[row][1] if p in self._large_sizes]
+                self._rows.measure(row, round(max(heights) * self._zoom) + CAPTION_H + PAGE_SPACING)
+            self._pager.setFixedSize(self._total_size())
+            self.verticalScrollBar().setValue(scroll_before + self._rows.offset(anchor) - before)
+            needed = set(self._visible_pages())
         # Pages actually on screen render first (high priority); the prefetch
         # buffer fills the pool afterwards so fast scrolling never starves the
         # visible pages behind a backlog of off-screen renders.
@@ -1141,6 +1210,7 @@ class PdfCanvas(QScrollArea):
         self._apply_search_hits()
         self._apply_font_inspection()
 
+    @_document_locked
     def _fill_render_queue(self, focused: set[int] | None = None) -> None:
         if focused is None:
             focused = set(self._visible_pages(buffer_pages=0))
@@ -1164,50 +1234,23 @@ class PdfCanvas(QScrollArea):
             return
         # Low-priority (prefetch) renders are throttled so the pool never
         # queues up behind off-screen pages while the user scrolls quickly.
-        if not high and len(self._pending) >= MAX_PENDING_RENDERS:
+        for old_token, task in list(self._render_jobs.items()):
+            if old_token[0] != self._generation or old_token[1] not in self._page_views:
+                if self._pool.tryTake(task):
+                    task.done.set()
+                    self._render_jobs.pop(old_token, None)
+                    self._pending.discard(old_token)
+        if len(self._pending) >= MAX_PENDING_RENDERS:
             return
-        # Show an instant low-resolution placeholder (non-blocking) so the
-        # page never appears blank, then let the full render replace it.
-        if DOCUMENT_LOCK.acquire(blocking=False):
-            try:
-                quick = render_page_pixmap_quick(self._doc, page_num, self._zoom, dpr)
-                view = self._page_views.get(page_num)
-                if view is not None:
-                    view.set_pixmap(quick)
-            except (KeyboardInterrupt, SystemExit) as exc:
-                from core.diagnostics import _InterruptBridge
-                _InterruptBridge().handle(type(exc).__name__)
-                return
-            except Exception:
-                log_failure("Quick page preview failed")
-            finally:
-                DOCUMENT_LOCK.release()
-        # Encrypted documents: MuPDF's per-document decryption state is not
-        # thread-safe, so render on the GUI thread to avoid corrupting the
-        # document's crypto state from a worker thread.
-        if self._doc.needs_pass:
-            try:
-                with DOCUMENT_LOCK:
-                    pixmap = render_page_pixmap(self._doc, page_num, self._zoom, dpr)
-            except (KeyboardInterrupt, SystemExit) as exc:
-                from core.diagnostics import _InterruptBridge
-                _InterruptBridge().handle(type(exc).__name__)
-                return
-            except Exception:
-                log_failure("Encrypted page render failed")
-                return
-            self._cache.put(key, pixmap)
-            view = self._page_views.get(page_num)
-            if view is not None:
-                view.set_pixmap(pixmap, self._doc.load_page(page_num))
-            return
+        # Rendering belongs exclusively to the worker. A low-resolution render
+        # still executes PDF operators and can block for seconds on complex pages.
         self._pending.add(token)
         task = _RenderTask(self._doc, page_num, self._zoom, dpr, key, self._generation)
+        self._render_jobs[token] = task
         task.signals.finished.connect(self._on_render_done)
         # Higher values run earlier in the pool; visible pages go first.
         self._pool.start(task, 6 if high else 0)
 
-    @_document_locked
     def _on_render_done(
         self,
         page_num: int,
@@ -1215,15 +1258,20 @@ class PdfCanvas(QScrollArea):
         key: tuple,
         image: QImage,
     ) -> None:
+        task = self._render_jobs.pop((generation, page_num), None)
+        self.last_render_ms = getattr(task, "render_ms", 0.0)
         self._pending.discard((generation, page_num))
         if generation != self._generation or not self._doc or image is None:
+            if self._doc and generation != self._generation:
+                self._fill_render_queue()
             return
         # QPixmap is a GUI resource and must only be created on this thread.
         pixmap = QPixmap.fromImage(image)
         self._cache.put(key, pixmap)
         view = self._page_views.get(page_num)
         if view is not None:
-            view.set_pixmap(pixmap, self._doc.load_page(page_num))
+            view.set_pixmap(pixmap)
+            self.pageRendered.emit(page_num)
         # Refill pages skipped by the prefetch limit without another gesture.
         self._fill_render_queue()
 
@@ -1280,6 +1328,7 @@ class PdfCanvas(QScrollArea):
             # Coalesce continuous window-drag resizes into one relayout.
             self._resize_timer.start()
 
+    @_document_locked
     def _apply_pending_relayout(self) -> None:
         if not self._doc:
             return
@@ -1330,6 +1379,7 @@ class PdfCanvas(QScrollArea):
         if not self._scroll_timer.isActive():
             self._scroll_timer.start()
 
+    @_document_locked
     def _apply_scroll_sync(self) -> None:
         if self._layout_mode != LayoutMode.SINGLE and self._doc:
             self._sync_views()
@@ -1469,6 +1519,9 @@ class PdfCanvas(QScrollArea):
 
     @_document_locked
     def _update_magnifier(self, position: QPoint) -> None:
+        if self._magnifier_task is not None:
+            self._pending_magnifier_position = QPoint(position)
+            return
         target = self._magnifier_target(position)
         if target is None or not self._doc:
             if self._magnifier_popup:
@@ -1498,18 +1551,38 @@ class PdfCanvas(QScrollArea):
             MAGNIFIER_ZOOM * self._zoom * dpr,
             MAGNIFIER_ZOOM * self._zoom * dpr,
         )
-        try:
-            pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False)
-        except Exception:
-            log_failure('pdf_canvas._update_magnifier: fallback after failure', 10)
-            return
-        image = QImage(
-            pix.samples,
-            pix.width,
-            pix.height,
-            pix.stride,
-            QImage.Format.Format_RGB888,
-        ).copy()
+        document = self._doc
+        generation = self._generation
+        completed = Event()
+        def render():
+            try:
+                with DOCUMENT_LOCK:
+                    pix = document.load_page(page_num).get_pixmap(matrix=matrix, clip=clip, alpha=False)
+                    return QImage(pix.samples, pix.width, pix.height, pix.stride,
+                                  QImage.Format.Format_RGB888).copy()
+            finally:
+                completed.set()
+
+        def received(image):
+            if (self._generation == generation and self._doc is document
+                    and self._tool_mode == ToolMode.MAGNIFIER and self._last_magnifier is not None):
+                self._display_magnifier(image, desired_clip, clip, matrix, dpr, position)
+
+        def finished():
+            self._magnifier_task = None
+            pending = self._pending_magnifier_position
+            self._pending_magnifier_position = None
+            if pending is not None and self._doc is not None and self._tool_mode == ToolMode.MAGNIFIER:
+                self._update_magnifier(pending)
+
+        task = FunctionTask(render)
+        task.done = completed
+        task.signals.result.connect(received)
+        task.signals.finished.connect(finished)
+        self._magnifier_task = task
+        self._pool.start(task, 6)
+
+    def _display_magnifier(self, image, desired_clip, clip, matrix, dpr, position):
         # Always build a fixed-size sample and place a clipped edge render at
         # its true offset. Without this padding, Qt enlarged an edge sample
         # and the cursor target visibly drifted away from the popup centre.

@@ -18,6 +18,7 @@ from pathlib import Path
 import fitz
 
 from core.diagnostics import log_failure
+from core.performance import PerformanceTrace
 
 from .io_atomic import atomic_output
 from .page_plan import PagePlanEntry, apply_plan_to_document
@@ -137,12 +138,13 @@ class PdfEngine:
         if self._transaction_depth:
             raise PdfEngineError("Save or document replacement is not allowed inside a mutation transaction.")
 
-    @_locked
     def open(self, path: str | os.PathLike[str], password: str | None = None) -> None:
         self._require_outside_transaction()
-        source = Path(path).expanduser().resolve()
-        if not source.is_file():
-            raise PdfEngineError(f"File not found: {source}")
+        self.open_trace = PerformanceTrace("open_document")
+        with self.open_trace.span("source_validation"):
+            source = Path(path).expanduser().resolve()
+            if not source.is_file():
+                raise PdfEngineError(f"File not found: {source}")
         # Authenticate the new file BEFORE touching the currently open
         # document: a cancelled or wrong password must never destroy the
         # document that is already on screen.
@@ -151,31 +153,43 @@ class PdfEngine:
         password_used: str | None = None
         reencrypt = False
         saved_permissions: int | None = None
+        doc = None
         try:
-            shutil.copy2(source, temp_path)
-            doc = fitz.open(temp_path)
-            if doc.needs_pass:
-                if not password:
-                    doc.close()
-                    raise PdfPasswordRequired("This document requires a password.")
-                if not doc.authenticate(password):
-                    doc.close()
-                    raise PdfInvalidPassword("The password is not valid.")
-                password_used = password
-                reencrypt = True
-                # Remember the document's effective permissions so re-saving
-                # does not silently upgrade or downgrade them.
-                try:
-                    saved_permissions = int(doc.permissions)
-                except Exception:
-                    log_failure('pdf_engine.open: fallback after failure', 10)
-                    saved_permissions = None
-                # MuPDF's in-memory decryption state on encrypted documents
-                # corrupts unpredictably across the app's many readers, so
-                # rebuild an unencrypted working copy up front. Saving will
-                # re-encrypt with the user password.
-                doc = self._decrypted_working_copy(doc, temp_dir.name)
+            with self.open_trace.span("working_copy"):
+                shutil.copy2(source, temp_path)
+            with DOCUMENT_LOCK:
+                with self.open_trace.span("fitz_open"):
+                    doc = fitz.open(temp_path)
+                if doc.needs_pass:
+                    if not password:
+                        doc.close()
+                        raise PdfPasswordRequired("This document requires a password.")
+                    if not doc.authenticate(password):
+                        doc.close()
+                        raise PdfInvalidPassword("The password is not valid.")
+                    password_used = password
+                    reencrypt = True
+                    # Remember the document's effective permissions so re-saving
+                    # does not silently upgrade or downgrade them.
+                    try:
+                        saved_permissions = int(doc.permissions)
+                    except Exception:
+                        log_failure('pdf_engine.open: fallback after failure', 10)
+                        saved_permissions = None
+                    # MuPDF's in-memory decryption state on encrypted documents
+                    # corrupts unpredictably across the app's many readers, so
+                    # rebuild an unencrypted working copy up front. Saving will
+                    # re-encrypt with the user password.
+                    with self.open_trace.span("decryption"):
+                        doc = self._decrypted_working_copy(doc, temp_dir.name)
+                with self.open_trace.span("metadata"):
+                    self.open_metadata = dict(doc.metadata or {})
+                with self.open_trace.span("page_count"):
+                    self.open_page_count = doc.page_count
         except Exception:
+            with DOCUMENT_LOCK:
+                if doc is not None and not doc.is_closed:
+                    doc.close()
             temp_dir.cleanup()
             raise
         self.close()
@@ -191,6 +205,8 @@ class PdfEngine:
         self._requires_sanitized_save = False
         self._document_id = uuid.uuid4().hex
         self._revision = 0
+        self.open_trace.mark("preparation")
+        self.open_trace.report("prepared")
 
     def _decrypted_working_copy(
         self, source_doc: fitz.Document, directory: str

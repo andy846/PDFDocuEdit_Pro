@@ -8,6 +8,7 @@ import tempfile
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
+from functools import wraps
 from pathlib import Path
 
 import fitz
@@ -106,6 +107,17 @@ def apply_transform(page: fitz.Page, entry: PagePlanEntry) -> None:
         page.set_rotation(entry.final_rotation % 360)
 
 
+def _reader_locked(function):
+    @wraps(function)
+    def call(*args, **kwargs):
+        # Lazy import avoids the page-plan / engine import cycle. Native PDF
+        # calls from explicit tools and background previews must serialize.
+        from core.pdf_engine import DOCUMENT_LOCK
+        with DOCUMENT_LOCK:
+            return function(*args, **kwargs)
+    return call
+
+
 class PlanReader:
     """One thread owns the reader and its external documents for its lifetime."""
 
@@ -116,6 +128,7 @@ class PlanReader:
         self._ocg_tags = {}
         self._copy_sources = {}
 
+    @_reader_locked
     def source(self, entry: PagePlanEntry) -> fitz.Document:
         if entry.source_kind == "current":
             return self.current
@@ -130,6 +143,7 @@ class PlanReader:
             self.sources[key] = source
         return self.sources[key]
 
+    @_reader_locked
     def box(self, entry: PagePlanEntry) -> fitz.Rect:
         if entry.crop_box is not None:
             return fitz.Rect(entry.crop_box)
@@ -138,10 +152,12 @@ class PlanReader:
             return fitz.Rect(0, 0, width, height)
         return self.source(entry).load_page(entry.source_page).cropbox
 
+    @_reader_locked
     def size(self, entry: PagePlanEntry) -> tuple[float, float]:
         box = self.box(entry)
         return (box.height, box.width) if entry.final_rotation % 180 else (box.width, box.height)
 
+    @_reader_locked
     def append(self, output: fitz.Document, entry: PagePlanEntry) -> None:
         if entry.source_kind == "blank":
             width, height = entry.page_size or (595, 842)
@@ -214,6 +230,7 @@ class PlanReader:
         pdf.m_internal.ocg = None
         fitz.mupdf.ll_pdf_read_ocg(pdf.m_internal)
 
+    @_reader_locked
     def render(self, entry: PagePlanEntry, max_pixels: int = 800) -> fitz.Pixmap:
         if entry.source_kind == "blank":
             with fitz.open() as single:
@@ -221,6 +238,10 @@ class PlanReader:
                 page = single[0]
                 scale = max_pixels / max(page.rect.width, page.rect.height)
                 return page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        source_page = self.source(entry).load_page(entry.source_page)
+        if entry.crop_box is None and source_page.rotation == entry.final_rotation % 360:
+            scale = max_pixels / max(source_page.rect.width, source_page.rect.height)
+            return source_page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         # Keep the entire source resource context, including optional-content
         # configuration, inherited resources and original widget appearances.
         # insert_pdf into a new one-page PDF can change those appearances.
@@ -242,6 +263,7 @@ class PlanReader:
             if page.rotation != original_rotation:
                 page.set_rotation(original_rotation)
 
+    @_reader_locked
     def close(self):
         for source in self.sources.values():
             source.close()

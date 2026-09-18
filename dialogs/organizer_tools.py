@@ -142,6 +142,8 @@ def run_job(parent, title, function):
     dialog = JobDialog(title, function, parent)
     parent._busy = True
     parent.pages._thumb_timer.stop()
+    if hasattr(parent.pages, "pause_previews"):
+        parent.pages.pause_previews()
     try:
         dialog.worker.start()
         dialog.exec()
@@ -151,6 +153,8 @@ def run_job(parent, title, function):
         return dialog.value
     finally:
         parent._busy = False
+        if hasattr(parent.pages, "resume_previews"):
+            parent.pages.resume_previews()
         parent.pages._queue_visible()
         dialog.deleteLater()
 

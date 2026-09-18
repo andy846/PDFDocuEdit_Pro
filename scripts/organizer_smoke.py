@@ -10,6 +10,7 @@ import sys
 import traceback
 import uuid
 from pathlib import Path
+from time import monotonic
 
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -52,6 +53,11 @@ def run(output: Path):
     window = PDFViewer()
     window.show()
     window.load_file(str(source))
+    deadline = monotonic() + 30
+    while not window.engine.is_loaded() and monotonic() < deadline:
+        QTest.qWait(10)
+    if not window.engine.is_loaded():
+        raise RuntimeError("Asynchronous document opening did not finish")
     app.processEvents()
     failures = []
     final = []

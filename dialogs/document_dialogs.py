@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -858,10 +859,18 @@ class VisualOrganizerDialog(ToolDialog):
         self.summary = QLabel()
         preview_header.addWidget(self.summary)
         preview.addLayout(preview_header)
-        self.pages = OrganizerGrid(document)
+        from core.performance import LARGE_DOCUMENT_PAGES
+        self._async_grid = document.page_count > LARGE_DOCUMENT_PAGES
+        self._pending_result = None
+        if self._async_grid:
+            from .virtual_organizer import VirtualOrganizerGrid
+            self.pages = VirtualOrganizerGrid(document)
+        else:
+            self.pages = OrganizerGrid(document)
         self.pages.orderChanged.connect(self._record_history)
         self.pages.orderChanged.connect(self._update_summary)
-        self.pages.selectionChanged.connect(lambda _entries: self._update_summary())
+        selection_signal = self.pages.planSelectionChanged if self._async_grid else self.pages.selectionChanged
+        selection_signal.connect(lambda _entries: self._update_summary())
         preview.addWidget(self.pages, 1)
         body.addLayout(preview, 1)
         self._root.addLayout(body, 1)
@@ -882,6 +891,20 @@ class VisualOrganizerDialog(ToolDialog):
         buttons.rejected.connect(self.reject)
         footer.addWidget(buttons)
         self._root.addLayout(footer)
+        if self._async_grid:
+            self.load_progress = QProgressBar()
+            self.load_progress.setRange(0, 0)
+            self.load_progress.setFormat("Preparing page plan…")
+            preview.addWidget(self.load_progress)
+            self._preparing_controls = [selection, tools_scroll, self.apply_button]
+            self._preparing_controls.extend(button for button in self.findChildren(QPushButton)
+                                            if button.text() in {"Undo plan", "Redo plan", "Restore"})
+            for control in self._preparing_controls:
+                control.setEnabled(False)
+            self.pages.progress.connect(self._organizer_progress)
+            self.pages.initialized.connect(self._organizer_ready)
+            self.pages.failed.connect(self.show_error)
+            self.pages.idle.connect(self._organizer_idle)
         self._restore()
         if preselected_pages:
             self.pages.select_source_pages(preselected_pages)
@@ -891,6 +914,26 @@ class VisualOrganizerDialog(ToolDialog):
         settings = getattr(parent, "settings", None)
         overrides = settings.get_shortcut_overrides() if settings else {}
         bind_organizer(self, {button.text(): button for button in self.findChildren(QPushButton)}, overrides)
+
+    def _organizer_progress(self, current, total, message):
+        if self._pending_result is not None:
+            return
+        self.load_progress.setRange(0, max(1, total))
+        self.load_progress.setValue(current)
+        self.load_progress.setFormat(message + " %v / %m")
+        self.load_progress.setVisible(current < total or self.pages._initial_plan is None)
+
+    def _organizer_ready(self):
+        for control in self._preparing_controls:
+            control.setEnabled(True)
+        if self._preselected_pages:
+            self.pages.select_source_pages(self._preselected_pages)
+        self._update_summary()
+
+    def _organizer_idle(self):
+        if self._pending_result is not None:
+            result, self._pending_result = self._pending_result, None
+            self.done(result)
 
     def _action_button(self, label, callback):
         button = QPushButton(label)
@@ -1119,20 +1162,33 @@ class VisualOrganizerDialog(ToolDialog):
     def done(self, result: int) -> None:
         if self._busy:
             return
+        if self._async_grid and not self.pages.request_stop():
+            self._pending_result = result
+            self.load_progress.show()
+            self.load_progress.setRange(0, 0)
+            self.load_progress.setFormat("Cancelling at the next safe checkpoint…"
+                                         if result == self.DialogCode.Rejected else "Finishing current preview safely…")
+            self.apply_button.setEnabled(False)
+            return
         self.pages.shutdown()
         super().done(result)
         if result != self.DialogCode.Accepted:
             self.release_sources()
 
     def reject(self) -> None:
-        if self._busy:
-            return
-        self.pages.shutdown()
-        super().reject()
+        if not self._busy:
+            self.done(self.DialogCode.Rejected)
 
     def closeEvent(self, event) -> None:
         if self._busy:
             event.ignore()
+            return
+        if self._async_grid:
+            self.done(self.DialogCode.Rejected)
+            if self._pending_result is not None:
+                event.ignore()
+            else:
+                event.accept()
             return
         self.pages.shutdown()
         super().closeEvent(event)

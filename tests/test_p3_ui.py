@@ -61,7 +61,7 @@ def test_annotation_tool_modes_and_highlight_commit(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "p3.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     for key, mode in (
@@ -103,7 +103,7 @@ def test_annotation_tool_modes_and_highlight_commit(
 def test_note_and_remove_annotation_flow(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "note.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     window._handle_annotation(
@@ -132,7 +132,7 @@ def test_redact_marks_require_separate_confirmation_to_apply(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "redact.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     window._handle_annotation(
@@ -168,7 +168,7 @@ def test_redact_marks_require_separate_confirmation_to_apply(
 def test_context_panel_options_reach_canvas(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "options.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window._activate_annotation_tool("highlight")
 
@@ -215,7 +215,7 @@ def test_custom_stamp_import_persists_selects_and_removes(
     assert window.context_panel.current_custom_stamp_name() == "Company Seal"
 
     source = make_pdf(tmp_path / "custom-stamp.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window._activate_annotation_tool("stamp")
     options = window.workspace.canvas._annot_options
@@ -287,7 +287,7 @@ def test_polygon_tool_creates_clicked_triangle_not_drag_rectangle(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "polygon.pdf", pages=1)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window._activate_annotation_tool("polygon")
 
@@ -319,7 +319,7 @@ def test_line_tools_preserve_drag_direction_and_do_not_use_a_rectangle(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / f"{tool}.pdf", pages=1)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window._activate_annotation_tool(tool)
 
@@ -358,7 +358,7 @@ def test_text_box_mouse_drag_has_visible_guide_and_visible_result(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "textbox-mouse.pdf", pages=1)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     monkeypatch.setattr(
         viewer_module.QInputDialog,
@@ -410,7 +410,7 @@ def test_typewriter_is_point_and_inline_text_interaction(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "typewriter-inline.pdf", pages=1)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window._activate_annotation_tool("freetext_typewriter")
 
@@ -485,7 +485,7 @@ def test_manage_content_editor_only_shows_for_text_annotations(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "conditional-content.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     window._handle_annotation(
         AnnotationOp(
             kind="rect", page=0, rects=(fitz.Rect(80, 120, 200, 220),)
@@ -579,7 +579,7 @@ def test_annotation_defaults_switch_without_cross_contamination(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "defaults.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     original_highlight = {
         "stroke": "red",
@@ -677,7 +677,7 @@ def test_split_canvas_annotation_tool_style_and_signal_parity(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "split-annot.pdf", pages=2)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window.settings.set(
         "annotation_defaults",
@@ -727,7 +727,7 @@ def test_annotation_undo_preserves_page_and_refreshes_list(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "undo-page.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
     window.workspace.canvas.set_page(1)
     app.processEvents()

@@ -96,7 +96,7 @@ def test_encrypt_decrypt_actions_follow_document_state(tmp_path, monkeypatch):
     assert not window.decrypt_action.isEnabled()
 
     source = make_pdf(tmp_path / "plain.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert window.encrypt_action.isEnabled()
     assert not window.decrypt_action.isEnabled()  # not encrypted
     window.close()
@@ -121,7 +121,7 @@ def test_print_pdf_confirms_system_dialog_and_names_job(tmp_path, monkeypatch):
 
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "printme.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     details = {
         "printer": "",
         "pages": [0, 1],
@@ -185,7 +185,7 @@ def test_print_pdf_prints_directly_without_system_dialog(tmp_path, monkeypatch):
 
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "direct.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     details = {
         "printer": "",
         "pages": [0],
@@ -587,7 +587,7 @@ def test_mixed_orientation_pages_print_upright(tmp_path, monkeypatch):
 def test_save_as_uses_remembered_save_folder(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "src.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     saved = tmp_path / "saved"
     saved.mkdir()
     window.settings.set_last_save_directory(saved)
@@ -609,7 +609,7 @@ def test_save_as_uses_remembered_save_folder(tmp_path, monkeypatch):
 def test_save_as_falls_back_to_document_folder(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "src.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     captured: list[str] = []
     monkeypatch.setattr(
         viewer_module.QFileDialog,
@@ -619,6 +619,16 @@ def test_save_as_falls_back_to_document_folder(tmp_path, monkeypatch):
     window.save_as_file()
     assert Path(captured[0]) == tmp_path / "src.pdf"
     window.close()
+
+
+def _wait_open_queue(window):
+    from time import monotonic
+
+    from PyQt6.QtTest import QTest
+    deadline = monotonic() + 10
+    while window._open_queue_scheduled and monotonic() < deadline:
+        QTest.qWait(10)
+    assert not window._open_queue_scheduled
 
 
 def test_open_dialog_multi_select_opens_each_file_in_own_tab(tmp_path, monkeypatch):
@@ -632,6 +642,7 @@ def test_open_dialog_multi_select_opens_each_file_in_own_tab(tmp_path, monkeypat
         lambda *a, **k: (selected, "Supported documents (*.pdf *.ps *.eps)"),
     )
     window._open_dialog()
+    _wait_open_queue(window)
     assert window.workspace.session_count() == 2
     assert window.workspace.session_at(0).display_path == first.resolve()
     assert window.workspace.session_at(1).display_path == second.resolve()
@@ -647,15 +658,17 @@ def test_open_files_reuses_empty_tab_then_opens_new_tabs(tmp_path, monkeypatch):
     # A failed open must not leave a placeholder tab behind.
     errors: list[str] = []
     monkeypatch.setattr(window, "_error", lambda title, message: errors.append(message))
-    window.load_file(str(tmp_path / "missing.pdf"))
+    window._load_file_sync(str(tmp_path / "missing.pdf"))
     assert window.workspace.session_count() == 0
     assert errors
     # Every file then opens in its own fresh tab.
     window.open_files([str(first), str(second)])
+    _wait_open_queue(window)
     assert window.workspace.session_count() == 2
     assert window._session.display_path == second.resolve()
     # Once a document is loaded, further opens always use new tabs.
     window.open_files([str(third)])
+    _wait_open_queue(window)
     assert window.workspace.session_count() == 3
     window.close()
 
@@ -664,9 +677,10 @@ def test_dropped_file_opens_new_tab_when_document_is_open(tmp_path, monkeypatch)
     window = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "first.pdf")
     second = make_pdf(tmp_path / "second.pdf")
-    window.load_file(str(first))
+    window._load_file_sync(str(first))
     assert window.workspace.session_count() == 1
     window._file_dropped(str(second))
+    _wait_open_queue(window)
     assert window.workspace.session_count() == 2
     assert window.workspace.session_at(0).display_path == first.resolve()
     assert window._session.display_path == second.resolve()
@@ -677,8 +691,8 @@ def test_cancelled_background_tab_close_keeps_active_session(tmp_path, monkeypat
     window = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "first.pdf")
     second = make_pdf(tmp_path / "second.pdf")
-    window.load_file(str(first))
-    window.open_in_new_tab(str(second))  # second tab becomes the active one
+    window._load_file_sync(str(first))
+    window._open_in_new_tab_sync(str(second))  # second tab becomes the active one
     background = window.workspace.session_at(0)
     assert window._session is not background
     monkeypatch.setattr(window, "_confirm_discard_changes", lambda: False)
@@ -695,7 +709,7 @@ def test_cancelled_background_tab_close_keeps_active_session(tmp_path, monkeypat
 def test_save_all_prompts_save_as_for_never_saved_documents(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "unsaved.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     session = window._session
     session.engine.detach_save_target()  # simulate a never-saved document
     session.engine.rotate_pages([0], 90)  # mark it modified
@@ -717,7 +731,7 @@ def test_save_all_skipping_save_as_reports_warning(tmp_path, monkeypatch):
     _allow_discard(monkeypatch)  # the document stays modified at close time
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "unsaved.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     session = window._session
     session.engine.detach_save_target()
     session.engine.rotate_pages([0], 90)
@@ -895,7 +909,7 @@ def test_sidebar_pages_order_and_new_order_tool(tmp_path, monkeypatch):
 def test_viewer_order_tool_opens_order_context(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "order.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     shown: list[str] = []
     monkeypatch.setattr(window, "_show_context", lambda key: shown.append(key))
     window._tool_requested("order")
@@ -965,7 +979,7 @@ def test_bottom_bar_rotate_box_submenu(tmp_path, monkeypatch):
 def test_rotate_box_pages_rotates_pages_from_page_box(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "rot.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     messages = _messages(window)
     window.bottom_bar._page.setText("1-2")
     window.bottom_bar.rotateBoxRequested.emit(180)
@@ -981,7 +995,7 @@ def test_rotate_box_pages_rotates_pages_from_page_box(tmp_path, monkeypatch):
 def test_rotate_box_pages_empty_and_invalid_input(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "rot2.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     messages = _messages(window)
 
     window.bottom_bar._page.setText("")
@@ -1023,7 +1037,7 @@ def test_zoom_slider_syncs_both_ways(tmp_path, monkeypatch):
 def test_viewer_zoom_slider_sets_canvas(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "zoom.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     ratios: list[float] = []
     monkeypatch.setattr(
         window.workspace.canvas, "set_zoom", lambda ratio: ratios.append(ratio)
@@ -1092,7 +1106,7 @@ def test_legacy_status_messages_on_load_and_save(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "msg.pdf")
     messages = _messages(window)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert any("✅ Loaded: msg.pdf" in message for message in messages)
 
     window.save_file()
@@ -1250,7 +1264,7 @@ def test_load_file_guard_swallows_unexpected_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(
         window, "_load_path", lambda *args: (_ for _ in ()).throw(RuntimeError("boom"))
     )
-    window.load_file("/tmp/missing.pdf")
+    window._load_file_sync("/tmp/missing.pdf")
     assert errors == ["boom"]
     window.close()
 
@@ -1267,7 +1281,7 @@ def test_organize_pages_applies_and_refreshes_canvas(tmp_path, monkeypatch):
 
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "org-apply.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     monkeypatch.setattr(
         viewer_module, "VisualOrganizerDialog", lambda document, parent: FakeOrganizer()
     )
@@ -1293,7 +1307,7 @@ def test_search_panel_scope_integration(tmp_path, monkeypatch):
     """Search scope changes wait for an explicit Search command."""
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "scope.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     panel = window.workspace.nav_panel.search
     assert panel._page_count == 3
 
@@ -1330,7 +1344,7 @@ def test_search_panel_scope_integration(tmp_path, monkeypatch):
 def test_run_search_scopes_results_to_selected_pages(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "scope-run.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     panel = window.workspace.nav_panel.search
     window._run_search("searchable", None, [1])
     assert panel._list.count() == 1
@@ -1342,7 +1356,7 @@ def test_run_search_scopes_results_to_selected_pages(tmp_path, monkeypatch):
 def test_encrypt_then_open_with_password_in_viewer(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "enc-viewer.pdf", pages=2)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     encrypted = tmp_path / "enc_viewer_enc.pdf"
     window.engine.encrypt("secret123", str(encrypted))
 
@@ -1350,7 +1364,7 @@ def test_encrypt_then_open_with_password_in_viewer(tmp_path, monkeypatch):
     monkeypatch.setattr(
         viewer_module, "ask_password", lambda *args, **kwargs: next(prompts)
     )
-    window.load_file(str(encrypted))
+    window._load_file_sync(str(encrypted))
     assert window.engine.page_count == 2
     assert "Searchable page 1" in window.engine.document.load_page(0).get_text()
     assert window.engine.is_encrypted()
@@ -1361,7 +1375,7 @@ def test_encrypt_then_open_with_password_in_viewer(tmp_path, monkeypatch):
 def test_viewer_password_retry_after_wrong_password(tmp_path, monkeypatch):
     window = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "enc-retry.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     encrypted = tmp_path / "enc_retry_enc.pdf"
     window.engine.encrypt("secret123", str(encrypted))
 
@@ -1375,7 +1389,7 @@ def test_viewer_password_retry_after_wrong_password(tmp_path, monkeypatch):
         "show_message",
         lambda msg, kind="", duration=0: messages.append(msg),
     )
-    window.load_file(str(encrypted))
+    window._load_file_sync(str(encrypted))
     assert window.engine.page_count == 2
     assert window.engine.password == "secret123"
     assert any("password is not valid" in message for message in messages)
@@ -1529,7 +1543,7 @@ def test_canvas_renders_visible_pages_first(tmp_path, monkeypatch):
     window.resize(1100, 760)
     window.show()
     source = make_pdf(tmp_path / "fast-scroll.pdf", pages=12)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     canvas = window.workspace.canvas
     app = _app()
 
@@ -1556,14 +1570,25 @@ def test_canvas_renders_visible_pages_first(tmp_path, monkeypatch):
     assert 6 in priorities, f"visible pages must render at high priority: {priorities}"
     assert 0 in priorities, f"prefetch buffer must render at low priority: {priorities}"
 
-    # A saturated pool never starves the focused pages: buffer prefetch is
-    # throttled, focused pages still start.
-    canvas._pending = {1000 + index for index in range(50)}
+    # A saturated queue stays bounded. As soon as a slot opens, the visible
+    # page gets it before prefetch; focused work must not grow an unbounded queue.
+    from ui.pdf_canvas import MAX_PENDING_RENDERS
+    for task in canvas._render_jobs.values():
+        task.done.set()  # these workers were replaced with the recording stub
+    canvas._render_jobs.clear()
+    canvas._pending = {(canvas._generation, 1000 + index) for index in range(MAX_PENDING_RENDERS)}
+    canvas._cache.clear()
     canvas._teardown_views()
     starts.clear()
     canvas._sync_views()
-    priorities = [priority for _task, priority in starts]
-    assert priorities and all(priority == 6 for priority in priorities)
+    assert not starts
+    canvas._pending.pop()
+    canvas._fill_render_queue()
+    assert [priority for _task, priority in starts] == [6]
+    assert len(canvas._pending) == MAX_PENDING_RENDERS
+    for task in canvas._render_jobs.values():
+        task.done.set()
+    canvas._pending.clear()
     _allow_discard(monkeypatch)
     window.close()
 

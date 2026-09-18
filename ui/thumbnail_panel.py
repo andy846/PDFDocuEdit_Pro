@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from threading import Event
 
 import fitz
 from PyQt6.QtCore import (
+    QAbstractListModel,
     QEvent,
     QObject,
-    QPoint,
     QRunnable,
     QSize,
     Qt,
@@ -19,16 +20,18 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QListView,
     QVBoxLayout,
     QWidget,
 )
 
 from core.diagnostics import connect_interrupts, log_failure
+from core.pdf_engine import DOCUMENT_LOCK
+from core.reader_lifetime import ReaderLease
 from styles.tokens import D, S
 
 from .motion import MotionIconButton
@@ -40,20 +43,87 @@ MAX_PENDING_RENDERS = 12
 OVERSCAN = 6
 
 
-class ReorderListWidget(QListWidget):
-    """Thumbnail list that reports the final page order after a drag-drop."""
+class PageListModel(QAbstractListModel):
+    """Count-only model: opening 18,000 pages allocates no per-page objects."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.page_count = 0
+
+    def reset_count(self, count):
+        self.beginResetModel()
+        self.page_count = max(0, count)
+        self.endResetModel()
+
+    def rowCount(self, parent=None):
+        return 0 if parent is not None and parent.isValid() else self.page_count
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < self.page_count:
+            return None
+        if role == Qt.ItemDataRole.UserRole:
+            return index.row()
+        if role == Qt.ItemDataRole.SizeHintRole:
+            return QSize(THUMBNAIL_WIDTH + S.MD, int(THUMBNAIL_WIDTH * 1.414) + 28)
+        if role == Qt.ItemDataRole.DisplayRole:
+            return str(index.row() + 1)
+
+    def flags(self, index):
+        return super().flags(index) | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction
+
+
+class ReorderListWidget(QListView):
+    """Virtual list with viewport-only index widgets and explicit reorder."""
 
     orderDropped = pyqtSignal(list)
+    currentRowChanged = pyqtSignal(int)
 
-    def dropEvent(self, event) -> None:
-        super().dropEvent(event)
-        order = [
-            int(self.item(index).data(Qt.ItemDataRole.UserRole))
-            for index in range(self.count())
-        ]
-        self.orderDropped.emit(order)
+    def __init__(self):
+        super().__init__()
+        self.setModel(PageListModel(self))
+        self.selectionModel().currentChanged.connect(lambda current, previous: self.currentRowChanged.emit(current.row()))
 
+    def count(self):
+        return self.model().rowCount()
 
+    def item(self, row):
+        return self.model().index(row, 0) if 0 <= row < self.count() else None
+
+    def clear(self):
+        self.model().reset_count(0)
+
+    def currentRow(self):
+        return self.currentIndex().row()
+
+    def setCurrentRow(self, row):
+        self.setCurrentIndex(self.model().index(row, 0))
+
+    def scrollToItem(self, index):
+        self.scrollTo(index)
+
+    def itemWidget(self, index):
+        return self.indexWidget(index) if index is not None else None
+
+    def setItemWidget(self, index, widget):
+        self.setIndexWidget(index, widget)
+
+    def removeItemWidget(self, index):
+        self.setIndexWidget(index, None)
+
+    def dropEvent(self, event):
+        source = self.currentRow()
+        target = self.indexAt(event.position().toPoint()).row()
+        if target < 0:
+            target = self.count() - 1
+        if 0 <= source < self.count() and target != source:
+            # O(n) only for an explicitly requested document reorder.
+            order = list(range(self.count()))
+            order.insert(target, order.pop(source))
+            self.orderDropped.emit(order)
+        event.accept()
 
 
 class _RenderSignals(QObject):
@@ -77,6 +147,7 @@ class _RenderTask(QRunnable):
         # The panel retains tasks until their completion signal so queued
         # off-screen renders can be safely removed with QThreadPool.tryTake().
         self.setAutoDelete(False)
+        self.done = Event()
         self._doc_path = doc_path
         self._page_num = page_num
         self._scale = scale
@@ -87,7 +158,7 @@ class _RenderTask(QRunnable):
 
     def run(self) -> None:
         try:
-            with fitz.open(self._doc_path) as doc:
+            with DOCUMENT_LOCK, fitz.open(self._doc_path) as doc:
                 if self._password and doc.needs_pass:
                     doc.authenticate(self._password)
                 if self._page_num >= doc.page_count:
@@ -109,6 +180,8 @@ class _RenderTask(QRunnable):
         except Exception:
             log_failure("Thumbnail render failed")
             self.signals.failed.emit(self._page_num, self._generation)
+        finally:
+            self.done.set()
 
 
 class ThumbnailPanel(QFrame):
@@ -128,14 +201,16 @@ class ThumbnailPanel(QFrame):
         self._page_count = 0
         self._pending: set[int] = set()
         self._tasks: dict[int, _RenderTask] = {}
+        self._retired_tasks = {}
         self._failures: dict[int, int] = {}
         self._cache: OrderedDict[int, QPixmap] = OrderedDict()
         self._widget_rows: set[int] = set()
         self._generation = 0
+        self._render_enabled = True
         # A panel-owned pool lets a document wait for only its own thumbnail
         # readers before deleting the editable temporary PDF on Windows.
-        self._pool = QThreadPool(self)
-        self._pool.setMaxThreadCount(4)
+        self._pool = QThreadPool(QApplication.instance())
+        self._pool.setMaxThreadCount(2)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(S.XS, S.XS, S.XS, S.SM)
@@ -162,7 +237,7 @@ class ThumbnailPanel(QFrame):
         # still be misread as only a few pixels from page 1.
         self._list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._list.setUniformItemSizes(True)
-        self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._list.setResizeMode(QListView.ResizeMode.Adjust)
         self._list.setDragEnabled(True)
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._list.setDefaultDropAction(Qt.DropAction.MoveAction)
@@ -203,9 +278,10 @@ class ThumbnailPanel(QFrame):
     def refresh_icons(self) -> None:
         self._close.refresh_icon()
 
-    def load_document(self, doc_path: str, page_count: int, password: str | None = None) -> None:
+    def load_document(self, doc_path: str, page_count: int, password: str | None = None, *, defer_render: bool = False) -> None:
         """Load thumbnails for a document."""
         self._stop_renders()
+        self._render_enabled = not defer_render
         self._doc_path = doc_path
         self._password = password
         self._page_count = page_count
@@ -216,12 +292,12 @@ class ThumbnailPanel(QFrame):
         self._widget_rows.clear()
         self._list.clear()
 
-        for page_num in range(page_count):
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, page_num)
-            item.setSizeHint(QSize(THUMBNAIL_WIDTH + S.MD, int(THUMBNAIL_WIDTH * 1.414) + 28))
-            self._list.addItem(item)
+        self._list.model().reset_count(page_count)
+        if self.isVisible():
+            self._render_visible_thumbnails()
 
+    def enable_rendering(self):
+        self._render_enabled = True
         self._render_visible_thumbnails()
 
     def _make_thumbnail_widget(self, page_num: int) -> QWidget:
@@ -268,14 +344,25 @@ class ThumbnailPanel(QFrame):
         self._list.clear()
 
     def _stop_renders(self) -> None:
-        """Invalidate queued renders and wait until their PDF handles close."""
+        """Invalidate queued renders without waiting on running PDF readers."""
         self._doc_path = None
-        self.quiesce_renders()
+        self.quiesce_renders(wait=False)
 
-    def quiesce_renders(self) -> None:
-        """Release file handles while keeping the current thumbnail source."""
+    def reader_events(self):
+        return [ReaderLease(task) for task in (*self._tasks.values(), *self._retired_tasks.values())]
+
+    def quiesce_renders(self, wait=True) -> None:
+        """Invalidate jobs; file-mutating callers may explicitly await readers."""
+        generation = self._generation
         self._generation += 1
-        self._pool.waitForDone()
+        for page, task in self._tasks.items():
+            if self._pool.tryTake(task):
+                task.done.set()
+            elif not task.done.is_set():
+                self._retired_tasks[(generation, page)] = task
+        if wait:
+            self._pool.waitForDone()
+            self._retired_tasks.clear()
         self._pending.clear()
         self._tasks.clear()
         self._failures.clear()
@@ -287,7 +374,7 @@ class ThumbnailPanel(QFrame):
         PDF); instead only the scroll window plus a small overscan renders,
         with a hard cap on in-flight tasks.
         """
-        if not self._doc_path or self._list.count() == 0:
+        if not self._render_enabled or not self.isVisible() or not self._doc_path or self._list.count() == 0:
             return
         first, last = self._visible_range()
         wanted = set(range(first, last + 1))
@@ -308,6 +395,7 @@ class ThumbnailPanel(QFrame):
         for page_num in list(self._pending - focused):
             task = self._tasks.get(page_num)
             if task is not None and self._pool.tryTake(task):
+                task.done.set()
                 self._tasks.pop(page_num, None)
                 self._pending.discard(page_num)
         # Render actual screen pages before prefetch pages above/below them.
@@ -323,34 +411,35 @@ class ThumbnailPanel(QFrame):
                 self._schedule_render(index, priority=10 if index in focused else 0)
 
     def _visible_range(self, overscan: int = OVERSCAN) -> tuple[int, int]:
-        first_item = self._list.item(0)
-        if first_item is None:
-            return (0, 0)
-        item_height = first_item.sizeHint().height() + self._list.spacing()
-        viewport_height = self._list.viewport().height()
-        top_index = self._list.indexAt(QPoint(2, 2))
-        bottom_index = self._list.indexAt(
-            QPoint(2, max(2, viewport_height - 2))
-        )
-        first_visible = (
-            top_index.row()
-            if top_index.isValid()
-            else self._list.verticalScrollBar().value() // max(1, item_height)
-        )
-        last_visible = (
-            bottom_index.row()
-            if bottom_index.isValid()
-            else first_visible + max(1, viewport_height // max(1, item_height))
-        )
-        first = max(0, first_visible - overscan)
-        last = min(
-            self._list.count() - 1,
-            last_visible + overscan,
-        )
-        return first, last
+        count = self._list.count()
+        if not count:
+            return 0, -1
+        height = self._list.viewport().height()
+
+        # Hit tests in the list margins or inter-row spacing return no index.
+        # Estimating from scrollbar pixels then accumulates spacing errors over
+        # thousands of rows. Query Qt's actual geometry instead: uniform rows
+        # make visualRect cheap, and two binary searches bound work to O(log n).
+        low, high = 0, count
+        while low < high:
+            middle = (low + high) // 2
+            if self._list.visualRect(self._list.model().index(middle, 0)).bottom() < 0:
+                low = middle + 1
+            else:
+                high = middle
+        first_visible = low
+        low, high = first_visible, count
+        while low < high:
+            middle = (low + high) // 2
+            if self._list.visualRect(self._list.model().index(middle, 0)).top() < height:
+                low = middle + 1
+            else:
+                high = middle
+        last_visible = low - 1
+        return max(0, first_visible - overscan), min(count - 1, last_visible + overscan)
 
     def _schedule_render(self, page_num: int, priority: int = 5) -> None:
-        if page_num in self._pending or not self._doc_path or self._failures.get(page_num, 0) >= 2:
+        if not self._render_enabled or page_num in self._pending or not self._doc_path or self._failures.get(page_num, 0) >= 2:
             return
         self._pending.add(page_num)
         task = _RenderTask(
@@ -362,6 +451,7 @@ class ThumbnailPanel(QFrame):
         self._pool.start(task, priority)
 
     def _on_thumbnail_rendered(self, page_num: int, image: QImage, generation: int) -> None:
+        self._retired_tasks.pop((generation, page_num), None)
         if generation != self._generation:
             return  # stale render from a previous document
         self._tasks.pop(page_num, None)
@@ -399,6 +489,7 @@ class ThumbnailPanel(QFrame):
             label.style().polish(label)
 
     def _on_thumbnail_failed(self, page_num: int, generation: int) -> None:
+        self._retired_tasks.pop((generation, page_num), None)
         if generation != self._generation:
             return
         self._tasks.pop(page_num, None)

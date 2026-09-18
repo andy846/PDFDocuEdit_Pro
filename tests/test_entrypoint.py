@@ -22,7 +22,7 @@ missing = root / 'gone.pdf'
 for name in ('a.pdf', 'b.PDF', 'notes.txt'):
     (root / name).write_bytes(b'%PDF-1.4 x')
 paths = pdf_arguments([str(first), str(text), str(missing), str(second)])
-assert paths == [first.resolve(), second.resolve()]
+assert paths == [first.resolve(), missing.resolve(), second.resolve()]
 """
     environment = os.environ.copy()
     environment["QT_QPA_PLATFORM"] = "offscreen"
@@ -90,7 +90,7 @@ def test_initial_pdf_open_waits_until_window_event_loop(
     monkeypatch.setattr(
         PDFViewer,
         "_start_queued_pdf_open",
-        lambda self, _session, path, password: (
+        lambda self, _session, path, password, **kwargs: (
             opened.append((path, password)),
             self._queued_open_finished(),
         ),

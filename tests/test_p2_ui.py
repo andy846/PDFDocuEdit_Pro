@@ -35,7 +35,7 @@ def _window(tmp_path: Path, monkeypatch):
 
 def _wait_renders(app, canvas, timeout: float = 15.0) -> None:
     deadline = time.monotonic() + timeout
-    while canvas._pending and time.monotonic() < deadline:
+    while (canvas._pending or canvas._magnifier_task is not None) and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.01)
     app.processEvents()
@@ -44,7 +44,7 @@ def _wait_renders(app, canvas, timeout: float = 15.0) -> None:
 def test_layout_modes_and_page_sync(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "p2.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     canvas = window.workspace.canvas
@@ -73,7 +73,7 @@ def test_horizontal_scroll_at_400_percent_all_layouts_and_split(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "wide-scroll.pdf", pages=4)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     canvas = window.workspace.canvas
     _wait_renders(app, canvas)
 
@@ -97,7 +97,7 @@ def test_horizontal_scroll_at_400_percent_all_layouts_and_split(
 def test_fit_and_actual_size(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "fit.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     canvas = window.workspace.canvas
@@ -115,7 +115,7 @@ def test_fit_and_actual_size(tmp_path: Path, monkeypatch) -> None:
 def test_selection_and_search_highlight(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "select.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     canvas = window.workspace.canvas
@@ -162,7 +162,7 @@ def test_magnifier_tracks_cursor_and_keeps_edge_sample_centered(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "magnifier.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     canvas = window.workspace.canvas
     _wait_renders(app, canvas)
 
@@ -179,6 +179,7 @@ def test_magnifier_tracks_cursor_and_keeps_edge_sample_centered(
     assert abs(pdf_point.y - expected.y) < 0.01
 
     canvas._update_magnifier(viewport_position)
+    _wait_renders(app, canvas)
     assert canvas._magnifier_popup is not None
     pixmap = canvas._magnifier_popup.pixmap()
     assert pixmap is not None
@@ -190,6 +191,7 @@ def test_magnifier_tracks_cursor_and_keeps_edge_sample_centered(
     canvas._update_magnifier(
         overlay.mapTo(canvas.viewport(), QPoint(1, 1))
     )
+    _wait_renders(app, canvas)
     edge_pixmap = canvas._magnifier_popup.pixmap()
     assert edge_pixmap is not None
     assert abs(edge_pixmap.deviceIndependentSize().width() - 200) <= 1
@@ -208,7 +210,7 @@ def test_command_bar_canvas_buttons_switch_and_sync_modes(
     assert all(not button.isEnabled() for button in buttons.values())
 
     source = make_pdf(tmp_path / "canvas-buttons.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     app.processEvents()
     assert all(button.isEnabled() for button in buttons.values())
     assert buttons["browse"].isChecked()

@@ -13,6 +13,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtProperty,
     pyqtSignal,
+    pyqtSlot,
 )
 from PyQt6.QtWidgets import (
     QFrame,
@@ -115,7 +116,14 @@ class CollapsibleSection(QWidget):
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._animation.finished.connect(self._animation_finished)
         self._update_header_icon()
-        QTimer.singleShot(0, lambda: self._apply_expanded(False))
+        self._layout_timer = QTimer(self)
+        self._layout_timer.setSingleShot(True)
+        self._layout_timer.timeout.connect(self._apply_initial_layout)
+        self._layout_timer.start(0)
+
+    @pyqtSlot()
+    def _apply_initial_layout(self) -> None:
+        self._apply_expanded(False)
 
     def add_button(self, button: QPushButton) -> None:
         self.body_layout.addWidget(button)
@@ -167,7 +175,7 @@ class CollapsibleSection(QWidget):
         self._filtering = filtering
         self.setVisible(has_matches or not filtering)
         if self.isVisible():
-            QTimer.singleShot(0, lambda: self._apply_expanded(False))
+            self._layout_timer.start(0)
 
     def set_animations_enabled(self, enabled: bool) -> None:
         self._animations_enabled = enabled

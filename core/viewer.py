@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import tempfile
@@ -11,9 +12,21 @@ from collections.abc import Callable
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 
 import fitz
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QSizeF, Qt, QThreadPool, QTimer
+from PyQt6.QtCore import (
+    QBuffer,
+    QByteArray,
+    QEvent,
+    QIODevice,
+    QPoint,
+    QRectF,
+    QSizeF,
+    Qt,
+    QThreadPool,
+    QTimer,
+)
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -93,8 +106,10 @@ from core.pdf_engine import (
     parse_page_range,
     search_pdf_file,
 )
+from core.performance import LARGE_DOCUMENT_PAGES, PerformanceTrace
 from core.platform_service import PlatformService
 from core.printing import PrintJob, PrintRenderSettings, render_page_image
+from core.reader_lifetime import after_readers
 from core.resources import APP_VERSION, COPYRIGHT_NOTICE
 from core.settings import SettingsManager
 from core.tasks import FunctionTask, TaskCancelled
@@ -162,7 +177,16 @@ def _prepare_pdf_engine(
     """Prepare an independent engine without blocking the GUI thread."""
     engine = PdfEngine()
     try:
-        engine.open(path, password)
+        suffix = Path(path).suffix.casefold()
+        if suffix in {".ps", ".eps"}:
+            with tempfile.TemporaryDirectory(prefix="pdfdocuedit-convert-") as directory:
+                converted = Path(directory) / "converted.pdf"
+                convert_postscript(path, converted)
+                engine.open(converted, password)
+        elif suffix == ".pdf":
+            engine.open(path, password)
+        else:
+            raise ValueError("Choose a PDF, PostScript, or EPS file.")
     except PdfPasswordRequired:
         engine.close()
         return ("password_required", None)
@@ -174,6 +198,11 @@ def _prepare_pdf_engine(
         engine.close()
         return ("error", str(exc) or exc.__class__.__name__)
     return ("ok", engine)
+
+
+def _dispose_prepared_pdf(result):
+    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], PdfEngine):
+        result[1].close()
 
 
 def _perform_document_analysis(
@@ -254,11 +283,13 @@ def _perform_document_analysis(
 
 class PDFViewer(QMainWindow):
     def __init__(self, initial_path: str | None = None):
+        self._startup_trace = PerformanceTrace("startup")
         super().__init__()
         self._integrated_chrome = os.name == "nt"
         if self._integrated_chrome:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        self.settings = SettingsManager()
+        with self._startup_trace.span("settings"):
+            self.settings = SettingsManager()
         self._sessions: list[DocumentSession] = []
         self._session: DocumentSession | None = None
         self._idle_engine = PdfEngine()
@@ -271,12 +302,15 @@ class PDFViewer(QMainWindow):
         self._task_had_error = False
         self._closing = False
         self._printing = False
-        self._queued_open_paths: list[tuple[str, str | None]] = []
+        self._queued_open_paths: list[tuple[str, str | None, DocumentSession | None, float]] = []
         self._open_queue_scheduled = False
         self._thread_pool = QThreadPool.globalInstance()
-        self._init_ui()
-        self._restore_window_state()
-        self._apply_theme(self.settings.get_theme())
+        with self._startup_trace.span("main_window"):
+            self._init_ui()
+        with self._startup_trace.span("restore_window"):
+            self._restore_window_state()
+        with self._startup_trace.span("theme"):
+            self._apply_theme(self.settings.get_theme())
         if initial_path:
             self.queue_open_files([initial_path])
 
@@ -336,6 +370,7 @@ class PDFViewer(QMainWindow):
         )
         self.workspace = DocumentWorkspace(
             self.settings.recent_files(),
+            recent_info=self.settings.get("recent_file_info", {}),
             animations_enabled=bool(self.settings.get("animations_enabled", True)),
         )
         self.info_bar = InfoBar(root)
@@ -708,6 +743,8 @@ class PDFViewer(QMainWindow):
         self.side_panel.collapsedChanged.connect(
             lambda value: self.settings.set("left_panel_collapsed", value)
         )
+        self.workspace._empty.toolRequested.connect(self._welcome_tool)
+        self.context_panel.annotationScanRequested.connect(self._scan_annotations)
         self.workspace.openRequested.connect(self._open_dialog)
         self.workspace.fileDropped.connect(self._file_dropped)
         self.workspace.extraFilesDropped.connect(self._add_extra_dropped_files)
@@ -1049,6 +1086,14 @@ class PDFViewer(QMainWindow):
         self._refresh_annotate_list()
 
     def _session_nav_tab_changed(self, session: DocumentSession, key: str) -> None:
+        if key == "outline" and not getattr(session, "_outline_loaded", False) and session.engine.is_loaded():
+            engine = session.engine
+            identity = (engine.document_id, engine.revision)
+            def received(toc):
+                if session in self._sessions and session.engine is engine and identity == (engine.document_id, engine.revision):
+                    session.nav_panel.outline.load_toc(toc)
+                    session._outline_loaded = True
+            self._run_task("Reading outline", engine.get_toc, on_result=received)
         if key != "thumbnails":
             return
 
@@ -1170,7 +1215,26 @@ class PDFViewer(QMainWindow):
     def _on_tab_close_requested(self, session: DocumentSession) -> None:
         self.close_document(session)
 
-    def open_in_new_tab(self, path: str) -> DocumentSession | None:
+    def open_in_new_tab(self, path: str, *, on_open=None) -> DocumentSession | None:
+        if self._printing:
+            return None
+        session = self._create_session()
+        session._after_open = on_open
+        self._queued_open_paths.append((path, None, session, perf_counter()))
+        self._schedule_queued_open()
+        return session
+
+    def load_file(self, path: str) -> None:
+        if self._printing:
+            return
+        if self._session is not None and self._session.engine.is_loaded():
+            if not self._confirm_discard_changes():
+                return
+        session = self._session or self._create_session()
+        self._queued_open_paths.append((path, None, session, perf_counter()))
+        self._schedule_queued_open()
+
+    def _open_in_new_tab_sync(self, path: str) -> DocumentSession | None:
         if self._printing:
             return
         session = self._create_session()
@@ -1187,28 +1251,8 @@ class PDFViewer(QMainWindow):
         return session
 
     def open_files(self, paths: list[str]) -> None:
-        """Open several documents at once, each in its own tab.
-
-        The first document reuses the current tab when it is an untouched
-        placeholder (a tab that exists but has nothing loaded); otherwise
-        every document opens in a fresh tab, matching drag-and-drop
-        behaviour.
-        """
-        paths = [path for path in paths if path]
-        if not paths:
-            return
-        first, rest = paths[0], paths[1:]
-        current = self._session
-        if (
-            current is not None
-            and not current.engine.is_loaded()
-            and not current.engine.is_modified
-        ):
-            self.load_file(first)
-        else:
-            self.open_in_new_tab(first)
-        for path in rest:
-            self.open_in_new_tab(path)
+        """Prepare each requested document off the GUI thread."""
+        self.queue_open_files(paths)
 
     def queue_open_files(self, paths: list[str]) -> None:
         """Open shell/file-association requests after the window can paint.
@@ -1218,7 +1262,7 @@ class PDFViewer(QMainWindow):
         made Windows report the app as loading. The zero-delay handoff lets
         the native main window and loading status become visible first.
         """
-        self._queued_open_paths.extend((path, None) for path in paths if path)
+        self._queued_open_paths.extend((path, None, None, perf_counter()) for path in paths if path)
         self._schedule_queued_open()
 
     def _schedule_queued_open(self) -> None:
@@ -1238,36 +1282,31 @@ class PDFViewer(QMainWindow):
         if self._tasks:
             QTimer.singleShot(100, self._drain_open_queue)
             return
-        path, password = self._queued_open_paths.pop(0)
-        source = Path(path).expanduser().resolve()
-        if source.suffix.casefold() != ".pdf":
-            current = self._session
-            if current is not None and not current.engine.is_loaded():
-                self.load_file(str(source))
-            else:
-                self.open_in_new_tab(str(source))
+        path, password, target, requested_at = self._queued_open_paths.pop(0)
+        if target is not None and target not in self._sessions:
             self._queued_open_finished()
             return
-        current = self._session
+        source = Path(os.path.abspath(os.path.expanduser(path)))
+        current = target or self._session
         session = (
-            current
-            if current is not None
-            and not current.engine.is_loaded()
-            and not current.engine.is_modified
+            target if target is not None else
+            current if current is not None and not current.engine.is_loaded() and not current.engine.is_modified
             else self._create_session()
         )
         self.workspace.set_current_session(session)
         self._session = session
-        session.canvas.wait_for_renders()
-        self._start_queued_pdf_open(session, str(source), password)
+        self._start_queued_pdf_open(session, str(source), password, requested_at=requested_at)
 
     def _start_queued_pdf_open(
         self,
         session: DocumentSession,
         path: str,
         password: str | None,
+        *,
+        requested_at: float | None = None,
     ) -> None:
         display_path = Path(path)
+        session._open_requested_at = perf_counter() if requested_at is None else requested_at
         self._run_task(
             "Opening document",
             _prepare_pdf_engine,
@@ -1279,6 +1318,7 @@ class PDFViewer(QMainWindow):
                 result,
             ),
             on_finished=self._queued_open_finished,
+            on_discard=_dispose_prepared_pdf,
         )
 
     def _queued_pdf_prepared(
@@ -1288,6 +1328,10 @@ class PDFViewer(QMainWindow):
         result: tuple[str, PdfEngine | str | None],
     ) -> None:
         status, value = result
+        if self._closing or session not in self._sessions:
+            if isinstance(value, PdfEngine):
+                after_readers([], value.close)
+            return
         if status in {"password_required", "invalid_password"}:
             if status == "invalid_password":
                 self.info_bar.show_message("The password is not valid.", "error")
@@ -1299,7 +1343,7 @@ class PDFViewer(QMainWindow):
             if accepted:
                 self._queued_open_paths.insert(
                     0,
-                    (str(display_path), password),
+                    (str(display_path), password, session, session._open_requested_at),
                 )
                 # QInputDialog.exec() runs a nested event loop. The worker's
                 # finished signal may therefore have cleared the queue state
@@ -1309,6 +1353,8 @@ class PDFViewer(QMainWindow):
             return
         if status == "error":
             self._error("Open failed", str(value))
+            if session in self._sessions and not session.engine.is_loaded():
+                self.close_document(session)
             return
         opened = value
         if not isinstance(opened, PdfEngine):
@@ -1319,8 +1365,24 @@ class PDFViewer(QMainWindow):
             return
         self.workspace.set_current_session(session)
         self._session = session
+        if hasattr(opened, "open_trace"):
+            trace = opened.open_trace
+            requested = getattr(session, "_open_requested_at", trace.started)
+            trace.values["queue_wait"] = round((trace.started - requested) * 1000, 3)
+            trace.started = requested
         self._replace_session_engine(session, opened)
         self._complete_pdf_open(session, display_path)
+        callback = getattr(session, "_after_open", None)
+        session._after_open = None
+        if callback:
+            callback(session)
+        key = getattr(self, "_pending_welcome_tool", None)
+        self._pending_welcome_tool = None
+        if key:
+            action = {"organize": self._organize_pages, "ocr": self._ocr,
+                      "preflight": self._welcome_preflight}.get(key)
+            if action:
+                QTimer.singleShot(0, action)
 
     def _queued_open_finished(self) -> None:
         if self._closing:
@@ -1426,18 +1488,19 @@ class PDFViewer(QMainWindow):
         )
         if not path:
             return
-        source = self.open_in_new_tab(path)
-        if source is None:
-            return
-        self.workspace.set_current_session(host)
-        self._session = host
-        if not host.has_split:
-            host.set_split(True)
-            if host.split_canvas is not None:
-                self._wire_canvas(host, host.split_canvas)
-        self._set_split_source(host, source)
-        self.split_action.setChecked(True)
-        self._sync_split_actions(host)
+        def attach(source):
+            if host not in self._sessions or not host.engine.is_loaded():
+                return
+            self.workspace.set_current_session(host)
+            self._session = host
+            if not host.has_split:
+                host.set_split(True)
+                if host.split_canvas is not None:
+                    self._wire_canvas(host, host.split_canvas)
+            self._set_split_source(host, source)
+            self.split_action.setChecked(True)
+            self._sync_split_actions(host)
+        self.open_in_new_tab(path, on_open=attach)
 
     def _set_split_orientation(self, orientation: str) -> None:
         value = "vertical" if orientation == "vertical" else "horizontal"
@@ -1606,14 +1669,10 @@ class PDFViewer(QMainWindow):
         Replacing the current document on drop was legacy behaviour; with
         tabs available, drops must never destroy the open work.
         """
-        if self._session is None or not self._session.engine.is_loaded():
-            self.load_file(path)
-        else:
-            self.open_in_new_tab(path)
+        self.queue_open_files([path])
 
     def _add_extra_dropped_files(self, paths: list) -> None:
-        for raw in paths:
-            self.open_in_new_tab(raw)
+        self.queue_open_files(paths)
 
     def _toggle_context_panel(self) -> None:
         if self.context_panel.isVisible():
@@ -1992,6 +2051,31 @@ class PDFViewer(QMainWindow):
         self._refresh_annotate_list()
 
     # --- Document lifecycle ---------------------------------------------
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_startup_reported", False):
+            self._startup_reported = True
+            self._startup_trace.mark("main_window_visible")
+            QTimer.singleShot(0, self._startup_interactive)
+
+    def _startup_interactive(self):
+        self._startup_trace.mark("time_to_interactive")
+        self._startup_trace.report("interactive")
+
+    def _welcome_preflight(self):
+        self.show_smart_detection()
+        if self._session:
+            self._session.analysis_panel.tabs.setCurrentIndex(1)
+
+    def _welcome_tool(self, key):
+        if key == "merge":
+            self._merge_pdfs()
+            return
+        self._pending_welcome_tool = key
+        self._open_dialog()
+        if not self._queued_open_paths and not self._open_queue_scheduled:
+            self._pending_welcome_tool = None
+
     def _open_dialog(self) -> None:
         # Multi-select: every chosen file opens in its own tab.
         paths, _ = QFileDialog.getOpenFileNames(
@@ -2022,7 +2106,7 @@ class PDFViewer(QMainWindow):
         else:
             self.load_file(dialog.selected_path)
 
-    def load_file(self, path: str) -> None:
+    def _load_file_sync(self, path: str) -> None:
         if self._printing:
             return
         if self._session is not None and self._session.engine.is_loaded():
@@ -2127,21 +2211,30 @@ class PDFViewer(QMainWindow):
             for host in self._sessions
             if host is not session and host.split_source_session is session
         ]
+        if not close_previous:
+            # Undo/rollback callers retain ownership and may close the previous
+            # engine themselves; finish its readers before handing it back.
+            for canvas in self._document_canvases(session):
+                canvas.wait_for_renders()
+            session.nav_panel.thumbnails.quiesce_renders()
+        readers = session.canvas.reader_events() + session.nav_panel.thumbnails.reader_events()
         for host in dependent_hosts:
             if host.split_canvas is not None:
-                host.split_canvas.clear()
-        session.canvas.clear()
+                readers += host.split_canvas.reader_events()
+                host.split_canvas.clear(wait=False)
+        session.canvas.clear(wait=False)
         if (
             session.split_canvas is not None
             and session.split_source_session is None
         ):
-            session.split_canvas.clear()
-        session.nav_panel.thumbnails.quiesce_renders()
+            readers += session.split_canvas.reader_events()
+            session.split_canvas.clear(wait=False)
+        session.nav_panel.thumbnails.quiesce_renders(wait=False)
         previous = session.engine
         opened.set_mutation_recorder(session.undo_stack.push_bytes)
         session.engine = opened
         if close_previous:
-            previous.close()
+            after_readers(readers, previous.close)
         for host in dependent_hosts:
             host.set_split_source(session)
 
@@ -2153,6 +2246,11 @@ class PDFViewer(QMainWindow):
         reset_history: bool = True,
         announce: bool = True,
     ) -> bool:
+        trace = getattr(session.engine, "open_trace", PerformanceTrace("open_document"))
+        session.large_document = session.engine.page_count > LARGE_DOCUMENT_PAGES
+        session._open_trace = trace
+        trace.values["large_document"] = session.large_document
+        ui_started = perf_counter()
         self.workspace.set_current_session(session)
         self._session = session
         # Keep the user-facing source path when a PostScript temp PDF was used.
@@ -2165,9 +2263,24 @@ class PDFViewer(QMainWindow):
         if reset_history:
             self._undo_stack.clear()
         self._update_undo_actions()
-        self.workspace.set_recent_files(self.settings.recent_files())
+        self.workspace.set_recent_files(self.settings.recent_files(), self.settings.get("recent_file_info", {}))
         zoom = self.settings.get_zoom_ratio()
-        session.canvas.load_doc(self.engine.document, zoom)
+        with trace.span("page_model"):
+            session.canvas.load_doc(self.engine.document, zoom)
+        render_started = perf_counter()
+        def first_page(page):
+            if page != session.canvas.current_page or session.engine is not opened_engine:
+                return
+            session.canvas.pageRendered.disconnect(first_page)
+            trace.values["first_page_render"] = round(session.canvas.last_render_ms, 3)
+            trace.values["first_page_delivery"] = round((perf_counter() - render_started) * 1000, 3)
+            trace.mark("time_to_first_page")
+            trace.values["first_visible_page"] = page + 1
+            trace.report("first_page")
+            session.nav_panel.thumbnails.enable_rendering()
+            QTimer.singleShot(0, lambda: self._cache_recent_preview(session, opened_engine))
+        opened_engine = session.engine
+        session.canvas.pageRendered.connect(first_page)
         if (
             session.split_canvas is not None
             and session.split_source_session is None
@@ -2175,11 +2288,13 @@ class PDFViewer(QMainWindow):
             session.split_canvas.load_doc(self.engine.document, zoom)
             session.split_canvas.set_page(0, emit=False)
         temp_path = self.engine.temp_path
-        if temp_path:
-            self.workspace.nav_panel.load_document(
-                str(temp_path), self.engine.page_count, self.engine.password
-            )
-        self._load_navigation()
+        with trace.span("thumbnail_panel"):
+            if temp_path:
+                self.workspace.nav_panel.load_document(
+                    str(temp_path), self.engine.page_count, self.engine.password, defer_render=True
+                )
+        with trace.span("navigation"):
+            self._load_navigation()
         self.workspace.show_document(True)
         self._page = 0
         self._set_document_available(True)
@@ -2187,15 +2302,43 @@ class PDFViewer(QMainWindow):
         self.bottom_bar.set_document_info(
             display_path.name, self.engine.page_count, str(display_path)
         )
-        self.context_panel.set_page_count(self.engine.page_count)
-        self._update_page_state()
-        self._refresh_annotate_list()
+        with trace.span("inspector"):
+            self.context_panel.set_page_count(self.engine.page_count)
+        with trace.span("search_text"):
+            self._update_page_state()
+        self.context_panel.refresh_annotation_list([])
         self._refresh_all_split_source_choices()
+        trace.values["page_analysis"] = "on_demand"
+        trace.values["ui_refresh"] = round((perf_counter() - ui_started) * 1000, 3)
+        def interactive():
+            if session in self._sessions and session.engine is opened_engine and not self._closing:
+                trace.mark("time_to_interactive")
+                trace.report("interactive")
+        QTimer.singleShot(0, interactive)
         if announce:
             self.info_bar.show_message(
                 f"✅ Loaded: {display_path.name}", "success", 2500
             )
         return True
+
+    def _cache_recent_preview(self, session, engine):
+        if self._closing or session not in self._sessions or session.engine is not engine:
+            return
+        path = str(session.display_path)
+        details = dict(self.settings.get("recent_file_info", {}) or {})
+        view = session.canvas._page_views.get(0)
+        if path not in details or view is None or view.overlay._pixmap is None:
+            return
+        image = view.overlay._pixmap.toImage().scaled(32, 44, Qt.AspectRatioMode.KeepAspectRatio,
+                                                    Qt.TransformationMode.SmoothTransformation)
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        if image.save(buffer, "PNG"):
+            details[path] = dict(details[path], thumbnail=base64.b64encode(bytes(data)).decode("ascii"))
+            self.settings.set("recent_file_info", details)
+            self.workspace._empty._on_recent_thumb(path, image)
+        buffer.close()
 
     def save_file(self) -> None:
         if not self.engine.is_loaded():
@@ -2260,9 +2403,6 @@ class PDFViewer(QMainWindow):
                 host.set_split_source(None)
         self._sessions = [item for item in self._sessions if item is not target]
         self.workspace.close_tab(target)
-        thumbnail_snapshot = getattr(target, "_thumbnail_snapshot", None)
-        if thumbnail_snapshot:
-            Path(thumbnail_snapshot).unlink(missing_ok=True)
         target.close()
         self._refresh_all_split_source_choices()
         remaining = self.workspace.current_session()
@@ -3753,14 +3893,56 @@ class PDFViewer(QMainWindow):
         )
 
     def _refresh_annotate_list(self) -> None:
+        # Page changes, tab switches, and document opening must never scan the PDF.
         session = self._session
-        with DOCUMENT_LOCK:
-            entries = (
-                list_document_annotations(session.engine.document)
-                if session is not None and session.engine.is_loaded()
-                else []
-            )
-            self.context_panel.refresh_annotation_list(entries)
+        cached = getattr(session, "_annotation_records", None) if session else None
+        valid = cached and cached[0] == (session.engine.document_id, session.engine.revision)
+        entries = cached[1] if valid else []
+        if not valid and session:
+            view = session.canvas._page_views.get(session.page)
+            if view is not None:
+                entries = [dict(entry, page=session.page) for entry in view.overlay._annotations]
+        self.context_panel.refresh_annotation_list(entries)
+
+    def _scan_annotations(self) -> None:
+        session = self._session
+        if session is None or not session.engine.is_loaded() or self._tasks:
+            return
+        engine = session.engine
+        identity = (engine.document_id, engine.revision)
+        cached = getattr(session, "_annotation_records", None)
+        if cached and cached[0] == identity:
+            self.context_panel.refresh_annotation_list(cached[1])
+            return
+
+        def scan(progress=None, is_cancelled=None):
+            from core.annotations import list_annotations
+            entries = []
+            count = engine.page_count
+            for page_number in range(count):
+                if is_cancelled and is_cancelled():
+                    return []
+                with DOCUMENT_LOCK:
+                    if not engine.is_loaded() or (engine.document_id, engine.revision) != identity:
+                        return []
+                    page = engine.document.load_page(page_number)
+                    for entry in list_annotations(page):
+                        entries.append(dict(entry, page=page_number))
+                if progress and page_number % 100 == 0:
+                    progress(page_number + 1, count, "Reading annotations")
+            return entries
+
+        def received(entries):
+            if session not in self._sessions or session.engine is not engine:
+                return
+            if (engine.document_id, engine.revision) != identity:
+                return
+            session._annotation_records = (identity, entries)
+            if session is self._session:
+                self.context_panel.refresh_annotation_list(entries)
+
+        self._run_task("Reading document annotations", scan, progress_argument="progress",
+                       cancel_argument="is_cancelled", on_result=received)
 
     def _select_annotation(self, page: int, xref: int) -> None:
         session = self._session
@@ -3952,7 +4134,8 @@ class PDFViewer(QMainWindow):
         if session is None:
             return
         nav = session.nav_panel
-        nav.outline.load_toc(session.engine.get_toc())
+        session._outline_loaded = False
+        nav.outline.clear()
         key = self._bookmark_key(session)
         nav.bookmarks.load_bookmarks(self.settings.get_bookmarks(key) if key else [])
         nav.bookmarks.set_current_page(session.page)
@@ -5475,6 +5658,7 @@ class PDFViewer(QMainWindow):
         progress_argument: str | None = None,
         cancel_argument: str | None = None,
         on_finished: Callable[[], None] | None = None,
+        on_discard: Callable | None = None,
         **kwargs,
     ) -> FunctionTask | None:
         if self._tasks or self._printing:
@@ -5495,6 +5679,7 @@ class PDFViewer(QMainWindow):
             *args,
             progress_argument=progress_argument,
             cancel_argument=cancel_argument,
+            discard_result=on_discard,
             **kwargs,
         )
         self._tasks.add(task)
@@ -5511,6 +5696,8 @@ class PDFViewer(QMainWindow):
 
         def result(value) -> None:
             if self._closing:
+                if on_discard is not None:
+                    on_discard(value)
                 return
             if on_result:
                 on_result(value)
@@ -5941,8 +6128,5 @@ class PDFViewer(QMainWindow):
         for task in list(self._tasks):
             task.cancel()
         for session in list(self._sessions):
-            thumbnail_snapshot = getattr(session, "_thumbnail_snapshot", None)
-            if thumbnail_snapshot:
-                Path(thumbnail_snapshot).unlink(missing_ok=True)
             session.close()
         event.accept()

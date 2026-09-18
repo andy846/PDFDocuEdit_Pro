@@ -714,6 +714,7 @@ def global_style() -> str:
             border: 2px dashed {c['primary']};
             border-radius: {R.MD}px;
         }}
+        QLabel#welcomeBrand {{ font-size: {F.LG}px; font-weight: {F.SEMIBOLD}; }}
         QLabel#emptyTitle {{ font-size: {F.TITLE}px; font-weight: {F.SEMIBOLD}; }}
         QLabel#emptyDescription {{ color: {c['text_secondary']}; font-size: {F.LG}px; }}
         QLabel#emptyEyebrow {{

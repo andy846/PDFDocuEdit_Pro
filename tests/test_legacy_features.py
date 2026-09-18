@@ -58,7 +58,7 @@ def test_readme_dialog_constructs(tmp_path: Path, monkeypatch) -> None:
 def test_thumbnail_context_delete_current(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "ctx.pdf", pages=3)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
     session = window._session
 
@@ -81,7 +81,7 @@ def test_thumbnail_context_delete_current(tmp_path: Path, monkeypatch) -> None:
 def test_rotate_current_quick_action(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "rot.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
 
     window._rotate_current(90)
@@ -99,8 +99,8 @@ def test_save_all_files(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "all-a.pdf")
     second = make_pdf(tmp_path / "all-b.pdf")
-    window.load_file(str(first))
-    window.open_in_new_tab(str(second))
+    window._load_file_sync(str(first))
+    window._open_in_new_tab_sync(str(second))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
 
     for session in window._sessions:
@@ -177,7 +177,7 @@ def test_decrypt_ui_flow_produces_readable_output(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(
         viewer_module, "ask_password", lambda *args, **kwargs: ("secret123", True)
     )
-    window.load_file(str(encrypted))
+    window._load_file_sync(str(encrypted))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
     assert window.engine.is_loaded() and window.engine.is_encrypted()
     assert window.side_panel._buttons["decrypt"].isEnabled()
@@ -221,7 +221,7 @@ def test_editing_encrypted_doc_preserves_password_on_save(
     monkeypatch.setattr(
         viewer_module, "ask_password", lambda *args, **kwargs: ("secret123", True)
     )
-    window.load_file(str(encrypted))
+    window._load_file_sync(str(encrypted))
     assert _wait(app, lambda: not window.workspace.canvas._pending)
     assert "Keep me secret" in window.engine.document.load_page(0).get_text()
     assert window.engine.is_encrypted()  # original was encrypted

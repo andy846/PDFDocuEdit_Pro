@@ -84,7 +84,7 @@ def test_viewer_thumbnail_status_and_counts_follow_primary_and_history(tmp_path,
         document.save(source)
     window = viewer_module.PDFViewer()
     window.show()
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     session = window._session
     thumbnails = session.nav_panel.thumbnails
 

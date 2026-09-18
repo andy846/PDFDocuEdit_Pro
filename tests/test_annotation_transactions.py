@@ -37,7 +37,7 @@ def viewer(tmp_path, monkeypatch, annotation_app):
         doc.save(source)
     window = viewer_module.PDFViewer()
     monkeypatch.setattr(window, "_error", lambda *args: None)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     window._session.set_split(True)
     yield window
     window.engine._is_modified = False

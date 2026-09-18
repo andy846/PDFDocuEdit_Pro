@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -168,7 +169,7 @@ class SettingsManager:
         self.set("shortcut_overrides", cleaned)
 
     def get_custom_stamps(self) -> dict[str, str]:
-        """Return named custom-stamp image paths that still exist."""
+        """Return cached stamp choices; validate files only when used."""
         value = self.get("custom_stamps", {})
         if not isinstance(value, dict):
             return {}
@@ -176,12 +177,12 @@ class SettingsManager:
         for raw_name, raw_path in value.items():
             name = str(raw_name).strip()
             path = Path(str(raw_path)).expanduser()
-            if name and path.is_file() and path.suffix.casefold() in {
+            if name and path.suffix.casefold() in {
                 ".png",
                 ".jpg",
                 ".jpeg",
             }:
-                stamps[name] = str(path.resolve())
+                stamps[name] = os.path.abspath(path)
         return stamps
 
     def set_custom_stamps(self, stamps: dict[str, str]) -> None:
@@ -271,13 +272,17 @@ class SettingsManager:
 
     def recent_files(self) -> list[str]:
         values = self.get("recent_files", [])
-        return [str(Path(value)) for value in values if Path(value).is_file()][:10]
+        # Cached UI data: never probe recent paths here (they may be network paths).
+        return [str(Path(value)) for value in values if isinstance(value, str) and value][:10]
 
     def add_recent_file(self, path: str | os.PathLike[str]) -> None:
-        value = str(Path(path).expanduser().resolve())
+        value = os.path.abspath(os.path.expanduser(os.fspath(path)))
         recent = [item for item in self.recent_files() if item != value]
         recent.insert(0, value)
-        self.set("recent_files", recent[:10])
+        recent = recent[:10]
+        details = dict(self.get("recent_file_info", {}) or {})
+        details[value] = dict(details.get(value, {}), last_opened=datetime.now().isoformat(timespec="minutes"))
+        self.update({"recent_files": recent, "recent_file_info": {key: details[key] for key in recent if key in details}})
 
     def get_print_offsets(self) -> tuple[float, float, float, float]:
         """Default print shifts in mm: (left, right, top, bottom).

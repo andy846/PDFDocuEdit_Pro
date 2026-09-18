@@ -49,7 +49,7 @@ def test_about_identifies_developer(tmp_path: Path, monkeypatch) -> None:
 def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "nav.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     window.resize(1100, 760)
     window.show()
     app.processEvents()
@@ -59,6 +59,12 @@ def test_nav_panel_outline_search_and_bookmarks(tmp_path: Path, monkeypatch) -> 
 
     window._show_nav_tab("outline")
     assert nav.active_key() == "outline"
+    from time import monotonic
+
+    from PyQt6.QtTest import QTest
+    deadline = monotonic() + 5
+    while window._tasks and monotonic() < deadline:
+        QTest.qWait(10)
     assert nav.outline._tree.topLevelItemCount() == 2
 
     window.show_document_info()
@@ -153,7 +159,7 @@ def test_command_registry_palette_and_dialogs(tmp_path: Path, monkeypatch) -> No
 def test_undo_keeps_real_save_target(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "undo-save-target.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
 
     window._snapshot_before("Rotate Pages")
     window.engine.rotate_pages([0], 90)
@@ -178,7 +184,7 @@ def test_delete_pages_refreshes_status_for_outlook_attachment(
     outlook_folder = tmp_path / "Content.Outlook" / "ABC123"
     outlook_folder.mkdir(parents=True)
     source = make_pdf(outlook_folder / "attachment.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
 
     def answer(_parent, title, *_args, **_kwargs):
         if title == "Delete pages":
@@ -203,7 +209,7 @@ def test_signed_document_warning_can_cancel_destructive_edit(
 ) -> None:
     window, _app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "signed.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     monkeypatch.setattr(window.engine, "has_digital_signatures", lambda: True)
     monkeypatch.setattr(
         viewer_module.QMessageBox,
@@ -228,7 +234,7 @@ def test_multi_step_undo_and_redo_preserves_history(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "undo.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     app.processEvents()
 
     window._snapshot_before("Rotate Pages")
@@ -262,7 +268,7 @@ def test_background_search_for_large_documents(tmp_path: Path, monkeypatch) -> N
             page = document.new_page()
             page.insert_text((72, 96), f"unique-needle on page {index + 1}")
         document.save(source)
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     app.processEvents()
 
     panel = window.workspace.nav_panel.search

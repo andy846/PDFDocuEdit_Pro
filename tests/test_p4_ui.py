@@ -48,11 +48,11 @@ def test_open_multiple_tabs_and_switch(tmp_path: Path, monkeypatch) -> None:
     first = make_pdf(tmp_path / "first.pdf", prefix="Alpha")
     second = make_pdf(tmp_path / "second.pdf", prefix="Beta")
 
-    window.load_file(str(first))
+    window._load_file_sync(str(first))
     _wait_renders(app, window.workspace.canvas)
     assert window.workspace.session_count() == 1
 
-    window.open_in_new_tab(str(second))
+    window._open_in_new_tab_sync(str(second))
     _wait_renders(app, window.workspace.canvas)
     assert window.workspace.session_count() == 2
     assert window._session is window.workspace.current_session()
@@ -90,8 +90,8 @@ def test_close_tab_and_last_tab_returns_empty_state(
         "question",
         staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Discard),
     )
-    window.load_file(str(first))
-    window.open_in_new_tab(str(second))
+    window._load_file_sync(str(first))
+    window._open_in_new_tab_sync(str(second))
     _wait_renders(app, window.workspace.canvas)
     assert window.workspace.session_count() == 2
 
@@ -120,8 +120,8 @@ def test_clicking_tab_x_closes_document_in_real_viewer(
         "question",
         staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Discard),
     )
-    window.load_file(str(first))
-    window.open_in_new_tab(str(second))
+    window._load_file_sync(str(first))
+    window._open_in_new_tab_sync(str(second))
     _wait_renders(app, window.workspace.canvas)
     assert window.workspace.session_count() == 2
 
@@ -143,8 +143,8 @@ def test_per_session_undo_isolation(tmp_path: Path, monkeypatch) -> None:
     first = make_pdf(tmp_path / "first.pdf", pages=4, prefix="Alpha")
     second = make_pdf(tmp_path / "second.pdf", pages=2, prefix="Beta")
 
-    window.load_file(str(first))
-    window.open_in_new_tab(str(second))
+    window._load_file_sync(str(first))
+    window._open_in_new_tab_sync(str(second))
     _wait_renders(app, window.workspace.canvas)
 
     second_session = window._session
@@ -176,7 +176,7 @@ def test_per_session_undo_isolation(tmp_path: Path, monkeypatch) -> None:
 def test_split_view_same_document(tmp_path: Path, monkeypatch) -> None:
     window, app = _window(tmp_path, monkeypatch)
     source = make_pdf(tmp_path / "split.pdf")
-    window.load_file(str(source))
+    window._load_file_sync(str(source))
     _wait_renders(app, window.workspace.canvas)
 
     session = window._session
@@ -222,9 +222,9 @@ def test_split_view_compares_another_open_document_read_only(
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "contract.pdf", pages=3, prefix="Contract")
     second = make_pdf(tmp_path / "revision.pdf", pages=2, prefix="Revision")
-    window.load_file(str(first))
+    window._load_file_sync(str(first))
     host = window._session
-    source = window.open_in_new_tab(str(second))
+    source = window._open_in_new_tab_sync(str(second))
     assert host is not None and source is not None
     _wait_renders(app, source.canvas)
 
@@ -278,8 +278,8 @@ def test_compat_properties_track_current_session(tmp_path: Path, monkeypatch) ->
     first = make_pdf(tmp_path / "first.pdf")
     second = make_pdf(tmp_path / "second.pdf")
 
-    window.load_file(str(first))
-    window.open_in_new_tab(str(second))
+    window._load_file_sync(str(first))
+    window._open_in_new_tab_sync(str(second))
     _wait_renders(app, window.workspace.canvas)
 
     second_session = window._session
@@ -311,9 +311,9 @@ def test_outline_to_thumbnails_resyncs_each_document(
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "first.pdf", pages=4, prefix="Alpha")
     second = make_pdf(tmp_path / "second.pdf", pages=3, prefix="Beta")
-    window.load_file(str(first))
+    window._load_file_sync(str(first))
     first_session = window._session
-    window.open_in_new_tab(str(second))
+    window._open_in_new_tab_sync(str(second))
     second_session = window._session
 
     window.workspace.set_current_session(first_session)
@@ -344,7 +344,7 @@ def test_notification_overlay_does_not_reflow_pdf_viewport(
 ) -> None:
     window, app = _window(tmp_path, monkeypatch)
     window._set_motion_enabled(False)
-    window.load_file(str(make_pdf(tmp_path / "notification.pdf", pages=2)))
+    window._load_file_sync(str(make_pdf(tmp_path / "notification.pdf", pages=2)))
     window.info_bar.hide_bar()
     app.processEvents()
     session = window._session

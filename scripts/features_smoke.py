@@ -9,6 +9,7 @@ if not getattr(sys, 'frozen', False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fitz
 from PyQt6.QtCore import QSettings
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from core.forms import apply_values, enumerate_fields
@@ -53,6 +54,10 @@ def run(output):
     window.settings.set('animations_enabled', False)
     window.show()
     window.load_file(str(path))
+    deadline = time.monotonic() + 30
+    while not window.engine.is_loaded() and time.monotonic() < deadline:
+        QTest.qWait(10)
+    check(window.engine.is_loaded(), 'asynchronous document opening completed')
     form = FormDialog(data, window)
     form.show()
     form._editor.setPlainText('中文客戶 Customer')

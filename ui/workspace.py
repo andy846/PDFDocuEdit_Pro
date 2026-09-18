@@ -2,31 +2,28 @@
 
 from __future__ import annotations
 
+import base64
+from collections import OrderedDict
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import (
-    QAbstractAnimation,
-    QEasingCurve,
     QEvent,
     QObject,
-    QPropertyAnimation,
-    QRunnable,
     QSize,
     Qt,
-    QThreadPool,
     QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
-    QGraphicsOpacityEffect,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTabBar,
     QTabWidget,
@@ -35,8 +32,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.diagnostics import connect_interrupts, log_failure
 from core.platform_service import PlatformService
+from core.recent_files import check_availability
+from core.resources import APP_VERSION
 from styles.theme import get_color
 from styles.tokens import D, S
 
@@ -45,7 +43,6 @@ from .icons import icon
 from .motion import MotionIconButton
 from .pdf_canvas import PdfCanvas
 
-RECENT_THUMB_SCALE = 0.08
 RECENT_ICON_W = 32
 RECENT_ICON_H = 44
 
@@ -53,44 +50,13 @@ RECENT_ICON_H = 44
 
 
 class _RecentSignals(QObject):
-    interrupted = pyqtSignal(str)
-    finished = pyqtSignal(str, object)  # (path, QPixmap)
-
-
-class _RecentThumbTask(QRunnable):
-    """Background render of a recent file's first page."""
-
-    def __init__(self, path: str, scale: float = RECENT_THUMB_SCALE):
-        super().__init__()
-        self.setAutoDelete(True)
-        self._path = path
-        self._scale = scale
-        self.signals = _RecentSignals()
-        connect_interrupts(self.signals)
-
-    def run(self) -> None:
-        try:
-            with fitz.open(self._path) as doc:
-                page = doc.load_page(0)
-                matrix = fitz.Matrix(self._scale, self._scale)
-                pix = page.get_pixmap(matrix=matrix, alpha=False)
-                image = QImage(
-                    pix.samples,
-                    pix.width,
-                    pix.height,
-                    pix.stride,
-                    QImage.Format.Format_RGB888,
-                ).copy()
-                self.signals.finished.emit(self._path, image)
-        except (KeyboardInterrupt, SystemExit) as exc:
-            self.signals.interrupted.emit(type(exc).__name__)
-        except Exception:
-            log_failure("Recent document thumbnail unavailable")
+    available = pyqtSignal(str, int, bool)
 
 
 class EmptyState(QWidget):
     openRequested = pyqtSignal()
     recentRequested = pyqtSignal(str)
+    toolRequested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,30 +67,33 @@ class EmptyState(QWidget):
         outer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._zone = QFrame()
         self._zone.setObjectName("emptyDropZone")
-        self._zone.setMinimumSize(520, 370)
+        self._zone.setMinimumWidth(480)
         self._zone.setMaximumWidth(720)
+        self._zone.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(self._zone)
         layout.setContentsMargins(S.XXL, S.XL, S.XXL, S.XL)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setSpacing(S.MD)
-        eyebrow = QLabel("YOUR PDF WORKSPACE")
-        eyebrow.setObjectName("emptyEyebrow")
-        eyebrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(eyebrow)
+        eyebrow = QLabel(f"PDFDocuEdit Pro  ·  {APP_VERSION}")
+        eyebrow.setObjectName("welcomeBrand")
+        eyebrow.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._image = QLabel()
         self._image.setObjectName("emptyIconBadge")
-        self._image.setFixedSize(76, 76)
+        self._image.setFixedSize(44, 44)
         self._image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._image)
-        self._title = QLabel("Make documents easier to work with")
+        brand = QHBoxLayout()
+        brand.addWidget(self._image)
+        brand.addWidget(eyebrow, 1)
+        layout.addLayout(brand)
+        self._title = QLabel("Open a document")
         self._title.setObjectName("emptyTitle")
-        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._title)
         self._description = QLabel(
-            "Open a PDF to edit, convert, secure and automate it — all in one focused workspace."
+            "Edit, organize and review your PDFs."
         )
         self._description.setObjectName("emptyDescription")
-        self._description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._description.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._description.setWordWrap(True)
         self._description.setMaximumWidth(540)
         layout.addWidget(self._description)
@@ -132,60 +101,105 @@ class EmptyState(QWidget):
         self._open_button.setProperty("primary", True)
         self._open_button.setIcon(icon("folder-open", D.ICON_SM, get_color("on_primary")))
         self._open_button.clicked.connect(self.openRequested.emit)
-        layout.addWidget(self._open_button, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._open_button, 0, Qt.AlignmentFlag.AlignLeft)
         self._drop_hint = QLabel("or drop PDF / PostScript anywhere here")
         self._drop_hint.setObjectName("dropHint")
-        self._drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._drop_hint.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._drop_hint)
         self._recent_title = QLabel("Recent files")
         self._recent_title.setObjectName("sectionTitle")
-        self._recent_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._recent_title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._recent_title)
         self._recent = QListWidget()
         self._recent.setMaximumWidth(560)
-        self._recent.setMaximumHeight(150)
+        self._recent.setMaximumHeight(220)
         self._recent.setIconSize(QSize(RECENT_ICON_W, RECENT_ICON_H))
         self._recent.itemActivated.connect(lambda item: self.recentRequested.emit(item.data(Qt.ItemDataRole.UserRole)))
         layout.addWidget(self._recent)
+        tools = QHBoxLayout()
+        for label, key in (("Combine PDFs", "merge"), ("Organize Pages", "organize"), ("OCR", "ocr"), ("Preflight", "preflight")):
+            button = QPushButton(label)
+            button.setProperty("secondary", True)
+            button.clicked.connect(lambda checked=False, value=key: self.toolRequested.emit(value))
+            tools.addWidget(button)
+        layout.addWidget(QLabel("Quick tools"))
+        layout.addLayout(tools)
         outer.addWidget(self._zone)
         self._recent_items: dict[str, QListWidgetItem] = {}
         self._thumb_done: set[str] = set()
-        self._recent_pool = QThreadPool.globalInstance()
+        self._recent_generation = 0
+        self._availability_started = -1
+        self._recent_signals = _RecentSignals(self)
+        self._recent_signals.available.connect(self._on_availability)
+        self._thumb_cache = OrderedDict()
+        self._recent_info = {}
 
-        self._image_opacity = QGraphicsOpacityEffect(self._image)
-        self._image.setGraphicsEffect(self._image_opacity)
-        self._pulse = QPropertyAnimation(self._image_opacity, b"opacity", self)
-        self._pulse.setDuration(1450)
-        self._pulse.setStartValue(0.62)
-        self._pulse.setEndValue(1.0)
-        self._pulse.setEasingCurve(QEasingCurve.Type.InOutSine)
-        self._pulse.setLoopCount(-1)
         self.refresh_icons()
-        self._pulse.start()
 
-    def set_recent_files(self, paths: list[str]) -> None:
+    def set_recent_files(self, paths: list[str], info: dict | None = None) -> None:
+        self._recent_info = info if isinstance(info, dict) else {}
+        self._recent_generation += 1
         self._recent.clear()
         self._recent_items.clear()
         self._thumb_done.clear()
         for value in paths[:5]:
             path = Path(value)
-            item = QListWidgetItem(icon("file-text", D.ICON_SM), path.name)
+            location = str(path.parent)
+            location = location if len(location) < 64 else "…" + location[-63:]
+            details = self._recent_info.get(str(path), {})
+            details = details if isinstance(details, dict) else {}
+            opened = str(details.get("last_opened", "")).replace("T", " ")
+            suffix = f"  ·  {opened}" if opened else ""
+            item = QListWidgetItem(icon("file-text", D.ICON_SM), f"{path.name}\n{location}{suffix}")
+            encoded = details.get("thumbnail", "")
+            if isinstance(encoded, str) and 0 < len(encoded) <= 65536:
+                try:
+                    image = QImage.fromData(base64.b64decode(encoded, validate=True))
+                    if not image.isNull():
+                        self._thumb_cache[str(path)] = image
+                except (ValueError, TypeError):
+                    pass
             item.setToolTip(str(path))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             item.setSizeHint(QSize(0, RECENT_ICON_H + 4))
             self._recent.addItem(item)
             self._recent_items[str(path)] = item
-            self._schedule_recent_thumb(str(path))
+            cached = self._thumb_cache.get(str(path))
+            if cached is not None:
+                self._on_recent_thumb(str(path), cached)
+        self._recent.setFixedHeight(min(3, len(paths)) * (RECENT_ICON_H + 4) + 8)
         visible = bool(paths)
         self._recent_title.setVisible(visible)
         self._recent.setVisible(visible)
+        if self.isVisible():
+            QTimer.singleShot(0, self._verify_recents)
 
-    def _schedule_recent_thumb(self, path: str) -> None:
-        task = _RecentThumbTask(path)
-        task.signals.finished.connect(self._on_recent_thumb)
-        self._recent_pool.start(task)
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._verify_recents)
+
+    def _verify_recents(self):
+        if not self.isVisible() or self._availability_started == self._recent_generation:
+            return
+        self._availability_started = self._recent_generation
+        for path in self._recent_items:
+            check_availability(path, self._recent_generation, self._recent_signals)
+
+    def _on_availability(self, path, generation, available):
+        if generation != self._recent_generation:
+            return
+        item = self._recent_items.get(path)
+        if item is not None:
+            state = "Available" if available else "Unavailable"
+            item.setToolTip(f"{path}\n{state}")
+            if not available:
+                item.setText(item.text() + "  ·  Unavailable")
 
     def _on_recent_thumb(self, path: str, image: QImage) -> None:
+        self._thumb_cache[path] = image
+        self._thumb_cache.move_to_end(path)
+        while len(self._thumb_cache) > 10:
+            self._thumb_cache.popitem(last=False)
         item = self._recent_items.get(path)
         if item is None or self._recent.row(item) < 0:
             return  # stale result for a list that has since changed
@@ -204,7 +218,7 @@ class EmptyState(QWidget):
     def refresh_icons(self) -> None:
         name = "folder-open" if self._drag_active else "file-text"
         self._image.setPixmap(
-            icon(name, 42, get_color("primary")).pixmap(QSize(42, 42))
+            icon(name, 28, get_color("primary")).pixmap(QSize(28, 28))
         )
         self._open_button.setIcon(icon("folder-open", D.ICON_SM, get_color("on_primary")))
         for index in range(self._recent.count()):
@@ -219,30 +233,20 @@ class EmptyState(QWidget):
         self._zone.setProperty("dragActive", active)
         self._zone.style().unpolish(self._zone)
         self._zone.style().polish(self._zone)
-        self._title.setText("Release to open this document" if active else "Make documents easier to work with")
+        self._title.setText("Release to open this document" if active else "Open a document")
         self._description.setText(
             "PDFDocuEdit Pro will open it in the focused document canvas."
             if active
-            else "Open a PDF to edit, convert, secure and automate it — all in one focused workspace."
+            else "Edit, organize and review your PDFs."
         )
         self._drop_hint.setText("Ready — let go to open" if active else "or drop PDF / PostScript anywhere here")
         self.refresh_icons()
 
     def set_animations_enabled(self, enabled: bool) -> None:
         self._animations_enabled = enabled
-        if enabled and self.isVisible():
-            self._pulse.start()
-        else:
-            self._pulse.stop()
-            self._image_opacity.setOpacity(1.0)
 
     def set_active(self, active: bool) -> None:
-        if active and self._animations_enabled:
-            if self._pulse.state() != QAbstractAnimation.State.Running:
-                self._pulse.start()
-        else:
-            self._pulse.stop()
-            self._image_opacity.setOpacity(1.0)
+        pass  # The Welcome Page is deliberately still.
 
 
 class TabCloseButton(MotionIconButton):
@@ -322,7 +326,7 @@ class DocumentWorkspace(QFrame):
     tabCloseAllRequested = pyqtSignal()
     tabChanged = pyqtSignal(object)  # DocumentSession
 
-    def __init__(self, recent_files: list[str] | None = None, animations_enabled: bool = True, parent=None):
+    def __init__(self, recent_files: list[str] | None = None, animations_enabled: bool = True, parent=None, recent_info: dict | None = None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._animations_enabled = animations_enabled
@@ -382,7 +386,7 @@ class DocumentWorkspace(QFrame):
         self._stack.addWidget(self._tabs)
         layout.addWidget(self._stack)
 
-        self.set_recent_files(recent_files or [])
+        self.set_recent_files(recent_files or [], recent_info)
 
     # --- tab management --------------------------------------------------
     def create_tab(self, session: DocumentSession) -> None:
@@ -648,8 +652,8 @@ class DocumentWorkspace(QFrame):
         self._stack.setCurrentWidget(self._tabs if show else self._empty)
         self._empty.set_active(not show)
 
-    def set_recent_files(self, paths: list[str]) -> None:
-        self._empty.set_recent_files(paths)
+    def set_recent_files(self, paths: list[str], info: dict | None = None) -> None:
+        self._empty.set_recent_files(paths, info)
 
     def refresh_icons(self) -> None:
         self._empty.refresh_icons()

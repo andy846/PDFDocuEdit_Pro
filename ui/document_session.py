@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.pdf_engine import PdfEngine
+from core.reader_lifetime import after_readers
 from core.undo import UndoStack
 
 from .analysis_panel import AnalysisPanel
@@ -308,9 +309,17 @@ class DocumentSession(QObject):
 
     def close(self) -> None:
         """Quiesce background renders and release the document."""
-        self.canvas.clear()
+        readers = self.canvas.reader_events() + self.nav_panel.thumbnails.reader_events()
+        self.canvas.clear(wait=False)
         if self.split_canvas is not None:
-            self.split_canvas.clear()
+            readers += self.split_canvas.reader_events()
+            self.split_canvas.clear(wait=False)
         self.nav_panel.clear_document()
         self.analysis_panel.hide()
-        self.engine.close()
+        engine = self.engine
+        snapshot = getattr(self, "_thumbnail_snapshot", None)
+        def cleanup():
+            engine.close()
+            if snapshot:
+                Path(snapshot).unlink(missing_ok=True)
+        after_readers(readers, cleanup)

@@ -27,7 +27,7 @@ def test_corrupt_settings_fall_back_to_defaults(tmp_path: Path) -> None:
     assert settings.get_window_size() == (1280, 820)
 
 
-def test_recent_files_are_deduplicated_and_missing_files_are_hidden(tmp_path: Path) -> None:
+def test_recent_files_are_deduplicated_and_missing_files_remain_cached(tmp_path: Path) -> None:
     config = tmp_path / "settings.json"
     first = tmp_path / "first.pdf"
     second = tmp_path / "second.pdf"
@@ -40,7 +40,7 @@ def test_recent_files_are_deduplicated_and_missing_files_are_hidden(tmp_path: Pa
     assert settings.recent_files() == [str(first.resolve()), str(second.resolve())]
 
     second.unlink()
-    assert settings.recent_files() == [str(first.resolve())]
+    assert settings.recent_files() == [str(first.resolve()), str(second.resolve())]
     assert json.loads(config.read_text(encoding="utf-8"))["recent_files"][0] == str(first.resolve())
 
 

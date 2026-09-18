@@ -116,8 +116,8 @@ class NavPanel(QFrame):
         else:
             self.show_panel(self._active_key)
 
-    def load_document(self, doc_path: str, page_count: int, password: str | None = None) -> None:
-        self.thumbnails.load_document(doc_path, page_count, password)
+    def load_document(self, doc_path: str, page_count: int, password: str | None = None, *, defer_render: bool = False) -> None:
+        self.thumbnails.load_document(doc_path, page_count, password, defer_render=defer_render)
         self.search.reset_query()
         self.outline.clear()
         self.bookmarks.clear()

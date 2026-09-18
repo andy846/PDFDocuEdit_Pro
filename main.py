@@ -67,7 +67,7 @@ class SingleInstanceRouter(QObject):
     def _message(paths: list[Path] | list[str]) -> bytes:
         payload = {
             "activate": True,
-            "paths": [str(Path(path).expanduser().resolve()) for path in paths],
+            "paths": [os.path.abspath(os.path.expanduser(str(path))) for path in paths],
         }
         return (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
 
@@ -298,12 +298,11 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
 
 
 def pdf_arguments(argv: list[str]) -> list[Path]:
-    """Existing .pdf/.ps/.eps files among the command-line arguments."""
+    """Candidate paths only; validation belongs to the background opener."""
     return [
-        Path(argument).expanduser().resolve()
+        Path(os.path.abspath(os.path.expanduser(argument)))
         for argument in argv
-        if Path(argument).expanduser().is_file()
-        and Path(argument).suffix.casefold() in {".pdf", ".ps", ".eps"}
+        if Path(argument).suffix.casefold() in {".pdf", ".ps", ".eps"}
     ]
 
 

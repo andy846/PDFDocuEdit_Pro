@@ -39,6 +39,7 @@ def test_large_list_keeps_widgets_bounded_and_restores_cached_image(monkeypatch)
 def test_failed_thumbnail_stops_after_two_attempts(monkeypatch):
     app = QApplication.instance() or QApplication([])
     panel = ThumbnailPanel(animations_enabled=False)
+    panel.show()
     started = []
     monkeypatch.setattr(panel._pool, "start", lambda *args: started.append(args))
     try:
@@ -89,6 +90,93 @@ def test_fast_scroll_prioritizes_visible_pages_before_prefetch(monkeypatch):
         assert not panel._list.itemWidget(panel._list.item(first)).image_label.pixmap().isNull()
     finally:
         panel.clear()
+        panel.close()
+        panel.deleteLater()
+        app.processEvents()
+
+
+def test_scrollbar_jumps_follow_actual_visible_rows_and_restore_images(monkeypatch):
+    """Use Qt geometry as the oracle, never the scheduler's own range helper."""
+    app = QApplication.instance() or QApplication([])
+    panel = ThumbnailPanel(False)
+    monkeypatch.setattr(panel._pool, "start", lambda *args: None)
+    monkeypatch.setattr(panel._pool, "tryTake", lambda task: True)
+    panel.resize(240, 700)
+    panel.load_document("unused.pdf", 18000)
+    panel.show()
+    image = QImage(8, 8, QImage.Format.Format_RGB888)
+    image.fill(0xFF123456)
+    try:
+        app.processEvents()
+        scroll = panel._list.verticalScrollBar()
+        for fraction in (0, .1, .5, .9, 1, .6, .02, 1, 0):
+            scroll.setValue(round(scroll.maximum() * fraction))
+            app.processEvents()
+            viewport = panel._list.viewport().rect()
+            # Independent exhaustive oracle is intentional in this regression;
+            # production must use bounded geometry lookups instead.
+            visible = {row for row in range(18000)
+                       if panel._list.visualRect(panel._list.model().index(row, 0)).intersects(viewport)}
+            assert visible
+            assert visible <= panel._widget_rows
+            assert visible <= panel._pending | panel._cache.keys()
+            for row in visible:
+                panel._on_thumbnail_rendered(row, image, panel._generation)
+                widget = panel._list.itemWidget(panel._list.item(row))
+                assert widget is not None
+                assert not widget.image_label.pixmap().isNull()
+            assert len(panel._widget_rows) < 30
+            assert len(panel._pending) <= 12
+        # Hide/show must recover the current viewport without another scroll.
+        panel.hide()
+        scroll.setValue(scroll.maximum())
+        panel.show()
+        app.processEvents()
+        assert 17999 in panel._widget_rows
+    finally:
+        panel.clear()
+        panel.close()
+        panel.deleteLater()
+        app.processEvents()
+
+
+def test_real_large_pdf_fills_visible_rows_after_drag_stops(tmp_path):
+    from time import monotonic
+
+    from PyQt6.QtTest import QTest
+
+    from scripts.benchmark_open import synthetic_pdf
+
+    app = QApplication.instance() or QApplication([])
+    source = synthetic_pdf(tmp_path / "large-thumbnails.pdf", 18000)
+    panel = ThumbnailPanel(False)
+    panel.resize(240, 700)
+    panel.load_document(str(source), 18000)
+    panel.show()
+    try:
+        app.processEvents()
+        scroll = panel._list.verticalScrollBar()
+        # Drag rapidly across distant ranges, then stop without another nudge.
+        for fraction in (.1, .8, .3, 1):
+            scroll.setValue(round(scroll.maximum() * fraction))
+        app.processEvents()
+        viewport = panel._list.viewport().rect()
+        visible = {row for row in range(17980, 18000)
+                   if panel._list.visualRect(panel._list.model().index(row, 0)).intersects(viewport)}
+        assert 17999 in visible
+        deadline = monotonic() + 15
+        while not visible <= panel._cache.keys() and monotonic() < deadline:
+            QTest.qWait(20)
+        assert visible <= panel._cache.keys()
+        for row in visible:
+            widget = panel._list.itemWidget(panel._list.item(row))
+            assert widget is not None
+            assert not widget.image_label.pixmap().isNull()
+        assert len(panel._cache) <= 80
+        assert len(panel._pending) <= 12
+    finally:
+        panel.clear()
+        panel.quiesce_renders()
         panel.close()
         panel.deleteLater()
         app.processEvents()
