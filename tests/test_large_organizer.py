@@ -236,3 +236,126 @@ def test_resizing_and_failed_preparation_have_safe_ui_states(app, tmp_path, monk
             assert not dialog.apply_button.isEnabled()
         finally:
             finish(dialog)
+
+
+def test_pointer_drag_reorders_group_and_history_without_native_drop(app, tmp_path):
+    from PyQt6.QtCore import QEvent, QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    path = synthetic_pdf(tmp_path / "drag.pdf", 18000)
+    with fitz.open(path) as doc:
+        dialog = VisualOrganizerDialog(doc)
+        try:
+            dialog.show()
+            wait_for(lambda: dialog.pages.count() == 18000)
+            app.processEvents()
+            grid = dialog.pages
+            viewport = grid.viewport()
+
+            def move(point):
+                event = QMouseEvent(QEvent.Type.MouseMove, QPointF(point), QPointF(viewport.mapToGlobal(point)),
+                                    Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                QApplication.sendEvent(viewport, event)
+
+            first = grid.visualRect(grid.model().index(0, 0)).center()
+            fourth = grid.visualRect(grid.model().index(3, 0)).center()
+            initial_history = len(dialog._history)
+            QTest.mousePress(viewport, Qt.MouseButton.LeftButton, pos=first)
+            move(fourth)
+            assert grid._dragging and grid._drop_slot == 4
+            # Only commit the plan on release, keeping hover/auto-scroll cheap.
+            assert grid.order()[:4] == [0, 1, 2, 3]
+            QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, pos=fourth)
+            assert grid.order()[:4] == [1, 2, 3, 0]
+            assert len(dialog._history) == initial_history + 1
+            dialog._undo()
+            assert grid.order()[:4] == [0, 1, 2, 3]
+            dialog._redo()
+            assert grid.order()[:4] == [1, 2, 3, 0]
+            grid.restore()
+            grid.select_positions([0, 1])
+            QTest.mousePress(viewport, Qt.MouseButton.LeftButton, pos=first)
+            move(fourth)
+            QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, pos=fourth)
+            assert grid.order()[:4] == [2, 3, 0, 1]
+            assert grid.selected_positions() == [2, 3]
+            assert len(grid.findChildren(QWidget)) < 10
+        finally:
+            finish(dialog)
+
+
+def test_pointer_drag_auto_scroll_and_escape_cancel(app, tmp_path):
+    from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    path = synthetic_pdf(tmp_path / "drag-cancel.pdf", 1001)
+    with fitz.open(path) as doc:
+        dialog = VisualOrganizerDialog(doc)
+        try:
+            dialog.show()
+            wait_for(lambda: dialog.pages.count() == 1001)
+            app.processEvents()
+            grid = dialog.pages
+            viewport = grid.viewport()
+            start = grid.visualRect(grid.model().index(0, 0)).center()
+            end = QPoint(start.x(), viewport.height() - 4)
+            QTest.mousePress(viewport, Qt.MouseButton.LeftButton, pos=start)
+            event = QMouseEvent(QEvent.Type.MouseMove, QPointF(end), QPointF(viewport.mapToGlobal(end)),
+                                Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+            QApplication.sendEvent(viewport, event)
+            assert grid._dragging
+            wait_for(lambda: grid.verticalScrollBar().value() > 0)
+            QTest.keyClick(grid, Qt.Key.Key_Escape)
+            QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, pos=end)
+            assert not grid._dragging and not grid._drag_scroll.isActive()
+            assert grid.order() == list(range(1001))
+        finally:
+            finish(dialog)
+
+
+@pytest.mark.parametrize("soft", ["#263f60", "rgba(16, 144, 200, 46)"])
+def test_large_card_uses_rounded_theme_surface_and_selection_badge(app, monkeypatch, soft):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QColor, QImage, QPainter
+    from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    from core.page_plan import PagePlanEntry
+    from dialogs.virtual_organizer import CELL_H, CELL_W
+    from styles.theme import get_colors
+
+    colors = dict(get_colors(), primary_soft=soft)
+    monkeypatch.setattr("dialogs.virtual_organizer.get_colors", lambda: colors)
+    with fitz.open() as doc:
+        doc.new_page()
+        grid = VirtualOrganizerGrid(doc)
+        grid.set_plan([PagePlanEntry("card", "current", 0)])
+        option = QStyleOptionViewItem()
+        option.rect = QRect(0, 0, CELL_W, CELL_H)
+        option.state = QStyle.StateFlag.State_Enabled
+        sentinel = QColor("#fa00fa")
+        def paint():
+            image = QImage(CELL_W, CELL_H, QImage.Format.Format_ARGB32)
+            image.fill(sentinel)
+            painter = QPainter(image)
+            grid.itemDelegate().paint(painter, option, grid.model().index(0, 0))
+            painter.end()
+            return image
+        try:
+            image = paint()
+            assert image.pixelColor(5, 5) == sentinel  # Rounded outer corner stays transparent.
+            assert image.pixelColor(20, 20) == QColor(get_colors()["bg_surface"])
+            option.state |= QStyle.StateFlag.State_Selected
+            image = paint()
+            if soft.startswith("rgba"):
+                base = QColor(colors["bg_surface"])
+                expected = QColor(*(round(front * 46 / 255 + back * 209 / 255)
+                                    for front, back in zip((16, 144, 200), base.getRgb()[:3], strict=True)))
+            else:
+                expected = QColor(soft)
+            assert image.pixelColor(20, 20) == expected
+            assert image.pixelColor(CELL_W - 20, 14) == QColor(get_colors()["primary"])
+            assert grid.frameShape() == grid.Shape.NoFrame
+        finally:
+            grid.shutdown()
+            grid.reader.close()
+            grid.deleteLater()
+            app.processEvents()

@@ -3,15 +3,17 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 from math import ceil
 
-from PyQt6.QtCore import QAbstractListModel, QSize, Qt, QThreadPool, QTimer, pyqtSignal
-from PyQt6.QtGui import QPen, QPixmap
-from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyledItemDelegate
+from PyQt6.QtCore import QAbstractListModel, QPoint, QRectF, QSize, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+from PyQt6.QtWidgets import QAbstractItemView, QApplication, QFrame, QListView, QStyledItemDelegate
 
 from core.diagnostics import log_failure
 from core.page_plan import PagePlanEntry, PlanReader, duplicate_entries
 from core.pdf_engine import DOCUMENT_LOCK
 from core.performance import PerformanceTrace
 from core.tasks import FunctionTask, TaskCancelled
+from styles.theme import get_colors
+from styles.tokens import F, R
 
 CELL_W, CELL_H = 172, 236
 
@@ -40,20 +42,6 @@ class PlanModel(QAbstractListModel):
                       f"{entry.source_label or 'Page'} {entry.source_page + 1}")
             return f"{index.row() + 1} · {source}"
 
-    def flags(self, index):
-        return super().flags(index) | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled
-
-    def supportedDropActions(self):
-        return Qt.DropAction.MoveAction
-
-    def mimeTypes(self):
-        return ["application/x-pdfdocuedit-plan"]
-
-    def mimeData(self, indexes):
-        from PyQt6.QtCore import QMimeData
-        data = QMimeData()
-        data.setData(self.mimeTypes()[0], b"pages")
-        return data
 
 
 class PageDelegate(QStyledItemDelegate):
@@ -63,12 +51,31 @@ class PageDelegate(QStyledItemDelegate):
         entry = grid._widgets[index.row()].entry
         card = option.rect.adjusted(4, 4, -4, -4)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        palette = option.palette
+        colors = get_colors()
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         painter.save()
-        painter.fillRect(card, palette.highlight() if selected else palette.base())
-        painter.setPen(QPen(palette.mid().color()))
-        painter.drawRect(card)
-        painter.setPen(palette.highlightedText().color() if selected else palette.text().color())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        surface = QColor(colors["bg_surface"])
+        if selected:
+            value = colors["primary_soft"]
+            if value.startswith("rgba("):
+                # The Windows accent palette supplies a QSS rgba() string,
+                # which QColor does not parse. Blend it onto the card surface.
+                red, green, blue, alpha = map(int, value[5:-1].split(","))
+                channels = (red, green, blue)
+                background = (surface.red(), surface.green(), surface.blue())
+                surface = QColor(*(round((front * alpha + back * (255 - alpha)) / 255)
+                                   for front, back in zip(channels, background, strict=True)))
+            else:
+                surface = QColor(value)
+        painter.setBrush(surface)
+        border = colors["primary"] if selected else colors["border_strong"] if hovered else "transparent"
+        painter.setPen(QPen(QColor(border), 2))
+        painter.drawRoundedRect(QRectF(card).adjusted(1, 1, -1, -1), R.LG, R.LG)
+        painter.setPen(QColor(colors["text_secondary"]))
+        font = painter.font()
+        font.setPixelSize(F.SM)
+        painter.setFont(font)
         image_area = card.adjusted(12, 8, -12, -50)
         cached = grid._thumb_cache.get(entry)
         if cached:
@@ -77,7 +84,17 @@ class PageDelegate(QStyledItemDelegate):
             size = pixmap.size().scaled(image_area.size(), Qt.AspectRatioMode.KeepAspectRatio)
             x = image_area.x() + (image_area.width() - size.width()) // 2
             y = image_area.y() + (image_area.height() - size.height()) // 2
+            paper = QRectF(x, y, size.width(), size.height())
+            clip = QPainterPath()
+            clip.addRoundedRect(paper, R.SM, R.SM)
+            painter.save()
+            painter.setClipPath(clip)
             painter.drawPixmap(x, y, size.width(), size.height(), pixmap)
+            painter.restore()
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(colors["border"]), 1))
+            painter.drawRoundedRect(paper, R.SM, R.SM)
+            painter.setPen(QColor(colors["text_secondary"]))
             details = f"{width * 25.4 / 72:.0f} × {height * 25.4 / 72:.0f} mm · {entry.final_rotation}°"
         else:
             painter.drawText(image_area, Qt.AlignmentFlag.AlignCenter,
@@ -87,6 +104,18 @@ class PageDelegate(QStyledItemDelegate):
         text = painter.fontMetrics().elidedText(index.data(), Qt.TextElideMode.ElideMiddle, caption.width())
         painter.drawText(caption, Qt.AlignmentFlag.AlignCenter, text)
         painter.drawText(card.adjusted(4, card.height() - 25, -4, -3), Qt.AlignmentFlag.AlignCenter, details)
+        if selected:
+            badge = QRectF(card.right() - 30, card.top() + 6, 24, 24)
+            painter.setPen(QPen(QColor(colors["bg_surface"]), 2))
+            painter.setBrush(QColor(colors["primary"]))
+            painter.drawEllipse(badge)
+            painter.setPen(QPen(QColor(colors["on_primary"]), 2, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            tick = QPainterPath()
+            tick.moveTo(badge.left() + 7, badge.top() + 12)
+            tick.lineTo(badge.left() + 10, badge.top() + 15)
+            tick.lineTo(badge.left() + 17, badge.top() + 8)
+            painter.drawPath(tick)
         painter.restore()
 
     def sizeHint(self, option, index):
@@ -114,6 +143,14 @@ class VirtualOrganizerGrid(QListView):
         self._task = None
         self._stopping = False
         self._paused = False
+        self._press_point = None
+        self._drag_point = QPoint()
+        self._dragging = False
+        self._drop_slot = None
+        self._collapse_on_click = None
+        self._drag_scroll = QTimer(self)
+        self._drag_scroll.setInterval(40)
+        self._drag_scroll.timeout.connect(self._scroll_drag)
         self._trace = PerformanceTrace("organizer")
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
@@ -123,6 +160,10 @@ class VirtualOrganizerGrid(QListView):
         self._start_timer = QTimer(self)
         self._start_timer.setSingleShot(True)
         self._start_timer.timeout.connect(self._initialize)
+        self.setObjectName("virtualOrganizerGrid")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet("QListView#virtualOrganizerGrid { background: transparent; border: none; }")
+        self.setMouseTracking(True)
         self.setModel(PlanModel(self))
         self.setItemDelegate(PageDelegate(self))
         self.setViewMode(QListView.ViewMode.IconMode)
@@ -135,11 +176,9 @@ class VirtualOrganizerGrid(QListView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        # Match the original Organizer's pointer-driven drag. IconMode's
+        # native InternalMove path is not a reliable model reorder mechanism.
+        self.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
         self.selectionModel().selectionChanged.connect(self._selection_changed)
         self.verticalScrollBar().valueChanged.connect(self._schedule_visible)
 
@@ -265,6 +304,7 @@ class VirtualOrganizerGrid(QListView):
         self.viewport().update()
 
     def request_stop(self):
+        self._cancel_drag()
         self._stopping = True
         self._start_timer.stop()
         self._thumb_timer.stop()
@@ -328,6 +368,7 @@ class VirtualOrganizerGrid(QListView):
                               if record.entry.source_kind == "current" and record.entry.source_page in wanted)
 
     def set_plan(self, entries, selected_ids=None):
+        self._cancel_drag()
         if selected_ids is None:
             selected_ids = {record.entry.entry_id for record in self.selected_widgets()}
         self.model().beginResetModel()
@@ -381,13 +422,107 @@ class VirtualOrganizerGrid(QListView):
         self.set_plan(plan, {entry.entry_id for entry in entries})
         return True
 
-    def dropEvent(self, event):
-        if event.source() is not self:
-            event.ignore()
+    def mousePressEvent(self, event):
+        self._cancel_drag()
+        index = self.indexAt(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton and index.isValid():
+            self._press_point = event.position().toPoint()
+            self._drag_point = QPoint(self._press_point)
+            # Preserve a selected group when pressing one of its cards to drag.
+            if not event.modifiers() and self.selectionModel().isSelected(index):
+                self._collapse_on_click = index.row()
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press_point is not None and not event.buttons() & Qt.MouseButton.LeftButton:
+            self._cancel_drag()
+        if self._press_point is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self._drag_point = event.position().toPoint()
+            if not self._dragging:
+                if (self._drag_point - self._press_point).manhattanLength() < QApplication.startDragDistance():
+                    return
+                self._dragging = bool(self.selected_positions())
+            if self._dragging:
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                self._update_drop_slot()
+                self._drag_scroll.start()
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._dragging:
+                self._drag_point = event.position().toPoint()
+                self._update_drop_slot()
+                target = self._drop_slot
+                self._cancel_drag()
+                if target is not None:
+                    self.move_selected(target)
+                event.accept()
+                return
+            collapse = self._collapse_on_click
+            self._cancel_drag()
+            if collapse is not None:
+                self.select_positions([collapse])
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def _update_drop_slot(self):
+        point = self._drag_point
+        if not self.viewport().rect().contains(point):
+            self._drop_slot = None
+        else:
+            index = self.indexAt(point)
+            if index.isValid():
+                rect = self.visualRect(index)
+                self._drop_slot = index.row() + int(point.x() >= rect.center().x())
+            elif self.count():
+                columns = max(1, self.viewport().width() // CELL_W)
+                row = (point.y() + self.verticalScrollBar().value()) // CELL_H
+                self._drop_slot = min(self.count(), row * columns + max(0, point.x() // CELL_W))
+        self.viewport().update()
+
+    def _scroll_drag(self):
+        if not self._dragging:
+            self._drag_scroll.stop()
             return
-        target = self.indexAt(event.position().toPoint()).row()
-        self.move_selected(self.count() if target < 0 else target)
-        event.acceptProposedAction()
+        area = self.viewport().rect()
+        point = self._drag_point
+        if not area.contains(point):
+            return
+        delta = -28 if point.y() < 28 else 28 if point.y() > area.height() - 28 else 0
+        if delta:
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.value() + delta)
+            self._update_drop_slot()
+
+    def _cancel_drag(self):
+        self._drag_scroll.stop()
+        self._press_point = None
+        self._dragging = False
+        self._drop_slot = None
+        self._collapse_on_click = None
+        self.viewport().unsetCursor()
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._dragging or self._drop_slot is None or not self.count():
+            return
+        after_last = self._drop_slot == self.count()
+        index = self.model().index(self.count() - 1 if after_last else self._drop_slot, 0)
+        rect = self.visualRect(index).adjusted(2, 6, -2, -6)
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(get_colors()["primary"]), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        x = rect.right() if after_last else rect.left()
+        painter.drawLine(x, rect.top(), x, rect.bottom())
+        painter.end()
 
     def move_selected(self, target):
         selected = set(self.selected_positions())
@@ -398,9 +533,14 @@ class VirtualOrganizerGrid(QListView):
         rest = [entry for i, entry in enumerate(plan) if i not in selected]
         insertion = max(0, min(len(rest), target - sum(i < target for i in selected)))
         rest[insertion:insertion] = moving
-        self.set_plan(rest, {entry.entry_id for entry in moving})
+        if rest != plan:
+            self.set_plan(rest, {entry.entry_id for entry in moving})
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self._press_point is not None:
+            self._cancel_drag()
+            event.accept()
+            return
         control = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
         if control and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
             selected = self.selected_positions()
