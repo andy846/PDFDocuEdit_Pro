@@ -9,7 +9,6 @@ from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -26,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from core.diagnostics import connect_interrupts, log_failure
 from core.page_plan import POINTS_PER_MM, crop_entries, interleave_entries, parse_page_selection
+from ui.responsive import ResponsiveDialog
 
 from .base import ToolDialog
 
@@ -90,7 +90,7 @@ class OrganizerWorker(QThread):
             self.failed.emit(exc)
 
 
-class JobDialog(QDialog):
+class JobDialog(ResponsiveDialog):
     def __init__(self, title, function, parent):
         super().__init__(parent)
         self.setWindowTitle(title)

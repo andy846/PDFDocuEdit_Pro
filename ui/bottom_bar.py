@@ -292,7 +292,14 @@ class BottomBar(QWidget):
         self._elide_status()
 
     def _update_responsive_layout(self, width: int) -> None:
+        self.layout().setContentsMargins(4 if width < 760 else S.MD, 0, 4 if width < 760 else S.MD, 0)
+        self.layout().setSpacing(2 if width < 760 else S.XS)
         compact = width < 1160
+        self._zoom_out.setVisible(width >= 760)
+        self._zoom_in.setVisible(width >= 760)
+        self._slider.setVisible(width >= 1000)
+        self._status.setVisible(width >= 900)
+        self._file.setVisible(width >= 760)
         self._size.setVisible(not compact)
         self._size_separator.setVisible(not compact)
         status_width = 128 if compact else 180

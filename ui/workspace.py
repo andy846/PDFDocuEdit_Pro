@@ -42,6 +42,7 @@ from .document_session import DocumentSession
 from .icons import icon
 from .motion import MotionIconButton
 from .pdf_canvas import PdfCanvas
+from .responsive import scroll_container
 
 RECENT_ICON_W = 32
 RECENT_ICON_H = 44
@@ -67,7 +68,7 @@ class EmptyState(QWidget):
         outer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._zone = QFrame()
         self._zone.setObjectName("emptyDropZone")
-        self._zone.setMinimumWidth(480)
+        self._zone.setMinimumWidth(360)
         self._zone.setMaximumWidth(720)
         self._zone.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(self._zone)
@@ -124,7 +125,14 @@ class EmptyState(QWidget):
             tools.addWidget(button)
         layout.addWidget(QLabel("Quick tools"))
         layout.addLayout(tools)
-        outer.addWidget(self._zone)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(4, 4, 4, 4)
+        content_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        content_layout.addWidget(self._zone)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setAlignment(Qt.AlignmentFlag(0))
+        outer.addWidget(scroll_container(content, self))
         self._recent_items: dict[str, QListWidgetItem] = {}
         self._thumb_done: set[str] = set()
         self._recent_generation = 0

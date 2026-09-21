@@ -5,10 +5,11 @@ from __future__ import annotations
 import threading
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout
 
 from core.diagnostics import log_failure
 from core.resources import APP_VERSION
+from ui.responsive import ResponsiveDialog
 from updates.protocol import Cancelled, check_release, download
 from updates.runtime import managed_root, request_restart
 from updates.trust import PUBLIC_KEY_HEX, REPOSITORY
@@ -43,7 +44,7 @@ class UpdateWorker(QThread):
             self.failed.emit(str(exc))
 
 
-class UpdateDialog(QDialog):
+class UpdateDialog(ResponsiveDialog):
     def __init__(self, viewer):
         super().__init__(viewer)
         self.viewer = viewer

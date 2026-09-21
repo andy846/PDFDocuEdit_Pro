@@ -18,6 +18,7 @@ from core.diagnostics import log_failure
 
 from .capabilities import CapabilityId, detect_capabilities
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
+from .performance import PerformanceTrace
 from .platform_service import PlatformService
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -82,16 +83,22 @@ def merge_pdfs(
     output_path: str | os.PathLike[str],
     progress: ProgressCallback | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    *,
+    compact: bool = False,
 ) -> Path:
-    sources = [Path(path).expanduser().resolve() for path in paths]
+    trace = PerformanceTrace("merge_pdf")
+    sources = [Path(os.path.abspath(os.path.expanduser(path))) for path in paths]
     if not sources:
         raise ToolError("Select at least one PDF to merge.")
+    if is_cancelled and is_cancelled():
+        raise ToolError("The merge was cancelled.")
     target = Path(output_path).expanduser().resolve()
-    missing = next((source for source in sources if not source.is_file()), None)
-    if missing:
-        raise ToolError(f"Source file not found: {missing}")
     temporary = _temporary_pdf_path(target)
     expected_pages = 0
+    trace.values["open_total"] = 0.0
+    trace.values["insert_total"] = 0.0
+    trace.values["files"] = len(sources)
+    trace.values["deep_compression"] = compact
     try:
         with fitz.open() as output:
             total = len(sources)
@@ -99,25 +106,42 @@ def merge_pdfs(
             for index, source_path in enumerate(sources):
                 if is_cancelled and is_cancelled():
                     break
-                _progress(progress, index, total, source_path.name)
+                _progress(progress, index, total + 2, source_path.name)
                 try:
-                    with fitz.open(source_path) as source:
+                    with trace.span("source_open"):
+                        source = fitz.open(source_path)
+                    trace.values["open_total"] += trace.values.pop("source_open")
+                    with source:
                         if first_metadata is None:
                             first_metadata = source.metadata or {}
                         expected_pages += source.page_count
-                        output.insert_pdf(source)
+                        with trace.span("insert"):
+                            output.insert_pdf(source)
+                        trace.values["insert_total"] += trace.values.pop("insert")
                 except Exception as exc:
                     raise ToolError(f"Cannot read {source_path.name}: {exc}") from exc
-                _progress(progress, index + 1, total, source_path.name)
+                _progress(progress, index + 1, total + 2, source_path.name)
             if is_cancelled and is_cancelled():
                 raise ToolError("The merge was cancelled.")
             if first_metadata:
                 set_safe_pdf_metadata(output, first_metadata)
-            output.save(temporary, garbage=4, deflate=True)
-        validate_pdf_file(temporary, expected_page_count=expected_pages)
+            trace.mark("assembly")
+            _progress(progress, total, total + 2, "Saving merged PDF…")
+            with trace.span("save"):
+                output.save(temporary, garbage=4 if compact else 1, deflate=compact)
+        if is_cancelled and is_cancelled():
+            raise ToolError("The merge was cancelled.")
+        _progress(progress, total + 1, total + 2, "Validating merged PDF…")
+        with trace.span("validation"):
+            validate_pdf_file(temporary, expected_page_count=expected_pages)
+        if is_cancelled and is_cancelled():
+            raise ToolError("The merge was cancelled.")
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
+    trace.values["pages"] = expected_pages
+    trace.mark("total")
+    trace.report("saved")
     return target
 
 

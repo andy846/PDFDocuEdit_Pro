@@ -342,14 +342,15 @@ class CommandBar(QWidget):
         self._update_compact_state()
 
     def _update_compact_state(self) -> None:
-        integrated = bool(self.property("integratedTitleBar"))
         width = self.width()
-        self._title.setVisible(not integrated or width >= 1080)
-        self._save_as.setVisible(not integrated or width >= 1020)
-        self._print.setVisible(not integrated or width >= 1100)
-        self._work.setVisible(not integrated or width >= 1250)
-        self._diagnostics.setVisible(not integrated or width >= 1180)
-        self._theme.setVisible(not integrated or width >= 1160)
+        for button in self._canvas_buttons.values():
+            button.setVisible(width >= 900)
+        self._title.setVisible(width >= 1080)
+        self._save_as.setVisible(width >= 1020)
+        self._print.setVisible(width >= 1100)
+        self._work.setVisible(width >= 1250)
+        self._diagnostics.setVisible(width >= 1180)
+        self._theme.setVisible(width >= 1160)
 
     def _button(self, icon_name: str, tooltip: str, signal) -> MotionIconButton:
         button = MotionIconButton(icon_name, tooltip, D.ICON_MD)

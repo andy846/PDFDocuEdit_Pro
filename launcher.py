@@ -109,6 +109,8 @@ def supervise(installation: Installation, arguments: list[str], *, spawn=subproc
 
 
 def main() -> int:
+    from updates.windows_shell import set_process_identity
+    set_process_identity()
     root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
     try:
         installation = Installation(root)

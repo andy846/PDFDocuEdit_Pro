@@ -61,6 +61,7 @@ class BatchPrintDialog(ToolDialog):
         self._printing = False
 
         columns = QHBoxLayout()
+        self._columns = columns
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -115,6 +116,7 @@ class BatchPrintDialog(ToolDialog):
 
         right = QWidget()
         right.setFixedWidth(340)
+        self._settings_column = right
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
@@ -236,10 +238,18 @@ class BatchPrintDialog(ToolDialog):
         self.cancel_button.clicked.connect(self._cancel_request)
         self.cancel_button.setEnabled(False)
         buttons.rejected.connect(self.reject)
-        right_layout.addWidget(buttons)
         columns.addWidget(right)
         self._root.addLayout(columns)
+        self._root.addWidget(buttons)
 
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_settings_column"):
+            narrow = self.width() < 980
+            self._columns.setDirection(QHBoxLayout.Direction.TopToBottom if narrow else QHBoxLayout.Direction.LeftToRight)
+            self._settings_column.setMinimumWidth(0 if narrow else 340)
+            self._settings_column.setMaximumWidth(16777215 if narrow else 340)
 
     def _default_profile(self) -> dict[str, object]:
         settings = getattr(self.parent(), "settings", None)

@@ -169,23 +169,8 @@ def _create_splash() -> QSplashScreen:
 
 
 def _set_windows_app_id() -> None:
-    """Give the packaged app its own taskbar identity.
-
-    The AppUserModelID makes Windows look up a registered icon for the ID,
-    which only exists for the packaged executable (whose icon is embedded);
-    for source runs it would replace the window icon with a generic white
-    one, so it is applied only when frozen.
-    """
-    if sys.platform != "win32" or not getattr(sys, "frozen", False):
-        return
-    try:
-        import ctypes
-
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(  # type: ignore[attr-defined]
-            "PDFDocuEdit.Pro"
-        )
-    except Exception:
-        pass
+    from updates.windows_shell import set_process_identity
+    set_process_identity()
 
 
 def _application_icon() -> QIcon:
@@ -386,6 +371,11 @@ def _run_application(root: Path | None) -> int:
     except AttributeError:
         pass
 
+    if root is not None and sys.platform == "win32" and getattr(sys, "frozen", False):
+        from updates.windows_shell import clear_managed_window, configure_managed_window
+        hwnd = int(viewer.winId())
+        configure_managed_window(hwnd, root)
+        app.aboutToQuit.connect(lambda: clear_managed_window(hwnd))
     viewer.show()
     splash.finish(viewer)
     if paths and root is None:

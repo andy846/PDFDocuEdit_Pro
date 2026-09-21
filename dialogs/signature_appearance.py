@@ -1,7 +1,9 @@
 """Handwritten image capture, with no digital-signature claims."""
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QDialogButtonBox, QLabel, QPushButton, QVBoxLayout
+
+from ui.responsive import ResponsiveDialog
 
 
 class SignaturePad(QLabel):
@@ -35,7 +37,7 @@ class SignaturePad(QLabel):
         self.last = None
 
 
-class SignatureAppearanceDialog(QDialog):
+class SignatureAppearanceDialog(ResponsiveDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Draw signature appearance")

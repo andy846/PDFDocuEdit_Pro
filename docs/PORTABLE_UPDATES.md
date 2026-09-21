@@ -2,7 +2,7 @@
 
 ## 公司首次使用
 
-1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.11-Managed-Portable-Windows-x64.zip`，核對同名 `.sha256`。
+1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.12-Managed-Portable-Windows-x64.zip`，核對同名 `.sha256`。
 2. 將整個 `PDFDocuEditPro` 資料夾解壓到 `%LOCALAPPDATA%` 或公司允許寫入及執行的資料夾。請勿覆蓋既有部署資料夾。
 3. 執行 `Launcher.exe`，並建立指向它的桌面捷徑。`launcher_runtime` 是啟動器依賴，必須保留。
 4. 首次啟動可選擇複製現有 Windows 使用者設定。舊設定及 PDF 不會被移動。歷史便攜版的設定如不在 Windows 設定位置，可在關閉程式後把其 `config.json` 中的設定匯入新部署的 `data/config/settings.json`；先保留原檔備份。
@@ -81,3 +81,19 @@ python -m ruff check .
 先從現有 v2.5.5 的 Launcher.exe 啟動，使用 Help → Check for Updates → Download Update → Update and Restart。確認版本變成 2.5.6，Advanced Page Organizer 可插入空白頁及旋轉，再關閉並重新從同一個 Launcher.exe 開啟。檢查設定、PDF 開啟及 logs/updater.log；未儲存文件應仍提供儲存／取消機會。首次直接部署 v2.5.6 無法測試這次跨版本升級。
 
 Installer 本身不阻止 auto update。現有 Setup 使用直接主程式目錄與捷徑，沒有 managed 的 versions/state/launcher 結構；因此這次仍需一次 Managed Portable 過渡。未來 Setup 可安裝相同的 managed 結構並將捷徑／檔案關聯指向 Launcher。這屬另一項安裝、卸載及既有使用者遷移工作，v2.5.6 未修改 Setup 部署結構。
+
+
+## Windows 工作列釘選
+
+修正版本使用共同的 AppUserModelID，主視窗的 RelaunchCommand 指向安裝根目錄的 Launcher.exe。從執行中的主視窗釘選後，即使版本目錄更新，捷徑仍經 Launcher 啟動並保留更新／回復功能。
+
+舊版建立的釘選可能快取了不同識別或版本 EXE 路徑。升級至包含這項修正的版本後：
+
+1. 取消原有 Launcher／PDFDocuEdit Pro 的工作列釘選。
+2. 從安裝根目錄執行 Launcher.exe。
+3. 在正在執行的 PDFDocuEdit Pro 工作列圖示按右鍵，選「釘選到工作列」。
+4. 關閉後由新釘選開啟，確認使用同一個圖示。
+
+請從主視窗重新釘選；直接拖曳裸 Launcher.exe 可能建立沒有明確 AppUserModelID 的舊式捷徑。程式不會自行修改使用者的工作列釘選。
+
+Windows 原生屬性讀寫與啟動／更新回歸測試已覆蓋此設定；Explorer 實際分組仍需在發布套件重新釘選後確認。

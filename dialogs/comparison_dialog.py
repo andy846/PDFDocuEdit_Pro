@@ -27,9 +27,10 @@ from core.comparison import compare_snapshots, manual_pair, snapshot_file, unpai
 from core.diagnostics import log_failure
 from core.tasks import FunctionTask
 from ui.pdf_canvas import PdfCanvas
+from ui.responsive import ResponsiveDialog
 
 
-class ComparisonDialog(QDialog):
+class ComparisonDialog(ResponsiveDialog):
     def __init__(self, source_a, sources_b, parent=None):
         """Sources are (label, snapshot callable, revision callable) tuples."""
         super().__init__(parent)

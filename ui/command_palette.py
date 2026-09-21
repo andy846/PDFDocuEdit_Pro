@@ -6,7 +6,6 @@ from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -19,11 +18,12 @@ from PyQt6.QtWidgets import (
 from core.commands import Command, filter_commands
 from styles.theme import get_colors
 from styles.tokens import D, F, S
+from ui.responsive import ResponsiveDialog
 
 from .icons import icon
 
 
-class CommandPalette(QDialog):
+class CommandPalette(ResponsiveDialog):
     """Frameless popup that filters and runs registered commands."""
 
     commandTriggered = pyqtSignal(str)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import QAbstractTableModel, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -22,13 +24,15 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QTableView,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from core.diagnostics import log_failure
+from core.pdf_engine import DOCUMENT_LOCK
+from core.performance import PerformanceTrace
+from core.tasks import FunctionTask
 
 from .base import (
     ToolDialog,
@@ -50,6 +54,78 @@ def _track_path_edit(edit: QLineEdit) -> None:
             QTimer.singleShot(0, lambda: edit.setCursorPosition(len(text)))
 
     edit.textChanged.connect(update)
+
+
+class PdfFileModel(QAbstractTableModel):
+    """Cached values only: Qt requests cells for visible rows without file I/O."""
+    headers = ("Order", "Filename", "Pages", "Size (MB)", "Modified")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.paths = []
+        self.details = {}
+        self.rows = {}
+
+    def rowCount(self, parent=None):
+        return 0 if parent is not None and parent.isValid() else len(self.paths)
+
+    def columnCount(self, parent=None):
+        return 0 if parent is not None and parent.isValid() else len(self.headers)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.headers[section]
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        path = self.paths[index.row()]
+        detail = self.details.get(path)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return path + ("\n" + detail[3] if detail and detail[3] else "")
+        if role == Qt.ItemDataRole.DisplayRole:
+            values = (index.row() + 1, Path(path).name,
+                      detail[0] if detail and not detail[3] else "Unavailable" if detail else "Pending…",
+                      detail[1] if detail else "", detail[2] if detail else "")
+            return str(values[index.column()])
+
+    def set_paths(self, paths):
+        self.beginResetModel()
+        self.paths = list(paths)
+        self.rows = {path: row for row, path in enumerate(paths)}
+        self.endResetModel()
+
+    def update_detail(self, path, detail):
+        if path not in self.rows:
+            return
+        self.details[path] = detail
+        row = self.rows[path]
+        self.dataChanged.emit(self.index(row, 2), self.index(row, 4))
+
+
+# One shared serial worker avoids unbounded network requests and never makes
+# closing a dialog wait for a slow native read or disconnected share.
+_metadata_pool = None
+
+
+def metadata_pool():
+    global _metadata_pool
+    if _metadata_pool is None:
+        _metadata_pool = QThreadPool()
+        _metadata_pool.setMaxThreadCount(1)
+    return _metadata_pool
+
+
+def read_pdf_detail(path):
+    try:
+        stat = os.stat(path)
+        with DOCUMENT_LOCK, fitz.open(path) as document:
+            if document.needs_pass:
+                raise ValueError("Password-protected PDF")
+            pages = document.page_count
+        return pages, f"{stat.st_size / 1048576:.2f}", datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"), ""
+    except Exception as exc:
+        return 0, "", "", str(exc)
 
 
 class PdfFileTable(QTableWidget):
@@ -74,6 +150,73 @@ class PdfFileTable(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for column in (2, 3, 4):
             self.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        # DropOnly mode makes the viewport route drop events to this table
+        # (with NoDragDrop the view swallows the drop before our handler).
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.setDropIndicatorShown(True)
+
+    def dragEnterEvent(self, event) -> None:
+        if self._pdf_paths(event):
+            self.setProperty("dragActive", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        # QAbstractItemView's default implementation asks its item model if
+        # the hovered cell is droppable. A QTableWidget model rejects file
+        # URLs, cancelling the eventual drop after dragEnterEvent accepted it.
+        if self._pdf_paths(event):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event) -> None:
+        self.setProperty("dragActive", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        self.setProperty("dragActive", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        pdfs = self._pdf_paths(event)
+        if pdfs:
+            self.filesDropped.emit(pdfs)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
+
+
+class MergeFileTable(QTableView):
+    filesDropped = pyqtSignal(list)
+
+    @staticmethod
+    def _pdf_paths(event) -> list[str]:
+        return [
+            url.toLocalFile()
+            for url in event.mimeData().urls()
+            if url.isLocalFile() and url.toLocalFile().casefold().endswith(".pdf")
+        ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setModel(PdfFileModel(self))
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setAlternatingRowColors(True)
+        self.verticalHeader().setDefaultSectionSize(32)
+        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for column in (2, 3, 4):
+            self.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        self.horizontalHeader().resizeSection(0, 55)
+        self.horizontalHeader().resizeSection(2, 85)
+        self.horizontalHeader().resizeSection(3, 90)
+        self.horizontalHeader().resizeSection(4, 140)
         self.setAcceptDrops(True)
         self.viewport().setAcceptDrops(True)
         # DropOnly mode makes the viewport route drop events to this table
@@ -277,12 +420,20 @@ class MergePDFDialog(ToolDialog):
     def __init__(self, parent=None):
         super().__init__("Merge PDF Files", "merge-pdf", parent)
         self.file_paths: list[str] = []
-        self._page_counts: dict[str, int] = {}
+        self._pending = deque()
+        self._queued = set()
+        self._metadata_task = None
+        self._stopped = False
+        self._total_pages = 0
+        self._read_count = 0
+        self._load_timer = QTimer(self)
+        self._load_timer.setSingleShot(True)
+        self._load_timer.timeout.connect(self._load_next)
         self.output_path = ""
         hint = QLabel("Add or drop PDFs, then arrange the exact merge order.")
         hint.setObjectName("secondary")
         self._root.addWidget(hint)
-        self.table = PdfFileTable()
+        self.table = MergeFileTable()
         self.table.filesDropped.connect(self.add_paths)
         self._root.addWidget(self.table, 1)
         actions = QHBoxLayout()
@@ -299,6 +450,8 @@ class MergePDFDialog(ToolDialog):
         self.total = QLabel("0 files · 0 pages")
         actions.addWidget(self.total)
         self._root.addLayout(actions)
+        self.compact = QCheckBox("Deep compression (slower; may reduce output size)")
+        self._root.addWidget(self.compact)
         self.add_validation()
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -313,11 +466,70 @@ class MergePDFDialog(ToolDialog):
         self.add_paths(paths)
 
     def add_paths(self, paths: list[str]) -> None:
+        trace = PerformanceTrace("merge_add_files")
+        known = {os.path.normcase(path) for path in self.file_paths}
         for value in paths:
-            path = str(Path(value).resolve())
-            if path not in self.file_paths and Path(path).is_file():
-                self.file_paths.append(path)
+            # Lexical normalization only. resolve()/is_file() can access UNC.
+            path = os.path.abspath(os.path.expanduser(value))
+            if Path(path).suffix.casefold() != ".pdf" or os.path.normcase(path) in known:
+                continue
+            known.add(os.path.normcase(path))
+            self.file_paths.append(path)
+            if path not in self.table.model().details and path not in self._queued:
+                self._queued.add(path)
+                self._pending.append(path)
         self._refresh()
+        self._load_timer.start(0)
+        trace.values["files"] = len(self.file_paths)
+        trace.mark("interactive")
+        trace.report("queued")
+
+    def _load_next(self):
+        if self._stopped or self._metadata_task is not None:
+            return
+        while self._pending:
+            path = self._pending.popleft()
+            if path in self.table.model().rows:
+                break
+            self._queued.discard(path)
+        else:
+            return
+        task = FunctionTask(lambda: (path, read_pdf_detail(path)))
+        self._metadata_task = task
+        task.signals.result.connect(self._detail_ready)
+        task.signals.finished.connect(self._detail_finished)
+        metadata_pool().start(task)
+
+    def _detail_ready(self, result):
+        if self._stopped:
+            return
+        path, detail = result
+        self._queued.discard(path)
+        model = self.table.model()
+        if path in model.rows:
+            old = model.details.get(path)
+            self._total_pages += detail[0] - (old[0] if old else 0)
+            self._read_count += int(old is None)
+            model.update_detail(path, detail)
+            self._update_total()
+
+    def _detail_finished(self):
+        self._metadata_task = None
+        if not self._stopped:
+            self._load_timer.start(0)
+
+    def _update_total(self):
+        pending = len(self.file_paths) - self._read_count
+        suffix = f" · {pending} pending" if pending else ""
+        self.total.setText(f"{len(self.file_paths)} files · {self._total_pages} pages{suffix}")
+
+    def done(self, result):
+        self._stopped = True
+        self._load_timer.stop()
+        self._pending.clear()
+        if self._metadata_task is not None:
+            self._metadata_task.cancel()
+        super().done(result)
 
     def _remove(self) -> None:
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()}, reverse=True)
@@ -326,7 +538,7 @@ class MergePDFDialog(ToolDialog):
         self._refresh()
 
     def _move(self, offset: int) -> None:
-        row = self.table.currentRow()
+        row = self.table.currentIndex().row()
         target = row + offset
         if row < 0 or not 0 <= target < len(self.file_paths):
             return
@@ -335,36 +547,18 @@ class MergePDFDialog(ToolDialog):
         self.table.selectRow(target)
 
     def _refresh(self) -> None:
-        self.table.setRowCount(0)
-        total_pages = 0
-        for index, value in enumerate(self.file_paths, 1):
-            path = Path(value)
-            pages = self._page_count(value)
-            total_pages += pages
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-            values = (index, path.name, pages, f"{path.stat().st_size / 1048576:.2f}", modified)
-            for column, item in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(str(item)))
-        self.total.setText(f"{len(self.file_paths)} files · {total_pages} pages")
+        model = self.table.model()
+        model.set_paths(self.file_paths)
+        model.details = {path: detail for path, detail in model.details.items() if path in model.rows}
+        self._total_pages = sum(detail[0] for detail in model.details.values())
+        self._read_count = len(model.details)
+        self._update_total()
 
     def drop_extensions(self) -> set[str] | None:
         return {".pdf"}
 
     def add_dropped_paths(self, paths: list[str]) -> None:
         self.add_paths(paths)
-
-    def _page_count(self, path: str) -> int:
-        """Cached page count; opening every PDF on each refresh is wasteful."""
-        if path not in self._page_counts:
-            try:
-                with fitz.open(path) as document:
-                    self._page_counts[path] = document.page_count
-            except Exception:
-                log_failure('batch_tools._page_count: fallback after failure', 10)
-                self._page_counts[path] = 0
-        return self._page_counts[path]
 
     def _choose_output(self) -> None:
         if len(self.file_paths) < 2:

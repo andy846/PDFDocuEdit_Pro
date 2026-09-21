@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, Qt
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.diagnostics import log_failure
+from ui.responsive import ResponsiveDialog, reveal_widget
 
 
 def password_line_edit(placeholder: str = "") -> QLineEdit:
@@ -149,7 +150,7 @@ class PathLineEdit(QLineEdit):
         self._refresh()
 
 
-class ToolDialog(QDialog):
+class ToolDialog(ResponsiveDialog):
     def __init__(self, title: str, geometry_key: str, parent=None):
         super().__init__(parent)
         self._geometry_key = geometry_key
@@ -211,6 +212,7 @@ class ToolDialog(QDialog):
     def show_error(self, message: str) -> None:
         self._validation.setText(message)
         self._validation.show()
+        QTimer.singleShot(0, lambda: reveal_widget(self._validation))
 
     def add_validation(self) -> None:
         self._root.addWidget(self._validation)
@@ -241,18 +243,7 @@ class ToolDialog(QDialog):
         self._fade.start()
 
     def _fit_to_content(self) -> None:
-        """Grow the dialog so its content fits without clipping, bounded by
-        the available screen area."""
-        hint = self.layout().sizeHint() if self.layout() else self.sizeHint()
-        width = max(self.width(), hint.width())
-        height = max(self.height(), hint.height())
-        screen = QApplication.primaryScreen()
-        if screen:
-            area = screen.availableGeometry()
-            width = min(width, area.width() - 24)
-            height = min(height, area.height() - 24)
-        if width != self.width() or height != self.height():
-            self.resize(width, height)
+        self._fit_screen()
 
 
 class NumericSortItem(QTableWidgetItem):

@@ -348,7 +348,7 @@ class PDFViewer(QMainWindow):
         app = QApplication.instance()
         if isinstance(app, QApplication) and not app.windowIcon().isNull():
             self.setWindowIcon(app.windowIcon())
-        self.setMinimumSize(960, 640)
+        self.setMinimumSize(640, 400)
         self.setAcceptDrops(True)
 
         root = QWidget()
@@ -740,9 +740,7 @@ class PDFViewer(QMainWindow):
         command.maximizeRestoreRequested.connect(self._toggle_maximize_restore)
         command.closeRequested.connect(self.close)
         self.side_panel.toolRequested.connect(self._tool_requested)
-        self.side_panel.collapsedChanged.connect(
-            lambda value: self.settings.set("left_panel_collapsed", value)
-        )
+        self.side_panel.collapsedChanged.connect(self._side_panel_state_changed)
         self.workspace._empty.toolRequested.connect(self._welcome_tool)
         self.context_panel.annotationScanRequested.connect(self._scan_annotations)
         self.workspace.openRequested.connect(self._open_dialog)
@@ -1638,6 +1636,19 @@ class PDFViewer(QMainWindow):
         if self.settings.get("window_maximized", False):
             self.showMaximized()
 
+    def _side_panel_state_changed(self, value):
+        self._auto_collapsed_sidebar = False
+        self.settings.set("left_panel_collapsed", value)
+
+    def _make_document_panel_room(self):
+        if self.width() < 1050 and not self.side_panel.is_collapsed():
+            blocked = self.side_panel.blockSignals(True)
+            try:
+                self.side_panel.set_collapsed(True, animate=False)
+            finally:
+                self.side_panel.blockSignals(blocked)
+            self._auto_collapsed_sidebar = True
+
     def _toggle_side_panel(self) -> None:
         self.side_panel.set_collapsed(not self.side_panel.is_collapsed())
 
@@ -1693,8 +1704,7 @@ class PDFViewer(QMainWindow):
             and not right_panel_visible
         ):
             session.nav_panel.hide()
-            sizes = session.tab_widget.sizes()
-            total = max(sum(sizes), session.tab_widget.width(), 900)
+            total = max(1, session.tab_widget.width())
             session.tab_widget.setSizes([0, total, 0, 0])
             return
         self._show_nav_tab("thumbnails")
@@ -2052,6 +2062,10 @@ class PDFViewer(QMainWindow):
 
     # --- Document lifecycle ---------------------------------------------
     def showEvent(self, event):
+        from ui.responsive import available_area, fit_window
+        fit_window(self)
+        area = available_area(self)
+        self.setMinimumSize(min(640, area.width() - 12), min(400, area.height() - 40))
         super().showEvent(event)
         if not getattr(self, "_startup_reported", False):
             self._startup_reported = True
@@ -2897,13 +2911,17 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
+        self._make_document_panel_room()
+        self._hide_context()
         self._hide_search_panel(session)
         session.analysis_panel.show()
         sizes = session.tab_widget.sizes()
-        total = max(sum(sizes), session.tab_widget.width(), 900)
+        total = max(1, session.tab_widget.width())
+        if total < 900:
+            session.nav_panel.hide()
         nav_width = sizes[0] if sizes and session.nav_panel.isVisible() else 0
         session.tab_widget.setSizes(
-            [nav_width, max(360, total - nav_width - 430), 0, 430]
+            [nav_width, max(120, total - nav_width - 430), 0, 430]
         )
         self._run_analysis_request(session, AnalysisRequest())
 
@@ -2914,14 +2932,18 @@ class PDFViewer(QMainWindow):
                 "Open a PDF before running detection.", "warning"
             )
             return
+        self._make_document_panel_room()
+        self._hide_context()
         self._hide_search_panel(session)
         session.analysis_panel.show()
         session.analysis_panel.tabs.setCurrentIndex(2)
         sizes = session.tab_widget.sizes()
-        total = max(sum(sizes), session.tab_widget.width(), 900)
+        total = max(1, session.tab_widget.width())
+        if total < 900:
+            session.nav_panel.hide()
         nav_width = sizes[0] if sizes and session.nav_panel.isVisible() else 0
         session.tab_widget.setSizes(
-            [nav_width, max(360, total - nav_width - 430), 0, 430]
+            [nav_width, max(120, total - nav_width - 430), 0, 430]
         )
 
     def _run_analysis_request(
@@ -4089,27 +4111,30 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None:
             return
+        self._make_document_panel_room()
         self._hide_search_panel(session)
         session.analysis_panel.hide()
         self.workspace.show_nav_tab(key)
-        sizes = session.tab_widget.sizes()
-        total = max(sum(sizes), session.tab_widget.width(), 900)
+        total = max(1, session.tab_widget.width())
         nav_width = max(1, session.nav_panel.width())
-        session.tab_widget.setSizes([nav_width, max(360, total - nav_width), 0, 0])
+        session.tab_widget.setSizes([nav_width, max(120, total - nav_width), 0, 0])
 
     def _show_search_panel(self, session: DocumentSession | None = None) -> None:
         session = session or self._session
         if session is None:
             return
+        self._make_document_panel_room()
         self._hide_context()
         session.analysis_panel.hide()
         session.search_panel.show()
         sizes = session.tab_widget.sizes()
-        total = max(sum(sizes), session.tab_widget.width(), 900)
+        total = max(1, session.tab_widget.width())
+        if total < 900:
+            session.nav_panel.hide()
         nav_width = sizes[0] if sizes and session.nav_panel.isVisible() else 0
         search_width = 340
         session.tab_widget.setSizes(
-            [nav_width, max(360, total - nav_width - search_width), search_width, 0]
+            [nav_width, max(120, total - nav_width - search_width), search_width, 0]
         )
         session.search_panel.raise_()
         session.search_panel.focus_query()
@@ -4120,13 +4145,13 @@ class PDFViewer(QMainWindow):
             return
         session.search_panel.hide()
         sizes = session.tab_widget.sizes()
-        total = max(sum(sizes), session.tab_widget.width(), 900)
+        total = max(1, session.tab_widget.width())
         nav_width = sizes[0] if sizes and session.nav_panel.isVisible() else 0
         analysis_width = (
             sizes[3] if len(sizes) > 3 and session.analysis_panel.isVisible() else 0
         )
         session.tab_widget.setSizes(
-            [nav_width, max(360, total - nav_width - analysis_width), 0, analysis_width]
+            [nav_width, max(120, total - nav_width - analysis_width), 0, analysis_width]
         )
 
     def _load_navigation(self) -> None:
@@ -5402,6 +5427,7 @@ class PDFViewer(QMainWindow):
                 merge_pdfs,
                 dialog.file_paths,
                 dialog.output_path,
+                compact=dialog.compact.isChecked(),
                 progress_argument="progress",
                 cancel_argument="is_cancelled",
                 on_result=lambda value: self.info_bar.show_message(
@@ -6122,7 +6148,7 @@ class PDFViewer(QMainWindow):
                 "window_size": [self.width(), self.height()],
                 "window_position": [self.x(), self.y()],
                 "window_maximized": self.isMaximized(),
-                "left_panel_collapsed": self.side_panel.is_collapsed(),
+                "left_panel_collapsed": False if getattr(self, "_auto_collapsed_sidebar", False) else self.side_panel.is_collapsed(),
             }
         )
         for task in list(self._tasks):

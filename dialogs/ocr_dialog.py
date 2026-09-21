@@ -6,7 +6,6 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
@@ -23,9 +22,10 @@ from PyQt6.QtWidgets import (
 from core.ocr import OCRMode, OCRRequest, OCRResult
 from core.ocr_language import OCR_LANGUAGE_OPTIONS, normalize_ocr_language
 from core.pdf_engine import parse_page_range
+from ui.responsive import ResponsiveDialog
 
 
-class OCRDialog(QDialog):
+class OCRDialog(ResponsiveDialog):
     def __init__(
         self,
         source: Path,
@@ -179,7 +179,7 @@ class OCRDialog(QDialog):
         super().accept()
 
 
-class OCRTextResultDialog(QDialog):
+class OCRTextResultDialog(ResponsiveDialog):
     def __init__(self, result: OCRResult, parent=None):
         super().__init__(parent)
         self.result = result

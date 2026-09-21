@@ -82,6 +82,7 @@ class TextExtractorDialog(ToolDialog):
         self.details: dict[str, object] | None = None
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._responsive_splitter = splitter
         controls = QWidget()
         controls.setMinimumWidth(430)
         control_layout = QVBoxLayout(controls)
@@ -176,6 +177,13 @@ class TextExtractorDialog(ToolDialog):
         buttons.rejected.connect(self.reject)
         self._root.addWidget(buttons)
         self._render()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_responsive_splitter"):
+            self._responsive_splitter.setOrientation(
+                Qt.Orientation.Vertical if self.width() < 900 else Qt.Orientation.Horizontal
+            )
 
     def _render(self) -> None:
         page = self.document.load_page(self.current_page)

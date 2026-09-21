@@ -12,7 +12,6 @@ from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -35,6 +34,7 @@ from core.commands import Command
 from core.platform_service import PlatformService
 from core.resources import config_dir, log_dir
 from dialogs.base import SortableTableWidget, ToolDialog
+from ui.responsive import ResponsiveDialog
 
 
 class DiagnosticsDialog(ToolDialog):
@@ -117,7 +117,7 @@ class DiagnosticsDialog(ToolDialog):
         return "Installed" if capability.available else "—"
 
 
-class PreferencesDialog(QDialog):
+class PreferencesDialog(ResponsiveDialog):
     def __init__(
         self,
         settings,

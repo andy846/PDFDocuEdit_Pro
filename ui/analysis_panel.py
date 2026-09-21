@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -89,11 +90,12 @@ class AnalysisPanel(QFrame):
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
+        from .responsive import scroll_container
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._inspector_tab(), "Inspector")
-        self.tabs.addTab(self._preflight_tab(), "Preflight")
-        self.tabs.addTab(self._detection_tab(), "Smart Detection")
-        self.tabs.addTab(self._results_tab(), "Results")
+        self.tabs.addTab(scroll_container(self._inspector_tab()), "Inspector")
+        self.tabs.addTab(scroll_container(self._preflight_tab()), "Preflight")
+        self.tabs.addTab(scroll_container(self._detection_tab()), "Smart Detection")
+        self.tabs.addTab(scroll_container(self._results_tab()), "Results")
         root.addWidget(self.tabs, 1)
 
     @staticmethod
@@ -262,8 +264,7 @@ class AnalysisPanel(QFrame):
         self.group_results = QCheckBox("Group repetitive findings")
         self.group_results.setChecked(True)
         self.group_results.toggled.connect(self._refresh_results)
-        controls.addWidget(self.group_results)
-        controls.addStretch(1)
+        layout.addWidget(self.group_results)
         controls.addWidget(QLabel("Rows"))
         self.export_mode = QComboBox()
         self.export_mode.addItem("Grouped findings", "grouped")
@@ -292,18 +293,18 @@ class AnalysisPanel(QFrame):
         self.results.cellClicked.connect(self._jump_result)
         layout.addWidget(self.results, 1)
 
-        buttons = QHBoxLayout()
+        buttons = QGridLayout()
         buttons.setSpacing(6)
         self.result_action_buttons: dict[str, QWidget] = {}
 
         select_all = QPushButton("Select all")
         select_all.clicked.connect(self.results.selectAll)
-        buttons.addWidget(select_all)
+        buttons.addWidget(select_all, 0, 0)
         self.result_action_buttons["Select all"] = select_all
 
         copy_pages = QPushButton("Copy pages")
         copy_pages.clicked.connect(self._copy_pages)
-        buttons.addWidget(copy_pages)
+        buttons.addWidget(copy_pages, 0, 1)
         self.result_action_buttons["Copy pages"] = copy_pages
 
         export_button = QToolButton()
@@ -319,21 +320,20 @@ class AnalysisPanel(QFrame):
             self._export_xlsx
         )
         export_button.setMenu(export_menu)
-        buttons.addWidget(export_button)
+        buttons.addWidget(export_button, 1, 0)
         self.result_action_buttons["Export"] = export_button
         self.export_actions_menu = export_menu
 
         extract = QPushButton("Extract")
         extract.clicked.connect(self._extract)
-        buttons.addWidget(extract)
+        buttons.addWidget(extract, 1, 1)
         self.result_action_buttons["Extract"] = extract
 
         remove = QPushButton("Remove pages")
         remove.clicked.connect(self._organize)
-        buttons.addWidget(remove)
+        buttons.addWidget(remove, 2, 0)
         self.result_action_buttons["Remove pages"] = remove
 
-        buttons.addStretch(1)
         layout.addLayout(buttons)
         return tab
 

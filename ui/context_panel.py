@@ -111,7 +111,8 @@ class ContextPanel(QFrame):
         layout.addLayout(header)
 
         self._stack = QStackedWidget()
-        layout.addWidget(self._stack, 1)
+        from .responsive import scroll_container
+        layout.addWidget(scroll_container(self._stack, self), 1)
         self._pages: dict[str, QWidget] = {}
         self._build_rotate()
         self._build_ranges("delete", "Delete Pages", self.deleteRequested)
