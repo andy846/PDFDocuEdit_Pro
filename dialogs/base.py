@@ -301,10 +301,9 @@ class SortableTableWidget(QTableWidget):
         for row in range(self.rowCount()):
             item = self.item(row, logical_index)
             if item is not None and not isinstance(item, NumericSortItem):
-                replacement = NumericSortItem(item.text())
-                replacement.setTextAlignment(item.textAlignment())
-                replacement.setToolTip(item.toolTip())
-                replacement.setData(Qt.ItemDataRole.UserRole, item.data(Qt.ItemDataRole.UserRole))
+                # Copy every Qt/custom role, flags and styling. Consumers keep
+                # result identity in roles beyond UserRole (e.g. Deep Search).
+                replacement = NumericSortItem(item)
                 self.setItem(row, logical_index, replacement)
         self.sortItems(logical_index, self._sort_order)
 

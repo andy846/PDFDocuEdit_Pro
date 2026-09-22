@@ -182,13 +182,13 @@ class DeepSearchDialog(ToolDialog):
         self.export_button.clicked.connect(self._export)
         self.open_selected_button = QPushButton("Open Selected Document")
         self.open_selected_button.setEnabled(False)
-        self.open_selected_button.clicked.connect(self._open_selected)
+        self.open_selected_button.clicked.connect(lambda _checked=False: self._open_selected())
         for button in (self.clear_button, self.export_button, self.open_selected_button):
             actions.addWidget(button)
         actions.addStretch(1)
         self._root.addLayout(actions)
 
-        self.table.itemSelectionChanged.connect(self._update_preview)
+        self.table.currentCellChanged.connect(lambda *_args: self._update_preview())
         self.table.cellDoubleClicked.connect(self._handle_double_click)
 
     # --- table setup -------------------------------------------------------
@@ -375,6 +375,9 @@ class DeepSearchDialog(ToolDialog):
             + (f" · {len(self._errors)} file(s) could not be searched" if self._errors else "")
         )
         self.export_button.setEnabled(bool(self._results))
+        if self.table.rowCount():
+            self.table.setCurrentCell(0, 0)
+        self._update_preview()
 
     def _result_index_for_row(self, row: int) -> int | None:
         item = self.table.item(row, 0)
@@ -391,6 +394,7 @@ class DeepSearchDialog(ToolDialog):
         index = self._result_index_for_row(row)
         self.open_selected_button.setEnabled(index is not None)
         if index is None:
+            self.preview.clear()
             return
         result = self._results[index]
         keywords = [keyword for keyword in self.query.text().split(",") if keyword.strip()]

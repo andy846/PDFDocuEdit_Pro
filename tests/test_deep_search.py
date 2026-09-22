@@ -293,3 +293,106 @@ def test_deep_search_empty_folder_status(tmp_path: Path) -> None:
     dialog._search_finished()
     assert "No PDF files" in dialog.status.text()
     dialog.close()
+
+
+def test_header_click_keeps_preview_and_open_mapping(tmp_path: Path) -> None:
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtTest import QTest
+
+    dialog, app = _dialog(tmp_path)
+    dialog.query.setText("apple")
+    dialog._show_results([
+        {"path": str(tmp_path / name), "filename": name, "pages": [page],
+         "snippets": [f"apple in {name}"]}
+        for name, page in [("b.pdf", 2), ("a.pdf", 1)]
+    ])
+    dialog.show()
+    app.processEvents()
+    emitted = []
+    dialog.openRequested.connect(lambda path, method: emitted.append(path))
+    try:
+        header = dialog.table.horizontalHeader()
+        for expected in [("a.pdf", "b.pdf"), ("b.pdf", "a.pdf")]:
+            QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton,
+                             pos=QPoint(30, header.height() // 2))
+            for row, name in enumerate(expected):
+                rect = dialog.table.visualItemRect(dialog.table.item(row, 0))
+                QTest.mouseClick(dialog.table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+                assert name in dialog.preview.toPlainText()
+                assert f"apple in {name}" in dialog.preview.toPlainText()
+                assert dialog.open_selected_button.isEnabled()
+                dialog.open_selected_button.click()
+                assert emitted[-1] == str(tmp_path / name)
+                count = len(emitted)
+                QTest.mouseDClick(dialog.table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+                assert len(emitted) == count + 1
+                assert emitted[-1] == str(tmp_path / name)
+    finally:
+        dialog.close()
+
+
+def test_open_button_uses_selected_row_not_clicked_boolean(tmp_path: Path) -> None:
+    dialog, app = _dialog(tmp_path)
+    dialog._show_results([
+        {"path": str(tmp_path / name), "filename": name, "pages": [1], "snippets": [name]}
+        for name in ("one.pdf", "two.pdf")
+    ])
+    emitted = []
+    dialog.openRequested.connect(lambda path, method: emitted.append(path))
+    try:
+        dialog.table.setCurrentCell(1, 0)
+        dialog.open_selected_button.click()
+        assert emitted == [str(tmp_path / "two.pdf")]
+        assert "two.pdf" in dialog.preview.toPlainText()
+    finally:
+        dialog.close()
+
+
+def test_preview_populates_on_results_and_clears_with_results(tmp_path: Path) -> None:
+    dialog, app = _dialog(tmp_path)
+    try:
+        dialog._show_results([
+            {"path": str(tmp_path / "first.pdf"), "filename": "first.pdf",
+             "pages": [7], "snippets": ["Matching page content"]}
+        ])
+        assert "Matching page content" in dialog.preview.toPlainText()
+        assert "Page 7" in dialog.preview.toPlainText()
+        assert dialog.open_selected_button.isEnabled()
+        dialog._clear_results()
+        assert dialog.preview.toPlainText() == ""
+        assert not dialog.open_selected_button.isEnabled()
+    finally:
+        dialog.close()
+
+
+def test_sortable_table_preserves_custom_roles_and_numeric_order(tmp_path: Path) -> None:
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QTableWidgetItem
+
+    from dialogs.base import SortableTableWidget
+
+    app = QApplication.instance() or QApplication([])
+    table = SortableTableWidget(2, 1)
+    try:
+        for row, text in enumerate(("10", "2")):
+            item = QTableWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole + 19, f"identity-{text}")
+            item.setForeground(QColor("red"))
+            item.setToolTip(f"tooltip-{text}")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 0, item)
+        table._on_header_clicked(0)
+        assert [table.item(row, 0).text() for row in range(2)] == ["2", "10"]
+        for row in range(2):
+            item = table.item(row, 0)
+            assert item.data(Qt.ItemDataRole.UserRole + 19) == f"identity-{item.text()}"
+            assert item.foreground().color() == QColor("red")
+            assert item.toolTip() == f"tooltip-{item.text()}"
+            assert not item.flags() & Qt.ItemFlag.ItemIsEditable
+        table._on_header_clicked(0)
+        assert table.item(0, 0).text() == "10"
+    finally:
+        table.close()
+        table.deleteLater()
+        app.processEvents()
