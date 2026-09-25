@@ -166,7 +166,7 @@ from ui.mutation_controller import MutationController
 from ui.print_controller import PrintController
 from ui.side_panel import SHORTCUT_HINTS, SidePanel
 from ui.task_bar import TaskBar
-from ui.window_chrome import FramelessResizeHandles
+from ui.window_chrome import FramelessResizeHandles, request_system_rounded_corners
 from ui.workspace import DocumentWorkspace
 
 
@@ -286,6 +286,7 @@ class PDFViewer(QMainWindow):
         self._startup_trace = PerformanceTrace("startup")
         super().__init__()
         self._integrated_chrome = os.name == "nt"
+        self._rounded_corner_hwnd = 0
         if self._integrated_chrome:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         with self._startup_trace.span("settings"):
@@ -2067,6 +2068,10 @@ class PDFViewer(QMainWindow):
         area = available_area(self)
         self.setMinimumSize(min(640, area.width() - 12), min(400, area.height() - 40))
         super().showEvent(event)
+        if self._integrated_chrome:
+            hwnd = int(self.winId())
+            if hwnd != self._rounded_corner_hwnd and request_system_rounded_corners(self):
+                self._rounded_corner_hwnd = hwnd
         if not getattr(self, "_startup_reported", False):
             self._startup_reported = True
             self._startup_trace.mark("main_window_visible")

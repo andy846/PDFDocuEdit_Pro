@@ -2,8 +2,35 @@
 
 from __future__ import annotations
 
+import sys
+
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QWidget
+
+
+def request_system_rounded_corners(window: QWidget) -> bool:
+    """Ask Windows 11 to round a top-level window without altering its frame."""
+    if sys.platform != "win32" or sys.getwindowsversion().build < 22000:
+        return False
+
+    try:
+        import ctypes
+
+        hwnd = int(window.winId())
+        if not hwnd:
+            return False
+        # DWM can round the frame while suppressing its one-pixel border.
+        preference = ctypes.c_int(2)  # DWMWCP_ROUND
+        no_border = ctypes.c_uint(0xFFFFFFFE)  # DWMWA_COLOR_NONE
+        set_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        set_attribute.argtypes = (ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint)
+        set_attribute.restype = ctypes.c_long
+        handle = ctypes.c_void_p(hwnd)
+        rounded = set_attribute(handle, 33, ctypes.byref(preference), ctypes.sizeof(preference))
+        borderless = set_attribute(handle, 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
+        return rounded == 0 and borderless == 0
+    except (AttributeError, OSError, RuntimeError, ValueError):
+        return False
 
 
 class _ResizeHandle(QWidget):
