@@ -151,31 +151,36 @@ class CommandBar(QWidget):
 
         self._more = MotionIconButton("more", "More commands", D.ICON_MD)
         menu = QMenu(self._more)
+        self._document_menu_actions: list[QAction] = []
 
-        def add_action(target: QMenu, label: str, callback) -> QAction:
+        def add_action(target: QMenu, label: str, callback, *, needs_document: bool = False) -> QAction:
             action = QAction(label, self)
             action.triggered.connect(callback)
             target.addAction(action)
+            if needs_document:
+                self._document_menu_actions.append(action)
             return action
 
         file_menu = menu.addMenu("File")
         add_action(file_menu, "Open…", self.openClicked.emit)
-        add_action(file_menu, "Save", self.saveClicked.emit)
-        add_action(file_menu, "Save As…", self.saveAsClicked.emit)
-        add_action(file_menu, "Print…", self.printClicked.emit)
+        add_action(file_menu, "Save", self.saveClicked.emit, needs_document=True)
+        add_action(file_menu, "Save As…", self.saveAsClicked.emit, needs_document=True)
+        add_action(file_menu, "Print…", self.printClicked.emit, needs_document=True)
 
         view_menu = menu.addMenu("View")
         add_action(
             view_menu,
             "Page Thumbnails",
             lambda _checked=False: self.commandRequested.emit("toggle_thumbnails"),
+            needs_document=True,
         )
         add_action(
             view_menu,
             "Split View",
             lambda _checked=False: self.commandRequested.emit("view_split"),
+            needs_document=True,
         )
-        add_action(view_menu, "Search Document", self.searchClicked.emit)
+        add_action(view_menu, "Search Document", self.searchClicked.emit, needs_document=True)
         canvas_menu = view_menu.addMenu("Canvas Tool")
         for mode, label in (
             ("browse", "Browse"),
@@ -189,6 +194,7 @@ class CommandBar(QWidget):
                 lambda _checked=False, value=mode: (
                     self.canvasToolChanged.emit(value)
                 ),
+                needs_document=True,
             )
 
         page_menu = menu.addMenu("Page")
@@ -206,6 +212,7 @@ class CommandBar(QWidget):
                 lambda _checked=False, value=key: (
                     self.commandRequested.emit(value)
                 ),
+                needs_document=True,
             )
 
         tools_menu = menu.addMenu("Tools")
@@ -360,6 +367,8 @@ class CommandBar(QWidget):
         return button
 
     def set_document_available(self, available: bool) -> None:
+        for action in self._document_menu_actions:
+            action.setEnabled(available)
         for button in (self._save, self._save_as, self._search, self._print):
             button.setEnabled(available)
         for button in self._canvas_buttons.values():

@@ -10,10 +10,11 @@ from PyQt6.QtCore import (
     QEvent,
     QPoint,
     QPropertyAnimation,
+    Qt,
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton
 
 from core.diagnostics import log_failure
 from styles.components import _rgba
@@ -56,8 +57,12 @@ class InfoBar(QFrame):
         self._message = QLabel()
         self._message.setWordWrap(True)
         layout.addWidget(self._message, 1)
-        self._queue_badge = QLabel()
+        self._queue_badge = QPushButton()
         self._queue_badge.setObjectName("infoBarBadge")
+        self._queue_badge.setToolTip("Show next notification")
+        self._queue_badge.setAccessibleName("Show next notification")
+        self._queue_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._queue_badge.clicked.connect(self._show_next_message)
         self._queue_badge.hide()
         layout.addWidget(self._queue_badge)
         self._close = MotionIconButton("x", "Dismiss notification", D.ICON_SM)
@@ -151,14 +156,16 @@ class InfoBar(QFrame):
         if timeout > 0:
             self._timer.start(timeout)
 
-    def _on_timer_expired(self) -> None:
-        if self._queue:
-            next_message = self._queue.popleft()
-            self._update_queue_badge()
-            self._motion.stop()
-            self._show_now(next_message.text, next_message.kind, next_message.timeout)
-        else:
+    def _show_next_message(self) -> None:
+        if not self._queue:
             self.hide_bar()
+            return
+        next_message = self._queue.popleft()
+        self._update_queue_badge()
+        self._show_now(next_message.text, next_message.kind, next_message.timeout)
+
+    def _on_timer_expired(self) -> None:
+        self._show_next_message()
 
     def _update_queue_badge(self) -> None:
         count = len(self._queue)
@@ -186,9 +193,10 @@ class InfoBar(QFrame):
         self._motion.stop()
         if self.isHidden():
             return
+        if self._queue:
+            self._show_next_message()
+            return
         self._closing = True
-        self._queue.clear()
-        self._update_queue_badge()
         if self._animations_enabled:
             self._opacity_animation.setStartValue(self._opacity.opacity())
             self._opacity_animation.setEndValue(0.0)

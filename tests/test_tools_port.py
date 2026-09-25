@@ -1202,6 +1202,10 @@ def test_command_bar_more_menu_is_grouped_and_routes_page_tools(tmp_path, monkey
         "Split PDF…",
         "Rotate Pages…",
     ]
+    assert not page_menu.actions()[0].isEnabled()
+    source = make_pdf(tmp_path / "menu.pdf")
+    window._load_file_sync(str(source))
+    assert page_menu.actions()[0].isEnabled()
     routed: list[str] = []
     monkeypatch.setattr(window, "_tool_requested", routed.append)
     page_menu.actions()[0].trigger()

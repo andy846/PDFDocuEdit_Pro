@@ -35,6 +35,7 @@ class SearchResultsPanel(QFrame):
     searchRequested = pyqtSignal(str, object)  # query, pages (list[int] | None)
     closed = pyqtSignal()
     ocrRequested = pyqtSignal()
+    pagesActionRequested = pyqtSignal(str, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,6 +46,8 @@ class SearchResultsPanel(QFrame):
         self._page_count = 0
         self._current_page = 0
         self._match_cursor = -1
+        self._result_identity: tuple[object, int] | None = None
+        self._search_pending = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
@@ -124,7 +127,29 @@ class SearchResultsPanel(QFrame):
         self._list = QListWidget()
         self._list.setObjectName("navList")
         self._list.itemActivated.connect(self._on_activated)
+        self._list.itemChanged.connect(self._update_page_actions)
         layout.addWidget(self._list, 1)
+
+        selection_row = QHBoxLayout()
+        self._selection_status = QLabel("0 pages selected")
+        selection_row.addWidget(self._selection_status, 1)
+        self._select_all = QPushButton("Select all")
+        self._select_all.clicked.connect(lambda: self._check_all(True))
+        selection_row.addWidget(self._select_all)
+        self._clear_selection = QPushButton("Clear")
+        self._clear_selection.clicked.connect(lambda: self._check_all(False))
+        selection_row.addWidget(self._clear_selection)
+        layout.addLayout(selection_row)
+
+        action_row = QHBoxLayout()
+        self._delete_pages = QPushButton("Delete pages")
+        self._delete_pages.clicked.connect(lambda: self._request_pages_action("delete"))
+        action_row.addWidget(self._delete_pages)
+        self._extract_pages = QPushButton("Extract pages…")
+        self._extract_pages.clicked.connect(lambda: self._request_pages_action("extract"))
+        action_row.addWidget(self._extract_pages)
+        layout.addLayout(action_row)
+        self._update_page_actions()
 
         self._ocr = QPushButton("Run OCR…")
         self._ocr.setToolTip("Make a scanned PDF searchable")
@@ -142,6 +167,7 @@ class SearchResultsPanel(QFrame):
         self._page_count = max(0, count)
         self._current_page = min(self._current_page, max(0, count - 1))
         self._refresh_current_label()
+        self._update_page_actions()
 
     def set_current_page(self, page: int) -> None:
         self._current_page = max(0, min(page, max(0, self._page_count - 1)))
@@ -158,7 +184,9 @@ class SearchResultsPanel(QFrame):
         self._query.setFocus()
         self._query.selectAll()
 
-    def set_results(self, hits: list[SearchHit], total_matches: int) -> None:
+    def set_results(self, hits: list[SearchHit], total_matches: int, identity=None) -> None:
+        self._result_identity = identity
+        self._search_pending = False
         self._hits = hits
         self._list.clear()
         self._match_cursor = -1
@@ -170,29 +198,78 @@ class SearchResultsPanel(QFrame):
             )
             item.setToolTip(hit.context)
             item.setData(Qt.ItemDataRole.UserRole, hit.page)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
             self._list.addItem(item)
         if hits:
             self._list.setCurrentRow(0)
         self._status.setText(f"Found {total_matches} match(es) on {len(hits)} page(s).")
         self._ocr.setVisible(not hits)
+        self._update_page_actions()
 
     def show_searching(self) -> None:
+        self.clear()
+        self._search_pending = False
         self._status.setText("Searching…")
         self._ocr.hide()
 
     def show_progress(self, current: int, total: int, message: str) -> None:
+        if self._search_pending:
+            return
         self._status.setText(f"{message} ({current}/{total})" if total else message)
 
     def show_error(self, message: str) -> None:
+        self.clear()
         self._ocr.hide()
         self._status.setText(message)
 
     def clear(self) -> None:
+        self._result_identity = None
         self._hits = []
         self._list.clear()
         self._match_cursor = -1
         self._status.setText("Enter keywords, then press Search.")
         self._ocr.hide()
+        self._update_page_actions()
+
+    def invalidate_results(self) -> None:
+        if self._result_identity is not None:
+            self.clear()
+            self._status.setText("Document changed — search again for current page numbers.")
+
+    def result_identity(self):
+        return self._result_identity
+
+    def search_pending(self) -> bool:
+        return self._search_pending
+
+    def _selected_pages(self) -> list[int]:
+        return sorted({int(item.data(Qt.ItemDataRole.UserRole)) for item in
+                       (self._list.item(row) for row in range(self._list.count()))
+                       if item.checkState() == Qt.CheckState.Checked})
+
+    def _update_page_actions(self, _item=None) -> None:
+        selected = len(self._selected_pages())
+        self._selection_status.setText(f"{selected} page(s) selected")
+        self._select_all.setEnabled(bool(self._hits))
+        self._clear_selection.setEnabled(bool(selected))
+        can_delete = bool(selected) and selected < self._page_count
+        self._delete_pages.setEnabled(can_delete)
+        self._delete_pages.setToolTip(
+            "A PDF must keep at least one page." if selected >= self._page_count and selected else ""
+        )
+        self._extract_pages.setEnabled(bool(selected))
+
+    def _check_all(self, checked: bool) -> None:
+        for row in range(self._list.count()):
+            self._list.item(row).setCheckState(
+                Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            )
+
+    def _request_pages_action(self, action: str) -> None:
+        pages = self._selected_pages()
+        if pages and self._result_identity is not None:
+            self.pagesActionRequested.emit(action, pages)
 
     def reset_query(self) -> None:
         self._ocr.hide()
@@ -216,10 +293,8 @@ class SearchResultsPanel(QFrame):
         self._mark_search_pending()
 
     def _mark_search_pending(self, _checked: bool | None = None) -> None:
-        self._hits = []
-        self._list.clear()
-        self._match_cursor = -1
-        self._ocr.hide()
+        self.clear()
+        self._search_pending = True
         if self._query.text().strip():
             self._status.setText("Ready — press Search or Enter to run.")
         else:

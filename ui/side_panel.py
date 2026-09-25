@@ -529,18 +529,21 @@ class SidePanel(QFrame):
     def _filter_tools(self, value: str) -> None:
         query = value.strip().casefold()
         visible_count = 0
-        for section, (_key, _title, items) in zip(
+        for section, (_key, title, items) in zip(
             self._sections, self.SECTIONS, strict=True
         ):
             matches = 0
             for item in items:
-                visible = not query or query in item.label.casefold()
+                searchable = (item.label, title, SHORTCUT_HINTS.get(item.key, ""))
+                visible = not query or any(query in value.casefold() for value in searchable)
                 self._buttons[item.key].setVisible(visible)
                 matches += int(visible)
             visible_count += matches
             section.set_filtering(bool(query), matches > 0)
         self._tool_count.setText(
-            f"{visible_count} matching tools"
+            "No matching tools"
+            if query and not visible_count
+            else f"{visible_count} matching tools"
             if query
             else f"{len(self._buttons)} tools"
         )

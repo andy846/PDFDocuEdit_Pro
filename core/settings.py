@@ -284,6 +284,16 @@ class SettingsManager:
         details[value] = dict(details.get(value, {}), last_opened=datetime.now().isoformat(timespec="minutes"))
         self.update({"recent_files": recent, "recent_file_info": {key: details[key] for key in recent if key in details}})
 
+    def remove_recent_file(self, path: str | os.PathLike[str]) -> None:
+        value = os.path.abspath(os.path.expanduser(os.fspath(path)))
+        recent = [item for item in self.recent_files() if item != value]
+        details = dict(self.get("recent_file_info", {}) or {})
+        details.pop(value, None)
+        self.update({
+            "recent_files": recent,
+            "recent_file_info": {key: details[key] for key in recent if key in details},
+        })
+
     def get_print_offsets(self) -> tuple[float, float, float, float]:
         """Default print shifts in mm: (left, right, top, bottom).
 

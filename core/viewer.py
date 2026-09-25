@@ -746,6 +746,7 @@ class PDFViewer(QMainWindow):
         self.context_panel.annotationScanRequested.connect(self._scan_annotations)
         self.workspace.openRequested.connect(self._open_dialog)
         self.workspace.fileDropped.connect(self._file_dropped)
+        self.workspace.missingRecentRequested.connect(self._recover_recent_file)
         self.workspace.extraFilesDropped.connect(self._add_extra_dropped_files)
         self.workspace.tabCloseRequested.connect(self._on_tab_close_requested)
         self.workspace.tabCloseOthersRequested.connect(self._close_other_tabs)
@@ -1033,6 +1034,9 @@ class PDFViewer(QMainWindow):
         )
         nav.search.jumpRequested.connect(
             lambda page, rects, s=session: self._goto_search_hit(page, rects, s)
+        )
+        nav.search.pagesActionRequested.connect(
+            lambda action, pages, s=session: self._search_pages_action(action, pages, s)
         )
         nav.search.closed.connect(lambda s=session: self._hide_search_panel(s))
         nav.search.ocrRequested.connect(lambda s=session: self._run_ocr_from_search(s))
@@ -1674,6 +1678,37 @@ class PDFViewer(QMainWindow):
     def _close_all_tabs(self) -> None:
         for candidate in list(self._sessions):
             self.close_document(candidate)
+
+    def _recover_recent_file(self, old_path: str) -> None:
+        prompt = QMessageBox(self)
+        prompt.setWindowTitle("Recent file unavailable")
+        prompt.setText(f"This file is unavailable:\n{old_path}")
+        prompt.setInformativeText("Locate the PDF in its new location or remove this recent entry.")
+        locate = prompt.addButton("Locate…", QMessageBox.ButtonRole.AcceptRole)
+        remove = prompt.addButton("Remove from recent", QMessageBox.ButtonRole.DestructiveRole)
+        prompt.addButton(QMessageBox.StandardButton.Cancel)
+        prompt.exec()
+        if prompt.clickedButton() is remove:
+            self.settings.remove_recent_file(old_path)
+            self.workspace.set_recent_files(
+                self.settings.recent_files(), self.settings.get("recent_file_info", {})
+            )
+            return
+        if prompt.clickedButton() is not locate:
+            return
+        replacement, _ = QFileDialog.getOpenFileName(
+            self, "Locate PDF", str(Path(old_path).parent), "PDF (*.pdf)"
+        )
+        if not replacement:
+            return
+
+        def opened(_session) -> None:
+            self.settings.remove_recent_file(old_path)
+            self.workspace.set_recent_files(
+                self.settings.recent_files(), self.settings.get("recent_file_info", {})
+            )
+
+        self.open_in_new_tab(replacement, on_open=opened)
 
     def _file_dropped(self, path: str) -> None:
         """A dropped file opens in a new tab when a document is already open.
@@ -2517,6 +2552,11 @@ class PDFViewer(QMainWindow):
         ):
             session.analysis_panel.mark_stale()
 
+        if session.search_panel.result_identity() not in {
+            None, (session.engine.document_id, session.engine.revision)
+        }:
+            session.search_panel.invalidate_results()
+
         modified = session.engine.is_modified
         self.setWindowModified(modified)
         path = session.display_path or session.engine.original_path
@@ -2738,7 +2778,7 @@ class PDFViewer(QMainWindow):
             log_failure('viewer._rotate_pages: fallback after failure', 10)
             self._error("Rotate failed", str(exc))
 
-    def _delete_pages(self, value: str) -> None:
+    def _delete_pages(self, value: str, *, show_pages: bool = False) -> None:
         try:
             pages = self._pages_from_text(value)
             if not pages:
@@ -2746,7 +2786,8 @@ class PDFViewer(QMainWindow):
             answer = QMessageBox.question(
                 self,
                 "Delete pages",
-                f"Delete {len(pages)} selected page(s)?",
+                (f"Delete page(s) {', '.join(str(page + 1) for page in pages)}?"
+                 if show_pages else f"Delete {len(pages)} selected page(s)?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
@@ -2897,6 +2938,7 @@ class PDFViewer(QMainWindow):
         )
         self.context_panel.set_page_count(session.engine.page_count)
         session.nav_panel.search.set_page_count(session.engine.page_count)
+        session.nav_panel.search.invalidate_results()
         self._reload_thumbnails(session)
         # set_page() does not emit when the page index stays unchanged (the
         # common case when deleting from an Outlook attachment on page 1), so
@@ -4243,6 +4285,7 @@ class PDFViewer(QMainWindow):
             previous.cancel()
             self._tasks.discard(previous)
         panel.show_searching()
+        identity = (session.engine.document_id, session.engine.revision)
         case_sensitive = panel.case_sensitive()
         whole_word = panel.whole_word()
 
@@ -4254,7 +4297,7 @@ class PDFViewer(QMainWindow):
                     whole_word=whole_word,
                     pages=pages,
                 )
-                self._finish_search(hits, session, query, generation)
+                self._finish_search(hits, session, query, generation, identity)
             except Exception as exc:
                 log_failure('viewer._run_search: fallback after failure', 10)
                 panel.show_error(str(exc))
@@ -4274,7 +4317,7 @@ class PDFViewer(QMainWindow):
             progress_argument="progress",
             cancel_argument="is_cancelled",
             on_result=lambda hits: self._finish_search(
-                hits, session, query, generation
+                hits, session, query, generation, identity
             ),
             on_finished=lambda: self._finish_search_task(key, generation),
         )
@@ -4293,13 +4336,19 @@ class PDFViewer(QMainWindow):
         session: DocumentSession | None = None,
         query: str | None = None,
         generation: int | None = None,
+        identity=None,
     ) -> None:
         if session is None:
             return
         key = id(session)
         if generation is not None and self._search_generations.get(key) != generation:
             return
-        if (
+        if not session.engine.is_loaded() or identity != (
+            session.engine.document_id, session.engine.revision
+        ):
+            session.search_panel.show_error("Document changed — search again for current page numbers.")
+            return
+        if session.search_panel.search_pending() or (
             query is not None
             and session.search_panel.query_text()
             and session.search_panel.query_text() != query.strip()
@@ -4307,7 +4356,29 @@ class PDFViewer(QMainWindow):
             return
         results = list(hits or [])
         total = sum(len(hit.rects) for hit in results)
-        session.search_panel.set_results(results, total)
+        session.search_panel.set_results(results, total, identity)
+
+    def _search_pages_action(
+        self, action: str, pages: list[int], session: DocumentSession
+    ) -> None:
+        if session not in self._sessions or not session.engine.is_loaded():
+            return
+        identity = (session.engine.document_id, session.engine.revision)
+        if session.search_panel.result_identity() != identity:
+            session.search_panel.invalidate_results()
+            self.info_bar.show_message("Document changed — search again.", "warning")
+            return
+        valid = sorted({page for page in pages if 0 <= page < session.engine.page_count})
+        if len(valid) != len(set(pages)) or not valid:
+            session.search_panel.invalidate_results()
+            return
+        self.workspace.set_current_session(session)
+        self._session = session
+        value = ",".join(str(page + 1) for page in valid)
+        if action == "delete":
+            self._delete_pages(value, show_pages=True)
+        elif action == "extract":
+            self._extract_pages(value)
 
     def _goto_search_hit(
         self, page: int, rects, session: DocumentSession | None = None

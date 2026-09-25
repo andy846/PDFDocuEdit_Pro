@@ -57,6 +57,7 @@ class _RecentSignals(QObject):
 class EmptyState(QWidget):
     openRequested = pyqtSignal()
     recentRequested = pyqtSignal(str)
+    missingRecentRequested = pyqtSignal(str)
     toolRequested = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -115,7 +116,7 @@ class EmptyState(QWidget):
         self._recent.setMaximumWidth(560)
         self._recent.setMaximumHeight(220)
         self._recent.setIconSize(QSize(RECENT_ICON_W, RECENT_ICON_H))
-        self._recent.itemActivated.connect(lambda item: self.recentRequested.emit(item.data(Qt.ItemDataRole.UserRole)))
+        self._recent.itemActivated.connect(self._activate_recent)
         layout.addWidget(self._recent)
         tools = QHBoxLayout()
         for label, key in (("Combine PDFs", "merge"), ("Organize Pages", "organize"), ("OCR", "ocr"), ("Preflight", "preflight")):
@@ -169,6 +170,7 @@ class EmptyState(QWidget):
                     pass
             item.setToolTip(str(path))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setData(int(Qt.ItemDataRole.UserRole) + 1, None)
             item.setSizeHint(QSize(0, RECENT_ICON_H + 4))
             self._recent.addItem(item)
             self._recent_items[str(path)] = item
@@ -200,8 +202,16 @@ class EmptyState(QWidget):
         if item is not None:
             state = "Available" if available else "Unavailable"
             item.setToolTip(f"{path}\n{state}")
-            if not available:
+            item.setData(int(Qt.ItemDataRole.UserRole) + 1, available)
+            if not available and "Unavailable" not in item.text():
                 item.setText(item.text() + "  ·  Unavailable")
+
+    def _activate_recent(self, item: QListWidgetItem) -> None:
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if item.data(int(Qt.ItemDataRole.UserRole) + 1) is False:
+            self.missingRecentRequested.emit(path)
+        else:
+            self.recentRequested.emit(path)
 
     def _on_recent_thumb(self, path: str, image: QImage) -> None:
         self._thumb_cache[path] = image
@@ -328,6 +338,7 @@ class DocumentWorkspace(QFrame):
 
     openRequested = pyqtSignal()
     fileDropped = pyqtSignal(str)
+    missingRecentRequested = pyqtSignal(str)
     extraFilesDropped = pyqtSignal(list)
     tabCloseRequested = pyqtSignal(object)  # DocumentSession
     tabCloseOthersRequested = pyqtSignal(object)  # DocumentSession to keep
@@ -352,6 +363,7 @@ class DocumentWorkspace(QFrame):
         self._empty = EmptyState()
         self._empty.openRequested.connect(self.openRequested.emit)
         self._empty.recentRequested.connect(self.fileDropped.emit)
+        self._empty.missingRecentRequested.connect(self.missingRecentRequested.emit)
 
         self._tabs = QTabWidget()
         self._tabs.setObjectName("documentTabs")

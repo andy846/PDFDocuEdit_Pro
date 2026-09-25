@@ -571,7 +571,8 @@ def global_style() -> str:
             border-radius: {R.SM}px;
             padding: {S.SM}px {S.MD}px;
         }}
-        QLabel#infoBarBadge {{
+        QPushButton#infoBarBadge {{
+            border: none;
             color: {c['on_primary']};
             background: {c['primary']};
             border-radius: 10px;
