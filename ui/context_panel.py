@@ -42,6 +42,7 @@ from core.diagnostics import log_failure
 from core.pdf_engine import parse_page_range
 from styles.tokens import D, S
 
+from .form_mode import FormPanel
 from .motion import MotionIconButton
 
 SWATCHES: dict[str, str] = {
@@ -122,6 +123,8 @@ class ContextPanel(QFrame):
         self._build_order()
         self._build_annotate()
         self._build_font_inspector()
+        self.form_panel = FormPanel()
+        self._add_page("form", self.form_panel)
 
     @pyqtProperty(int)
     def panelWidth(self) -> int:  # noqa: N802 - Qt property naming

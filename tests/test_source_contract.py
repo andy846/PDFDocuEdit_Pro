@@ -76,15 +76,15 @@ def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
     )
 
 
-def test_release_metadata_is_v2_5_5() -> None:
-    assert APP_VERSION == "2.5.13"
+def test_release_metadata_is_v2_5_14() -> None:
+    assert APP_VERSION == "2.5.14"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "2.5.13"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "2.5.13"' in (
+    assert 'version = "2.5.14"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "2.5.14"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "2.5.13"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(2, 5, 13, 0)" in (
+    assert 'VERSION = "2.5.14"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(2, 5, 14, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 
@@ -105,6 +105,14 @@ def test_windows_installer_has_professional_shell_integration() -> None:
     )
     assert not [entry for entry in required if entry not in script]
     assert 'Subkey: "Software\\Classes\\.pdf"; ValueType:' not in script
+
+
+def test_managed_installer_uses_launcher_and_avoids_existing_installations() -> None:
+    script = (ROOT / "installer/PDFDocuEditProManaged.iss").read_text(encoding="utf-8")
+    assert '#define MyAppExeName "Launcher.exe"' in script
+    assert 'Source: "{#ManagedStage}\\PDFDocuEditPro\\*"' in script
+    assert "FileExists(InstallRoot + 'state.json')" in script
+    assert "FileExists(InstallRoot + 'PDFDocuEdit Pro.exe')" in script
 
 
 def test_windows_icon_uses_high_dpi_master_sizes() -> None:

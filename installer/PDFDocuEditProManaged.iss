@@ -1,22 +1,29 @@
 #define MyAppName "PDFDocuEdit Pro"
-#define MyAppVersion "2.5.14"
+#ifndef ManagedVersion
+  #error Supply /DManagedVersion from build_managed_installer.py
+#endif
+#ifndef ManagedStage
+  #error Supply /DManagedStage from build_managed_installer.py
+#endif
+#define MyAppVersion ManagedVersion
 #define MyAppPublisher "Andy Leung"
-#define MyAppExeName "PDFDocuEdit Pro.exe"
-#define MyAppProgId "PDFDocuEditPro.Document"
+#define MyAppExeName "Launcher.exe"
+#define MyAppProgId "PDFDocuEditPro.Managed.Document"
+#define MyRegisteredName "PDFDocuEdit Pro Managed"
 #define MyAppUserModelId "AndyLeung.PDFDocuEditPro"
 #define MyAppDescription "Professional PDF viewing, editing, annotation, conversion, and document tools."
 #define MyAppCopyright "Copyright © 2026 Andy Leung. All rights reserved."
-#define MySetupFilename "PDFDocuEdit-Pro-v" + MyAppVersion + "-Legacy-Setup-Windows-x64"
+#define MySetupFilename "PDFDocuEdit-Pro-v" + MyAppVersion + "-Setup-Windows-x64"
 
 [Setup]
-AppId={{A074C4B2-BE72-4C40-A219-98A0D453B786}
+AppId={{C17A5D2E-1A04-45D5-95CE-295E1D9884B0}
 AppName={#MyAppName}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppCopyright={#MyAppCopyright}
 AppComments={#MyAppDescription}
-DefaultDirName={localappdata}\Programs\{#MyAppName}
+DefaultDirName={localappdata}\Programs\PDFDocuEditPro
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=auto
 PrivilegesRequired=lowest
@@ -35,7 +42,7 @@ SetupLogging=yes
 CloseApplications=yes
 CloseApplicationsFilter={#MyAppExeName}
 RestartApplications=no
-UsePreviousAppDir=yes
+UsePreviousAppDir=no
 UsePreviousGroup=yes
 UsePreviousTasks=yes
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
@@ -59,7 +66,7 @@ SignToolRunMinimized=yes
 #endif
 
 [Files]
-Source: "..\dist\PDFDocuEdit Pro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ManagedStage}\PDFDocuEditPro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -77,21 +84,30 @@ Root: HKCU; Subkey: "Software\Classes\.pdf\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\.ps\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.eps\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 
-; Populate Explorer's Open with list and Windows Default Apps capabilities.
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "ApplicationCompany"; ValueData: "{#MyAppPublisher}"
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "{#MyAppDescription}"
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\DefaultIcon"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"",0"
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".pdf"; ValueData: ""
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".ps"; ValueData: ""
-Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".eps"; ValueData: ""
-Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "{#MyAppDescription}"
-Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "{#MyAppProgId}"
-Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ps"; ValueData: "{#MyAppProgId}"
-Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".eps"; ValueData: "{#MyAppProgId}"
-Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: "Software\{#MyAppName}\Capabilities"; Flags: uninsdeletevalue
+; Register the managed handler in Default Apps without claiming the generic Launcher.exe name.
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "{#MyAppDescription}"
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "{#MyAppProgId}"
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ps"; ValueData: "{#MyAppProgId}"
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".eps"; ValueData: "{#MyAppProgId}"
+Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#MyRegisteredName}"; ValueData: "Software\{#MyRegisteredName}\Capabilities"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  InstallRoot: String;
+begin
+  Result := True;
+  if CurPageID <> wpSelectDir then
+    Exit;
+  InstallRoot := AddBackslash(WizardDirValue);
+  if FileExists(InstallRoot + 'state.json') or
+     FileExists(InstallRoot + 'PDFDocuEdit Pro.exe') then
+  begin
+    MsgBox('This folder already contains PDFDocuEdit Pro. Use its updater, or choose an empty folder for a fresh managed installation.', mbError, MB_OK);
+    Result := False;
+  end;
+end;

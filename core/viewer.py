@@ -32,6 +32,7 @@ from PyQt6.QtGui import (
     QActionGroup,
     QCloseEvent,
     QColor,
+    QCursor,
     QFont,
     QFontMetrics,
     QGuiApplication,
@@ -160,9 +161,11 @@ from ui.context_panel import ContextPanel
 from ui.deep_search_dialog import OPEN_CURRENT, OPEN_NEW_TAB, DeepSearchDialog
 from ui.diagnostics_dialog import DiagnosticsDialog, PreferencesDialog
 from ui.document_session import DocumentSession
+from ui.form_mode import FormChoiceEditor, FormDraft, FormMultilineEditor
 from ui.icons import clear_icon_cache
 from ui.infobar import InfoBar
 from ui.mutation_controller import MutationController
+from ui.page_overlay import InlineTextEditor
 from ui.print_controller import PrintController
 from ui.side_panel import SHORTCUT_HINTS, SidePanel
 from ui.task_bar import TaskBar
@@ -803,6 +806,12 @@ class PDFViewer(QMainWindow):
         )
         self.context_panel.closed.connect(self._hide_context)
         self.context_panel.rotateRequested.connect(self._rotate_pages)
+        form_panel = self.context_panel.form_panel
+        form_panel.fieldSelected.connect(self._form_select_field)
+        form_panel.applyRequested.connect(self._apply_form_draft)
+        form_panel.discardRequested.connect(self._discard_form_draft)
+        form_panel.previewRequested.connect(self._refresh_form_preview)
+        form_panel.reloadRequested.connect(self._reload_form_draft)
         self.context_panel.deleteRequested.connect(self._delete_pages)
         self.context_panel.extractRequested.connect(self._extract_pages)
         self.context_panel.splitRequested.connect(self._split_pdf)
@@ -886,6 +895,10 @@ class PDFViewer(QMainWindow):
                 s, c, page, point
             )
         )
+        if canvas is session.canvas:
+            canvas.formFieldRequested.connect(
+                lambda page, point, s=session: self._form_field_clicked(s, page, point)
+            )
 
     @staticmethod
     def _external_split_source(session: DocumentSession, canvas):
@@ -1185,6 +1198,9 @@ class PDFViewer(QMainWindow):
             Path(previous).unlink(missing_ok=True)
 
     def _on_tab_changed(self, session: DocumentSession) -> None:
+        previous = self._session
+        if previous is not None and previous is not session:
+            self._suspend_form_preview(previous)
         self._session = session
         self._last_context_key = None
         self._set_canvas_tool(session.canvas.tool_mode.value)
@@ -1214,6 +1230,13 @@ class PDFViewer(QMainWindow):
         self._refresh_annotate_list()
         self._session_nav_tab_changed(session, session.nav_panel.active_key())
         self._refresh_all_split_source_choices()
+        if session.form_mode_active and session.form_draft is not None:
+            session.canvas.set_form_fields(session.form_draft.fields)
+            self._form_panel_sync(session)
+            self._show_context("form")
+            self.side_panel.set_active_tool("fill_form")
+            if session.form_draft.changed and not self._form_is_stale(session):
+                self._refresh_form_preview()
 
     def _on_tab_close_requested(self, session: DocumentSession) -> None:
         self.close_document(session)
@@ -1761,6 +1784,9 @@ class PDFViewer(QMainWindow):
 
     def _set_canvas_tool(self, mode: str) -> None:
         session = self._session
+        if session is not None and session.form_mode_active and mode != "form":
+            self._suspend_form_preview(session)
+            session.form_mode_active = False
         canvases = list(self._session_canvases(session))
         if (
             session is not None
@@ -2285,6 +2311,13 @@ class PDFViewer(QMainWindow):
             session.split_canvas.clear(wait=False)
         session.nav_panel.thumbnails.quiesce_renders(wait=False)
         previous = session.engine
+        if session.form_draft is not None:
+            preview = session.form_draft.preview
+            session.form_draft.preview = None
+            if preview is not None:
+                after_readers(readers, preview.close)
+            session.form_draft = None
+            session.form_mode_active = False
         opened.set_mutation_recorder(session.undo_stack.push_bytes)
         session.engine = opened
         if close_previous:
@@ -2400,6 +2433,8 @@ class PDFViewer(QMainWindow):
         if not self.engine.original_path:
             self.save_as_file()
             return
+        if not self._confirm_form_draft_for_save():
+            return
         try:
             target = self.engine.save()
             self._display_path = target
@@ -2411,6 +2446,8 @@ class PDFViewer(QMainWindow):
 
     def save_as_file(self) -> None:
         if not self.engine.is_loaded():
+            return
+        if not self._confirm_form_draft_for_save():
             return
         original = self.engine.original_path
         initial = start_in_save_directory(
@@ -2473,6 +2510,8 @@ class PDFViewer(QMainWindow):
         self._update_undo_actions()
 
     def _confirm_discard_changes(self) -> bool:
+        if not self._confirm_form_draft_for_close():
+            return False
         if not self.engine.is_modified:
             return True
         answer = QMessageBox.question(
@@ -2557,6 +2596,8 @@ class PDFViewer(QMainWindow):
         }:
             session.search_panel.invalidate_results()
 
+        if session.form_draft is not None and session.form_mode_active:
+            self._form_panel_sync(session)
         modified = session.engine.is_modified
         self.setWindowModified(modified)
         path = session.display_path or session.engine.original_path
@@ -2593,6 +2634,8 @@ class PDFViewer(QMainWindow):
         self.bottom_bar.set_zoom_percent(round(canvas.zoom_ratio * 100))
 
     def _show_context(self, key: str) -> None:
+        if key != "form" and self._session is not None and self._session.form_mode_active:
+            self._set_canvas_tool("browse")
         if not self.engine.is_loaded():
             self.info_bar.show_message("Open a PDF before using page tools.", "warning")
             return
@@ -2616,6 +2659,8 @@ class PDFViewer(QMainWindow):
                 self._refresh_annotate_list()
 
     def _hide_context(self) -> None:
+        if self._session is not None and self._session.form_mode_active:
+            self._set_canvas_tool("browse")
         self.context_panel.close_animated()
         self.side_panel.set_active_tool(None)
         self.settings.set("right_panel_visible", False)
@@ -3399,6 +3444,8 @@ class PDFViewer(QMainWindow):
     }
 
     def _tool_requested(self, key: str) -> None:
+        if key != "fill_form" and self._session is not None and self._session.form_mode_active:
+            self._set_canvas_tool("browse")
         if key in self.ANNOTATION_TOOL_KEYS:
             self._activate_annotation_tool(key)
             return
@@ -3441,7 +3488,7 @@ class PDFViewer(QMainWindow):
             try:
                 handler()
             finally:
-                if key not in {"rotate", "font_inspect"}:
+                if key not in {"rotate", "font_inspect", "fill_form"}:
                     self.side_panel.set_active_tool(None)
 
     # --- P3: annotations and content editing -----------------------------
@@ -5178,36 +5225,336 @@ class PDFViewer(QMainWindow):
         dialog.finished.connect(lambda: self._comparison_dialogs.remove(dialog) if dialog in self._comparison_dialogs else None)
         dialog.show()
 
-    def _fill_form(self):
-        from core.forms import apply_values
-        from dialogs.form_dialog import FormDialog
+    def _form_identity(self, session: DocumentSession) -> tuple[object, int]:
+        return session.engine.document_id, session.engine.revision
 
-        if not self.engine.is_loaded():
+    def _form_is_stale(self, session: DocumentSession) -> bool:
+        draft = session.form_draft
+        return draft is not None and draft.identity != self._form_identity(session)
+
+    def _form_panel_sync(self, session: DocumentSession | None = None) -> None:
+        target = session or self._session
+        if target is not None and target is self._session:
+            self.context_panel.form_panel.set_draft(
+                target.form_draft, stale=self._form_is_stale(target)
+            )
+
+    def _suspend_form_preview(self, session: DocumentSession) -> None:
+        draft = session.form_draft
+        if draft is None or draft.preview is None:
             return
-        dialog = None
-        try:
-            with DOCUMENT_LOCK:
-                revision = (self.engine.document_id, self.engine.revision)
-                data = self.engine.document.tobytes(garbage=0, clean=False, no_new_id=True)
-            dialog = FormDialog(data, self)
-            if dialog.exec() != QDialog.DialogCode.Accepted:
+        canvas = session.canvas
+        page, zoom = session.page, canvas.zoom_ratio
+        canvas.clear()
+        draft.release()
+        if session.engine.is_loaded():
+            canvas.load_doc(session.engine.document, zoom)
+            canvas.set_page(min(page, session.engine.page_count - 1), emit=False)
+
+    def _fill_form(self) -> None:
+        if not self.engine.is_loaded() or self._session is None:
+            return
+        session = self._session
+        if session.form_draft is None:
+            try:
+                with DOCUMENT_LOCK:
+                    identity = self._form_identity(session)
+                    snapshot = session.engine.document.tobytes(
+                        garbage=0, clean=False, no_new_id=True
+                    )
+                session.form_draft = FormDraft.from_snapshot(identity, snapshot)
+            except Exception as exc:
+                self._error("Fill form unavailable", str(exc))
                 return
-            if revision != (self.engine.document_id, self.engine.revision):
-                raise ValueError("The document changed while the form was open. Reopen the form to edit the current revision.")
+        if not session.form_draft.fields:
+            session.form_draft = None
+            self.info_bar.show_message("This PDF has no AcroForm fields.", "info")
+            return
+        session.form_mode_active = True
+        session.canvas.set_form_fields(session.form_draft.fields)
+        self._set_canvas_tool("form")
+        self._form_panel_sync(session)
+        self._show_context("form")
+        self.side_panel.set_active_tool("fill_form")
+        if session.form_draft.changed and not self._form_is_stale(session):
+            self._refresh_form_preview()
+
+    def _form_select_field(self, name: str) -> None:
+        session = self._session
+        if session is None or session.form_draft is None:
+            return
+        item = next((field for field in session.form_draft.fields if field.name == name), None)
+        if item is None or not item.widgets:
+            return
+        ref = item.widgets[0]
+        if session.page != ref.page:
+            self.goto_page(ref.page)
+        session.canvas.show_search_hits(
+            ref.page, [fitz.Rect(widget.rect) for widget in item.widgets if widget.page == ref.page]
+        )
+
+    def _form_stage(self, session: DocumentSession, item, value) -> None:
+        if session.form_draft is None or self._form_is_stale(session):
+            return
+        session.form_draft.stage(item, value)
+        self._form_panel_sync(session)
+        if session is self._session and session.form_mode_active:
+            self._refresh_form_preview()
+
+    def _form_field_clicked(self, session: DocumentSession, page: int, point) -> None:
+        if not session.form_mode_active or session.form_draft is None:
+            return
+        if self._form_is_stale(session):
+            self._form_panel_sync(session)
+            return
+        found = session.form_draft.field_at(page, point)
+        if found is None:
+            return
+        item, ref = found
+        self._form_select_field(item.name)
+        if item.readonly or item.calculation or item.signed or item.kind == fitz.PDF_WIDGET_TYPE_BUTTON:
+            self.info_bar.show_message(f"{item.name} cannot be edited.", "info")
+            return
+        value = session.form_draft.current_value(item)
+        if item.kind == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+            state = next((state for state in ref.states if state != "Off"), "Yes")
+            self._form_stage(session, item, "Off" if value not in (None, "", "Off", False) else state)
+            return
+        if item.kind == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+            state = next((state for state in ref.states if state != "Off"), "Off")
+            self._form_stage(session, item, state)
+            return
+        if item.kind == fitz.PDF_WIDGET_TYPE_SIGNATURE:
+            self._form_signature(session, item, ref)
+            return
+        view = session.canvas._page_views.get(page)
+        if view is None:
+            return
+        overlay = view.overlay
+        rect = overlay.pdf_rect_to_widget(fitz.Rect(ref.rect)).toAlignedRect()
+        rect.setWidth(max(165, rect.width()))
+        rect.setHeight(max(28, rect.height()))
+        rect.moveLeft(max(0, min(rect.left(), overlay.width() - rect.width())))
+        rect.moveTop(max(0, min(rect.top(), overlay.height() - rect.height())))
+        if item.kind in (fitz.PDF_WIDGET_TYPE_COMBOBOX, fitz.PDF_WIDGET_TYPE_LISTBOX):
+            multiple = item.kind == fitz.PDF_WIDGET_TYPE_LISTBOX and bool(item.flags & (1 << 21))
+            editor = FormChoiceEditor(
+                item.choices, value, multiple=multiple,
+                editable=item.kind == fitz.PDF_WIDGET_TYPE_COMBOBOX and bool(item.flags & (1 << 18)),
+                parent=overlay,
+            )
+            editor.setGeometry(rect.x(), rect.y(), min(280, overlay.width()), 180 if multiple else 76)
+            editor.valueCommitted.connect(
+                lambda selected, s=session, field=item, widget=editor: (
+                    widget.hide(), widget.deleteLater(), self._form_stage(s, field, selected)
+                )
+            )
+        elif item.kind == fitz.PDF_WIDGET_TYPE_TEXT and item.flags & (1 << 12):
+            editor = FormMultilineEditor(overlay)
+            editor.setPlainText(str(value or ""))
+            editor.setGeometry(rect.x(), rect.y(), min(280, overlay.width()), max(90, rect.height()))
+            editor.finishRequested.connect(
+                lambda commit, s=session, field=item, widget=editor: self._finish_form_text(
+                    s, field, widget, commit
+                )
+            )
+        else:
+            editor = InlineTextEditor(overlay)
+            editor.setText(str(value or ""))
+            editor.setGeometry(rect)
+            editor.finishRequested.connect(
+                lambda commit, s=session, field=item, widget=editor: self._finish_form_text(
+                    s, field, widget, commit
+                )
+            )
+        editor.setObjectName("inlineFormEditor")
+        editor.show()
+        editor.raise_()
+        editor.setFocus(Qt.FocusReason.MouseFocusReason)
+
+    def _finish_form_text(self, session, item, editor, commit: bool) -> None:
+        if getattr(editor, "_form_finished", False):
+            return
+        editor._form_finished = True
+        value = editor.toPlainText() if isinstance(editor, FormMultilineEditor) else editor.text()
+        editor.hide()
+        editor.deleteLater()
+        if commit:
+            self._form_stage(session, item, value)
+
+    def _form_signature(self, session: DocumentSession, item, ref) -> None:
+        from dialogs.signature_appearance import SignatureAppearanceDialog
+
+        menu = QMenu(self)
+        draw = menu.addAction("Draw signature appearance…")
+        choose = menu.addAction("Choose signature image…")
+        selected = menu.exec(QCursor.pos())
+        data = None
+        if selected is draw:
+            dialog = SignatureAppearanceDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                data = dialog.image_bytes()
+        elif selected is choose:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Signature appearance", "", "Images (*.png *.jpg *.jpeg)"
+            )
+            if path:
+                try:
+                    data = Path(path).read_bytes()
+                    fitz.Pixmap(data)
+                except Exception as exc:
+                    self._error("Signature image unavailable", str(exc))
+        if data is not None and session.form_draft is not None:
+            session.form_draft.signatures[item.name] = data
+            self._form_panel_sync(session)
+            self._refresh_form_preview()
+
+    def _refresh_form_preview(self) -> bool:
+        session = self._session
+        if session is None or session.form_draft is None or self._form_is_stale(session):
+            return False
+        draft = session.form_draft
+        if not draft.changed:
+            self._suspend_form_preview(session)
+            self._form_panel_sync(session)
+            return True
+        try:
+            candidate = draft.build_preview()
+        except Exception as exc:
+            self._suspend_form_preview(session)
+            self.context_panel.form_panel.status.setText(f"Draft saved; preview needs attention: {exc}")
+            return False
+        if not session.form_mode_active:
+            candidate.close()
+            return True
+        canvas = session.canvas
+        page, zoom = session.page, canvas.zoom_ratio
+        canvas.clear()
+        draft.release()
+        draft.preview = candidate
+        canvas.load_doc(candidate, zoom)
+        canvas.set_page(min(page, candidate.page_count - 1), emit=False)
+        canvas.set_tool_mode("form")
+        self._form_panel_sync(session)
+        return True
+
+    def _reload_form_draft(self) -> None:
+        session = self._session
+        if session is None or session.form_draft is None:
+            return
+        previous = session.form_draft
+        self._suspend_form_preview(session)
+        with DOCUMENT_LOCK:
+            identity = self._form_identity(session)
+            snapshot = session.engine.document.tobytes(garbage=0, clean=False, no_new_id=True)
+        try:
+            refreshed = FormDraft.from_snapshot(identity, snapshot)
+            by_name = {item.name: item for item in refreshed.fields}
+            refreshed.staged = {
+                name: value for name, value in previous.staged.items()
+                if name in by_name and by_name[name].kind == next(
+                    item.kind for item in previous.fields if item.name == name
+                )
+            }
+            refreshed.signatures = {
+                name: data for name, data in previous.signatures.items()
+                if name in by_name and by_name[name].kind == fitz.PDF_WIDGET_TYPE_SIGNATURE
+            }
+        except Exception as exc:
+            self._error("Cannot reload form", str(exc))
+            return
+        session.form_draft = refreshed
+        self._form_panel_sync(session)
+        self._refresh_form_preview()
+
+    def _discard_form_draft(self) -> None:
+        session = self._session
+        if session is None or session.form_draft is None:
+            return
+        self._suspend_form_preview(session)
+        session.form_draft = None
+        session.form_mode_active = False
+        session.canvas.set_form_fields([])
+        self._set_canvas_tool("browse")
+        self._hide_context()
+
+    def _apply_form_draft(self) -> bool:
+        from core.forms import apply_values, validate_values
+
+        session = self._session
+        if session is None or session.form_draft is None or not session.form_draft.changed:
+            return True
+        draft = session.form_draft
+        if self._form_is_stale(session):
+            self._form_panel_sync(session)
+            return False
+        try:
+            _, warnings = validate_values(draft.fields, draft.staged)
+            if warnings and QMessageBox.question(
+                self, "Scripts not executed",
+                "\n".join(warnings) + "\n\nApply supported values anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return False
+            self._suspend_form_preview(session)
             with self._page_transaction("Fill form") as allowed:
                 if not allowed:
-                    return
-                apply_values(self.engine.document, dialog.staged, dialog.signatures,
-                             acknowledge_scripts=dialog.acknowledge_scripts)
-                self.engine.mark_modified()
+                    self._refresh_form_preview()
+                    return False
+                apply_values(
+                    session.engine.document, draft.staged, draft.signatures,
+                    acknowledge_scripts=bool(warnings),
+                )
+                session.engine.mark_modified()
+            session.form_draft = None
+            session.form_mode_active = False
+            session.canvas.set_form_fields([])
+            self._set_canvas_tool("browse")
             self._after_page_count_change()
+            self._hide_context()
             self.info_bar.show_message("Form values applied. Save to keep the changes.", "success")
+            return True
         except Exception as exc:
-            log_failure("Form editing failed")
             self._error("Form editing failed", str(exc))
-        finally:
-            if dialog is not None:
-                dialog.release()
+            self._refresh_form_preview()
+            return False
+
+    def _confirm_form_draft_for_save(self) -> bool:
+        session = self._session
+        if session is None or session.form_draft is None or not session.form_draft.changed:
+            return True
+        prompt = QMessageBox(self)
+        prompt.setWindowTitle("Unapplied form draft")
+        prompt.setText("This document has form values that have not been applied.")
+        apply_button = prompt.addButton("Apply and save", QMessageBox.ButtonRole.AcceptRole)
+        save_button = prompt.addButton("Save without draft", QMessageBox.ButtonRole.ActionRole)
+        prompt.addButton(QMessageBox.StandardButton.Cancel)
+        prompt.exec()
+        if prompt.clickedButton() is apply_button:
+            return self._apply_form_draft()
+        return prompt.clickedButton() is save_button
+
+    def _confirm_form_draft_for_close(self) -> bool:
+        session = self._session
+        if session is None or session.form_draft is None or not session.form_draft.changed:
+            return True
+        prompt = QMessageBox(self)
+        prompt.setWindowTitle("Unapplied form draft")
+        prompt.setText("Apply or discard this form draft before closing the document.")
+        apply_button = prompt.addButton("Apply", QMessageBox.ButtonRole.AcceptRole)
+        discard_button = prompt.addButton("Discard draft", QMessageBox.ButtonRole.DestructiveRole)
+        prompt.addButton(QMessageBox.StandardButton.Cancel)
+        prompt.exec()
+        if prompt.clickedButton() is apply_button:
+            return self._apply_form_draft()
+        if prompt.clickedButton() is discard_button:
+            self._suspend_form_preview(session)
+            session.form_draft = None
+            session.form_mode_active = False
+            session.canvas.set_tool_mode("browse")
+            return True
+        return False
 
     def _require_source(self) -> Path | None:
         if not self.engine.is_loaded() or not self.engine.original_path:
@@ -5889,7 +6236,10 @@ class PDFViewer(QMainWindow):
         sessions = [
             session
             for session in self._sessions
-            if session.engine.is_loaded() and session.engine.is_modified
+            if session.engine.is_loaded() and (
+                session.engine.is_modified
+                or (session.form_draft is not None and session.form_draft.changed)
+            )
         ]
         if not sessions:
             self.info_bar.show_message("No files need to be saved.", "info")
@@ -5897,6 +6247,11 @@ class PDFViewer(QMainWindow):
         saved = 0
         skipped = 0
         for session in sessions:
+            self.workspace.set_current_session(session)
+            self._session = session
+            if not self._confirm_form_draft_for_save():
+                skipped += 1
+                continue
             if session.engine.original_path is None:
                 # Never-saved documents need a file name: prompt Save As
                 # instead of silently dropping their changes.

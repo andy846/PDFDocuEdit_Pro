@@ -112,6 +112,8 @@ class DocumentSession(QObject):
         super().__init__(parent)
         self.undo_stack = UndoStack(self)
         self.engine = PdfEngine(on_commit=self.undo_stack.push_bytes)
+        self.form_draft = None
+        self.form_mode_active = False
         self.display_path: Path | None = None
         self.page = 0
         self.split_orientation = "horizontal"

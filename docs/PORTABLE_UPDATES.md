@@ -1,10 +1,10 @@
-# PDFDocuEdit Pro 免 Installer 更新
+# PDFDocuEdit Pro Managed 更新與安裝
 
 ## 公司首次使用
 
-1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.13-Managed-Portable-Windows-x64.zip`，核對同名 `.sha256`。
-2. 將整個 `PDFDocuEditPro` 資料夾解壓到 `%LOCALAPPDATA%` 或公司允許寫入及執行的資料夾。請勿覆蓋既有部署資料夾。
-3. 執行 `Launcher.exe`，並建立指向它的桌面捷徑。`launcher_runtime` 是啟動器依賴，必須保留。
+1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.14-Setup-Windows-x64.exe` 或同版本 Managed Portable ZIP，核對同名 `.sha256`。
+2. Setup 會將 managed 版本安裝到新的使用者可寫資料夾，建立 Launcher.exe 捷徑。ZIP 使用者則將整個 `PDFDocuEditPro` 資料夾解壓到 `%LOCALAPPDATA%` 或公司允許寫入及執行的資料夾；請勿覆蓋既有部署資料夾。
+3. 執行 `Launcher.exe`。`launcher_runtime` 是啟動器依賴，必須保留。
 4. 首次啟動可選擇複製現有 Windows 使用者設定。舊設定及 PDF 不會被移動。歷史便攜版的設定如不在 Windows 設定位置，可在關閉程式後把其 `config.json` 中的設定匯入新部署的 `data/config/settings.json`；先保留原檔備份。
 5. 以後使用 **Help → Check for Updates… → Download Update → Update and Restart**。
 
@@ -33,7 +33,7 @@ python scripts/update_release.py keygen
 python scripts/update_release.py build
 ```
 
-此流程執行原始碼檢查、Ruff、完整 pytest、現有 PyInstaller 打包及啟動器打包；不要求 Inno Setup。外部 OCR／Ghostscript／veraPDF 依賴沿用既有 build 驗證。
+此流程執行原始碼檢查、Ruff、完整 pytest、PyInstaller 與 Launcher 打包，並由 Inno Setup 6 產生首次安裝版。外部 OCR／Ghostscript／veraPDF 依賴沿用既有 build 驗證。
 
 產物存於 `release/`：
 
@@ -42,7 +42,8 @@ python scripts/update_release.py build
 | `PDFDocuEdit-Pro-vX.Y.Z-Update-Windows-x64.zip` | 現有 managed 版下載的完整版本，包含所有依賴 |
 | `update.json`、`update.sig` | 簽署版本清單及原始 64-byte Ed25519 簽章 |
 | `PDFDocuEdit-Pro-vX.Y.Z-Managed-Portable-Windows-x64.zip` | 首次部署，包含固定啟動器及初始版本 |
-| 各 ZIP 的 `.sha256` | 手動下載驗證 |
+| `PDFDocuEdit-Pro-vX.Y.Z-Setup-Windows-x64.exe` | Inno Setup 首次安裝版，使用相同的 managed Launcher 結構 |
+| 各 ZIP／Setup 的 `.sha256` | 手動下載驗證 |
 
 3. 在隔離資料夾啟動部署包，驗證 PDF 開啟、編輯、儲存，以及 OCR／轉換等主要功能。
 4. 把版本提交並建立對應 `vX.Y.Z` tag。在 `andy846/PDFDocuEdit_Pro` 建立 Release 草稿，上傳上表全部檔案及版本說明。
@@ -80,7 +81,7 @@ python -m ruff check .
 
 先從現有 v2.5.5 的 Launcher.exe 啟動，使用 Help → Check for Updates → Download Update → Update and Restart。確認版本變成 2.5.6，Advanced Page Organizer 可插入空白頁及旋轉，再關閉並重新從同一個 Launcher.exe 開啟。檢查設定、PDF 開啟及 logs/updater.log；未儲存文件應仍提供儲存／取消機會。首次直接部署 v2.5.6 無法測試這次跨版本升級。
 
-Installer 本身不阻止 auto update。現有 Setup 使用直接主程式目錄與捷徑，沒有 managed 的 versions/state/launcher 結構；因此這次仍需一次 Managed Portable 過渡。未來 Setup 可安裝相同的 managed 結構並將捷徑／檔案關聯指向 Launcher。這屬另一項安裝、卸載及既有使用者遷移工作，v2.5.6 未修改 Setup 部署結構。
+V2.5.14 起的新 Setup 安裝相同 managed 結構並將捷徑／檔案關聯指向 Launcher。安裝程式只接受空白目錄；已有 managed 部署應透過程式內更新，舊式 Setup 使用者可選新的資料夾作一次過渡。解除安裝保留更新後新增的版本與使用者資料，必要時須手動清理。
 
 
 ## Windows 工作列釘選

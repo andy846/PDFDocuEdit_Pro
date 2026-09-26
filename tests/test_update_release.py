@@ -7,6 +7,7 @@ import zipfile
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from scripts.build_managed_installer import extract_deployment
 from scripts.update_release import create_packages
 from updates import protocol, trust
 from updates.protocol import EXECUTABLE, Manifest, UpdateError
@@ -36,6 +37,27 @@ def test_release_packages_round_trip_and_exclude_signing_key(tmp_path, monkeypat
     (app / "signing.pem").write_bytes(b"must not ship")
     with pytest.raises(UpdateError, match="Private/local"):
         create_packages(app, bootstrap, tmp_path / "release", "2.5.6", key)
+
+
+def test_managed_installer_stages_same_deployment(tmp_path, monkeypatch):
+    key = Ed25519PrivateKey.generate()
+    monkeypatch.setattr(trust, "PUBLIC_KEY_HEX", key.public_key().public_bytes_raw().hex())
+    app, launcher = tmp_path / "app", tmp_path / "launcher"
+    app.mkdir()
+    launcher.mkdir()
+    (app / EXECUTABLE).write_bytes(b"app")
+    (app / "_internal").mkdir()
+    (app / "_internal" / "runtime.dll").write_bytes(b"runtime")
+    (launcher / "Launcher.exe").write_bytes(b"launcher")
+    deployment = create_packages(app, launcher, tmp_path / "release", "2.5.14", key)[3]
+
+    stage = extract_deployment(deployment, tmp_path / "stage", "2.5.14")
+    assert (stage / "Launcher.exe").read_bytes() == b"launcher"
+    assert (stage / "versions" / "2.5.14" / EXECUTABLE).read_bytes() == b"app"
+    assert json.loads((stage / "state.json").read_text())["current"] == "2.5.14"
+
+    with pytest.raises(UpdateError, match="state"):
+        extract_deployment(deployment, tmp_path / "wrong-version", "2.5.15")
 
 
 def test_api_quota_uses_direct_public_release_redirect(monkeypatch):

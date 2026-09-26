@@ -1,6 +1,6 @@
 @echo off
 rem PDFDocuEdit Pro - canonical Windows release build.
-rem Run on Windows x64 with Python 3.12 and Inno Setup 6 installed.
+rem Run on Windows x64 with Python 3.12, Inno Setup 6, and the update signing key.
 setlocal
 cd /d "%~dp0\.."
 
@@ -20,7 +20,7 @@ python -m pip install -r requirements-windows.txt || exit /b 1
 
 echo === 2/2 Verify, test, package, sign, and create checksums ===
 set QT_QPA_PLATFORM=offscreen
-python scripts\build.py || exit /b 1
+python scripts\update_release.py build || exit /b 1
 
 echo Release artifacts are available in the release folder.
 endlocal

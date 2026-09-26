@@ -1,15 +1,15 @@
-# PDFDocuEdit Pro V2.5.13
+# PDFDocuEdit Pro V2.5.14
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
 
-## V2.5.13 Deep Search quick fix
+## V2.5.14 Viewer and form improvements
 
-- Restore file opening and previews after sorting search results by filename.
-- Open Selected Document now opens the selected result, not the first row.
-- Automatically show the first result preview when search completes.
-- Preserve custom data and styling when sorting shared result tables.
+- Fill AcroForm fields directly on the PDF page with a right-side field list, staged preview, Apply and one-step Undo.
+- Keep form drafts when changing tools or tabs, with prompts on save and close.
+- Improve viewer layout, search result page actions, and page extraction/deletion workflows.
+- Provide a managed Inno Setup installer for first deployment alongside signed update and Managed Portable packages.
 
-See [release notes](docs/RELEASE_NOTES_2.5.13.md).
+See [release notes](docs/RELEASE_NOTES_2.5.14.md).
 
 ## V2.5.10 啟動與大型文件效能
 
@@ -50,12 +50,12 @@ Page thumbnails, viewer navigation and page counts stay synchronized; fitting PD
 
 Windows managed portable builds now support **Help → Check for Updates**:
 signed GitHub ZIP downloads, a fixed launcher, isolated versions, and automatic
-startup rollback without an installer. The first deployment requires extracting
-the Managed Portable ZIP and switching the shortcut to Launcher.exe.
-See [免 Installer 更新與發佈指南](docs/PORTABLE_UPDATES.md).
+startup rollback. First deployment can use the Inno Setup installer or extract
+the Managed Portable ZIP; both launch through Launcher.exe.
+See [更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V2.5.13 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.13). First deployments use the V2.5.13 Managed Portable package below; start Launcher.exe for managed updates.
-Existing installations need the one-time managed portable transition before using in-app updates.
+Download the [V2.5.14 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.14). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
+Existing legacy Setup installations need a one-time transition to the managed installer or portable package.
 
 ## V2.5.4 stability update
 
@@ -66,7 +66,7 @@ Existing installations need the one-time managed portable transition before usin
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V2.5.13. Use the Managed Portable ZIP below for installer-free updates; matching SHA-256 files are included.
+The current Windows x64 release is V2.5.14. Setup and Managed Portable downloads include SHA-256 files.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -142,15 +142,15 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 首次部署：[Managed Portable V2.5.13](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.13/PDFDocuEdit-Pro-v2.5.13-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
-- 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。
-- 每個 ZIP 均附有同名 .sha256 校驗檔。V2.5.13 採用免 installer 發佈。已有 Managed Portable 的使用者可從 Launcher.exe 啟動後檢查更新。
+- 安裝版：[Inno Setup V2.5.14](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.14/PDFDocuEdit-Pro-v2.5.14-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
+- 免安裝版：[Managed Portable V2.5.14](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.14/PDFDocuEdit-Pro-v2.5.14-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。各下載均有同名 .sha256 校驗檔。
 
 ### Windows release build
 
-在 Windows x64 安裝 Python 3.12 及 Inno Setup 6 後，可執行
+在 Windows x64 安裝 Python 3.12、Inno Setup 6 並設定更新簽署私鑰後，可執行
 `scripts\build_windows.bat`。流程會先驗證 source、執行測試，再建立 PyInstaller
-程式、Portable ZIP、Inno Setup 安裝檔及兩份 SHA-256 checksum。
+程式、簽署更新 ZIP、Managed Portable ZIP、Inno Setup 安裝檔及各自的 SHA-256 checksum。
 
 正式簽署 build 可設定以下環境變數：
 
@@ -158,7 +158,7 @@ Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/relea
 - `PDFDOCUEDIT_CERT_SHA1`：Authenticode certificate thumbprint
 - `PDFDOCUEDIT_TIMESTAMP_URL`：RFC 3161 timestamp URL（可省略）
 
-設定後會簽署主程式、Setup 及 Uninstaller。Installer 會將 PDFDocuEdit Pro
+設定後會簽署主程式、Launcher、Setup 及 Uninstaller。Installer 會將 PDFDocuEdit Pro
 註冊為 PDF、PS、EPS 的可選開啟程式，但不會未經使用者同意改寫 Windows
 現有預設程式。
 

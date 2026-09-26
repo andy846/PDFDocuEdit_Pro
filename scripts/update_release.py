@@ -1,4 +1,4 @@
-"""Build signed update/deployment ZIPs without Inno Setup or administrator rights.
+"""Build signed update/deployment ZIPs and a managed Inno Setup installer.
 
 Run from the repository root with Python 3.12. Private keys never enter dist.
 """
@@ -154,6 +154,7 @@ def main() -> int:
     parser.add_argument("command", choices=("keygen", "build"))
     parser.add_argument("--key", type=Path, default=ROOT / ".update-keys" / "signing.pem")
     parser.add_argument("--skip-build", action="store_true", help="Reuse a matching, already built application; rebuild launcher")
+    parser.add_argument("--skip-tests", action="store_true", help="Use only after the full suite passed on this source tree")
     args = parser.parse_args()
     if args.command == "keygen":
         keygen(args.key)
@@ -171,12 +172,19 @@ def main() -> int:
     dist = ROOT / "dist" / "PDFDocuEdit Pro"
     if not args.skip_build:
         atomic_json(ROOT / "build_assets" / "update_build.json", build_info)
-        subprocess.run([sys.executable, "scripts/build.py", "--portable-only"], cwd=ROOT, check=True)
+        command = [sys.executable, "scripts/build.py", "--portable-only"]
+        if args.skip_tests:
+            command.append("--skip-tests")
+        subprocess.run(command, cwd=ROOT, check=True)
     info_path = dist / "_internal" / "update_build.json"
     if not info_path.is_file() or json.loads(info_path.read_text(encoding="utf-8")) != build_info:
         raise UpdateError("Packaged application does not match this source tree. Build without --skip-build.")
     launcher = build_launcher()
     outputs = create_packages(dist, launcher, ROOT / "release", APP_VERSION, key)
+    from scripts.build_managed_installer import build_installer
+
+    installer = build_installer(outputs[3], APP_VERSION)
+    outputs.extend((installer, installer.with_suffix(installer.suffix + ".sha256")))
     for output in outputs:
         print(output)
     return 0

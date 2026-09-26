@@ -99,6 +99,7 @@ class ToolMode(StrEnum):
     SELECT = "select"
     MAGNIFIER = "magnifier"
     FONT_INSPECT = "font_inspect"
+    FORM = "form"
     HIGHLIGHT = "highlight"
     UNDERLINE = "underline"
     STRIKEOUT = "strikeout"
@@ -230,6 +231,7 @@ class PdfCanvas(QScrollArea):
     annotationGeometryChanged = pyqtSignal(int, int, object)
     annotationTextChanged = pyqtSignal(int, int, str)
     fontInspectionRequested = pyqtSignal(int, object)
+    formFieldRequested = pyqtSignal(int, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -252,6 +254,7 @@ class PdfCanvas(QScrollArea):
         self._selection: tuple[int, str] | None = None
         self._selected_annotation: tuple[int, int] | None = None
         self._search_hits: tuple[int, list[fitz.Rect]] | None = None
+        self._form_rects_by_page: dict[int, list[fitz.Rect]] = {}
         self._font_inspection: tuple[int, fitz.Rect] | None = None
         self._show_captions = True
         self._annotations_editable = True
@@ -550,7 +553,7 @@ class PdfCanvas(QScrollArea):
             cursor = Qt.CursorShape.CrossCursor
         elif self._tool_mode == ToolMode.FREETEXT_TYPEWRITER:
             cursor = Qt.CursorShape.IBeamCursor
-        elif self._tool_mode in {ToolMode.NOTE, ToolMode.FONT_INSPECT}:
+        elif self._tool_mode in {ToolMode.NOTE, ToolMode.FONT_INSPECT, ToolMode.FORM}:
             cursor = Qt.CursorShape.PointingHandCursor
         else:
             cursor = Qt.CursorShape.ArrowCursor
@@ -567,6 +570,11 @@ class PdfCanvas(QScrollArea):
             view.overlay.set_ink_mode(ink)
             view.overlay.set_polygon_mode(polygon)
             view.overlay.set_font_inspect_mode(font_inspect)
+            view.overlay.set_form_mode(self._tool_mode == ToolMode.FORM)
+            view.overlay.set_form_rects(
+                self._form_rects_by_page.get(view.overlay._page_num, [])
+                if self._tool_mode == ToolMode.FORM else []
+            )
             view.overlay.set_line_mode(
                 line,
                 arrow=self._tool_mode == ToolMode.ARROW,
@@ -669,6 +677,19 @@ class PdfCanvas(QScrollArea):
             self.set_zoom(1.0)
 
     # --- search hits (P1 integration) ------------------------------------
+    def set_form_fields(self, fields) -> None:
+        self._form_rects_by_page = {}
+        for field in fields:
+            for ref in field.widgets:
+                self._form_rects_by_page.setdefault(ref.page, []).append(
+                    fitz.Rect(ref.rect)
+                )
+        for page, view in self._page_views.items():
+            view.overlay.set_form_rects(
+                self._form_rects_by_page.get(page, [])
+                if self._tool_mode == ToolMode.FORM else []
+            )
+
     def show_search_hits(self, page: int, rects: list[fitz.Rect]) -> None:
         self._search_hits = (page, list(rects))
         self._apply_search_hits()
@@ -700,6 +721,13 @@ class PdfCanvas(QScrollArea):
         for page_num, view in self._page_views.items():
             view.overlay.set_font_inspection_rect(
                 rect if page_num == target_page else None
+            )
+
+    def _on_form_click(self, page_num: int, widget_point: QPointF) -> None:
+        view = self._page_views.get(page_num)
+        if view is not None:
+            self.formFieldRequested.emit(
+                page_num, view.overlay.widget_to_pdf(widget_point)
             )
 
     def _on_font_inspect(self, page_num: int, widget_point: QPointF) -> None:
@@ -1168,6 +1196,11 @@ class PdfCanvas(QScrollArea):
             view.overlay.selectionMade.connect(self._on_selection)
             view.overlay.set_polygon_mode(polygon)
             view.overlay.set_font_inspect_mode(font_inspect)
+            view.overlay.set_form_mode(self._tool_mode == ToolMode.FORM)
+            view.overlay.set_form_rects(
+                self._form_rects_by_page.get(page_num, [])
+                if self._tool_mode == ToolMode.FORM else []
+            )
             view.overlay.set_line_mode(
                 line,
                 arrow=self._tool_mode == ToolMode.ARROW,
@@ -1181,6 +1214,7 @@ class PdfCanvas(QScrollArea):
             view.overlay.lineDrawn.connect(self._on_line)
             view.overlay.polygonDrawn.connect(self._on_polygon)
             view.overlay.fontInspectClicked.connect(self._on_font_inspect)
+            view.overlay.formClicked.connect(self._on_form_click)
             view.overlay.annotationSelected.connect(self._on_annotation_selected)
             view.overlay.annotationContextRequested.connect(
                 self.annotationContextRequested.emit

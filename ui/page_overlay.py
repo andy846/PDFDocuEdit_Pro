@@ -124,6 +124,7 @@ class InteractionState(StrEnum):
     IDLE = "idle"
     SELECT = "select"
     FONT_INSPECT = "font_inspect"
+    FORM = "form"
     NOTE = "note"
     INK = "ink"
     LINE = "line"
@@ -155,6 +156,7 @@ class PageOverlay(QWidget):
     annotationTextChanged = pyqtSignal(int, int, str)
     typewriterCommitted = pyqtSignal(int, object, str)
     fontInspectClicked = pyqtSignal(int, object)
+    formClicked = pyqtSignal(int, object)
 
     def __init__(self, page_num: int, parent=None):
         super().__init__(parent)
@@ -166,6 +168,7 @@ class PageOverlay(QWidget):
         self._derotation_matrix: fitz.Matrix | None = None
         self._selection_rects: list[fitz.Rect] = []
         self._search_rects: list[fitz.Rect] = []
+        self._form_rects: list[fitz.Rect] = []
         self._font_inspection_rect: fitz.Rect | None = None
         self._interaction_state = InteractionState.IDLE
         self._marquee: QRectF | None = None
@@ -219,6 +222,10 @@ class PageOverlay(QWidget):
         self._search_rects = list(rects)
         self.update()
 
+    def set_form_rects(self, rects: Iterable[fitz.Rect]) -> None:
+        self._form_rects = list(rects)
+        self.update()
+
     def set_font_inspection_rect(self, rect: fitz.Rect | None) -> None:
         self._font_inspection_rect = fitz.Rect(rect) if rect is not None else None
         self.update()
@@ -268,7 +275,7 @@ class PageOverlay(QWidget):
         self.setFocus(Qt.FocusReason.OtherFocusReason)
         cursor = (
             Qt.CursorShape.PointingHandCursor
-            if next_state in {InteractionState.NOTE, InteractionState.FONT_INSPECT}
+            if next_state in {InteractionState.NOTE, InteractionState.FONT_INSPECT, InteractionState.FORM}
             else (
                 Qt.CursorShape.CrossCursor
                 if next_state
@@ -283,6 +290,12 @@ class PageOverlay(QWidget):
         )
         self.setCursor(cursor)
         self.update()
+
+    def set_form_mode(self, enabled: bool) -> None:
+        if enabled:
+            self.set_interaction_state(InteractionState.FORM)
+        elif self._interaction_state == InteractionState.FORM:
+            self.set_interaction_state(InteractionState.IDLE)
 
     def set_font_inspect_mode(self, enabled: bool) -> None:
         if enabled:
@@ -370,6 +383,11 @@ class PageOverlay(QWidget):
         if self._pixmap:
             painter.drawPixmap(0, 0, self._pixmap)
         colors = get_colors()
+        if self._form_rects:
+            painter.setPen(QPen(QColor(colors["primary"]), 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for rect in self._form_rects:
+                painter.drawRoundedRect(self.pdf_rect_to_widget(rect), 3.0, 3.0)
         if self._search_rects:
             search = QColor(SEARCH_COLOR)
             search.setAlpha(SEARCH_ALPHA)
@@ -709,6 +727,13 @@ class PageOverlay(QWidget):
             and event.button() == Qt.MouseButton.LeftButton
         ):
             self.fontInspectClicked.emit(self._page_num, event.position())
+            event.accept()
+            return
+        if (
+            self._interaction_state == InteractionState.FORM
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self.formClicked.emit(self._page_num, event.position())
             event.accept()
             return
         if self._interaction_state == InteractionState.POLYGON and event.button() in {
