@@ -1,17 +1,11 @@
-"""Deep Search dialog: folder-wide PDF text and barcode search.
-
-The layout mirrors the original PDFDocuEdit Pro "PDF Content Deep Search"
-window, restyled with the application theme tokens: folder row, prominent
-search row, options row (subfolders / barcode content / open method), status
-row with progress, three tabs (Search Result / Preview / Error Message) and
-one compact action row (clear / export / open selected).
-"""
+"""Deep Search dialog with file summaries, paged occurrences, and reports."""
 
 from __future__ import annotations
 
 import html
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThreadPool, QTimer, pyqtSignal
@@ -29,16 +23,20 @@ from PyQt6.QtWidgets import (
     QMenu,
     QProgressBar,
     QPushButton,
+    QTableView,
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
 )
 
+from core.deep_search import SearchBatch, SearchFile, SearchHit, SearchIssue, search_folder_detailed
 from core.diagnostics import log_failure
+from core.search_report import ReportMeta, export_html, export_report, export_text
+from core.search_results_store import SearchResultsStore
 from core.tasks import FunctionTask
-from core.tools import deep_search, export_search_results_csv
 from dialogs.base import SortableTableWidget, ToolDialog, remember_save_directory, start_in_save_directory
 from styles.theme import get_color, get_colors
+from ui.search_hits_model import SearchHitsModel
 
 OPEN_NEW_TAB = "new_tab"
 OPEN_CURRENT = "current"
@@ -51,6 +49,7 @@ class DeepSearchDialog(ToolDialog):
     """Non-modal folder-wide PDF search with preview and error tabs."""
 
     openRequested = pyqtSignal(str, str)  # file path, open method
+    hitOpenRequested = pyqtSignal(str, str, int)  # path, method, one-based page
 
     def __init__(self, initial_folder: str, parent=None):
         super().__init__("Deep Search PDFs", "deep_search", parent)
@@ -71,10 +70,23 @@ class DeepSearchDialog(ToolDialog):
         self._results: list[dict[str, object]] = []  # matches, aligned with table rows
         self._errors: list[dict[str, object]] = []  # failures, aligned with error rows
         self._task: FunctionTask | None = None
+        self._export_task: FunctionTask | None = None
         self._pool = QThreadPool.globalInstance()
         self._search_started_at = 0.0
         self._processed_files = 0
         self._total_files = 0
+        self._store = SearchResultsStore()
+        self._hits_model = SearchHitsModel(self._store, self)
+        self._run_completed = False
+        self._search_error = False
+        self._run_elapsed = 0.0
+        self._searched_at = ""
+        self._selected_file_path: str | None = None
+        self._run_query = ""
+        self._run_folder = initial_folder
+        self._run_subfolders = True
+        self._run_barcodes = False
+        self._refresh_scheduled = False
 
         # --- folder row ---
         folder_row = QHBoxLayout()
@@ -155,6 +167,19 @@ class DeepSearchDialog(ToolDialog):
         self.table.setObjectName("deepSearchResultsTable")
         self._setup_result_table()
         self.tabs.addTab(self.table, "Search Result")
+        self.hits_table = QTableView()
+        self.hits_table.setObjectName("deepSearchMatchesTable")
+        self.hits_table.setModel(self._hits_model)
+        self.hits_table.setSortingEnabled(True)
+        self.hits_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.hits_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.hits_table.setWordWrap(False)
+        self.hits_table.setColumnWidth(0, 180)
+        self.hits_table.setColumnWidth(1, 65)
+        self.hits_table.setColumnWidth(2, 130)
+        self.hits_table.setColumnWidth(3, 90)
+        self.hits_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.tabs.addTab(self.hits_table, "Matches")
         self.preview = QTextEdit()
         self.preview.setObjectName("deepSearchPreview")
         self.preview.setReadOnly(True)
@@ -164,6 +189,28 @@ class DeepSearchDialog(ToolDialog):
         self._setup_error_table()
         self.tabs.addTab(self.error_table, "Error Message")
         self._root.addWidget(self.tabs, 1)
+
+        filter_row = QHBoxLayout()
+        self.file_filter = QLineEdit()
+        self.file_filter.setPlaceholderText("Filter files by name or path")
+        self.file_filter.textChanged.connect(self._refresh_filters)
+        self.keyword_filter = QComboBox()
+        self.keyword_filter.addItem("All keywords", "")
+        self.keyword_filter.currentIndexChanged.connect(self._refresh_filters)
+        self.source_filter = QComboBox()
+        for label, value in (("All sources", ""), ("Text", "text"), ("Barcode", "barcode")):
+            self.source_filter.addItem(label, value)
+        self.source_filter.currentIndexChanged.connect(self._refresh_filters)
+        self.show_all_button = QPushButton("All matching files")
+        self.show_all_button.clicked.connect(self._show_all_hits)
+        filter_row.addWidget(self.file_filter, 2)
+        filter_row.addWidget(self.keyword_filter)
+        filter_row.addWidget(self.source_filter)
+        filter_row.addWidget(self.show_all_button)
+        self._root.addLayout(filter_row)
+        self.text_notice = QLabel("Image-only PDF pages need OCR before text search.")
+        self.text_notice.setObjectName("secondary")
+        self._root.addWidget(self.text_notice)
 
         tip = QLabel(
             "Tip: drag the edge of a column header to resize it, double-click it "
@@ -180,21 +227,30 @@ class DeepSearchDialog(ToolDialog):
         self.export_button = QPushButton("Export Search Results")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self._export)
+        self.export_scope = QComboBox()
+        self.export_scope.addItem("Export all results", "all")
+        self.export_scope.addItem("Export current filters", "filtered")
         self.open_selected_button = QPushButton("Open Selected Document")
         self.open_selected_button.setEnabled(False)
         self.open_selected_button.clicked.connect(lambda _checked=False: self._open_selected())
         for button in (self.clear_button, self.export_button, self.open_selected_button):
             actions.addWidget(button)
+        actions.addWidget(self.export_scope)
         actions.addStretch(1)
         self._root.addLayout(actions)
 
         self.table.currentCellChanged.connect(lambda *_args: self._update_preview())
+        self.table.currentCellChanged.connect(lambda *_args: self._select_file_hits())
         self.table.cellDoubleClicked.connect(self._handle_double_click)
+        self.hits_table.doubleClicked.connect(self._open_hit)
+        self.hits_table.selectionModel().currentChanged.connect(
+            lambda *_args: self._update_hit_preview()
+        )
 
     # --- table setup -------------------------------------------------------
     def _setup_result_table(self) -> None:
         self.table.setHorizontalHeaderLabels(
-            ["File Name", "Page number", "Match Count", "Contextual Summary"]
+            ["File Name", "Matching Pages", "Occurrences", "Summary"]
         )
         header = self.table.horizontalHeader()
         self.table.setColumnWidth(0, 200)
@@ -258,7 +314,7 @@ class DeepSearchDialog(ToolDialog):
         super().keyPressEvent(event)
 
     def _search(self) -> None:
-        if self._task is not None:
+        if self._task is not None or self._export_task is not None:
             return  # a search is already running
         query = self.query.text().strip()
         if not query:
@@ -269,6 +325,13 @@ class DeepSearchDialog(ToolDialog):
             self.status.setText("Choose a valid folder to search.")
             return
         self._clear_results()
+        self._searched_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        self._run_query = query
+        self._run_folder = folder
+        self._run_subfolders = self.subfolders.isChecked()
+        self._run_barcodes = self.barcodes.isChecked()
+        self._run_completed = False
+        self._search_error = False
         self.search_button.setEnabled(False)
         self.clear_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -278,20 +341,20 @@ class DeepSearchDialog(ToolDialog):
         self._processed_files = 0
         self._total_files = 0
         task = FunctionTask(
-            deep_search,
+            search_folder_detailed,
             folder,
             query,
-            self.subfolders.isChecked(),
-            self.barcodes.isChecked(),
+            self._run_subfolders,
+            self._run_barcodes,
             progress_argument="progress",
             cancel_argument="is_cancelled",
+            batch_argument="on_batch",
         )
         self._task = task
         task.signals.progress.connect(self._on_progress)
-        task.signals.result.connect(self._show_results)
-        task.signals.error.connect(
-            lambda message: self.status.setText(f"Search failed: {message}")
-        )
+        task.signals.batch.connect(self._receive_batch)
+        task.signals.result.connect(self._detailed_result)
+        task.signals.error.connect(self._on_search_error)
         task.signals.finished.connect(self._search_finished)
         self._pool.start(task)
 
@@ -308,6 +371,70 @@ class DeepSearchDialog(ToolDialog):
         if message:
             self.current_file.setText(f"Processing: {message}")
 
+    def _receive_batch(self, batch: SearchBatch) -> None:
+        self._store.add(batch)
+        if batch.file and batch.file.matches:
+            self._append_file_result(batch.file)
+        if batch.issue:
+            issue = batch.issue
+            self._errors.append({"path": issue.path, "filename": issue.filename,
+                                 "pages": [], "snippets": [], "error": issue.message})
+            row = self.error_table.rowCount()
+            self.error_table.insertRow(row)
+            self.error_table.setItem(row, 0, QTableWidgetItem(issue.filename))
+            self.error_table.setItem(row, 1, QTableWidgetItem(issue.message))
+        if batch.hits:
+            if not self._refresh_scheduled:
+                self._refresh_scheduled = True
+                QTimer.singleShot(100, self._flush_hit_refresh)
+        self.export_button.setEnabled(self._task is None and bool(self._results or self._errors))
+
+    def _flush_hit_refresh(self) -> None:
+        self._refresh_scheduled = False
+        if self._store.db is not None:
+            self._refresh_hit_model()
+
+    def _append_file_result(self, file: SearchFile) -> None:
+        self._results.append({"path": file.path, "filename": file.filename,
+                              "pages": [], "snippets": [],
+                              "match_count": file.matches})
+        index = len(self._results) - 1
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        name = QTableWidgetItem(file.filename)
+        name.setToolTip(file.path)
+        name.setData(_RESULT_INDEX_ROLE, index)
+        name.setData(Qt.ItemDataRole.UserRole, file.path)
+        self.table.setItem(row, 0, name)
+        page_item = QTableWidgetItem(str(file.matching_pages))
+        page_item.setToolTip("Number of pages with at least one match")
+        self.table.setItem(row, 1, page_item)
+        count_item = QTableWidgetItem(str(file.matches))
+        count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setItem(row, 2, count_item)
+        first_hit = self._store.hit_page(0, 1, (file.path,))
+        context = first_hit[0].context if first_hit else "Select to view occurrences"
+        self.table.setItem(row, 3, QTableWidgetItem(context))
+
+    def _detailed_result(self, run) -> None:
+        self._run_completed = True
+        self._total_files = run.files_found
+        self._processed_files = run.files_processed
+        self.keyword_filter.blockSignals(True)
+        self.keyword_filter.clear()
+        self.keyword_filter.addItem("All keywords", "")
+        for keyword in run.keywords:
+            self.keyword_filter.addItem(keyword, keyword)
+        self.keyword_filter.blockSignals(False)
+        self.text_notice.setText(
+            f"{run.no_text_files} file(s) had no extractable text. "
+            "Image-only pages need OCR before text search."
+        )
+
+    def _on_search_error(self, message: str) -> None:
+        self._search_error = True
+        self.status.setText(f"Search failed: {message}")
+
     def _search_finished(self) -> None:
         was_cancelled = bool(self._task and self._task.is_cancelled())
         self._task = None
@@ -315,8 +442,18 @@ class DeepSearchDialog(ToolDialog):
         self.clear_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self.current_file.setText("")
+        self._run_elapsed = max(0.0, time.monotonic() - self._search_started_at)
+        self._store.remove_incomplete_files()
+        self._refresh_hit_model()
         if was_cancelled:
-            self.status.setText("Search cancelled.")
+            occurrences = self._store.hit_count()
+            self.status.setText(
+                f"Search cancelled · partial results retained · {occurrences} occurrences"
+            )
+            self.export_button.setEnabled(bool(self._results or self._errors))
+            return
+        if self._search_error:
+            self.export_button.setEnabled(bool(self._results or self._errors))
             return
         if not self._results and not self._errors and self._total_files == 0:
             self.progress.setValue(0)
@@ -325,23 +462,42 @@ class DeepSearchDialog(ToolDialog):
         self.progress.setValue(100)
         matches = len(self._results)
         errors = len(self._errors)
-        elapsed = time.monotonic() - self._search_started_at
+        occurrences, _, matching_pages = self._store.counts()
+        elapsed = self._run_elapsed
         processed = max(self._processed_files, matches + errors)
         self.status.setText(
-            f"Search Completed! Use: {elapsed:.2f} sec, Processed: {processed} files, "
-            f"Found: {matches} files, Error: {errors} files"
+            f"Completed in {elapsed:.2f} s · {processed} files scanned · "
+            f"{matches} matching files · {matching_pages} pages · "
+            f"{occurrences} occurrences · {errors} errors"
         )
-        self.export_button.setEnabled(bool(self._results))
+        self.export_button.setEnabled(bool(self._results or self._errors))
         if matches:
             self.tabs.setCurrentIndex(0)
-            QTimer.singleShot(100, self._auto_resize_columns)
         elif errors:
-            self.tabs.setCurrentIndex(2)
-            QTimer.singleShot(100, lambda: self._auto_resize(self.error_table))
+            self.tabs.setCurrentIndex(3)
 
     def _show_results(self, results: list[dict[str, object]]) -> None:
+        # Compatibility path for callers using the older one-snippet-per-page
+        # structure. The live search uses _receive_batch instead.
         self._results = [result for result in results if not result.get("error")]
         self._errors = [result for result in results if result.get("error")]
+        for result in results:
+            if result.get("error"):
+                self._store.add(SearchBatch(issue=SearchIssue(
+                    str(result["path"]), str(result["filename"]), str(result["error"])
+                )))
+                continue
+            pages = list(result.get("pages", []))
+            snippets = list(result.get("snippets", []))
+            keyword = self.query.text().split(",")[0].strip() or "search"
+            hits = tuple(SearchHit(str(result["path"]), str(result["filename"]),
+                                   int(page), keyword, "text",
+                                   str(snippets[index]) if index < len(snippets) else "", index)
+                         for index, page in enumerate(pages))
+            self._store.add(SearchBatch(hits=hits, file=SearchFile(
+                str(result["path"]), str(result["filename"]), max(pages, default=0),
+                len(set(pages)), len(hits), False,
+            )))
         primary = QColor(get_color("primary"))
         for index, result in enumerate(self._results):
             row = self.table.rowCount()
@@ -374,10 +530,69 @@ class DeepSearchDialog(ToolDialog):
             f"{len(self._results)} matching file(s)"
             + (f" · {len(self._errors)} file(s) could not be searched" if self._errors else "")
         )
-        self.export_button.setEnabled(bool(self._results))
+        self.export_button.setEnabled(bool(self._results or self._errors))
+        self._refresh_hit_model()
         if self.table.rowCount():
             self.table.setCurrentCell(0, 0)
         self._update_preview()
+
+    def _visible_paths(self) -> tuple[str, ...]:
+        paths: list[str] = []
+        for row in range(self.table.rowCount()):
+            if self.table.isRowHidden(row):
+                continue
+            index = self._result_index_for_row(row)
+            if index is not None:
+                paths.append(str(self._results[index]["path"]))
+        return tuple(paths)
+
+    def _refresh_filters(self, *_args) -> None:
+        needle = self.file_filter.text().strip().casefold()
+        for row in range(self.table.rowCount()):
+            index = self._result_index_for_row(row)
+            value = str(self._results[index]["path"]).casefold() if index is not None else ""
+            self.table.setRowHidden(row, bool(needle and needle not in value))
+        self._refresh_hit_model()
+
+    def _select_file_hits(self) -> None:
+        index = self._result_index_for_row(self.table.currentRow())
+        self._selected_file_path = (str(self._results[index]["path"])
+                                    if index is not None else None)
+        self._refresh_hit_model()
+
+    def _show_all_hits(self) -> None:
+        self._selected_file_path = None
+        self.table.clearSelection()
+        self._refresh_hit_model()
+        self.tabs.setCurrentWidget(self.hits_table)
+
+    def _refresh_hit_model(self) -> None:
+        visible = self._visible_paths()
+        paths: tuple[str, ...] | None = (visible if self.file_filter.text().strip() else None)
+        if self._selected_file_path:
+            paths = tuple(path for path in visible if path == self._selected_file_path)
+        self._hits_model.configure(
+            paths, str(self.keyword_filter.currentData() or ""),
+            str(self.source_filter.currentData() or ""),
+        )
+
+    def _update_hit_preview(self) -> None:
+        hit = self._hits_model.hit(self.hits_table.currentIndex().row())
+        if hit is None:
+            return
+        self.preview.setHtml(
+            f"<h3>{html.escape(hit.filename)}</h3>"
+            f"<p>{html.escape(hit.path)}</p>"
+            f"<p><b>Page {hit.page} · {html.escape(hit.keyword)} · "
+            f"{html.escape(hit.source.title())}</b></p>"
+            f"<p>{self._highlight(hit.context, [hit.keyword])}</p>"
+        )
+
+    def _open_hit(self, index) -> None:
+        hit = self._hits_model.hit(index.row())
+        if hit is None:
+            return
+        self.hitOpenRequested.emit(hit.path, str(self.open_option.currentData()), hit.page)
 
     def _result_index_for_row(self, row: int) -> int | None:
         item = self.table.item(row, 0)
@@ -397,15 +612,19 @@ class DeepSearchDialog(ToolDialog):
             self.preview.clear()
             return
         result = self._results[index]
-        keywords = [keyword for keyword in self.query.text().split(",") if keyword.strip()]
+        keywords = [keyword for keyword in self._run_query.split(",") if keyword.strip()]
+        if not keywords:
+            keywords = [keyword for keyword in self.query.text().split(",") if keyword.strip()]
         text_color = get_color("text_primary")
         error_color = get_color("error")
         parts = [
             f"<div style='color: {text_color};'>",
             f"<h3>File: {html.escape(str(result['filename']))}</h3>",
             f"<p><b>Path:</b> {html.escape(str(result['path']))}</p>",
-            f"<p><b>Page number:</b> {', '.join(map(str, result['pages']))}</p>",
-            f"<p><b>Matched:</b> {len(result['pages'])}</p>",
+            (f"<p><b>Matching pages:</b> {self._store.counts((str(result['path']),))[2]}</p>"
+             if "match_count" in result else
+             f"<p><b>Page number:</b> {', '.join(map(str, result['pages']))}</p>"),
+            f"<p><b>Occurrences:</b> {result.get('match_count', len(result['pages']))}</p>",
         ]
         if result.get("error"):
             parts.append(
@@ -413,13 +632,20 @@ class DeepSearchDialog(ToolDialog):
             )
         else:
             parts.append("<h4>Matching content:</h4><hr/>")
+            if "match_count" in result:
+                hits = self._store.hit_page(0, 20, (str(result["path"]),))
+                for hit in hits:
+                    parts.append(f"<p><b>Page {hit.page} · {html.escape(hit.keyword)}:</b><br/>"
+                                 f"{self._highlight(hit.context, [hit.keyword])}</p>")
+                if int(result["match_count"]) > len(hits):
+                    parts.append("<p>More occurrences are available in the Matches tab.</p>")
             for snippet_index, snippet in enumerate(result["snippets"]):
                 page_number = (
                     result["pages"][snippet_index]
                     if snippet_index < len(result["pages"])
                     else "?"
                 )
-                escaped = self._highlight(html.escape(str(snippet)), keywords)
+                escaped = self._highlight(str(snippet), keywords)
                 parts.append(f"<p><b>Page {page_number}:</b><br/>{escaped}</p>")
         parts.append("</div>")
         self.preview.setHtml("".join(parts))
@@ -429,17 +655,21 @@ class DeepSearchDialog(ToolDialog):
         colors = get_colors()
         background = colors.get("warning_soft", "#fff0d8")
         foreground = colors.get("text_primary", "#000000")
-        for keyword in sorted(keywords, key=len, reverse=True):
-            text = re.sub(
-                re.escape(keyword),
-                lambda match: (
-                    f"<span style='background-color: {background}; color: {foreground}; "
-                    f"font-weight: bold;'>{match.group(0)}</span>"
-                ),
-                text,
-                flags=re.IGNORECASE,
+        terms = sorted((term for term in keywords if term), key=len, reverse=True)
+        if not terms:
+            return html.escape(text)
+        pattern = re.compile("|".join(re.escape(term) for term in terms), re.IGNORECASE)
+        parts: list[str] = []
+        previous = 0
+        for match in pattern.finditer(text):
+            parts.append(html.escape(text[previous:match.start()]))
+            parts.append(
+                f"<span style='background-color: {background}; color: {foreground}; "
+                f"font-weight: bold;'>{html.escape(match.group())}</span>"
             )
-        return text
+            previous = match.end()
+        parts.append(html.escape(text[previous:]))
+        return "".join(parts)
 
     # --- opening -------------------------------------------------------------
     def _handle_double_click(self, row: int, column: int) -> None:
@@ -447,6 +677,11 @@ class DeepSearchDialog(ToolDialog):
             self._open_selected(row)
 
     def _open_selected(self, row: int | None = None) -> None:
+        if row is None and self.tabs.currentWidget() is self.hits_table:
+            index = self.hits_table.currentIndex()
+            if index.isValid():
+                self._open_hit(index)
+            return
         if row is None:
             row = self.table.currentRow()
         index = self._result_index_for_row(row)
@@ -474,6 +709,16 @@ class DeepSearchDialog(ToolDialog):
         self.current_file.setText("")
         self.export_button.setEnabled(False)
         self.open_selected_button.setEnabled(False)
+        self._selected_file_path = None
+        self._store.close()
+        self._store = SearchResultsStore()
+        self._hits_model.store = self._store
+        self._hits_model.configure(())
+        self.keyword_filter.blockSignals(True)
+        self.keyword_filter.clear()
+        self.keyword_filter.addItem("All keywords", "")
+        self.keyword_filter.blockSignals(False)
+        self.source_filter.setCurrentIndex(0)
 
     def _auto_resize_columns(self) -> None:
         self._auto_resize(self.table)
@@ -487,12 +732,14 @@ class DeepSearchDialog(ToolDialog):
                 table.setColumnWidth(column, minimums.get(column, 80))
 
     def _export(self) -> None:
-        if not self._results:
+        if self._export_task is not None:
+            return
+        if not self._results and not self._errors:
             self.status.setText("No search results available to export")
             return
         safe_query = re.sub(r'[\\/:*?"<>|]', "_", self.query.text().strip())[:60] or "search"
         suggested = f"PDF Search Results_{safe_query}.html"
-        path, _ = QFileDialog.getSaveFileName(
+        path, selected_format = QFileDialog.getSaveFileName(
             self,
             "Export Search Results",
             start_in_save_directory(self, suggested),
@@ -500,70 +747,78 @@ class DeepSearchDialog(ToolDialog):
         )
         if not path:
             return
+        extension = Path(path).suffix.casefold()
+        if extension not in {".html", ".txt", ".csv"}:
+            extension = ".html" if "HTML" in selected_format else (
+                ".txt" if "Text" in selected_format else ".csv"
+            )
+            path += extension
         remember_save_directory(self, path)
-        try:
-            if path.endswith(".html"):
-                self._export_html(path)
-            elif path.endswith(".txt"):
-                self._export_text(path)
-            else:
-                if not path.endswith(".csv"):
-                    path += ".csv"
-                export_search_results_csv(self._results, path)
-            self.status.setText(f"Export successful: {path}")
-        except Exception as exc:
-            log_failure('deep_search_dialog._export: fallback after failure', 10)
-            self.status.setText(f"Export failed: {exc}")
+        paths, keyword, source, scope = self._export_selection()
+        task = FunctionTask(
+            export_report, str(self._store.path), path, extension,
+            self._report_meta(scope), paths, keyword, source,
+        )
+        self._export_task = task
+        self.export_button.setEnabled(False)
+        self.search_button.setEnabled(False)
+        self.clear_button.setEnabled(False)
+        self.status.setText("Exporting report…")
+        store = self._store
+        task.signals.result.connect(self._export_succeeded)
+        task.signals.error.connect(self._export_failed)
+        task.signals.finished.connect(self._export_finished)
+        task.signals.finished.connect(
+            lambda: store.close() if getattr(store, "close_after_export", False) else None
+        )
+        self._pool.start(task)
+
+    def _export_succeeded(self, path: Path) -> None:
+        self.status.setText(f"Export successful: {path}")
+
+    def _export_failed(self, message: str) -> None:
+        log_failure("deep_search_dialog._export: failed", 10)
+        self.status.setText(f"Export failed: {message}")
+
+    def _export_finished(self) -> None:
+        self._export_task = None
+        self.export_button.setEnabled(bool(self._results or self._errors))
+        self.search_button.setEnabled(True)
+        self.clear_button.setEnabled(True)
 
     def _export_html(self, path: str) -> None:
-        query = html.escape(self.query.text().strip())
-        folder = html.escape(self.folder.text().strip())
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                "<title>PDF Search Results</title></head><body>"
-                f"<h1>PDF Search Results</h1><p><b>Search keys:</b> {query}<br/>"
-                f"<b>Search path:</b> {folder}<br/>"
-                f"<b>Matching files:</b> {len(self._results)}<br/>"
-                f"<b>Search time:</b> {time.strftime('%Y-%m-%d %H:%M:%S')}</p>"
-            )
-            for result in self._results:
-                handle.write(
-                    f"<hr/><p><b>File:</b> {html.escape(str(result['filename']))}<br/>"
-                    f"<b>Path:</b> {html.escape(str(result['path']))}<br/>"
-                    f"<b>Match page number:</b> {', '.join(map(str, result['pages']))}</p>"
-                )
-                for index, snippet in enumerate(result["snippets"]):
-                    page = result["pages"][index] if index < len(result["pages"]) else "?"
-                    handle.write(
-                        f"<p>From page {page}: {html.escape(str(snippet))}</p>"
-                    )
-            handle.write("</body></html>")
+        paths, keyword, source, scope = self._export_selection()
+        export_html(self._store, path, self._report_meta(scope), paths, keyword, source)
 
     def _export_text(self, path: str) -> None:
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("PDF Search Result\n")
-            handle.write(f"Search Keys: {self.query.text().strip()}\n")
-            handle.write(f"Search Path: {self.folder.text().strip()}\n")
-            handle.write(f"Number of matching files: {len(self._results)}\n")
-            handle.write(f"Search time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            handle.write("-" * 80 + "\n\n")
-            for index, result in enumerate(self._results):
-                handle.write(f"File {index + 1}: {result['filename']}\n")
-                handle.write(f"Path: {result['path']}\n")
-                handle.write(
-                    f"Match page number: {', '.join(map(str, result['pages']))}\n\n"
-                )
-                for snippet_index, snippet in enumerate(result["snippets"]):
-                    page = (
-                        result["pages"][snippet_index]
-                        if snippet_index < len(result["pages"])
-                        else "?"
-                    )
-                    handle.write(f"From page {page}: {snippet}\n\n")
-                handle.write("-" * 80 + "\n\n")
+        paths, keyword, source, scope = self._export_selection()
+        export_text(self._store, path, self._report_meta(scope), paths, keyword, source)
+
+    def _export_selection(self) -> tuple[tuple[str, ...] | None, str, str, str]:
+        if self.export_scope.currentData() == "filtered":
+            return (self._hits_model.paths, self._hits_model.keyword,
+                    self._hits_model.source, "Current filters")
+        return None, "", "", "All results"
+
+    def _report_meta(self, scope: str) -> ReportMeta:
+        return ReportMeta(
+            self._run_query or self.query.text().strip(), self._run_folder,
+            self._searched_at or datetime.now().astimezone().isoformat(timespec="seconds"),
+            self._run_elapsed, self._processed_files,
+            self._total_files, self._run_subfolders, self._run_barcodes,
+            self._run_completed, scope,
+        )
 
     def reject(self) -> None:
-        if self._task:
+        if self._task and hasattr(self._task, "cancel"):
             self._task.cancel()
         super().reject()
+
+    def closeEvent(self, event) -> None:
+        if self._task and hasattr(self._task, "cancel"):
+            self._task.cancel()
+        if self._export_task is not None:
+            self._store.close_after_export = True
+        else:
+            self._store.close()
+        super().closeEvent(event)

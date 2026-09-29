@@ -1283,13 +1283,14 @@ class PDFViewer(QMainWindow):
         self._schedule_queued_open()
         return session
 
-    def load_file(self, path: str) -> None:
+    def load_file(self, path: str, *, on_open=None) -> None:
         if self._printing:
             return
         if self._session is not None and self._session.engine.is_loaded():
             if not self._confirm_discard_changes():
                 return
         session = self._session or self._create_session()
+        session._after_open = on_open
         self._queued_open_paths.append((path, None, session, perf_counter()))
         self._schedule_queued_open()
 
@@ -6238,6 +6239,7 @@ class PDFViewer(QMainWindow):
             return
         dialog = DeepSearchDialog(self.settings.get_last_directory(), self)
         dialog.openRequested.connect(self._open_deep_search_result)
+        dialog.hitOpenRequested.connect(self._open_deep_search_hit)
         dialog.destroyed.connect(lambda: setattr(self, "_deep_search_dialog", None))
         self._deep_search_dialog = dialog
         dialog.show()
@@ -6251,6 +6253,14 @@ class PDFViewer(QMainWindow):
             from core.platform_service import PlatformService
 
             PlatformService.open_path(path)
+
+    def _open_deep_search_hit(self, path: str, method: str, page: int) -> None:
+        if method == OPEN_NEW_TAB:
+            self.open_in_new_tab(path, on_open=lambda session: self._session_goto(session, page - 1))
+        elif method == OPEN_CURRENT:
+            self.load_file(path, on_open=lambda session: self._session_goto(session, page - 1))
+        else:
+            self._open_deep_search_result(path, method)
 
     def _merge_sheets(self) -> None:
         dialog = SpreadsheetMergeDialog(self)
