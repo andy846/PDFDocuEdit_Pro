@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import fitz
 import pytest
 from PyQt6.QtCore import Qt
@@ -92,32 +94,44 @@ def test_canvas_measurement_can_be_saved_through_viewer(tmp_path, monkeypatch) -
     window = viewer_module.PDFViewer()
     window.resize(1000, 700)
     window.show()
-    app.processEvents()
-    window._load_file_sync(str(source))
-    app.processEvents()
-    canvas = window.workspace.canvas
-    window.command_bar._canvas_buttons["measure"].click()
-    assert canvas.tool_mode == ToolMode.MEASURE
-    overlay = canvas._page_views[0].overlay
-    start = overlay.pdf_point_to_widget((72, 72)).toPoint()
-    end = overlay.pdf_point_to_widget((144, 72)).toPoint()
-    QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, pos=start)
-    QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, pos=end)
-    assert canvas.selected_measurement() is not None
-    canvas.set_zoom(2.0)
-    assert len(canvas._page_views[0].overlay._measurements) == 1
-    canvas.set_page(1)
-    canvas.set_page(0)
-    assert len(canvas._page_views[0].overlay._measurements) == 1
-    canvas.set_measure_unit("cm")
-    assert canvas._page_views[0].overlay._measure_unit == "cm"
-    window._store_selected_measurement(window._session, canvas)
-    assert canvas.selected_measurement() is None
-    assert len(list(window.engine.document[0].annots())) == 2
-    window.save_file()
-    with fitz.open(source) as saved:
-        page = saved[0]
-        assert [annotation.info["content"] for annotation in page.annots()] == [
-            "2.54 cm", "2.54 cm"
-        ]
-    window.close()
+    def wait_for_page(canvas, page_number):
+        deadline = time.monotonic() + 10
+        while page_number not in canvas._page_views and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert page_number in canvas._page_views
+
+    try:
+        app.processEvents()
+        window._load_file_sync(str(source))
+        app.processEvents()
+        canvas = window.workspace.canvas
+        window.command_bar._canvas_buttons["measure"].click()
+        assert canvas.tool_mode == ToolMode.MEASURE
+        wait_for_page(canvas, 0)
+        overlay = canvas._page_views[0].overlay
+        start = overlay.pdf_point_to_widget((72, 72)).toPoint()
+        end = overlay.pdf_point_to_widget((144, 72)).toPoint()
+        QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, pos=end)
+        assert canvas.selected_measurement() is not None
+        canvas.set_zoom(2.0)
+        wait_for_page(canvas, 0)
+        assert len(canvas._page_views[0].overlay._measurements) == 1
+        canvas.set_page(1)
+        wait_for_page(canvas, 1)
+        canvas.set_page(0)
+        wait_for_page(canvas, 0)
+        assert len(canvas._page_views[0].overlay._measurements) == 1
+        canvas.set_measure_unit("cm")
+        assert canvas._page_views[0].overlay._measure_unit == "cm"
+        window._store_selected_measurement(window._session, canvas)
+        assert canvas.selected_measurement() is None
+        assert len(list(window.engine.document[0].annots())) == 2
+        window.save_file()
+        with fitz.open(source) as saved:
+            page = saved[0]
+            assert [annotation.info["content"] for annotation in page.annots()] == [
+                "2.54 cm", "2.54 cm"
+            ]
+    finally:
+        window.close()
