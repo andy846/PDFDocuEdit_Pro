@@ -34,6 +34,7 @@ from core.annotations import (
     list_annotations,
 )
 from core.diagnostics import connect_interrupts, log_failure
+from core.measurement import PageScale, page_scale, saved_measurements
 from core.pdf_engine import DOCUMENT_LOCK
 from core.reader_lifetime import ReaderLease
 from core.tasks import FunctionTask
@@ -232,6 +233,10 @@ class PdfCanvas(QScrollArea):
     annotationGeometryChanged = pyqtSignal(int, int, object)
     annotationTextChanged = pyqtSignal(int, int, str)
     measurementContextRequested = pyqtSignal(int, int, object)
+    savedMeasurementContextRequested = pyqtSignal(int, str, object)
+    savedMeasurementMoved = pyqtSignal(int, str, object)
+    legacyMeasurementSelected = pyqtSignal(int, int)
+    calibrationReferenceDrawn = pyqtSignal(int, object)
     fontInspectionRequested = pyqtSignal(int, object)
     formFieldRequested = pyqtSignal(int, object)
 
@@ -257,6 +262,8 @@ class PdfCanvas(QScrollArea):
         self._selected_annotation: tuple[int, int] | None = None
         self._measurements: dict[int, list[tuple[tuple[float, float], tuple[float, float]]]] = {}
         self._selected_measurement: tuple[int, int] | None = None
+        self._selected_saved_measurement: tuple[int, str] | None = None
+        self._calibration_pending_page: int | None = None
         self._measure_unit = "mm"
         self._search_hits: tuple[int, list[fitz.Rect]] | None = None
         self._form_rects_by_page: dict[int, list[fitz.Rect]] = {}
@@ -332,6 +339,8 @@ class PdfCanvas(QScrollArea):
         self._doc = doc
         self._measurements.clear()
         self._selected_measurement = None
+        self._selected_saved_measurement = None
+        self._calibration_pending_page = None
         self._large_sizes = {}
         self._page = 0
         self._zoom = min(self._max_zoom, max(self._min_zoom, zoom))
@@ -365,6 +374,8 @@ class PdfCanvas(QScrollArea):
         self._doc = None
         self._measurements.clear()
         self._selected_measurement = None
+        self._selected_saved_measurement = None
+        self._calibration_pending_page = None
         self._page = 0
         self._zoom = 1.0
         self._generation += 1
@@ -430,6 +441,7 @@ class PdfCanvas(QScrollArea):
                 self._page_views[page_num].overlay.set_annotations(
                     list_annotations(page)
                 )
+                self._sync_page_measurements(page_num)
                 self._request_render(page_num, high=True)
 
     def selected_annotation(self) -> tuple[int, int] | None:
@@ -529,6 +541,28 @@ class PdfCanvas(QScrollArea):
         entries = self._measurements.get(page, [])
         return (page, index, entries[index]) if 0 <= index < len(entries) else None
 
+    def selected_saved_measurement(self):
+        selection = self._selected_saved_measurement
+        if selection is None or self._doc is None:
+            return None
+        page, identifier = selection
+        with DOCUMENT_LOCK:
+            return next((record for record in saved_measurements(self._doc[page])
+                         if record.identifier == identifier), None)
+
+    def page_measure_scale(self, page: int) -> PageScale:
+        if self._doc is None:
+            return PageScale()
+        with DOCUMENT_LOCK:
+            return page_scale(self._doc[page])
+
+    def begin_calibration(self, page: int) -> None:
+        self._calibration_pending_page = page
+        self.set_tool_mode(ToolMode.MEASURE)
+
+    def cancel_calibration(self) -> None:
+        self._calibration_pending_page = None
+
     def remove_measurement(self, page: int, index: int) -> None:
         entries = self._measurements.get(page, [])
         if not 0 <= index < len(entries):
@@ -544,21 +578,53 @@ class PdfCanvas(QScrollArea):
 
     def _sync_page_measurements(self, page: int) -> None:
         view = self._page_views.get(page)
-        if view is not None:
+        if view is not None and self._doc is not None:
             selected = self._selected_measurement
+            with DOCUMENT_LOCK:
+                pdf_page = self._doc[page]
+                scale = page_scale(pdf_page)
+                saved = saved_measurements(pdf_page)
             view.overlay.set_measurements(
                 self._measurements.get(page, ()), self._measure_unit,
                 selected[1] if selected is not None and selected[0] == page else None,
+                scale=scale.real_per_paper, saved=saved,
+                selected_saved=(self._selected_saved_measurement[1]
+                                if self._selected_saved_measurement is not None
+                                and self._selected_saved_measurement[0] == page else None),
+                scale_state=scale.state,
+                missing_calibration=(scale.state != "calibrated" and any(
+                    record.saved_scale != 1 for record in saved
+                )),
             )
 
     def _on_measurement_drawn(self, page: int, points: object) -> None:
+        if self._calibration_pending_page == page:
+            self._calibration_pending_page = None
+            self.calibrationReferenceDrawn.emit(page, points)
+            return
         entries = self._measurements.setdefault(page, [])
         entries.append(points)
         self._selected_measurement = (page, len(entries) - 1)
+        self._selected_saved_measurement = None
         self._sync_page_measurements(page)
 
     def _on_measurement_selected(self, page: int, index: int) -> None:
         self._selected_measurement = (page, index)
+        self._selected_saved_measurement = None
+        self._sync_page_measurements(page)
+
+    def _on_saved_measurement_selected(self, page: int, identifier: str) -> None:
+        self._selected_saved_measurement = (page, identifier)
+        self._selected_measurement = None
+        self._sync_page_measurements(page)
+
+    def _on_measurement_moved(self, page: int, key: object, points: object) -> None:
+        if isinstance(key, str):
+            self.savedMeasurementMoved.emit(page, key, points)
+            return
+        entries = self._measurements.get(page, [])
+        if 0 <= key < len(entries):
+            entries[key] = points
         self._sync_page_measurements(page)
 
     @property
@@ -1278,8 +1344,16 @@ class PdfCanvas(QScrollArea):
             view.overlay.lineDrawn.connect(self._on_line)
             view.overlay.measurementDrawn.connect(self._on_measurement_drawn)
             view.overlay.measurementSelected.connect(self._on_measurement_selected)
+            view.overlay.savedMeasurementSelected.connect(self._on_saved_measurement_selected)
+            view.overlay.measurementMoved.connect(self._on_measurement_moved)
             view.overlay.measurementContextRequested.connect(
                 self.measurementContextRequested.emit
+            )
+            view.overlay.savedMeasurementContextRequested.connect(
+                self.savedMeasurementContextRequested.emit
+            )
+            view.overlay.legacyMeasurementSelected.connect(
+                self.legacyMeasurementSelected.emit
             )
             view.overlay.polygonDrawn.connect(self._on_polygon)
             view.overlay.fontInspectClicked.connect(self._on_font_inspect)

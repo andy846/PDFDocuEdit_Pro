@@ -12,7 +12,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QLineEdit, QWidget
 
-from core.measurement import distance_mm, format_distance
+from core.measurement import SavedMeasurement, distance_mm, format_distance
 from styles.theme import get_colors
 
 SELECTION_ALPHA = 56
@@ -153,6 +153,10 @@ class PageOverlay(QWidget):
     measurementDrawn = pyqtSignal(int, object)  # page, two PDF points
     measurementSelected = pyqtSignal(int, int)  # page, temporary line index
     measurementContextRequested = pyqtSignal(int, int, object)
+    savedMeasurementSelected = pyqtSignal(int, str)
+    savedMeasurementContextRequested = pyqtSignal(int, str, object)
+    legacyMeasurementSelected = pyqtSignal(int, int)
+    measurementMoved = pyqtSignal(int, object, object)
     polygonDrawn = pyqtSignal(int, object)  # (page_num, list[QPointF])
     annotationSelected = pyqtSignal(int, int)
     annotationContextRequested = pyqtSignal(int, int, object)
@@ -190,6 +194,13 @@ class PageOverlay(QWidget):
         self._measurements: list[tuple[tuple[float, float], tuple[float, float]]] = []
         self._selected_measurement: int | None = None
         self._measure_unit = "mm"
+        self._measure_factor = 1.0
+        self._measure_scale_state = "paper"
+        self._measure_scale_missing = False
+        self._saved_measurements: list[SavedMeasurement] = []
+        self._selected_saved_measurement: str | None = None
+        self._measure_drag: dict | None = None
+        self._measure_preview: tuple[tuple[float, float], tuple[float, float]] | None = None
         self._polygon_points: list[QPointF] = []
         self._preview: dict | None = None
         self._annotations: list[dict] = []
@@ -254,10 +265,21 @@ class PageOverlay(QWidget):
         measurements: Iterable[tuple[tuple[float, float], tuple[float, float]]],
         unit: str = "mm",
         selected: int | None = None,
+        *,
+        scale: float = 1.0,
+        saved: Iterable[SavedMeasurement] = (),
+        selected_saved: str | None = None,
+        scale_state: str = "paper",
+        missing_calibration: bool = False,
     ) -> None:
         self._measurements = list(measurements)
         self._measure_unit = unit
         self._selected_measurement = selected
+        self._measure_factor = scale
+        self._measure_scale_state = scale_state
+        self._measure_scale_missing = missing_calibration
+        self._saved_measurements = list(saved)
+        self._selected_saved_measurement = selected_saved
         self.update()
 
     def set_measure_mode(self, enabled: bool) -> None:
@@ -269,6 +291,12 @@ class PageOverlay(QWidget):
     def cancel_measurement(self) -> None:
         self._measure_origin = None
         self._measure_endpoint = None
+        if self._measure_drag is not None:
+            drag = self._measure_drag
+            if drag["kind"] == "temporary":
+                self._measurements[drag["key"]] = drag["original"]
+            self._measure_drag = None
+            self._measure_preview = None
         self.update()
 
     def set_annotations_editable(self, editable: bool) -> None:
@@ -277,6 +305,7 @@ class PageOverlay(QWidget):
         self._annotations_editable = bool(editable)
         if not self._annotations_editable:
             self._geometry_drag = None
+            self.cancel_measurement()
             if self._inline_editor is not None:
                 self._finish_inline_editor(False)
 
@@ -415,6 +444,16 @@ class PageOverlay(QWidget):
             (pdf.y - self._page_rect.y0) / self._scale,
         )
 
+    def _bounded_pdf_point(self, pos: QPointF) -> fitz.Point:
+        point = self.widget_to_pdf(pos)
+        bounds = fitz.Rect(self._page_rect)
+        if self._derotation_matrix is not None:
+            bounds = bounds * self._derotation_matrix
+        return fitz.Point(
+            max(bounds.x0, min(point.x, bounds.x1)),
+            max(bounds.y0, min(point.y, bounds.y1)),
+        )
+
     def pdf_rect_to_widget(self, rect: fitz.Rect) -> QRectF:
         return pdf_rect_to_widget(
             rect, self._page_rect, self._scale, self._rotation_matrix
@@ -551,6 +590,20 @@ class PageOverlay(QWidget):
 
     def _paint_measurements(self, painter: QPainter, colors: dict) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._interaction_state == InteractionState.MEASURE:
+            if self._measure_scale_state == "calibrated":
+                scale_label = f"Actual size 1:{self._measure_factor:g}"
+            elif self._measure_scale_state == "invalid":
+                scale_label = "Paper size · invalid calibration"
+            else:
+                scale_label = "Paper size · uncalibrated"
+            if self._measure_scale_missing:
+                scale_label += " · previous scale missing"
+            bounds = QFontMetrics(painter.font()).boundingRect(scale_label)
+            badge = QRectF(8, 8, bounds.width() + 18, bounds.height() + 10)
+            painter.fillRect(badge, QColor("#ffffff"))
+            painter.setPen(QColor(colors["primary"]))
+            painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, scale_label)
         entries = list(self._measurements)
         if self._measure_origin is not None and self._measure_endpoint is not None:
             entries.append((
@@ -568,7 +621,10 @@ class PageOverlay(QWidget):
             painter.drawLine(start, end)
             painter.drawEllipse(start, 3.5, 3.5)
             painter.drawEllipse(end, 3.5, 3.5)
-            label = format_distance(distance_mm(start_pdf, end_pdf), self._measure_unit)
+            label = format_distance(
+                distance_mm(start_pdf, end_pdf) * self._measure_factor,
+                self._measure_unit,
+            )
             midpoint = QPointF((start.x() + end.x()) / 2, (start.y() + end.y()) / 2)
             font = QFont(painter.font())
             font.setPointSizeF(10.0)
@@ -579,6 +635,39 @@ class PageOverlay(QWidget):
                                 bounds.width() + 10, bounds.height() + 4)
             painter.fillRect(label_rect, QColor("#ffffff"))
             painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
+        for record in self._saved_measurements:
+            if record.identifier != self._selected_saved_measurement:
+                continue
+            points = (self._measure_preview if self._measure_drag is not None
+                      and self._measure_drag["kind"] == "saved"
+                      and self._measure_drag["key"] == record.identifier
+                      else record.points)
+            start = self.pdf_point_to_widget(points[0])
+            end = self.pdf_point_to_widget(points[1])
+            painter.setPen(QPen(QColor(colors["primary"]), 2.5))
+            painter.setBrush(QColor(colors["primary"]))
+            if self._measure_preview is not None:
+                painter.drawLine(start, end)
+                label = format_distance(distance_mm(*points) * self._measure_factor,
+                                        record.unit)
+                painter.drawText(QPointF((start.x() + end.x()) / 2,
+                                          (start.y() + end.y()) / 2 - 10), label)
+            painter.drawEllipse(start, 5.0, 5.0)
+            painter.drawEllipse(end, 5.0, 5.0)
+
+    def _measure_target(self, pos: QPointF):
+        candidates = [("temporary", index, points)
+                      for index, points in enumerate(self._measurements)]
+        candidates += [("saved", item.identifier, item.points)
+                       for item in self._saved_measurements]
+        for kind, key, points in reversed(candidates):
+            first, second = (self.pdf_point_to_widget(value) for value in points)
+            for endpoint, handle in enumerate((first, second)):
+                if hypot(pos.x() - handle.x(), pos.y() - handle.y()) <= 10:
+                    return kind, key, endpoint, points
+            if self._distance_to_segment(pos, first, second) <= 8:
+                return kind, key, None, points
+        return None
 
     def _hit_measurement(self, pos: QPointF) -> int | None:
         for index in range(len(self._measurements) - 1, -1, -1):
@@ -671,18 +760,36 @@ class PageOverlay(QWidget):
     # --- interaction -----------------------------------------------------
     def mousePressEvent(self, event) -> None:
         if self._interaction_state == InteractionState.MEASURE:
-            hit = (
-                self._hit_measurement(event.position())
-                if self._measure_origin is None else None
-            )
-            if hit is not None:
-                self._selected_measurement = hit
-                self.measurementSelected.emit(self._page_num, hit)
+            target = (self._measure_target(event.position())
+                      if self._measure_origin is None else None)
+            if target is not None:
+                kind, key, endpoint, points = target
+                if kind == "temporary":
+                    self._selected_measurement = key
+                    self._selected_saved_measurement = None
+                    self.measurementSelected.emit(self._page_num, key)
+                else:
+                    self._selected_measurement = None
+                    self._selected_saved_measurement = key
+                    self.savedMeasurementSelected.emit(self._page_num, key)
                 self.update()
                 if event.button() == Qt.MouseButton.RightButton:
-                    self.measurementContextRequested.emit(
-                        self._page_num, hit, self.mapToGlobal(event.position().toPoint())
-                    )
+                    position = self.mapToGlobal(event.position().toPoint())
+                    if kind == "temporary":
+                        self.measurementContextRequested.emit(self._page_num, key, position)
+                    else:
+                        self.savedMeasurementContextRequested.emit(self._page_num, key, position)
+                elif (event.button() == Qt.MouseButton.LeftButton
+                      and endpoint is not None and self._annotations_editable):
+                    self._measure_drag = {"kind": kind, "key": key,
+                                          "endpoint": endpoint, "original": points}
+                    self.setFocus(Qt.FocusReason.MouseFocusReason)
+                event.accept()
+                return
+            legacy = self._hit_annotation(event.position())
+            if (legacy is not None and legacy.get("kind") == "Line"
+                    and legacy.get("subject") == "Measurement"):
+                self.legacyMeasurementSelected.emit(self._page_num, legacy["xref"])
                 event.accept()
                 return
             if event.button() == Qt.MouseButton.RightButton:
@@ -690,6 +797,9 @@ class PageOverlay(QWidget):
                 event.accept()
                 return
             if event.button() == Qt.MouseButton.LeftButton:
+                if not self._annotations_editable:
+                    event.accept()
+                    return
                 point = self.widget_to_pdf(event.position())
                 if self._measure_origin is None:
                     self._measure_origin = point
@@ -773,6 +883,18 @@ class PageOverlay(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._measure_drag is not None:
+            drag = self._measure_drag
+            points = list(drag["original"])
+            pdf = self._bounded_pdf_point(event.position())
+            points[drag["endpoint"]] = (pdf.x, pdf.y)
+            preview = (points[0], points[1])
+            self._measure_preview = preview
+            if drag["kind"] == "temporary":
+                self._measurements[drag["key"]] = preview
+            self.update()
+            event.accept()
+            return
         if self._interaction_state == InteractionState.MEASURE and self._measure_origin is not None:
             self._measure_endpoint = self.widget_to_pdf(event.position())
             self.update()
@@ -815,6 +937,16 @@ class PageOverlay(QWidget):
         super().contextMenuEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._measure_drag is not None and event.button() == Qt.MouseButton.LeftButton:
+            drag = self._measure_drag
+            points = self._measure_preview
+            self._measure_drag = None
+            self._measure_preview = None
+            if points is not None and points != drag["original"]:
+                self.measurementMoved.emit(self._page_num, drag["key"], points)
+            self.update()
+            event.accept()
+            return
         if self._geometry_drag is not None and event.button() == Qt.MouseButton.LeftButton:
             payload = self._finish_geometry_drag(event.position())
             if payload is not None and self._selected_xref is not None:
