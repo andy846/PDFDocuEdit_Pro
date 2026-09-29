@@ -89,6 +89,7 @@ jobs:
           tests/test_bookmarks.py
           tests/test_commands.py
           tests/test_deep_search.py
+          tests/test_deep_search_detailed.py
           tests/test_font_inspector.py
           tests/test_ocr.py
           tests/test_io_atomic.py
