@@ -106,6 +106,7 @@ class ToolMode(StrEnum):
     NOTE = "note"
     SQUIGGLY = "squiggly"
     LINE = "line"
+    MEASURE = "measure"
     ARROW = "arrow"
     ELLIPSE = "ellipse"
     POLYGON = "polygon"
@@ -230,6 +231,7 @@ class PdfCanvas(QScrollArea):
     annotationContextRequested = pyqtSignal(int, int, object)
     annotationGeometryChanged = pyqtSignal(int, int, object)
     annotationTextChanged = pyqtSignal(int, int, str)
+    measurementContextRequested = pyqtSignal(int, int, object)
     fontInspectionRequested = pyqtSignal(int, object)
     formFieldRequested = pyqtSignal(int, object)
 
@@ -253,6 +255,9 @@ class PdfCanvas(QScrollArea):
         self._pool = QThreadPool.globalInstance()
         self._selection: tuple[int, str] | None = None
         self._selected_annotation: tuple[int, int] | None = None
+        self._measurements: dict[int, list[tuple[tuple[float, float], tuple[float, float]]]] = {}
+        self._selected_measurement: tuple[int, int] | None = None
+        self._measure_unit = "mm"
         self._search_hits: tuple[int, list[fitz.Rect]] | None = None
         self._form_rects_by_page: dict[int, list[fitz.Rect]] = {}
         self._font_inspection: tuple[int, fitz.Rect] | None = None
@@ -325,6 +330,8 @@ class PdfCanvas(QScrollArea):
     # --- document lifecycle ----------------------------------------------
     def load_doc(self, doc: fitz.Document, zoom: float = 1.0) -> None:
         self._doc = doc
+        self._measurements.clear()
+        self._selected_measurement = None
         self._large_sizes = {}
         self._page = 0
         self._zoom = min(self._max_zoom, max(self._min_zoom, zoom))
@@ -356,6 +363,8 @@ class PdfCanvas(QScrollArea):
         if wait:
             self.wait_for_renders()
         self._doc = None
+        self._measurements.clear()
+        self._selected_measurement = None
         self._page = 0
         self._zoom = 1.0
         self._generation += 1
@@ -502,6 +511,57 @@ class PdfCanvas(QScrollArea):
         self._refresh_cursors()
 
     @property
+    def measure_unit(self) -> str:
+        return self._measure_unit
+
+    def set_measure_unit(self, unit: str) -> None:
+        if unit not in {"mm", "cm"}:
+            raise ValueError("Measurement unit must be mm or cm")
+        self._measure_unit = unit
+        for page_num in self._page_views:
+            self._sync_page_measurements(page_num)
+
+    def selected_measurement(self):
+        selection = self._selected_measurement
+        if selection is None:
+            return None
+        page, index = selection
+        entries = self._measurements.get(page, [])
+        return (page, index, entries[index]) if 0 <= index < len(entries) else None
+
+    def remove_measurement(self, page: int, index: int) -> None:
+        entries = self._measurements.get(page, [])
+        if not 0 <= index < len(entries):
+            return
+        del entries[index]
+        self._selected_measurement = None
+        self._sync_page_measurements(page)
+
+    def clear_page_measurements(self, page: int) -> None:
+        self._measurements.pop(page, None)
+        self._selected_measurement = None
+        self._sync_page_measurements(page)
+
+    def _sync_page_measurements(self, page: int) -> None:
+        view = self._page_views.get(page)
+        if view is not None:
+            selected = self._selected_measurement
+            view.overlay.set_measurements(
+                self._measurements.get(page, ()), self._measure_unit,
+                selected[1] if selected is not None and selected[0] == page else None,
+            )
+
+    def _on_measurement_drawn(self, page: int, points: object) -> None:
+        entries = self._measurements.setdefault(page, [])
+        entries.append(points)
+        self._selected_measurement = (page, len(entries) - 1)
+        self._sync_page_measurements(page)
+
+    def _on_measurement_selected(self, page: int, index: int) -> None:
+        self._selected_measurement = (page, index)
+        self._sync_page_measurements(page)
+
+    @property
     def tool_mode(self) -> ToolMode:
         return self._tool_mode
 
@@ -549,6 +609,7 @@ class PdfCanvas(QScrollArea):
             ToolMode.SELECT,
             ToolMode.INK,
             ToolMode.POLYGON,
+            ToolMode.MEASURE,
         }:
             cursor = Qt.CursorShape.CrossCursor
         elif self._tool_mode == ToolMode.FREETEXT_TYPEWRITER:
@@ -582,6 +643,7 @@ class PdfCanvas(QScrollArea):
                 width=float(self._annot_options["width"]),
                 opacity=float(self._annot_options["opacity"]),
             )
+            view.overlay.set_measure_mode(self._tool_mode == ToolMode.MEASURE)
             # The PDF image is a child widget and owns the cursor while the
             # pointer is over the page. Make it transparent during panning so
             # viewport drag events and the open/closed hand cursor both apply
@@ -1173,6 +1235,7 @@ class PdfCanvas(QScrollArea):
                 )
                 view.overlay.set_annotations(list_annotations(page))
                 self._configure_annotation_preview(view.overlay)
+                self._sync_page_measurements(page_num)
                 selected = self._selected_annotation
                 view.overlay.select_annotation(
                     selected[1] if selected is not None and selected[0] == page_num else None
@@ -1208,10 +1271,16 @@ class PdfCanvas(QScrollArea):
                 width=float(self._annot_options["width"]),
                 opacity=float(self._annot_options["opacity"]),
             )
+            view.overlay.set_measure_mode(self._tool_mode == ToolMode.MEASURE)
             view.overlay.inkDrawn.connect(self._on_ink)
             view.overlay.noteClicked.connect(self._on_note)
             view.overlay.typewriterCommitted.connect(self._on_typewriter_committed)
             view.overlay.lineDrawn.connect(self._on_line)
+            view.overlay.measurementDrawn.connect(self._on_measurement_drawn)
+            view.overlay.measurementSelected.connect(self._on_measurement_selected)
+            view.overlay.measurementContextRequested.connect(
+                self.measurementContextRequested.emit
+            )
             view.overlay.polygonDrawn.connect(self._on_polygon)
             view.overlay.fontInspectClicked.connect(self._on_font_inspect)
             view.overlay.formClicked.connect(self._on_form_click)
@@ -1240,6 +1309,7 @@ class PdfCanvas(QScrollArea):
                 selected[1] if selected is not None and selected[0] == page_num else None
             )
             self._page_views[page_num] = view
+            self._sync_page_measurements(page_num)
         self._fill_render_queue(focused)
         self._apply_search_hits()
         self._apply_font_inspection()

@@ -2,7 +2,7 @@
 
 ## 公司首次使用
 
-1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.14-Setup-Windows-x64.exe` 或同版本 Managed Portable ZIP，核對同名 `.sha256`。
+1. 從 GitHub Releases 下載 `PDFDocuEdit-Pro-v2.5.15-Setup-Windows-x64.exe` 或同版本 Managed Portable ZIP，核對同名 `.sha256`。
 2. Setup 會將 managed 版本安裝到新的使用者可寫資料夾，建立 Launcher.exe 捷徑。ZIP 使用者則將整個 `PDFDocuEditPro` 資料夾解壓到 `%LOCALAPPDATA%` 或公司允許寫入及執行的資料夾；請勿覆蓋既有部署資料夾。
 3. 執行 `Launcher.exe`。`launcher_runtime` 是啟動器依賴，必須保留。
 4. 首次啟動可選擇複製現有 Windows 使用者設定。舊設定及 PDF 不會被移動。歷史便攜版的設定如不在 Windows 設定位置，可在關閉程式後把其 `config.json` 中的設定匯入新部署的 `data/config/settings.json`；先保留原檔備份。

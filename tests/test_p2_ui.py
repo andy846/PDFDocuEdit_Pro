@@ -206,7 +206,7 @@ def test_command_bar_canvas_buttons_switch_and_sync_modes(
 
     window, app = _window(tmp_path, monkeypatch)
     buttons = window.command_bar._canvas_buttons
-    assert list(buttons) == ["browse", "hand", "select", "magnifier"]
+    assert list(buttons) == ["browse", "hand", "select", "magnifier", "measure"]
     assert all(not button.isEnabled() for button in buttons.values())
 
     source = make_pdf(tmp_path / "canvas-buttons.pdf")

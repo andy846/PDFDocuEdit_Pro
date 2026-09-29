@@ -98,6 +98,7 @@ from core.file_association import (
     register_default_app,
 )
 from core.font_inspector import inspect_font_at
+from core.measurement import distance_mm, format_distance
 from core.ocr import OCRMode, OCRResult, run_ocr
 from core.pdf_engine import (
     DOCUMENT_LOCK,
@@ -590,6 +591,7 @@ class PDFViewer(QMainWindow):
             ("Hand (drag to pan)", "hand"),
             ("Select Text", "select"),
             ("Magnifier", "magnifier"),
+            ("Measure Distance", "measure"),
         ):
             from ui.shortcut_bindings import CommandAction
             action = CommandAction(label, self)
@@ -884,6 +886,10 @@ class PDFViewer(QMainWindow):
         )
         canvas.annotationRequested.connect(
             lambda op, s=session, c=canvas: self._handle_annotation_from(s, c, op)
+        )
+        canvas.measurementContextRequested.connect(
+            lambda page, index, pos, s=session, c=canvas:
+                self._show_measurement_menu(pos, s, c, page, index)
         )
         canvas.noteRequested.connect(
             lambda page, point, s=session, c=canvas: self._handle_note_from(
@@ -1808,6 +1814,15 @@ class PDFViewer(QMainWindow):
         canvas = self.workspace.canvas
         if canvas is None or str(canvas.tool_mode) == "browse":
             return
+        if str(canvas.tool_mode) == "measure":
+            pending = False
+            for view in canvas._page_views.values():
+                overlay = view.overlay
+                if overlay._measure_origin is not None:
+                    overlay.cancel_measurement()
+                    pending = True
+            if pending:
+                return
         self._set_canvas_tool("browse")
         self.side_panel.set_active_tool(None)
 
@@ -1978,6 +1993,35 @@ class PDFViewer(QMainWindow):
         )
         info.setEnabled(loaded)
 
+        measure_menu = menu.addMenu("Measure Distance")
+        measure_menu.setEnabled(loaded)
+        measure_menu.addAction(
+            "Start measuring", activate_then(lambda: self._set_canvas_tool("measure"))
+        )
+        unit_menu = measure_menu.addMenu("Unit")
+        for unit in ("mm", "cm"):
+            action = unit_menu.addAction(
+                unit, lambda checked=False, value=unit: canvas.set_measure_unit(value)
+            )
+            action.setCheckable(True)
+            action.setChecked(canvas.measure_unit == unit)
+        selection = canvas.selected_measurement()
+        on_page = selection is not None and selection[0] == canvas.current_page
+        save_measurement = measure_menu.addAction(
+            "Save selected measurement to PDF",
+            activate_then(lambda: self._store_selected_measurement(session, canvas)),
+        )
+        save_measurement.setEnabled(on_page)
+        remove_measurement = measure_menu.addAction(
+            "Delete selected temporary measurement",
+            lambda: canvas.remove_measurement(selection[0], selection[1]) if on_page else None,
+        )
+        remove_measurement.setEnabled(on_page)
+        measure_menu.addAction(
+            "Clear temporary measurements on this page",
+            lambda: canvas.clear_page_measurements(canvas.current_page),
+        )
+
         menu.exec(global_pos)
 
     def _show_comparison_canvas_menu(
@@ -2048,6 +2092,45 @@ class PDFViewer(QMainWindow):
             lambda: self._handle_remove_annotation(page, xref),
         )
         menu.exec(global_pos)
+
+    def _show_measurement_menu(
+        self, global_pos, session: DocumentSession, canvas, page: int, index: int
+    ) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        menu = QMenu(self)
+        menu.addAction(
+            "Save this measurement to PDF",
+            lambda: self._store_selected_measurement(session, canvas),
+        )
+        menu.addAction(
+            "Delete temporary measurement",
+            lambda: canvas.remove_measurement(page, index),
+        )
+        unit_menu = menu.addMenu("Unit")
+        for unit in ("mm", "cm"):
+            action = unit_menu.addAction(
+                unit, lambda checked=False, value=unit: canvas.set_measure_unit(value)
+            )
+            action.setCheckable(True)
+            action.setChecked(canvas.measure_unit == unit)
+        menu.exec(global_pos)
+
+    def _store_selected_measurement(self, session: DocumentSession, canvas) -> None:
+        selected = canvas.selected_measurement()
+        if selected is None:
+            return
+        page, index, (start, end) = selected
+        label = format_distance(distance_mm(start, end), canvas.measure_unit)
+        op = AnnotationOp(
+            kind="measurement", page=page, points=(start, end), text=label
+        )
+        if self._handle_annotation(op, session):
+            canvas.remove_measurement(page, index)
+            self.info_bar.show_message(
+                "Measurement added as a PDF annotation. Save the document to keep it.",
+                "success",
+            )
 
     def _focus_annotation_properties(self, page: int, xref: int) -> None:
         self._select_annotation(page, xref)
@@ -3880,6 +3963,7 @@ class PDFViewer(QMainWindow):
             else f"{op.description()} added. Save the document to keep the change."
         )
         self.info_bar.show_message(message, "success")
+        return True
 
     def _handle_note_request(
         self, page: int, point, session: DocumentSession | None = None
