@@ -17,6 +17,7 @@ import fitz
 from core.diagnostics import log_failure
 
 from .capabilities import CapabilityId, detect_capabilities
+from .measurement import copy_page_scales
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .performance import PerformanceTrace
 from .platform_service import PlatformService
@@ -116,7 +117,10 @@ def merge_pdfs(
                             first_metadata = source.metadata or {}
                         expected_pages += source.page_count
                         with trace.span("insert"):
+                            start = output.page_count
                             output.insert_pdf(source)
+                            copy_page_scales(source, output,
+                                             list(range(source.page_count)), start)
                         trace.values["insert_total"] += trace.values.pop("insert")
                 except Exception as exc:
                     raise ToolError(f"Cannot read {source_path.name}: {exc}") from exc
@@ -562,6 +566,7 @@ def decrypt_pdf_file(
                         output.insert_pdf(
                             doc, from_page=0, to_page=doc.page_count - 1
                         )
+                        copy_page_scales(doc, output, list(range(doc.page_count)), 0)
                     set_safe_pdf_metadata(output, doc.metadata)
                     set_safe_pdf_toc(output, doc.get_toc())
                     output.save(

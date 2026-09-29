@@ -12,6 +12,7 @@ from pathlib import Path
 import fitz
 
 from .capabilities import bundled_tesseract_runtime
+from .measurement import copy_page_scales
 from .ocr_language import OCR_LANGUAGE, normalize_ocr_language
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .platform_service import PlatformService
@@ -222,6 +223,8 @@ def _create_searchable_pdf(
             expected_page_count = original.page_count
             with fitz.open() as output:
                 output.insert_pdf(original)
+                copy_page_scales(original, output,
+                                 list(range(original.page_count)), 0)
                 set_safe_pdf_metadata(output, original.metadata)
                 set_safe_pdf_toc(output, original.get_toc())
                 for page_number in pages:

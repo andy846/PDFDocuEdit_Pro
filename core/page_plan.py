@@ -14,6 +14,7 @@ from pathlib import Path
 import fitz
 
 from core.diagnostics import log_failure
+from core.measurement import copy_page_scale
 
 from .io_atomic import atomic_output
 from .pdf_io import validate_pdf_file
@@ -176,6 +177,7 @@ class PlanReader:
             tags = self._tag_optional_content(source)
             previous_xref = output.xref_length()
             output.insert_pdf(source, from_page=entry.source_page, to_page=entry.source_page)
+            copy_page_scale(source[entry.source_page], output[-1])
             self._register_optional_content(output, previous_xref, tags)
         apply_transform(output[-1], entry)
 

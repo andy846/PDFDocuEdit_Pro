@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -12,6 +13,14 @@ from pathlib import Path
 import fitz
 
 from core.diagnostics import log_failure
+from core.measurement import (
+    distance_mm,
+    format_distance,
+    page_scale,
+    saved_measurements,
+    set_page_scale,
+    write_marker,
+)
 
 from .pdf_engine import DOCUMENT_LOCK
 from .system_fonts import is_pdf_base_font, resolve_system_font
@@ -625,6 +634,10 @@ def add_measurement(
     p1: tuple[float, float],
     p2: tuple[float, float],
     label: str,
+    *,
+    identifier: str | None = None,
+    unit: str | None = None,
+    factor: float | None = None,
 ) -> None:
     """Add a line and a visible metric label in one mutation transaction."""
     page = _page(doc, page_num)
@@ -634,9 +647,13 @@ def add_measurement(
     line.set_colors(stroke=color)
     line.set_info(subject="Measurement", content=label)
     line.update()
+    measure_id = identifier or uuid.uuid4().hex
+    display_unit = unit or ("cm" if label.endswith(" cm") else "mm")
+    real_per_paper = factor if factor is not None else page_scale(page).real_per_paper
+    write_marker(doc, line.xref, measure_id, "line", display_unit, real_per_paper)
     midpoint = fitz.Point((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
     width = max(50.0, min(120.0, len(label) * 6.0 + 12.0))
-    bounds = page.rect
+    bounds = page.rect * page.derotation_matrix
     x0 = max(bounds.x0, min(midpoint.x - width / 2, bounds.x1 - width))
     y0 = max(bounds.y0, min(midpoint.y - 22.0, bounds.y1 - 18.0))
     rect = fitz.Rect(x0, y0, x0 + width, y0 + 18.0)
@@ -647,6 +664,47 @@ def add_measurement(
     )
     caption.set_info(subject="Measurement label")
     caption.update()
+    write_marker(doc, caption.xref, measure_id, "label", display_unit, real_per_paper)
+
+
+def recalibrate_measurements(doc: fitz.Document, page_num: int,
+                             factor: float | None) -> None:
+    """Set a page scale and update its managed labels as one caller transaction."""
+    page = _page(doc, page_num)
+    records = saved_measurements(page)
+    set_page_scale(page, factor)
+    effective = page_scale(page).real_per_paper
+    for record in records:
+        for xref in (record.line_xref, record.label_xref):
+            annot = page.load_annot(xref)
+            if annot is not None:
+                page.delete_annot(annot)
+        add_measurement(doc, page_num, *record.points,
+                        format_distance(distance_mm(*record.points) * effective,
+                                        record.unit),
+                        identifier=record.identifier, unit=record.unit,
+                        factor=effective)
+
+
+def update_saved_measurement(doc: fitz.Document, page_num: int,
+                             identifier: str,
+                             points: tuple[tuple[float, float], tuple[float, float]],
+                             unit: str | None = None) -> bool:
+    page = _page(doc, page_num)
+    record = next((entry for entry in saved_measurements(page)
+                   if entry.identifier == identifier), None)
+    if record is None:
+        return False
+    chosen_unit = unit or record.unit
+    effective = page_scale(page).real_per_paper
+    label = format_distance(distance_mm(*points) * effective, chosen_unit)
+    for xref in (record.line_xref, record.label_xref):
+        annot = page.load_annot(xref)
+        if annot is not None:
+            page.delete_annot(annot)
+    add_measurement(doc, page_num, *points, label, identifier=identifier,
+                    unit=chosen_unit, factor=effective)
+    return True
 
 
 def add_arrow(
@@ -949,6 +1007,14 @@ def remove_annotation(page: fitz.Page, xref: int) -> bool:
         target = next((annot for annot in annots if int(annot.xref) == int(xref)), None)
         if target is not None:
             try:
+                record = next((entry for entry in saved_measurements(page)
+                               if xref in {entry.line_xref, entry.label_xref}), None)
+                if record is not None:
+                    for member_xref in (record.line_xref, record.label_xref):
+                        member = page.load_annot(member_xref)
+                        if member is not None:
+                            page.delete_annot(member)
+                    return True
                 page.delete_annot(target)
                 return True
             except Exception:
@@ -977,6 +1043,17 @@ def update_annotation_geometry(
         )
         if target is None:
             return None
+        record = next((entry for entry in saved_measurements(page)
+                       if xref in {entry.line_xref, entry.label_xref}), None)
+        if record is not None:
+            if xref != record.line_xref or len(points) != 2:
+                return None
+            if not update_saved_measurement(page.parent, page.number,
+                                            record.identifier, (points[0], points[1])):
+                return None
+            updated = next((entry for entry in saved_measurements(page)
+                            if entry.identifier == record.identifier), None)
+            return updated.line_xref if updated is not None else None
         kind = str(target.type[1])
         if kind == "Line" and len(points) == 2:
             border = dict(target.border or {})
@@ -1130,6 +1207,9 @@ def update_annotation_text(page: fitz.Page, xref: int, text: str) -> bool:
         )
         if target is None or str(target.type[1]) not in {"Text", "FreeText"}:
             return False
+        if any(xref in {entry.line_xref, entry.label_xref}
+               for entry in saved_measurements(page)):
+            return False
         target.set_info(content=str(text))
         system_font = _system_font_family(page.parent, target.xref)
         if str(target.type[1]) == "FreeText" and system_font:
@@ -1170,6 +1250,9 @@ def update_annotation(
             None,
         )
         if target is None:
+            return False
+        if any(xref in {entry.line_xref, entry.label_xref}
+               for entry in saved_measurements(page)):
             return False
         is_freetext = "FreeText" in str(target.type[1])
         page_num = page.number
