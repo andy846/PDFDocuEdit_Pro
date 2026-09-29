@@ -54,6 +54,7 @@ SUPPORTED_ANNOTATION_KINDS = frozenset(
         "ink",
         "rect",
         "line",
+        "measurement",
         "arrow",
         "circle",
         "ellipse",
@@ -109,6 +110,7 @@ class AnnotationOp:
             "ink": "Freehand",
             "rect": "Rectangle",
             "line": "Line",
+            "measurement": "Measurement",
             "arrow": "Arrow",
             "circle": "Circle",
             "ellipse": "Ellipse",
@@ -258,6 +260,7 @@ def validate_annotation_op(doc: fitz.Document, op: AnnotationOp) -> AnnotationOp
             "note": 1,
             "ink": 2,
             "line": 2,
+            "measurement": 2,
             "arrow": 2,
             "polygon": 3,
         }
@@ -267,8 +270,10 @@ def validate_annotation_op(doc: fitz.Document, op: AnnotationOp) -> AnnotationOp
                 f"{op.description()} requires at least {required} point"
                 f"{'s' if required != 1 else ''}."
             )
-        if kind in {"line", "arrow"} and len(points) != 2:
+        if kind in {"line", "arrow", "measurement"} and len(points) != 2:
             raise AnnotationValidationError(f"{op.description()} requires two endpoints.")
+        if kind == "measurement" and not op.text.strip():
+            raise AnnotationValidationError("Measurement requires a distance label.")
         if kind == "freetext_callout" and len(points) != 3:
             raise AnnotationValidationError("Callout requires three leader-line points.")
         if kind.startswith("freetext_") and not op.text.strip():
@@ -612,6 +617,36 @@ def add_line(
     annot.set_colors(stroke=_rgb(color))
     annot.set_opacity(max(0.0, min(1.0, opacity)))
     annot.update()
+
+
+def add_measurement(
+    doc: fitz.Document,
+    page_num: int,
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    label: str,
+) -> None:
+    """Add a line and a visible metric label in one mutation transaction."""
+    page = _page(doc, page_num)
+    color = (0.10, 0.45, 0.91)
+    line = page.add_line_annot(fitz.Point(p1), fitz.Point(p2))
+    line.set_border(width=1.5)
+    line.set_colors(stroke=color)
+    line.set_info(subject="Measurement", content=label)
+    line.update()
+    midpoint = fitz.Point((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+    width = max(50.0, min(120.0, len(label) * 6.0 + 12.0))
+    bounds = page.rect
+    x0 = max(bounds.x0, min(midpoint.x - width / 2, bounds.x1 - width))
+    y0 = max(bounds.y0, min(midpoint.y - 22.0, bounds.y1 - 18.0))
+    rect = fitz.Rect(x0, y0, x0 + width, y0 + 18.0)
+    caption = page.add_freetext_annot(
+        rect, label, fontsize=10.0, fontname="Helv",
+        text_color=color, fill_color=(1, 1, 1),
+        align=fitz.TEXT_ALIGN_CENTER,
+    )
+    caption.set_info(subject="Measurement label")
+    caption.update()
 
 
 def add_arrow(
@@ -1235,6 +1270,8 @@ def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
                 style.width,
                 style.opacity,
             )
+        elif op.kind == "measurement":
+            add_measurement(doc, op.page, op.points[0], op.points[1], op.text)
         elif op.kind == "arrow":
             add_arrow(doc, op.page, op.points[0], op.points[1], style)
         elif op.kind in {"circle", "ellipse"}:
