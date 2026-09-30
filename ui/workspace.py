@@ -126,6 +126,15 @@ class EmptyState(QWidget):
             tools.addWidget(button)
         layout.addWidget(QLabel("Quick tools"))
         layout.addLayout(tools)
+        from composition.enabled import is_enabled
+        if is_enabled():
+            composition = QPushButton("Print Composition")
+            composition.setProperty("primary", True)
+            composition.clicked.connect(lambda: self.toolRequested.emit("composition"))
+            layout.addWidget(composition)
+            description = QLabel("Create production documents using templates and variable data.")
+            description.setWordWrap(True)
+            layout.addWidget(description)
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(4, 4, 4, 4)

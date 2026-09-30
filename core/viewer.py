@@ -2231,6 +2231,9 @@ class PDFViewer(QMainWindow):
             self._session.analysis_panel.tabs.setCurrentIndex(1)
 
     def _welcome_tool(self, key):
+        if key == "composition":
+            self._open_composition()
+            return
         if key == "merge":
             self._merge_pdfs()
             return
@@ -2238,6 +2241,20 @@ class PDFViewer(QMainWindow):
         self._open_dialog()
         if not self._queued_open_paths and not self._open_queue_scheduled:
             self._pending_welcome_tool = None
+
+    def _open_composition(self):
+        from composition.enabled import is_enabled
+        if not is_enabled():
+            return
+        from composition.designer.workspace import CompositionWindow
+        window = getattr(self, "_composition_window", None)
+        if window is None:
+            window = CompositionWindow(self)
+            self._composition_window = window
+            window.destroyed.connect(lambda: setattr(self, "_composition_window", None))
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def _open_dialog(self) -> None:
         # Multi-select: every chosen file opens in its own tab.
@@ -6634,6 +6651,13 @@ class PDFViewer(QMainWindow):
             self.open_in_new_tab(extra)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        composition = getattr(self, "_composition_window", None)
+        if composition is not None:
+            if not composition.close():
+                event.ignore()
+                if composition.close_pending:
+                    QTimer.singleShot(150, self.close)
+                return
         comparisons = list(getattr(self, "_comparison_dialogs", []))
         for comparison in comparisons:
             comparison.close()

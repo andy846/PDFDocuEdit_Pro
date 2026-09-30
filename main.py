@@ -9,6 +9,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Worker dispatch must precede Qt/editor imports in frozen development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-worker":
+    from composition.worker import main as composition_worker_main
+    raise SystemExit(composition_worker_main(sys.argv[2:]))
+
+# Internal acceptance mode is available only in explicitly enabled development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-smoke":
+    from composition.enabled import is_enabled
+    if not is_enabled() or os.environ.get("PDFDOCUEDIT_COMPOSITION_QA") != "1":
+        raise SystemExit("Composition acceptance mode requires an enabled development build.")
+    from importlib import import_module
+    raise SystemExit(import_module("scripts.composition_smoke").main(sys.argv[2:]))
+
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
