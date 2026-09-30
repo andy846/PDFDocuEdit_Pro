@@ -1,6 +1,14 @@
-# PDFDocuEdit Pro V2.5.15
+# PDFDocuEdit Pro V2.5.16
 
 PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
+
+## V2.5.16 Deep Search 與間尺增強
+
+- Deep Search 逐次記錄關鍵字命中，可依檔案、關鍵字及來源篩選，並開啟 PDF 對應頁面。
+- 重新設計可列印的 HTML 搜尋報告；CSV 每次命中各佔一列，匯出可選全部或目前篩選結果。
+- 間尺支援逐頁比例校準、編輯已儲存量度線端點，並在重新校準後更新相關標籤。
+
+詳見 [v2.5.16 版本說明](docs/RELEASE_NOTES_2.5.16.md)。
 
 ## V2.5.15 PDF 間尺
 
@@ -62,7 +70,7 @@ startup rollback. First deployment can use the Inno Setup installer or extract
 the Managed Portable ZIP; both launch through Launcher.exe.
 See [更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V2.5.15 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.15). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
+Download the [V2.5.16 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.16). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
 Existing legacy Setup installations need a one-time transition to the managed installer or portable package.
 
 ## V2.5.4 stability update
@@ -74,7 +82,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V2.5.15. Setup and Managed Portable downloads include SHA-256 files.
+The current Windows x64 release is V2.5.16. Setup and Managed Portable downloads include SHA-256 files.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -150,8 +158,8 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：[Inno Setup V2.5.15](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.15/PDFDocuEdit-Pro-v2.5.15-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
-- 免安裝版：[Managed Portable V2.5.15](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.15/PDFDocuEdit-Pro-v2.5.15-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 安裝版：[Inno Setup V2.5.16](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.16/PDFDocuEdit-Pro-v2.5.16-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
+- 免安裝版：[Managed Portable V2.5.16](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.16/PDFDocuEdit-Pro-v2.5.16-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
 - 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。各下載均有同名 .sha256 校驗檔。
 
 ### Windows release build
