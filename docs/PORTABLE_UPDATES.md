@@ -27,13 +27,14 @@ python scripts/update_release.py keygen
 每次發佈：
 
 1. 同步程式版本：`core/resources.py`、`pyproject.toml`、`scripts/build.py`、PyInstaller spec、Windows installer 版本資訊及對應版本測試。使用 `major.minor.patch`，每次正式更新都提高版本。
-2. 執行：
+2. 將版本變更提交 PR。GitHub CI 在 PR 與合併後執行 Windows automated suite；涉及 UI 或 shared/core code 時分別加跑 UI interaction、Ubuntu／macOS core tests。建立版本 tag 後，CI 會再跑所有測試組別。普通未開 PR 的 branch push 只跑改動相關測試與 basic smoke；已有 PR 的 branch push 由 PR CI 驗證，避免同一提交重複跑兩套測試。
+3. 確認正式版本提交的 CI 全部通過，再於該提交的乾淨 checkout 執行：
 
 ```powershell
 python scripts/update_release.py build
 ```
 
-此流程執行原始碼檢查、Ruff、完整 pytest、PyInstaller 與 Launcher 打包，並由 Inno Setup 6 產生首次安裝版。外部 OCR／Ghostscript／veraPDF 依賴沿用既有 build 驗證。
+此流程執行必要的原始碼及 bundled runtime 檢查、PyInstaller 與 Launcher 打包、更新簽署及 Inno Setup 安裝版建置；不在本機重跑 CI 已通過的 Ruff 或完整 pytest。外部 OCR／Ghostscript／veraPDF 依賴沿用既有 build 驗證。如需調查 CI 與本機差異，才明確使用 `python scripts/update_release.py build --run-tests`。
 
 產物存於 `release/`：
 
@@ -45,11 +46,11 @@ python scripts/update_release.py build
 | `PDFDocuEdit-Pro-vX.Y.Z-Setup-Windows-x64.exe` | Inno Setup 首次安裝版，使用相同的 managed Launcher 結構 |
 | 各 ZIP／Setup 的 `.sha256` | 手動下載驗證 |
 
-3. 在隔離資料夾啟動部署包，驗證 PDF 開啟、編輯、儲存，以及 OCR／轉換等主要功能。
-4. 把版本提交並建立對應 `vX.Y.Z` tag。在 `andy846/PDFDocuEdit_Pro` 建立 Release 草稿，上傳上表全部檔案及版本說明。
-5. 檢查附件完整及可公開後才發佈，標記為 latest 正式版本。不要用 GitHub 自動產生的 Source code ZIP 作為更新 ZIP。不要修改已發佈版本的附件；修正需新增版本。
+4. 在隔離資料夾啟動部署包，做必要的 final smoke：開啟 PDF、編輯及儲存、確認 Launcher 啟動；檢查更新簽章與 ZIP／Setup 的 SHA-256。只在本次改動涉及 OCR／轉換時重測該功能。
+5. 在 `andy846/PDFDocuEdit_Pro` 建立 Release 草稿，上傳上表全部檔案及版本說明。
+6. 檢查附件完整及可公開後才發佈，標記為 latest 正式版本。不要用 GitHub 自動產生的 Source code ZIP 作為更新 ZIP。不要修改已發佈版本的附件；修正需新增版本。
 
-`--skip-build` 只允許重用版本與原始碼 fingerprint 相符的主程式產物，仍會重建啟動器。它不能把修改過的程式碼冒充成已打包版本。只建普通 Portable ZIP 可用 `python scripts/build.py --portable-only`。
+`--skip-build` 只允許重用版本與原始碼 fingerprint 相符的主程式產物，仍會重建啟動器。它不能把修改過的程式碼冒充成已打包版本。只建普通 Portable ZIP 可用 `python scripts/build.py --portable-only`；這兩個建置入口預設均不重跑完整測試。
 
 簽署清單與 Windows Authenticode 是兩回事。前者驗證更新來源；如公司要求 EXE 發行者簽章，仍需原有 `PDFDOCUEDIT_SIGNTOOL`／`PDFDOCUEDIT_CERT_SHA1` 設定及公司的允許政策。
 
@@ -69,7 +70,6 @@ python scripts/update_release.py build
 
 ```powershell
 python -m pytest tests/test_updates.py tests/test_update_ui.py
-python -m pytest
 python -m ruff check .
 ```
 

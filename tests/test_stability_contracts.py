@@ -41,10 +41,14 @@ def test_build_rejects_unsupported_python_before_any_work(monkeypatch, version):
 
 def test_build_accepts_python_312(monkeypatch):
     monkeypatch.setattr(build.sys, "version_info", (3, 12, 9))
-    monkeypatch.setattr(build, "run", lambda *a, **k: None)
+    commands = []
+    monkeypatch.setattr(build, "run", lambda *a, **k: commands.append(a))
     monkeypatch.setattr(build.platform, "system", lambda: "Windows")
     monkeypatch.setattr(build, "build_windows", lambda: ("setup", "portable"))
     assert build.main() == 0
+    assert commands == [(build.sys.executable, "scripts/verify_source.py")]
+    assert build.main(["--run-tests"]) == 0
+    assert commands[-1][:3] == (build.sys.executable, "-m", "pytest")
 
 
 def test_macos_ocr_contract(monkeypatch, capsys):

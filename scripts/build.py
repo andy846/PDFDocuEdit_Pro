@@ -307,7 +307,7 @@ def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
-    parser.add_argument("--skip-tests", action="store_true", help="Use only after the full suite passed on this source tree")
+    parser.add_argument("--run-tests", action="store_true", help="Explicitly run the full local suite (normally covered by CI)")
     args = parser.parse_args(argv or [])
     if sys.version_info[:2] != (3, 12):
         current = ".".join(map(str, sys.version_info[:3]))
@@ -316,23 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             f"Current interpreter: {current}"
         )
     run(sys.executable, "scripts/verify_source.py")
-    run(
-        sys.executable,
-        "-m",
-        "ruff",
-        "check",
-        "main.py",
-        "PDFdocuEdit_Pro.py",
-        "core",
-        "dialogs",
-        "ui",
-        "styles",
-        "tests",
-        "scripts",
-        "updates",
-        "launcher.py",
-    )
-    if not args.skip_tests:
+    if args.run_tests:
         test_environment = os.environ.copy()
         test_environment.setdefault("QT_QPA_PLATFORM", "offscreen")
         run(sys.executable, "-m", "pytest", env=test_environment)
