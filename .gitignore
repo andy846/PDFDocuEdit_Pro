@@ -52,3 +52,7 @@ pytest_out*.txt
 
 # Local update signing key: never distribute
 .update-keys/
+
+!build_assets/composition/
+build_assets/composition/*
+!build_assets/composition/BUNDLE_INFO.json

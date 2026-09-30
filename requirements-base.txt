@@ -16,3 +16,5 @@ pdf2docx==0.5.8
 Pillow==11.3.0
 pyzbar==0.1.9
 cryptography==46.0.7
+segno==1.6.6
+python-barcode==0.16.1

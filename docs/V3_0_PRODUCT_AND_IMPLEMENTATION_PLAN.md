@@ -1,151 +1,23 @@
-# PDFDocuEdit Pro V3.0 功能、UI 與效能計劃書
+# PDFDocuEdit Pro v3.0 — Print Composition
 
-**規劃基線：** v2.5.14（2026-09-28）
+Planning baseline: v2.5.15. This specification replaces the previous Search/workflow proposal. Existing editor version metadata stays at 2.5.15 until the release process is ready.
 
-**首發平台：** Windows x64；沿用英文介面、現有淺色／深色主題及本機處理模式。
+## Accepted scope
 
-**文件性質：** 實作規格與驗收準則；本文不代表功能已完成或已有 V3.0 發布日期。
+A distinct Print Composition workspace generates one fixed page per data record from CSV/delimited TXT. First release includes static/variable/mixed text, static images, lines, boxes, Code 128 and QR, PDF backgrounds, field mapping, per-record preview, save/reopen, background production, reconciliation, CSV control reports and JSON job logs. Multiple template pages, conditional rules, splitting, reprint, dynamic pagination and AFP/IPDS are later milestones.
 
-## 1. 產品目標與版本邊界
+## Architecture
 
-V3.0 的核心是**讓搜尋結果直接變成可覆核、可列印或可擷取的頁面選取**。已確認的日常路徑有兩條：①在目前 PDF 做 Normal Search，挑選命中頁並列印；②用 Deep Search 找到檔案，開檔後直接到命中頁，覆核並列印或擷取成新 PDF。使用者不應再次搜尋同一文字或手抄頁碼。這是現有 Tools 之間的短工作流，不以通用流程編輯器作為前提。
+The root composition package contains template, data, engine, production and designer subpackages. Headless models/rendering/jobs do not import Qt or depend on editor sessions. Only the Welcome launch hook and worker entry dispatch integrate into existing app modules. Production and preview run in isolated subprocesses. A disk-backed SQLite import snapshot supports random preview and streamed records. Templates are versioned .pdcx JSON with copied static assets and a data-source reference.
 
-本版本須同時達成三件事：
+PDF production uses bounded chunks of 500 pages, then the pinned qpdf 12.4.2 runtime assembles one PDF. This bounds composition memory; the assembler's object memory is measured separately. Missing fonts, unsupported glyphs, invalid fields, barcode size violations and text overflow block output. The first release stops on critical errors. Output is published only after page-count verification and reconciliation; failures/cancellation never publish partial PDFs.
 
-1. **搜尋即能交付：** Normal Search 選頁後可直接列印或擷取；Deep Search 開檔後保留檔案、命中頁和查詢上下文，再完成相同動作。
-2. **操作可預期：** 清楚區分命中次數與命中頁數、列印所選頁與列印全文；操作前核對檔案及頁碼，擷取預設保留原檔。
-3. **維持速度：** 開檔、搜尋結果列表、列印與擷取不能因交接功能而退步；大型文件不得因準備列印而長時間卡住 GUI。
+## Milestones
 
-OCR、雲端 AI、自由節點流程圖、任意 Python 腳本、背景自動續跑及整個主視窗重寫均不列入 V3.0。OCR 保留為現有獨立工具。首發以**有文字 layer 的 PDF**及 Windows 實際工作流程驗收。通用 Workflow Studio、跨檔合併／壓縮流程及持久化任務佇列延後評估；它們並非完成上述兩條路徑的必要條件。
+M0 architecture/assets/feasibility; M1 template and data models; M2 headless renderer; M3 workspace; M4 import and preview; M5 jobs/reconciliation/reports; M6 barcodes, performance and regression. Each milestone has a local commit and focused tests. Development launch is feature-flagged. Stable release version changes only during a separately reviewed release step.
 
-目前已知的使用者證據是產品擁有人實際會用 Normal Search 挑選結果列印，亦會用 Deep Search 找檔，再定位結果頁列印或擷取。這是**個人工作流程證據**，足以決定本版方向，但不代表所有使用者的頻率。M0 應量度這兩條路徑的步驟和耗時，並收集其他使用者回饋，而毋須重新猜測主要流程。
+## Release gates
 
-## 2. 現況與要解決的問題
+Template roundtrip/version/schema, CSV/TXT encodings/headers/field collisions, Unicode/Chinese/long values, background fidelity, all elements, barcode decoding, failure/cancellation and reconciliation tests. Full existing suite, Ruff and source verification remain required. Repeatable production benchmarks at 100/1,000/10,000/50,000 records report throughput, peak process memory and output size. 100,000 is an extended benchmark. Synthetic performance results are not guarantees for arbitrary images or background PDFs.
 
-| 現有能力 | V3.0 要解決的斷點 |
-| --- | --- |
-| Normal Search 的 `SearchResultsPanel` 已有每頁勾選、Select all、Extract pages 和 Delete pages | 缺少 **Print selected pages**；現有 Print 對話框預設頁碼不會接收已選命中頁。 |
-| Deep Search 已有檔案、命中頁碼、片段、排序、開檔及 CSV 匯出 | 開檔訊號只傳路徑與方式，沒有傳命中頁；開檔後沒有自動跳到首個命中頁或保留可操作的命中頁清單。 |
-| `core/viewer.py` 已有 Print、Extract 和非同步開檔；開檔後可執行回呼 | 現有操作仍須人工重找頁面或重輸頁碼；列印前 `doc.tobytes()` 在 GUI 執行，需要測量大型檔的阻塞。 |
-| 文件內搜尋結果已有 document id／revision 失效檢查；Extract 不准覆蓋原檔 | Deep Search 結果來自磁碟檔案，開檔／輸出前仍須檢查來源是否已變更；交接須正確處理一基與零基頁碼。 |
-| 既有側欄、命令面板及工具對話框 | 需要在搜尋結果附近放清晰操作入口；毋須額外切換到大型 Studio 畫面。 |
-
-既有性能資料是歷史單次樣本，**不能直接視為 V3.0 基線**。例如 `docs/STARTUP_AND_OPEN_PERFORMANCE.md` 記錄 18,000 頁合成 PDF 的首次顯示、頁面模型及縮圖工作；`docs/MERGE_PERFORMANCE.md` 記錄 200 個檔案加入清單和合併的改善。第一階段必須在當前 HEAD 上重跑並記錄多次中位數。
-
-### 2.1 M0 產品驗證關口
-
-先以至少 3 宗 Normal Search、3 宗 Deep Search 真實任務記錄目前的按鍵／點擊數、重複搜尋次數、抄頁碼次數、完成時間與錯誤。用可點擊原型走同一批任務，確認新增操作入口符合直覺。若能接觸其他目標使用者，再觀察至少 3 位使用者；若只有產品擁有人，記錄兩週實際任務並註明代表性限制。研究過程不加入自動遙測或上傳文件。
-
-**M0 的決定：** 以已確認的兩條使用路徑作首要驗收，量度原流程後再定交互細節。若日誌顯示使用者經常要把多份命中 PDF 合併，才另開後續里程碑；目前不為假設的批次流程預建架構。
-
-## 3. V3.0 使用情境與交付功能
-
-以下 A／B 是使用者已描述的實際路徑；V3.0 依兩條路徑交付。
-
-### 3.1 情境 A：Normal Search → 選命中頁 → 列印／擷取
-
-1. 開啟 PDF，按 `Ctrl+F`，輸入文字並搜尋；保留現有範圍、大小寫及完整詞設定。
-2. 結果以「命中 **N 次／M 頁**」顯示；點結果可跳頁，勾選代表選中**整頁**，同頁多次命中只算一頁。可 Select all、Clear、逐頁取消誤中。
-3. 結果操作列加入 **Print selected pages…**，沿用目前 Print 對話框的印表機、紙張及版面設定，預填選中的實際頁碼及頁數；使用者確認後才列印。**Extract pages…** 沿用現有入口和選頁，不須重輸頁碼。
-4. 搜尋條件或文件內容變更後，舊結果／選頁失效並要求重搜；取消列印或儲存對話框不改動原檔及勾選。
-
-**驗收例：** 100 頁 PDF 的第 3、7、20 頁有命中，其中第 7 頁命中兩次；選中三頁後，Print 對話框顯示頁碼 3、7、20 及共 3 頁，實際列印順序相同；擷取輸出亦只有 3 頁，文字層仍可搜尋，原檔不變。第 7 頁不會重印。
-
-### 3.2 情境 B：Deep Search → 開檔定位 → 列印／擷取
-
-1. 指定資料夾，以現有 Deep Search 搜尋文字；結果仍按檔案顯示，檔名旁可展開**逐個命中頁與片段**，毋須在逗號分隔的頁碼中自行查找。
-2. 點檔案預設在程式內開啟，待非同步開檔完成後自動跳到第一個命中頁；點某個命中頁則直接跳到該頁。把查詢文字、命中頁和來源狀態交給該文件的搜尋結果面板，供使用者檢視／勾選／取消選取。若要即時顯示精確標記，應在背景對該頁再搜尋，而非把片段文字當成座標。
-3. 使用者覆核後，沿用同一組 **Print selected pages…**／**Extract pages…**。返回 Deep Search 結果時，原有搜尋結果及目前選中的檔案仍可用；換到另一份檔案亦不會把前一份的選頁套錯。
-4. 每次從 Deep Search 結果開檔或執行操作前核對檔案版本及頁數。若檔案已更改、刪除、加密或無法開啟，顯示 **Results changed — search again**，禁止以舊頁碼列印／擷取。系統預設應用程式開檔選項保留，但明示無法保證程式內跳頁及頁面交接。
-
-**驗收例：** 20 份 PDF 中某檔命中第 4、9、15 頁；點第 9 頁後開檔停在第 9 頁，選第 4、15 頁可直接列印兩頁或擷取兩頁；整個過程無須再次搜尋或輸入 `4,15`。
-
-### 3.3 現有工具的具體升級
-
-| Tool | V3.0 改動 | 驗收結果 |
-| --- | --- | --- |
-| Normal Search | 在已有勾選與 Extract 旁加入 Print selected pages，顯示選中頁數，保留原有 Delete。 | 所選命中頁每頁只列印一次；不影響一般 File → Print 全文。 |
-| Deep Search | 結果可展開逐頁命中，開檔訊號攜帶頁碼／查詢／來源識別；仍保留 CSV 匯出和原有開檔方式。 | 開檔後直接定位命中頁，毋須重搜；來源變更時拒絕舊結果。 |
-| Print | 接受可選的已勾選頁碼作對話框預設值，沿用既有 PrintJob 與設定；核對列印順序。 | 對話框顯示正確頁數、範圍和順序；取消不列印，全文列印仍正常。 |
-| Extract | 接受同一組頁碼，保留輸出另存與來源不覆蓋規則，完成後核對頁數及可讀性。 | 不須重輸頁碼，輸出頁順序與選擇一致，原檔不變。 |
-
-Merge、Compress、Organizer、Compare 繼續以現有獨立 Tools 提供。跨檔合併、輸出來源 CSV 對照、Compare 差異摘要和通用範本列為 **V3.1 候選**，須有實際使用任務支持後再排期。
-
-### 3.4 搜尋交接規則
-
-- 使用者選的是**頁**，不是單個文字命中；預設依 PDF 原頁序輸出。若要自訂頁序，使用現有 Organizer；V3.0 不把排序畫布塞進搜尋面板。
-- Deep Search 結果一次選取一份檔案的頁面，開檔後再做列印或擷取；跨檔一次列印／合併不屬首發路徑。
-- 命中為零時，Print／Extract selected pages 停用；不得把空集合解讀成「全部頁」。
-- 查詢改變、目前文件 revision 改變、磁碟來源變更或非同步開檔失敗時，舊選頁必須失效。已完成的其他文件操作不受影響。
-- 搜尋結果交接只在本次程式會話保留；不儲存文件文字、密碼或來源檔案副本。獨立 Normal Search、Deep Search、Print、Extract 入口繼續可用。
-
-## 4. UI 規格
-
-### 4.1 Normal Search 結果面板
-
-- 保留目前的搜尋欄、範圍設定、結果列表、Select all／Clear、Delete pages 和 Extract pages。結果顯示「N matches on M pages」及「K pages selected」，避免把命中次數誤當列印張數。
-- 加入 **Print selected pages…**，與 Extract pages 並列。按鈕只在搜尋結果有效且至少選了一頁時可用；滑鼠提示寫明「Print each selected page once」。Delete 屬破壞性操作，與兩個交付按鈕作視覺區分。
-- 按 Print 後開啟原有列印對話框，預選 Custom range 並填入所選頁碼，列出預計頁數。使用者仍可改選 All pages／Current page；確認前清楚顯示實際作用範圍。記住的印表機與版面設定照舊，但不得用上次儲存的頁碼覆蓋本次選頁。
-- 640×440 視窗、深淺色、200% 縮放及鍵盤操作都要可見、可用；若三個動作放不下，改為兩行或一個有清楚標籤的動作選單，不能裁切。
-
-### 4.2 Deep Search 結果與開檔體驗
-
-- 保留檔案層級的排序、預覽、錯誤及 CSV 匯出；每個檔案可展開命中頁和對應片段。逐頁項目可以啟動開檔定位，並可勾選供開檔後列印／擷取。
-- 結果列顯示命中**檔案數／頁數**，目前檔案的選頁數，以及來源是否已過期；長頁碼清單不得只靠逗號字串展示。
-- 在程式內開檔時，保留 Deep Search 視窗和目前結果。開檔完成後在文件頁籤顯示來源查詢及命中頁，首個或被點擊的命中頁自動可見；開檔未完成前不得跳到別份文件。
-- 若選擇系統預設應用程式，只執行原有開檔，不聲稱能在外部程式定位或傳遞選頁。
-- 920×620 及較窄視窗、深淺色、200% 縮放、鍵盤焦點順序都要檢查；大量結果以按需展開／model 顯示，避免每個命中頁建一個 QWidget。
-
-## 5. 工程設計與資料契約
-
-### 5.1 搜尋結果到頁面操作的窄接口
-
-建立內部 `SearchPageSelection`，包含來源類型（已開文件／磁碟檔案）、文件 id 或正規化路徑、來源 revision 或檔案指紋、零基頁碼集合、查詢及可選命中片段。它只為 Search、Deep Search、Print、Extract 交接服務，毋須對所有 Tools 建通用 adapter 或持久化工作流引擎。
-
-- Normal Search 沿用 `SearchResultsPanel.pagesActionRequested` 與 `core/viewer.py::_search_pages_action` 的身份檢查；新增 `print` 分支，把經驗證的零基頁碼傳入列印對話框。
-- `PrintOptionsDialog` 加可選的預選頁碼參數，建立控制項與恢復印表機 profile 後才套用，避免 `_restore_profile()` 覆寫本次選頁；由同一個 `PrintJob` 路徑執行。必須驗證自訂範圍 parser 可正確保留選頁和原頁序。
-- Deep Search 目前 `openRequested(path, method)` 只傳路徑與方法；新增帶查詢、命中頁、所點擊頁和來源指紋的交接資料。現有結果的頁碼是一基，進入 viewer 時統一轉為零基；排序後仍以結果 id 取得正確檔案。
-- 新分頁可使用現有 `open_in_new_tab(..., on_open=...)` 回呼，在非同步開檔成功且 session 仍有效後套用定位及結果。現有頁籤開檔要提供等效的完成回呼或綁定該次 open request，不能用計時器猜測開檔時間。
-- Deep Search 的片段資料不含頁面座標；匯入 `SearchResultsPanel` 時須明確標示它是 Deep Search 命中頁清單，不能把片段假裝成文件內搜尋的精確命中框。若加入精確高亮，須在已開文件的相應頁重新計算座標。
-
-### 5.2 來源、輸出與失效保護
-
-- 已開文件的選頁在執行前核對 `PdfEngine.document_id`、`revision` 與目前頁數。Deep Search 在搜尋時記錄磁碟檔案大小、修改時間及頁數；開檔與執行前重新核對。來源變更後要求重搜，不靜默套用舊頁碼。
-- Deep Search 的來源指紋採便宜的 metadata 檢查；若 metadata 一樣但內容曾被原地改寫，頁數與命中條件在開檔後再核驗。此保護不能宣稱對惡意或極罕見的同大小同時間戳改寫絕對可靠。
-- 選頁必須非空、去重、落在頁數範圍內；列印與擷取均按文件原頁序。密碼文件、開檔失敗、已刪檔及頁碼失效都顯示具體原因，不把空選頁退回全文操作。
-- Extract 仍另存為新 PDF，拒絕覆蓋來源；完成後重新開啟輸出核對可讀性及頁數。列印使用原有確認、取消與印表機選項，不建立未經確認的直接列印快捷路徑。
-- 搜尋字串、片段及頁面選擇只保留於目前程式會話，無須新增模板、RunRecord 或含敏感內容的紀錄檔。
-
-## 6. 效能與可靠性驗收
-
-M0 在同一 Windows x64 機器和相同 fixture 上，各跑至少五次，分開記錄冷／暖快取中位數及 GUI 最長阻塞。比較目前 v2.5.14 與 V3.0 的啟動、100 頁／18,000 頁開檔、文件內搜尋、Deep Search 20／200 檔結果呈現、選頁、列印對話框開啟及擷取。歷史單次數據只作背景，不能直接作基線。
-
-| Gate | V3.0 驗收標準 |
-| --- | --- |
-| 開檔與搜尋回歸 | 100 頁及 18,000 頁 fixture 的可互動時間、首次顯示及峰值記憶體，不得比重量測基線中位數惡化超過 10%；搜尋結果逐頁展開不得按命中數建立 QWidget。 |
-| 選頁及開檔交接 | 1000 個命中頁的勾選／清除及結果切換保持可操作；從 Deep Search 開檔後準確定位，無跨頁籤錯置；記錄開檔至命中頁可見的時間。 |
-| 列印準備 | 量度 `print_pdf` 中同步 `doc.tobytes()` 對大型檔的 GUI 阻塞；若超過 100 ms，改用安全的背景 snapshot／來源重開策略，再驗證修改未儲存時仍列印目前版本。 |
-| 背景工作 | Deep Search、長文件搜尋與擷取運行時主視窗可操作；若現有擷取路徑同步處理造成超過 100 ms GUI 阻塞，須移至安全的背景任務。PyMuPDF 原生呼叫只在可行的安全檢查點取消。 |
-| 資源清理 | 取消、開檔失敗、來源過期及關閉視窗後，不遺留 worker、檔案 handle 或正式輸出的半成品。 |
-
-若沒有真實大型工作 PDF，報告須明確標示合成 fixture 的局限，尤其不把它當作網路磁碟或影像密集 PDF 的效能保證。
-
-## 7. 實施次序與完成門檻
-
-| 階段 | 實作內容 | 完成門檻 |
-| --- | --- | --- |
-| M0：真實任務與基線 | 量度兩條現有路徑；核對 PrintOptionsDialog、Deep Search 結果與非同步開檔生命週期；建立可點擊的面板草圖及效能基線。 | 六宗真實任務和基線表可審；交接契約、頁碼轉換與失效規則定稿。 |
-| M1：Normal Search → Print | 結果面板加 Print selected pages，對話框接收預選頁；沿用既有 Extract。 | 所選頁正確列印／擷取、同頁多命中不重複、取消／全文列印回歸通過。 |
-| M2：Deep Search → 開檔定位 | 結果逐頁展開、來源指紋、開檔完成回呼、命中頁交接與舊結果過期提示。 | 20 份 PDF 搜尋後點任一命中頁均開到正確檔案／頁，可立即選頁列印或擷取，無須重搜。 |
-| M3：效能與發布 | 解決已量出的 GUI 阻塞；跑大型資料、所有獨立 Tools 回歸、Windows 安裝版 smoke test。 | 第 6 節 gates、下節案例與完整回歸通過，才標 V3.0 release candidate。 |
-
-## 8. 測試案例與發布驗收
-
-1. **Normal Search 列印：** 一份 PDF 有多頁、多次命中；只選兩頁，Print 對話框顯示兩頁，實際列印作業頁序正確。取消後沒有作業，選頁仍在；獨立 File → Print 全文仍正常。
-2. **Normal Search 擷取：** 同一選頁走現有 Extract，輸出 PDF 頁數與順序正確、文字可搜尋、原檔雜湊不變。
-3. **Deep Search 開檔：** 20 份 PDF 中一份命中多頁；排序結果表後點指定頁，開到正確文件及頁碼。切往另一檔再回來，查詢與選頁仍對應各自來源；Print／Extract 不須再輸入頁碼。
-4. **失效與錯誤：** 搜尋後改檔、刪檔、改頁數、修改未儲存文件、開檔失敗、加密文件與零命中；均不得錯印其他頁或自動改為全文。
-5. **效能與相容：** 重跑基線、搜尋大量命中、取消 Deep Search、列印大型 PDF；執行 pytest、Ruff、source verification、Windows 打包及安裝後 smoke test，覆蓋原有搜尋、列印、擷取、其他獨立 Tools、Undo／Redo。
-6. **易用性：** 由實際使用者重做 M0 任務，記錄按鍵／點擊數、重複搜尋次數、頁碼手輸次數、完成時間和誤操作；目標是兩條路徑均無重搜／抄頁碼，並比 v2.5.14 更少步驟。若只得產品擁有人測試，明示代表性限制。
-
-發布時附功能示範、效能前後中位數、完整測試結果、已知限制及更新／安裝驗收記錄。
+The Windows installed build must contain verified qpdf and font assets, all licence notices, worker dispatch and the barcode packages. Existing tools, installer/update paths and preferences receive regression checks.

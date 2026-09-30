@@ -26,6 +26,8 @@ dependencies = [
     "Pillow==11.3.0",
     "pyzbar==0.1.9",
     "cryptography==46.0.7",
+    "segno==1.6.6",
+    "python-barcode==0.16.1",
 ]
 
 [project.gui-scripts]
@@ -35,7 +37,7 @@ pdfdocuedit-pro = "main:main"
 py-modules = ["main", "PDFdocuEdit_Pro", "launcher"]
 
 [tool.setuptools.packages.find]
-include = ["core*", "ui*", "styles*", "updates*"]
+include = ["core*", "ui*", "styles*", "updates*", "composition*"]
 exclude = ["backup*", "tests*"]
 
 [tool.pytest.ini_options]
