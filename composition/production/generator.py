@@ -155,7 +155,11 @@ def generate(
             value for element in template.elements for value in (element.image, element.font.file) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
-        with Renderer(template) as renderer:
+        with tempfile.TemporaryDirectory(prefix="font-subsets-", dir=staging) as font_folder, Renderer(template) as renderer:
+            if progress:
+                progress(0, 0, "Preparing exact font subsets")
+            renderer.prepare_fonts(store.records(), font_folder, progress, is_cancelled)
+            check_cancel(is_cancelled)
             chunk = fitz.open()
             for ordinal, record in store.records():
                 check_cancel(is_cancelled)
@@ -213,7 +217,8 @@ def generate(
         if chunk is not None:
             chunk.close()
             chunk = None
-        result.status = "cancelled" if isinstance(exc, JobCancelled) else "failed"
+        was_cancelled = isinstance(exc, JobCancelled) or (is_cancelled is not None and is_cancelled())
+        result.status = "cancelled" if was_cancelled else "failed"
         result.error = str(exc)
         result.finished_at = now()
         result.output_pdf = ""

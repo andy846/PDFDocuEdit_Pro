@@ -52,6 +52,13 @@ jobs:
         run: python scripts/prepare_composition_assets.py
       - name: Run tests
         run: python -m pytest
+      - name: Composition performance smoke
+        run: python scripts/benchmark_composition.py --records 100 --output build/composition-benchmark
+      - name: Retain composition benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: composition-performance-smoke
+          path: build/composition-benchmark/**/benchmark.json
 
   cross-platform-core:
     name: Core tests on ${{ matrix.os }}

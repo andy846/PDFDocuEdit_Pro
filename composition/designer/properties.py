@@ -113,6 +113,7 @@ class Properties(QWidget):
         self.loading = True
         self.element = element
         self.form_widget.setEnabled(element is not None)
+        self.form_widget.setVisible(element is not None)
         self.title.setText(element.type.title() if element else "Select one object")
         if element:
             for key, widget in self.numbers.items():

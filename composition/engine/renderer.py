@@ -70,6 +70,9 @@ class Renderer:
                 self.close()
                 raise CompositionError("The static background must be an unencrypted single-page PDF.")
         self.fonts = {}
+        self.resource_document = None
+        self.font_xrefs = {}
+        self.output_fonts = {}
         self.images = {}
         try:
             for element in template.elements:
@@ -96,12 +99,23 @@ class Renderer:
 
     def close(self):
         self.stack.close()
+        self.resource_document = None
+        self.font_xrefs.clear()
+
+    def prepare_fonts(self, records, directory, progress=None, is_cancelled=None):
+        from .subsets import prepare_subsets
+        self.output_fonts = prepare_subsets(
+            self.template, self.tokens, self.fonts, records, directory, progress, is_cancelled,
+        )
 
     def finalize(self, document):
         if all(permits_subsetting(path) for _font, path in self.fonts.values()):
             document.subset_fonts()
 
     def render(self, document: fitz.Document, record: dict[str, str], ordinal: int = 1) -> None:
+        if self.resource_document is not document:
+            self.resource_document = document
+            self.font_xrefs.clear()
         page = document.new_page(
             width=self.template.width_mm * MM_TO_PT, height=self.template.height_mm * MM_TO_PT
         )
@@ -152,8 +166,25 @@ class Renderer:
             (rect.height - height) / 2 if element.vertical_align == "center" else rect.height - height
         )
         # A non-reserved font name embeds the exact selected TTF/OTF.
+        font_path = self.output_fonts.get(str(font_path), font_path)
         fontname = "font_" + str(abs(hash(str(font_path))))
-        page.insert_font(fontname=fontname, fontfile=str(font_path), set_simple=False)
+        document = page.parent
+        if str(font_path) not in self.font_xrefs:
+            self.font_xrefs[str(font_path)] = page.insert_font(
+                fontname=fontname, fontfile=str(font_path), set_simple=False,
+            )
+        else:
+            # Reuse the chunk's exact embedded font; reparsing a CJK face per page is costly.
+            font_xref = self.font_xrefs[str(font_path)]
+            resource_type, resources = document.xref_get_key(page.xref, "Resources")
+            if resource_type != "xref":
+                raise CompositionError("The generated page has invalid PDF resources.")
+            resource_xref = int(resources.split()[0])
+            kind, fonts = document.xref_get_key(resource_xref, "Font")
+            if kind == "xref":
+                document.xref_set_key(int(fonts.split()[0]), fontname, f"{font_xref} 0 R")
+            else:
+                document.xref_set_key(resource_xref, f"Font/{fontname}", f"{font_xref} 0 R")
         baseline = rect.y0 + offset + font.ascender * element.font.size_pt
         for index, line in enumerate(lines):
             length = font.text_length(line, fontsize=element.font.size_pt)
@@ -171,10 +202,9 @@ class Renderer:
     def _barcode(self, page, rect, element, value):
         if not value:
             raise CompositionError("Barcode content is empty.")
-        shape = page.new_shape()
+        rectangles = []
         # A white quiet-zone backing prevents PDF background art from obscuring codes.
-        shape.draw_rect(rect)
-        shape.finish(color=None, fill=(1, 1, 1))
+        page.draw_rect(rect, color=None, fill=(1, 1, 1))
         module_min = element.barcode_module_mm * MM_TO_PT
         if element.type == "code128":
             if any(not 32 <= ord(c) <= 126 for c in value):
@@ -197,7 +227,7 @@ class Renderer:
                 end = start + 1
                 while end < len(pattern) and pattern[end] == "1":
                     end += 1
-                shape.draw_rect(fitz.Rect(
+                rectangles.append(fitz.Rect(
                     rect.x0 + (10 + start) * module, rect.y0,
                     rect.x0 + (10 + end) * module, rect.y0 + height,
                 ))
@@ -212,14 +242,31 @@ class Renderer:
             origin_x = rect.x0 + (rect.width - count * module) / 2
             origin_y = rect.y0 + (rect.height - count * module) / 2
             for y, row in enumerate(matrix):
-                for x, dark in enumerate(row):
-                    if dark:
-                        shape.draw_rect(fitz.Rect(
-                            origin_x + (x + 4) * module, origin_y + (y + 4) * module,
-                            origin_x + (x + 5) * module, origin_y + (y + 5) * module,
-                        ))
-        shape.finish(color=None, fill=(0, 0, 0))
-        shape.commit()
+                x = 0
+                while x < len(row):
+                    if not row[x]:
+                        x += 1
+                        continue
+                    end = x + 1
+                    while end < len(row) and row[end]:
+                        end += 1
+                    rectangles.append(fitz.Rect(
+                        origin_x + (x + 4) * module, origin_y + (y + 4) * module,
+                        origin_x + (end + 4) * module, origin_y + (y + 5) * module,
+                    ))
+                    x = end
+        # One vector path avoids thousands of Python/native shape calls.
+        operators = ["q", "0 g"]
+        for box in rectangles:
+            operators.append(f"{box.x0:.6f} {page.rect.height-box.y1:.6f} "
+                             f"{box.width:.6f} {box.height:.6f} re")
+        operators.extend(["f", "Q"])
+        document = page.parent
+        stream = document.get_new_xref()
+        document.update_object(stream, "<<>>")
+        document.update_stream(stream, ("\n".join(operators)+"\n").encode("ascii"))
+        contents = page.get_contents() + [stream]
+        document.xref_set_key(page.xref, "Contents", "["+" ".join(f"{xref} 0 R" for xref in contents)+"]")
         if element.type == "code128" and element.show_barcode_text:
             label = fitz.Rect(rect.x0, rect.y0 + height, rect.x1, rect.y1)
             self._text(page, label, element, value)

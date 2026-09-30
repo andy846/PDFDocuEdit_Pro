@@ -114,3 +114,26 @@ def test_unicode_and_space_output_path(tmp_path):
     assert result.status == "completed", result.error
     with fitz.open(result.output_pdf) as doc:
         assert doc.page_count == 2
+
+
+def test_subset_output_matches_preview_and_retains_late_record_glyphs(tmp_path):
+    from composition.engine.renderer import render_preview
+    from composition.template.model import FontSpec
+    source = tmp_path / "chinese.csv"
+    names = ["\u9673\u5c0f\u660e", "\u9999\u6e2f\u5ba2\u6236", "\u674e\u5927\u6587"]
+    source.write_text("Name\n" + "\n".join(names) + "\n", encoding="utf-8")
+    store = import_records(DataConfig(path=str(source)), tmp_path / "chinese.db")
+    template = Template(elements=[
+        Element(value="Hello {{Name}}", height_mm=20, font=FontSpec(family="Noto Sans CJK HK")),
+        Element(type="qr", value="{{Name}}", y_mm=65, width_mm=45, height_mm=45),
+    ])
+    job = ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "output"), chunk_size=1)
+    result = generate(job)
+    assert result.status == "completed", result.error
+    assert result.output_size < 1_000_000, "CJK output must not embed a full font per chunk"
+    with fitz.open(result.output_pdf) as output:
+        for index, name in enumerate(names):
+            assert name in output[index].get_text()
+            preview = render_preview(template, {"Name": name}, index+1)
+            with fitz.open(stream=preview, filetype="pdf") as before:
+                assert before[0].get_pixmap().samples == output[index].get_pixmap().samples
