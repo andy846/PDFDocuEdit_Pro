@@ -40,12 +40,12 @@ def suggest_import(path: str | Path) -> DataConfig:
         # Legacy encodings are ambiguous: suggestions remain user-confirmable.
         for candidate in ("utf-8", "big5", "gb18030", "cp1252"):
             try:
-                sample.decode(candidate)
+                codecs.getincrementaldecoder(candidate)(errors="strict").decode(sample, final=False)
                 encoding = candidate
                 break
             except UnicodeDecodeError:
                 continue
-    text = sample.decode(encoding, errors="replace")
+    text = codecs.getincrementaldecoder(encoding)(errors="replace").decode(sample, final=False)
     try:
         delimiter = csv.Sniffer().sniff(text, delimiters=",\t;|").delimiter
     except csv.Error:
@@ -117,8 +117,7 @@ def import_records(
             if not 1 <= len(first) <= MAX_FIELDS:
                 raise CompositionError("Invalid number of fields.")
             original = first if config.header else [f"Field_{i+1}" for i in range(len(first))]
-            original = [name.strip() for name in original]
-            if len(set(original)) != len(original) or any(not name for name in original):
+            if len(set(original)) != len(original) or any(not name.strip() for name in original):
                 raise CompositionError("Header fields must be non-empty and unique.")
             fields = [config.mapping.get(name, normalize_field(name, index + 1)) for index, name in enumerate(original)]
             if len(set(fields)) != len(fields) or any(

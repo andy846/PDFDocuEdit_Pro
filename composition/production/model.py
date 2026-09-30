@@ -39,6 +39,8 @@ class JobResult:
     output_pdf: str = ""
     report_dir: str = ""
     output_size: int = 0
+    composer_peak_memory_bytes: int = 0
+    assembler_peak_memory_bytes: int = 0
     error: str = ""
     error_record: int | None = None
     warnings: list[str] = field(default_factory=list)

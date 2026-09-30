@@ -17,6 +17,8 @@ FAMILIES = ("Noto Sans", "Noto Sans CJK HK")
 
 def resolve_font(spec: FontSpec) -> Path:
     if spec.file:
+        if spec.bold or spec.italic:
+            raise CompositionError("Custom fonts use their exact selected face. Choose the actual bold/italic file.")
         return Path(spec.file).expanduser().resolve()
     if spec.family == "Noto Sans":
         style = ("BoldItalic" if spec.bold and spec.italic else

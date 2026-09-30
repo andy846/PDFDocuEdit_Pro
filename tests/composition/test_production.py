@@ -90,3 +90,27 @@ def test_reconcile_rejects_missing_record():
     with pytest.raises(CompositionError, match="RECONCILIATION FAILED"):
         reconcile(JobResult("test", input_records=2, processed_records=1, successful_records=1,
                             generated_pages=1, generated_files=1))
+
+
+def test_cancel_during_assembler_never_publishes_pdf(tmp_path):
+    job = job_for(tmp_path, 100)
+    cancelled = False
+
+    def progress(done, total, message):
+        nonlocal cancelled
+        if message.startswith("Assembling"):
+            cancelled = True
+
+    result = generate(job, progress=progress, is_cancelled=lambda: cancelled)
+    assert result.status == "cancelled"
+    assert result.generated_files == 0
+    assert not list((tmp_path / "output").rglob("*.pdf"))
+
+
+def test_unicode_and_space_output_path(tmp_path):
+    job = job_for(tmp_path, 2)
+    job.output_dir = str(tmp_path / "\u9999\u6e2f production")
+    result = generate(job)
+    assert result.status == "completed", result.error
+    with fitz.open(result.output_pdf) as doc:
+        assert doc.page_count == 2

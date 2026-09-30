@@ -23,6 +23,7 @@ from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
 
 from .model import JobResult, ProductionJob, now
+from .resources import peak_memory
 
 
 class JobCancelled(CompositionError):
@@ -49,7 +50,7 @@ def reconcile(result: JobResult) -> None:
         )
 
 
-def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled) -> None:
+def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled) -> int:
     arguments = output.parent / "assembly.args"
     # qpdf argument files accept one complete argument per line, including spaces.
     lines = ["--empty", "--pages", *(str(path) for path in chunks), "--", str(output)]
@@ -72,6 +73,7 @@ def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled) 
         if process.returncode:
             message = (stderr or stdout).decode("utf-8", errors="replace")[-4000:]
             raise CompositionError(f"qpdf assembly failed ({process.returncode}): {message}")
+        return peak_memory(process)
     finally:
         if process.poll() is None:
             process.terminate()
@@ -187,7 +189,7 @@ def generate(
         if progress:
             progress(store.count, store.count, "Assembling and validating production PDF")
         pdf = staging / "production.pdf"
-        _assemble(chunks, pdf, executable, is_cancelled)
+        result.assembler_peak_memory_bytes = _assemble(chunks, pdf, executable, is_cancelled)
         for path in chunks:
             path.unlink()
         check_cancel(is_cancelled)
@@ -199,6 +201,7 @@ def generate(
         result.output_size = pdf.stat().st_size
         result.output_pdf = str(final / pdf.name)
         result.report_dir = str(final)
+        result.composer_peak_memory_bytes = peak_memory()
         result.status = "completed"
         result.finished_at = now()
         _write_reports(staging, result, template, store)

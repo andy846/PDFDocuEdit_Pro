@@ -234,6 +234,10 @@ def render_preview(template: Template, record: dict[str, str], ordinal: int = 1)
 
 def import_background(path: str | Path, page_number: int, target: str | Path) -> tuple[float, float]:
     """Copy and flatten a selected PDF page, keeping the source unchanged."""
+    if Path(path).expanduser().resolve() == Path(target).expanduser().resolve():
+        raise CompositionError("The background snapshot must not overwrite its source PDF.")
+    from core.io_atomic import atomic_output
+
     with fitz.open(path) as source, fitz.open() as background:
         if source.needs_pass:
             raise CompositionError("Unlock the background PDF with the existing editor before importing it.")
@@ -242,5 +246,6 @@ def import_background(path: str | Path, page_number: int, target: str | Path) ->
         background.insert_pdf(source, from_page=page_number, to_page=page_number)
         background.bake(annots=True, widgets=True)
         rect = background[0].rect
-        background.save(target, deflate=True)
+        with atomic_output(target, overwrite=False) as staged:
+            background.save(staged, deflate=True)
     return rect.width / MM_TO_PT, rect.height / MM_TO_PT
