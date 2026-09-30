@@ -1,0 +1,107 @@
+# Print Composition MVP 開發驗收報告
+
+日期：2026-10-01（香港）。狀態：**MVP 已實作並完成本機驗證；可攜開發版可試用。**
+正式版本 metadata 仍為 2.5.15；本報告不宣稱 v3.0 已公開發佈。
+
+## 開發隔離與回退
+
+- 穩定基線：main 的 a4a7ed0，v2.5.15。
+- 回退 tag：pre-v3.0-v2.5.15。
+- 實作分支：feature/print-composition-v3，附於 print-composition-v3 worktree。
+- 原始 measurement-calibration checkout／功能分支保持原狀。
+- 所有里程碑儲存在本機 Git；沒有推送 remote。
+- 舊 V3 搜尋／工具工作流方案由新 Print Composition 方案取代；歷史由 Git 保留。
+
+## 里程碑與實際交付
+
+| 里程碑 | 實際檔案／設計 | 狀態 |
+| --- | --- | --- |
+| M0 架構盤點 | PRINT_COMPOSITION_ARCHITECTURE.md；選定獨立視窗、worker、qpdf 分批管線 | 完成 |
+| M1 Template / Data | composition/template；composition/data；嚴格 JSON v1、來源映射、SQLite 快照 | 完成 |
+| M2 Headless Engine | composition/engine；精確字體、字體子集、背景、文字、圖形、圖片及條碼 | 完成 |
+| M3 Workspace | composition/designer；選取、拖動／縮放、屬性、獨立 Undo/Redo、save/load | 完成 |
+| M4 Import / Preview | 編碼／分隔符／標題設定、原始欄名、拖欄位、單筆預覽 | 完成 |
+| M5 Production | composition/production；QProcess worker、進度、取消、單一正式輸出提交 | 完成 |
+| M6 Reconciliation / Reports | 計數核對、control.csv、job.json、記錄錯誤及失敗診斷 | 完成 |
+| M7 Performance / Regression | 串流基準、完整回歸、最終 Composition 測試、frozen／installed smoke、CI | 完成本機驗證 |
+
+### 最小整合與相容影響
+
+- ui/workspace.py：Welcome 入口。
+- core/viewer.py：開啟／關閉擁有的 Composition 視窗。
+- main.py：在載入 Qt 前 dispatch headless worker；開發封裝包含受環境旗標保護的 QA 入口。
+- core/__init__.py：改為 lazy public exports，以移除 headless 匯入時意外載入 Qt；保留既有公開 import identity，回歸測試覆蓋。
+- PyInstaller、build、package discovery、來源檢查及 CI：加入 opt-in 素材與測試；正常封裝預設不啟用 Composition。
+- 原有 editor 文檔模型、Undo/Redo、偏好版本及公開版本號未遷移。Composition .pdcx 是新格式；未知版本拒絕載入。
+
+### 驗證重點
+
+來源 fingerprint 與引用欄位、禁止任意執行程式、固定頁數核對、不覆蓋來源、字體缺失／缺字／超出框阻止生產、失敗／取消不發佈部分 PDF、報告 CSV formula escaping、背景逐像素保真、條碼實際解碼。
+
+CJK CID 字體子集保留 glyph IDs，並以 production／preview 逐像素比較驗證。只檢查文字抽取不足以證明印刷外觀。
+
+## 測試結果與證據邊界
+
+| 驗證 | 結果 | 本機證據 |
+| --- | --- | --- |
+| 完整既有＋Composition pytest | 877 passed，0 failures/errors/skips；1048 秒 | build/qa-composition/regression.xml |
+| 最終 Composition pytest | 47 passed，0 failures/errors/skips；20 秒 | build/qa-composition/composition-final.xml |
+| Ruff／source／素材 hash | 通過 | 本機命令結果、BUNDLE_INFO.json |
+| Windows frozen，100% 縮放 | 100 筆生成、中文、背景、Code128/QR 解碼、save/reopen、editor 開檔通過 | build/qa-composition-final-frozen-1/result.json |
+| Windows frozen，200% 縮放 | 相同完整工作流通過；GUI event loop 保持運作 | build/qa-composition-final-frozen-2/result.json |
+| 安裝後 smoke | 隔離 QA AppId 安裝後實際 exe 通過；已完成 uninstall | build/composition-install-qa/result.json、安裝／移除 logs |
+| 視覺檢查 | light／dark、960×640／200% 畫面已檢查 | frozen smoke screenshots |
+
+完整 877 項回歸是在 ef0d335 檢查點執行。之後的修改集中在 Composition 字體／barcode 效能、背景異常清理、開發封裝名稱與文件；使用最終 47 項 Composition 測試及重新封裝 smoke 驗證。**不能將這兩次結果稱為在最終 HEAD 重跑了全部測試。**
+
+完整套件未刪除／停用測試，也沒有降低覆蓋要求。QA installer 使用獨立 AppId／工作目錄，不註冊 PDF 檔案處理器；這不是既有正式安裝版就地升級驗收。
+
+## 可重複效能基準
+
+環境：Windows 11 x64，Python 3.12.14，Intel i7-1185G7（4 核／8 threads），PyMuPDF 1.26.6、qpdf 12.4.2。每筆固定一頁，chunk size 500，本機資料；**每格單次樣本，沒有宣稱五次中位數或冷／暖快取統計。**
+
+Plain：一個英文變數文字物件。
+Mixed：帳號、姓名地址、Box、Code 128、QR、Noto Sans CJK HK 中文文字。
+
+時間包含字體掃描／子集、組版、合併、驗證及報告，不包含表內另外量測的匯入。MiB = bytes / 1,048,576。
+
+| Fixture | 記錄／頁數 | 生成秒 | 頁／秒 | 組版峰值 MiB | 合併峰值 MiB | PDF MiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Plain | 100 | 0.69 | 145.15 | 75.3 | 10.5 | 0.05 |
+| Plain | 1,000 | 2.38 | 419.48 | 75.9 | 18.4 | 0.46 |
+| Plain | 10,000 | 18.31 | 546.26 | 87.4 | 101.6 | 4.72 |
+| Plain | 50,000 | 81.97 | 609.99 | 137.0 | 469.0 | 23.93 |
+| Mixed | 1,000 | 14.39 | 69.48 | 190.6 | 42.1 | 2.89 |
+| Mixed | 10,000 | 130.61 | 76.56 | 190.6 | 339.0 | 29.16 |
+| Mixed | 50,000 | 561.44 | 89.06 | 260.3 | 1657.2 | 146.44 |
+
+所有樣本均完成實際 PDF 重新開啟、頁數及記錄 reconciliation。峰值為不同 process 的各自 peak working set，不能將表內兩欄當作同一時刻相加。
+
+可追蹤數據存於 docs/validation/composition_benchmark_20261001.json；完整本機 PDF／job.json 在 .benchmarks/composition-final/20261001-030447 與 .benchmarks/composition-mixed-final-verified/20261001-030855。
+
+### 效能限制
+
+1. 已驗證 50,000 記錄；100,000 的 extended benchmark 尚未執行。
+2. 組版保留有界 chunk／字元集合，而 qpdf 物件表記憶體會隨頁數增加。不是整條管線的常數記憶體保證。
+3. Mixed 50,000 頁約需 1.62 GiB assembler peak；低記憶體環境、大型背景／圖片／不同字體可能需要更多資源。
+4. 測試資料是合成固定頁資料。沒有真實客戶業務 fixture；沒有保證所有網絡路徑、影像密集 PDF 或印刷機的產能。
+5. 此版本未在每筆執行完整 veraPDF／印刷規範 preflight。已共用既有 PDF 開啟／頁數驗證服務；使用者可對最終 PDF 再執行原有 Preflight。
+6. GUI smoke event-loop ticks 與畫面檢查證明工作不跑 GUI thread，但不是完整延遲分佈量測；沒有宣稱所有 GUI 操作小於特定毫秒。
+
+## Definition of Done
+
+使用者可從 Welcome 建立空白／PDF 背景、匯入 CSV/TXT、查看／拖入欄位、加入靜態／變數文字、編輯位置與字體、保存／重開、預覽多筆、在背景生成數千至 50,000 頁、收到 summary／reconciliation／CSV／JSON，以及清楚記錄錯誤。
+
+既有完整回歸已通過；Windows 打包與隔離安裝 smoke 通過。可試用 MVP 已完成。正式發布仍需實際業務資料／實際列印驗收與既有版本／簽署／release 流程。
+
+## 交付與下一版本
+
+- 可執行目錄：dist/PDFDocuEdit Pro。
+- 可攜 ZIP：release/PDFDocuEdit-Pro-v2.5.15-Composition-Dev-Portable-Windows-x64.zip；附 .sha256。
+- 操作說明：PRINT_COMPOSITION_GUIDE.md。
+- qpdf／字體／barcode 授權：THIRD_PARTY_NOTICES.md，素材版本／hash：build_assets/composition/BUNDLE_INFO.json。
+- v3.0.1：真實資料驗收後的 bug fixes／效能／mapping 改善。
+- v3.1：多模板頁、規則、條件 visibility、分檔。
+- v3.2：重印、history、OMR／inserter marks、watch-folder prototype。
+
+目前沒有正式 v3.0 發布日期，也沒有開啟排程、hot folder、自動背景續跑或遠端處理服務。

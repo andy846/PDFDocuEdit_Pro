@@ -81,3 +81,19 @@ def test_barcode_size_and_payload_errors():
         render_preview(Template(elements=[Element(type="code128", value="123456789", width_mm=5)]), {})
     with pytest.raises(CompositionError, match="ASCII"):
         render_preview(Template(elements=[Element(type="code128", value="\u9999\u6e2f")]), {})
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_invalid_background_reports_error_and_releases_reader(tmp_path, encrypted):
+    background = tmp_path / "invalid-background.pdf"
+    with fitz.open() as doc:
+        doc.new_page()
+        if encrypted:
+            doc.save(background, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user")
+        else:
+            doc.new_page()
+            doc.save(background)
+    with pytest.raises(CompositionError, match="unencrypted single-page PDF"):
+        render_preview(Template(background=str(background)), {})
+    background.unlink()
+    assert not background.exists()

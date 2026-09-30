@@ -64,16 +64,16 @@ class Renderer:
         }
         self.stack = ExitStack()
         self.background = None
-        if template.background:
-            self.background = self.stack.enter_context(fitz.open(template.background))
-            if self.background.needs_pass or self.background.page_count != 1:
-                self.close()
-                raise CompositionError("The static background must be an unencrypted single-page PDF.")
         self.fonts = {}
         self.resource_document = None
         self.font_xrefs = {}
         self.output_fonts = {}
         self.images = {}
+        if template.background:
+            self.background = self.stack.enter_context(fitz.open(template.background))
+            if self.background.needs_pass or self.background.page_count != 1:
+                self.close()
+                raise CompositionError("The static background must be an unencrypted single-page PDF.")
         try:
             for element in template.elements:
                 if element.type == "text" or element.show_barcode_text:

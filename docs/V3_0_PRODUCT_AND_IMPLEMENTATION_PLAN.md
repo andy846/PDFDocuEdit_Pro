@@ -14,10 +14,14 @@ PDF production uses bounded chunks of 500 pages, then the pinned qpdf 12.4.2 run
 
 ## Milestones
 
-M0 architecture/assets/feasibility; M1 template and data models; M2 headless renderer; M3 workspace; M4 import and preview; M5 jobs/reconciliation/reports; M6 barcodes, performance and regression. Each milestone has a local commit and focused tests. Development launch is feature-flagged. Stable release version changes only during a separately reviewed release step.
+M0 architecture/assets/feasibility; M1 template and data models; M2 headless renderer; M3 workspace; M4 import and preview; M5 production jobs; M6 reconciliation and reports; M7 performance and regression. Code 128 and QR are included in the accepted MVP renderer. Each milestone has a local commit and focused tests. Development launch is feature-flagged. Stable release version changes only during a separately reviewed release step.
 
 ## Release gates
 
 Template roundtrip/version/schema, CSV/TXT encodings/headers/field collisions, Unicode/Chinese/long values, background fidelity, all elements, barcode decoding, failure/cancellation and reconciliation tests. Full existing suite, Ruff and source verification remain required. Repeatable production benchmarks at 100/1,000/10,000/50,000 records report throughput, peak process memory and output size. 100,000 is an extended benchmark. Synthetic performance results are not guarantees for arbitrary images or background PDFs.
 
 The Windows installed build must contain verified qpdf and font assets, all licence notices, worker dispatch and the barcode packages. Existing tools, installer/update paths and preferences receive regression checks.
+
+## Implementation status — 2026-10-01
+
+The fixed-page MVP is implemented in the isolated feature/print-composition-v3 worktree. See PRINT_COMPOSITION_GUIDE.md for operation and PRINT_COMPOSITION_ACCEPTANCE.md for milestone evidence, measured performance and remaining release limits. This development delivery does not change the public version or declare a v3.0 release date.

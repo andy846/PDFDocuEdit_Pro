@@ -184,6 +184,11 @@ def _clean_portable_tree(tree: Path) -> None:
                 shutil.rmtree(Path(dirpath) / name, ignore_errors=True)
 
 
+def _windows_artifact_prefix() -> str:
+    suffix = "-Composition-Dev" if os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION") == "1" else ""
+    return f"PDFDocuEdit-Pro-v{VERSION}{suffix}"
+
+
 def build_portable_zip() -> Path:
     """Create the Portable ZIP from the PyInstaller ``dist`` folder."""
     dist_dir = ROOT / "dist" / APP_NAME
@@ -197,7 +202,7 @@ def build_portable_zip() -> Path:
         _clean_portable_tree(staging)
         release = ROOT / "release"
         release.mkdir(exist_ok=True)
-        zip_path = release / f"PDFDocuEdit-Pro-v{VERSION}-Portable-Windows-x64.zip"
+        zip_path = release / f"{_windows_artifact_prefix()}-Portable-Windows-x64.zip"
         shutil.make_archive(
             str(zip_path.with_suffix("")),
             "zip",
@@ -298,8 +303,9 @@ def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
         raise RuntimeError(
             "Inno Setup 6 (ISCC.exe) is required to build the installer."
         )
-    run(compiler, *_inno_signing_args(signing), "installer/PDFDocuEditPro.iss")
-    output = ROOT / "release" / f"PDFDocuEdit-Pro-v{VERSION}-Legacy-Setup-Windows-x64.exe"
+    installer_name = f"{_windows_artifact_prefix()}-Legacy-Setup-Windows-x64"
+    run(compiler, *_inno_signing_args(signing), f"/F{installer_name}", "installer/PDFDocuEditPro.iss")
+    output = ROOT / "release" / f"{installer_name}.exe"
     sha256(output)
     return output, portable
 
