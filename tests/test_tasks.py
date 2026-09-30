@@ -32,6 +32,22 @@ def test_function_task_reports_cooperative_cancellation_without_result() -> None
     assert finished == [True]
 
 
+def test_function_task_keeps_committed_batch_result_after_cancel() -> None:
+    def commit_then_cancel(*, on_item):
+        task.cancel()
+        on_item("committed")
+        return ["committed"]
+
+    task = FunctionTask(commit_then_cancel, batch_argument="on_item")
+    items: list[str] = []
+    cancelled: list[bool] = []
+    task.signals.batch.connect(items.append)
+    task.signals.cancelled.connect(lambda: cancelled.append(True))
+    task.run()
+    assert items == ["committed"]
+    assert cancelled == [True]
+
+
 def test_mid_operation_cancellation_leaves_no_partial_text_pdf(tmp_path: Path) -> None:
     source = tmp_path / "source.txt"
     source.write_text("word " * 5000, encoding="utf-8")
