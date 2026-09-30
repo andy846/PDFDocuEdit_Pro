@@ -1,0 +1,238 @@
+"""Bounded page generation, subprocess assembly and reconciled publication."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+
+import fitz
+
+from composition.data.source import RecordStore
+from composition.engine.assets import qpdf_executable
+from composition.engine.renderer import Renderer
+from composition.template.model import CompositionError, Template, required_fields
+from composition.template.serializer import file_hash
+from core.pdf_io import validate_pdf_file
+
+from .model import JobResult, ProductionJob, now
+
+
+class JobCancelled(CompositionError):
+    pass
+
+
+def check_cancel(is_cancelled):
+    if is_cancelled and is_cancelled():
+        raise JobCancelled("Production cancelled.")
+
+
+def reconcile(result: JobResult) -> None:
+    if not (
+        result.input_records == result.processed_records == result.successful_records
+        and result.failed_records == 0
+        and result.generated_pages == result.input_records
+        and result.generated_files == 1
+    ):
+        raise CompositionError(
+            "RECONCILIATION FAILED: "
+            f"input={result.input_records}, processed={result.processed_records}, "
+            f"successful={result.successful_records}, failed={result.failed_records}, "
+            f"pages={result.generated_pages}, files={result.generated_files}."
+        )
+
+
+def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled) -> None:
+    arguments = output.parent / "assembly.args"
+    # qpdf argument files accept one complete argument per line, including spaces.
+    lines = ["--empty", "--pages", *(str(path) for path in chunks), "--", str(output)]
+    if any("\n" in value or "\r" in value for value in lines):
+        raise CompositionError("Output paths may not contain line breaks.")
+    arguments.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    process = subprocess.Popen(
+        [str(executable), "@" + str(arguments)], stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, **options,
+    )
+    try:
+        while True:
+            check_cancel(is_cancelled)
+            try:
+                stdout, stderr = process.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode:
+            message = (stderr or stdout).decode("utf-8", errors="replace")[-4000:]
+            raise CompositionError(f"qpdf assembly failed ({process.returncode}): {message}")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        if process.stdout:
+            process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
+        arguments.unlink(missing_ok=True)
+
+
+def _csv_value(value):
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
+def _write_reports(directory: Path, result: JobResult, template: Template, store: RecordStore | None) -> None:
+    log = {
+        "job_version": 1,
+        **result.to_dict(),
+        "template_name": template.name,
+        "template_sha256": hashlib.sha256(
+            json.dumps(template.to_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest(),
+        "source": store.metadata["source"] if store else None,
+        "record_identity": "source_sha256 + one-based imported record ordinal",
+        "page_mapping": "fixed single page: output page = record ordinal",
+    }
+    (directory / "job.json").write_text(json.dumps(log, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    columns = {
+        "Job ID": result.job_id, "Source File": store.metadata["source"]["path"] if store else "",
+        "Template Name": template.name, "Start Time": result.started_at, "End Time": result.finished_at,
+        "Input Records": result.input_records, "Processed Records": result.processed_records,
+        "Successful Records": result.successful_records, "Failed Records": result.failed_records,
+        "Page Count": result.generated_pages, "Output Files": result.generated_files,
+        "Output File": result.output_pdf, "File Size": result.output_size,
+        "Status": result.status, "Error Record": result.error_record or "", "Error": result.error,
+    }
+    with (directory / "control.csv").open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(columns.keys())
+        writer.writerow([_csv_value(value) for value in columns.values()])
+
+
+def generate(
+    job: ProductionJob, *, progress: Callable | None = None, is_cancelled: Callable | None = None,
+) -> JobResult:
+    """Compose a disk-backed imported snapshot without loading all rendered pages."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job.job_id):
+        raise CompositionError("Invalid job identity.")
+    if not 1 <= job.chunk_size <= 1000:
+        raise CompositionError("Chunk size must be between 1 and 1,000 pages.")
+    template = Template.from_dict(job.template)
+    output_root = Path(job.output_dir).expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    final = output_root / job.job_id
+    if final.exists() or (output_root / f"{job.job_id}-failed").exists():
+        raise CompositionError("That production job already exists. Use a new job ID.")
+    staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))
+    result = JobResult(job.job_id)
+    store = None
+    current_record = None
+    chunk = None
+    chunks = []
+    try:
+        check_cancel(is_cancelled)
+        store = RecordStore(job.record_store)
+        result.input_records = store.count
+        missing = required_fields(template) - set(store.fields)
+        if missing:
+            raise CompositionError(f"Missing mapped fields: {', '.join(sorted(missing))}")
+        executable = qpdf_executable()
+        assets = [template.background] + [
+            value for element in template.elements for value in (element.image, element.font.file) if value
+        ]
+        fingerprints = {path: file_hash(Path(path)) for path in assets if path}
+        with Renderer(template) as renderer:
+            chunk = fitz.open()
+            for ordinal, record in store.records():
+                check_cancel(is_cancelled)
+                current_record = ordinal
+                try:
+                    renderer.render(chunk, record, ordinal)
+                except Exception:
+                    result.failed_records += 1
+                    result.processed_records += 1
+                    result.error_record = ordinal
+                    raise
+                result.processed_records += 1
+                result.successful_records += 1
+                if chunk.page_count == job.chunk_size or ordinal == store.count:
+                    check_cancel(is_cancelled)
+                    renderer.finalize(chunk)
+                    path = staging / f"chunk-{len(chunks):06}.pdf"
+                    chunk.save(path, deflate=True, garbage=1)
+                    result.generated_pages += chunk.page_count
+                    chunk.close()
+                    chunk = fitz.open()
+                    chunks.append(path)
+                if progress and (ordinal % 25 == 0 or ordinal == store.count):
+                    progress(ordinal, store.count, f"Composing record {ordinal:,} / {store.count:,}")
+            chunk.close()
+            chunk = None
+        check_cancel(is_cancelled)
+        for path, digest in fingerprints.items():
+            if file_hash(Path(path)) != digest:
+                raise CompositionError("A template asset changed during production. Run the job again.")
+        if progress:
+            progress(store.count, store.count, "Assembling and validating production PDF")
+        pdf = staging / "production.pdf"
+        _assemble(chunks, pdf, executable, is_cancelled)
+        for path in chunks:
+            path.unlink()
+        check_cancel(is_cancelled)
+        validate_pdf_file(pdf, expected_page_count=store.count)
+        with fitz.open(pdf) as checked:
+            result.generated_pages = checked.page_count
+        result.generated_files = 1
+        reconcile(result)
+        result.output_size = pdf.stat().st_size
+        result.output_pdf = str(final / pdf.name)
+        result.report_dir = str(final)
+        result.status = "completed"
+        result.finished_at = now()
+        _write_reports(staging, result, template, store)
+        check_cancel(is_cancelled)
+        # A unique, same-parent directory rename publishes the PDF and both reports together.
+        os.rename(staging, final)
+        return result
+    except Exception as exc:
+        if chunk is not None:
+            chunk.close()
+            chunk = None
+        result.status = "cancelled" if isinstance(exc, JobCancelled) else "failed"
+        result.error = str(exc)
+        result.finished_at = now()
+        result.output_pdf = ""
+        result.output_size = 0
+        result.generated_files = 0
+        if result.error_record is None and current_record is not None and result.failed_records:
+            result.error_record = current_record
+        # Keep only diagnostics; incomplete PDFs are never published.
+        for path in staging.glob("*.pdf"):
+            path.unlink(missing_ok=True)
+        failure_dir = output_root / f"{job.job_id}-failed"
+        result.report_dir = str(failure_dir)
+        try:
+            _write_reports(staging, result, template, store)
+            os.rename(staging, failure_dir)
+        except OSError as report_error:
+            result.report_dir = ""
+            result.warnings.append(f"Unable to publish diagnostic reports: {report_error}")
+        return result
+    finally:
+        if staging.exists():
+            resolved = staging.resolve()
+            if resolved.parent != output_root or not resolved.name.startswith(f".{job.job_id}-"):
+                raise CompositionError("Unsafe staging cleanup path.")
+            shutil.rmtree(resolved)
