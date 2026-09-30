@@ -80,7 +80,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 - Runtime/build contract: Python 3.12.x. OCR is not bundled in the macOS build.
 - Single and batch printing now prepare/rasterize pages in cancellable workers, with live progress. One page image is in flight at a time; printer interaction stays on the GUI thread. Cancel stops at the next safe checkpoint.
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
-- Windows Python 3.12.14: **389 collected/passed test cases across 35 test modules**. Ruff passes. CI already runs Windows full pytest, Ruff, and Linux/macOS core tests. Pillow is pinned to 11.3.0.
+- CI runs affected tests and basic smoke checks on ordinary branch pushes. PRs and merges run the Windows automated suite; UI interaction and Linux/macOS core jobs run when relevant files change, and version tags run every test group. Pillow is pinned to 11.3.0.
 
 The current Windows x64 release is V2.5.16. Setup and Managed Portable downloads include SHA-256 files.
 
@@ -165,7 +165,7 @@ Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/relea
 ### Windows release build
 
 在 Windows x64 安裝 Python 3.12、Inno Setup 6 並設定更新簽署私鑰後，可執行
-`scripts\build_windows.bat`。流程會先驗證 source、執行測試，再建立 PyInstaller
+`scripts\build_windows.bat`。確認同一提交的 GitHub CI 已通過後執行；流程會驗證 source，並建立 PyInstaller
 程式、簽署更新 ZIP、Managed Portable ZIP、Inno Setup 安裝檔及各自的 SHA-256 checksum。
 
 正式簽署 build 可設定以下環境變數：
