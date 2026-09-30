@@ -96,6 +96,6 @@ class FunctionTask(QRunnable):
         self.signals.progress.emit(current, total, message)
 
     def _report_batch(self, value: Any) -> None:
-        if self.is_cancelled():
-            raise TaskCancelled
+        # A completed batch item must still be reported when cancellation
+        # arrives just after its output has been committed to disk.
         self.signals.batch.emit(value)

@@ -108,6 +108,7 @@ from core.measurement import (
     valid_factor,
 )
 from core.ocr import OCRMode, OCRResult, run_ocr
+from core.overlay import OverlayFileResult
 from core.pdf_engine import (
     DOCUMENT_LOCK,
     PdfEngine,
@@ -154,6 +155,7 @@ from dialogs.conversion_dialogs import (
 from dialogs.data_dialogs import PageCountReportDialog, SpreadsheetMergeDialog
 from dialogs.document_dialogs import PrintOptionsDialog, VisualOrganizerDialog
 from dialogs.ocr_dialog import OCRDialog, OCRTextResultDialog
+from dialogs.overlay_tool import OverlayResultsDialog
 from dialogs.page_operations import InsertPagesDialog, PageSelectionDialog, SplitDialog
 from dialogs.readme_dialog import ReadmeDialog
 from dialogs.search_open_dialog import SearchOpenDialog
@@ -6140,44 +6142,78 @@ class PDFViewer(QMainWindow):
             )
 
     def _overlay_pdf(self) -> None:
-        dialog = OverlayDialog(self.engine.original_path, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
-            return
-        details = dialog.details
-        session = self._session
-        targets = [Path(value).resolve() for value in details["targets"]]
         current = self.engine.original_path
         snapshot = None
-        if current and self.engine.is_modified and current in targets:
-            if not details["suffix"] and details["overwrite"]:
-                self.info_bar.show_message(
-                    "Save the current PDF before applying an in-place overlay.",
-                    "warning",
-                    0,
-                )
-                return
+        working = None
+        if current and self.engine.is_modified:
             try:
                 snapshot, working = self._working_snapshot(current)
             except Exception as exc:
-                log_failure('viewer._overlay_pdf: fallback after failure', 10)
-                self._error("PDF overlay failed", str(exc))
+                log_failure("viewer._overlay_pdf: cannot make preview snapshot", 10)
+                self._error("PDF overlay preview failed", str(exc))
                 return
-            targets = [working if value == current else value for value in targets]
-        self._run_task(
+        dialog = OverlayDialog(
+            current, self, current_preview_path=working,
+            current_modified=bool(snapshot),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            if snapshot:
+                self._safe_cleanup(snapshot)()
+            return
+        details = dialog.details
+        session = self._session
+        original_targets = [Path(value).resolve() for value in details["targets"]]
+        overrides = {current: working} if current and working else None
+        records: list[OverlayFileResult] = []
+        started = False
+        result_seen = False
+
+        def received(item: OverlayFileResult) -> None:
+            records.append(item)
+
+        def finished() -> None:
+            if snapshot:
+                self._safe_cleanup(snapshot)()
+            if not started or self._closing:
+                return
+            if not result_seen:
+                committed = [item.output for item in records if item.status == "completed"]
+                self._reload_session_if_replaced(session, committed)
+            reported = {item.source for item in records}
+            output_folder = Path(str(details["output_folder"]))
+            suffix = str(details["suffix"])
+            overwrite = bool(details["overwrite"])
+            for source in original_targets:
+                if source not in reported:
+                    output = source if overwrite and not suffix else output_folder / f"{source.stem}{suffix}.pdf"
+                    records.append(OverlayFileResult(source, output, "skipped", "Not processed"))
+            OverlayResultsDialog(records, output_folder, self).exec()
+
+        def completed(values: list[Path]) -> None:
+            nonlocal result_seen
+            result_seen = True
+            if values:
+                self._batch_completed(session, values, "Overlay completed for {count} PDF file(s).")
+
+        task = self._run_task(
             "Applying PDF overlay",
             overlay_pdfs,
             details["template"],
-            targets,
+            original_targets,
             details["output_folder"],
             details["suffix"],
             details["overwrite"],
+            options=details["options"],
+            source_overrides=overrides,
+            continue_on_error=True,
             progress_argument="progress",
             cancel_argument="is_cancelled",
-            on_result=lambda values: self._batch_completed(
-                session, values, "Overlay completed for {count} PDF file(s)."
-            ),
-            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+            batch_argument="on_item",
+            on_batch=received,
+            on_result=completed,
+            on_finished=finished,
         )
+        started = task is not None
 
     def _compress_pdf(self) -> None:
         dialog = CompressionDialog(self.engine.original_path, self)
@@ -6396,6 +6432,8 @@ class PDFViewer(QMainWindow):
         on_result: Callable | None = None,
         progress_argument: str | None = None,
         cancel_argument: str | None = None,
+        batch_argument: str | None = None,
+        on_batch: Callable | None = None,
         on_finished: Callable[[], None] | None = None,
         on_discard: Callable | None = None,
         **kwargs,
@@ -6418,6 +6456,7 @@ class PDFViewer(QMainWindow):
             *args,
             progress_argument=progress_argument,
             cancel_argument=cancel_argument,
+            batch_argument=batch_argument,
             discard_result=on_discard,
             **kwargs,
         )
@@ -6465,6 +6504,8 @@ class PDFViewer(QMainWindow):
                     self.bottom_bar.set_status("Ready")
 
         task.signals.progress.connect(progress)
+        if on_batch:
+            task.signals.batch.connect(lambda item: None if self._closing else on_batch(item))
         task.signals.result.connect(result)
         task.signals.cancelled.connect(
             lambda: (
