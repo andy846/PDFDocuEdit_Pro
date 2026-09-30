@@ -12,6 +12,7 @@ ACTIVE = [
     ROOT / "dialogs",
     ROOT / "ui",
     ROOT / "styles",
+    ROOT / "composition",
 ]
 FORBIDDEN = (
     "PyQt5",

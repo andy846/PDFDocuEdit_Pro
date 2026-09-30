@@ -91,6 +91,29 @@ for _file in _VERA_ROOT.rglob("*"):
     if _file.is_file():
         datas.append((str(_file), f"verapdf/{_file.relative_to(_VERA_ROOT).parent}"))
 
+# Composition is opt-in while its release validation is in progress.
+_composition_enabled = os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION", "").lower() in {"1", "true", "yes", "on"}
+if _composition_enabled:
+    if sys.platform != "win32":
+        raise RuntimeError("Initial Print Composition production builds target Windows x64.")
+    import json as _json
+    import hashlib as _hashlib
+    _composition_root = ROOT / "build_assets" / "composition"
+    _manifest = _json.loads((_composition_root / "BUNDLE_INFO.json").read_text(encoding="utf-8"))
+    for _entry in _manifest["assets"]:
+        _relative = _entry["path"]
+        _asset = _composition_root / _relative
+        if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
+            raise RuntimeError(f"Invalid composition asset: {_relative}. Run scripts/prepare_composition_assets.py.")
+        datas.append((str(_asset), str(Path("build_assets/composition") / Path(_relative).parent)))
+    datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
+    _enabled_file = ROOT / "build" / "composition-enabled" / "enabled.json"
+    _enabled_file.parent.mkdir(parents=True, exist_ok=True)
+    _enabled_file.write_text('{"enabled":true}', encoding="utf-8")
+    datas.append((str(_enabled_file), "build_assets/composition"))
+    for _package in ("segno", "python-barcode"):
+        datas.extend(copy_metadata(_package))
+
 # pyzbar ships the zbar native library as DLLs inside its package on Windows.
 binaries = []
 try:
@@ -115,7 +138,13 @@ _hiddenimports = [
     "cv2",
     "numpy",
     "fontTools",
+    "composition.worker",
+    "composition.designer.workspace",
+    "barcode.codex",
+    "segno",
 ]
+if _composition_enabled:
+    _hiddenimports.append("scripts.composition_smoke")
 if sys.platform == "win32":
     # Microsoft Office COM backend for Office-to-PDF conversion.
     _hiddenimports += ["comtypes", "comtypes.client"]
