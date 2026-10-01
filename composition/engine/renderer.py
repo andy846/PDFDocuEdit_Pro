@@ -205,16 +205,23 @@ class Renderer:
             background = self.backgrounds.get(spec.id)
             if background is not None:
                 page.show_pdf_page(page.rect, background, 0, overlay=False)
-            for element in spec.elements:
-                try:
-                    self._render_element(page, element, values)
-                except Exception as exc:
-                    fields = sorted(self.plans[element.id].fields)
-                    raise CompositionError(
-                        f"Record {ordinal}, template page {index+1}, object {element.id}"
-                        + (f", field {', '.join(fields)}" if fields else "")
-                        + f": {exc}"
-                    ) from exc
+            self.paint_elements(page, spec.elements, values, ordinal, context=f"template page {index+1}")
+
+    def paint_elements(self, page, elements, values, ordinal=1, *, context="overlay page"):
+        """Paint onto a dedicated layer; never rewrite source PDF font resources."""
+        if self.resource_document is not page.parent:
+            self.resource_document = page.parent
+            self.font_xrefs.clear()
+        for element in elements:
+            try:
+                self._render_element(page, element, values)
+            except Exception as exc:
+                fields = sorted(self.plans[element.id].fields)
+                raise CompositionError(
+                    f"Record {ordinal}, {context}, object {element.id}"
+                    + (f", field {', '.join(fields)}" if fields else "")
+                    + f": {exc}"
+                ) from exc
 
     def _render_element(self, page, element: Element, record) -> None:
         selected = self.plans[element.id].resolve(record, design=self.design)
