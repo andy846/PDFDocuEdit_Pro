@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import tempfile
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -15,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -44,21 +46,36 @@ from .font_controls import FontOperations
 from .pages import PageOperations
 from .process import Worker
 from .properties import Properties
+from .usability import DesignerUsability
 
 
 class TemplateEdit(QUndoCommand):
-    def __init__(self, window, before, after, label, selected=None, page_id=None):
+    def __init__(self, window, before, after, label, selected=None, page_id=None, content_only=None):
         super().__init__(label)
         self.window, self.before, self.after, self.selected = window, before, after, selected
         self.before_page = window.active_page_id
         self.after_page = page_id or window.active_page_id
+        self.content_only = content_only
+        self.edited_at = time.monotonic()
     def undo(self):
-        self.window._apply_template(self.before, self.selected, page_id=self.before_page)
+        self.window._apply_template(self.before, self.selected, page_id=self.before_page, content_only=bool(self.content_only))
     def redo(self):
-        self.window._apply_template(self.after, self.selected, page_id=self.after_page)
+        self.window._apply_template(self.after, self.selected, page_id=self.after_page, content_only=bool(self.content_only))
+
+    def id(self):
+        return 101 if self.content_only else -1
+
+    def mergeWith(self, other):
+        if (not self.content_only or self.content_only != other.content_only
+                or self.after_page != other.after_page or self.after != other.before
+                or other.edited_at-self.edited_at > 0.8):
+            return False
+        self.after = other.after
+        self.edited_at = other.edited_at
+        return True
 
 
-class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(DesignerUsability, PageOperations, DesignerChrome, FontOperations, QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -73,6 +90,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.preview_worker = self.production_worker = self.import_worker = None
         self.preview_generation = 0
         self.stores = {}
+        self._data_ui_key = None
         self.record_count = 0
         self.clipboard = []
         self.font_requests = {}
@@ -82,6 +100,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.preferences = QSettings()
         self.preferences.beginGroup("document_designer")
 
+        self._init_usability()
         self.close_pending = False
         self.undo = QUndoStack(self)
         self.undo.cleanChanged.connect(self._title)
@@ -94,6 +113,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.undo.setClean()
         QTimer.singleShot(0, self.canvas.fit_page)
         QTimer.singleShot(0, self._load_windows_fonts)
+        QTimer.singleShot(0, self._adjust_inspector)
 
     def _build_ui(self):
         self._build_actions()
@@ -102,7 +122,9 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         heading = QLabel("Document Designer")
         heading.setStyleSheet("font-size: 18px; font-weight: 600;")
         layout.addWidget(heading)
-        layout.addWidget(QLabel("Design reusable documents with static content, variable data and production PDF output."))
+        self.description = QLabel("Design reusable documents with static content, variable data and production PDF output.")
+        self.description.setWordWrap(True)
+        layout.addWidget(self.description)
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         for name in ("Data", "Design", "Preview", "Production"):
@@ -129,6 +151,12 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.fields = FieldList()
         self.fields.setDragEnabled(True)
         self.fields.itemDoubleClicked.connect(lambda item: self.add_field(item.text(), 20, 20))
+        self.field_filter = QLineEdit()
+        self.field_filter.setPlaceholderText("Find a data field…")
+        self.field_filter.setClearButtonEnabled(True)
+        self.field_filter.setAccessibleName("Filter data fields")
+        self.field_filter.textChanged.connect(self._filter_fields)
+        data_layout.addWidget(self.field_filter)
         data_layout.addWidget(self.fields)
         help_label = QLabel("Drag a field onto the page. Double-click to add at 20 mm.")
         help_label.setWordWrap(True)
@@ -152,12 +180,30 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
         self.properties.glyphRepairRequested.connect(self.edit_glyph_repairs)
+        self.properties.revertRequested.connect(self.revert_content_draft)
         self.properties_scroll = QScrollArea()
         self.properties_scroll.setWidgetResizable(True)
         self.properties_scroll.setWidget(self.properties)
         self.properties_scroll.setMinimumWidth(260)
         self.splitter.addWidget(self.left_panel)
-        self.splitter.addWidget(self.canvas)
+        self.canvas_panel = QWidget()
+        canvas_layout = QVBoxLayout(self.canvas_panel)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_state = QLabel("Design layout")
+        self.preview_state.setWordWrap(True)
+        preview_row = QHBoxLayout()
+        preview_row.addWidget(self.preview_state, 1)
+        self.preview_review = QPushButton("Review object")
+        self.preview_review.hide()
+        self.preview_review.clicked.connect(self.review_failed_object)
+        preview_row.addWidget(self.preview_review)
+        self.preview_retry = QPushButton("Refresh")
+        self.preview_retry.setToolTip("Render the current template page again")
+        self.preview_retry.clicked.connect(self._schedule_preview)
+        preview_row.addWidget(self.preview_retry)
+        canvas_layout.addLayout(preview_row)
+        canvas_layout.addWidget(self.canvas, 1)
+        self.splitter.addWidget(self.canvas_panel)
         self.splitter.addWidget(self.properties_scroll)
         self.splitter.setSizes([220, 700, 280])
         design_layout.addWidget(self.splitter)
@@ -168,7 +214,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.data_summary.setTextFormat(Qt.TextFormat.PlainText)
         self.data_summary.setWordWrap(True)
         data_layout.addWidget(self.data_summary)
-        import_large = QPushButton("Import / remap data…")
+        import_large = self.remap_button = QPushButton("Import / remap data…")
         import_large.clicked.connect(self.import_data)
         data_layout.addWidget(import_large)
         self.sample = QTableWidget()
@@ -243,10 +289,12 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def _worker(self, request, result, failure=None):
         worker = Worker(self.directory, request, self)
+        worker.task = request["task"]
         self.workers.append(worker)
         worker.resultReady.connect(result)
         worker.failed.connect(failure or self._error)
         worker.ended.connect(lambda: self._worker_ended(worker))
+        self._busy()
         return worker
 
     def _worker_ended(self, worker):
@@ -270,8 +318,14 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
     def _store(self):
         return self.stores.get(self._config_key())
 
-    def _apply_template(self, value, selected=None, *, page_id=None):
+    def _apply_template(self, value, selected=None, *, page_id=None, content_only=False):
         template = Template.from_dict(value)
+        if (content_only and (page_id is None or page_id == self.active_page_id)
+                and self.properties.element and self.properties.element.id == selected
+                and self.canvas.selected_ids() == [selected]):
+            self._apply_text_update(template, selected)
+            return
+        self._remember_canvas_view()
         old = {e.id: e.font for e in self.template.all_elements()}
         new = {e.id: e.font for e in template.all_elements()}
         for object_id in list(self.font_requests):
@@ -283,16 +337,18 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.template = template
         target = page_id or self.active_page_id
         self.active_page_id = target if any(p.id == target for p in template.pages) else template.pages[0].id
+        if selected is None and self.active_page_id in self.page_views:
+            selected = self.page_views[self.active_page_id][2]
         self.canvas.set_template(self.template, selected, page_index=self.page_index)
+        self._restore_canvas_view()
         selected_ids = selected if isinstance(selected, list) else [selected]
         self._selection(selected_ids[0] if len(selected_ids) == 1 else "")
         self._refresh_data()
         self._refresh_layers()
-        self._refresh_pages()
         self._title()
         self._schedule_preview()
 
-    def _commit(self, before, after, label, selected=None, *, page_id=None):
+    def _commit(self, before, after, label, selected=None, *, page_id=None, content_only=None):
         if before == after:
             return
         try:
@@ -303,9 +359,16 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
             return
         if selected is None:
             selected = self.canvas.selected_ids()
-        self.undo.push(TemplateEdit(self, before, after, label, selected, page_id))
+        self.undo.push(TemplateEdit(self, before, after, label, selected, page_id, content_only))
 
     def _selection(self, selected):
+        if self.content_invalid and self.properties.element:
+            object_id = self.properties.element.id
+            if selected != object_id:
+                self.canvas.select_ids([object_id])
+                self._error("Finish the unfinished content or use Revert unfinished edit before selecting another object.")
+            self._sync_layers()
+            return
         element = next((e for e in self.page.elements if e.id == selected), None)
         self.properties.show_element(element)
         self._inspect_selected_font(element)
@@ -313,18 +376,23 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self._update_actions()
 
     def _property_edit(self, values):
-        if not self.properties.element:
-            return
-        before = self.template.to_dict()
-        after = copy.deepcopy(before)
-        selected = self.properties.element.id
-        for element in self._page_dict(after)["elements"]:
-            if element["id"] == selected:
-                element.update(values)
-        self._commit(before, after, "Edit object properties", selected)
+        self._edit_property_values(values)
+
+    def _filter_fields(self, text=None):
+        query = self.field_filter.text().casefold()
+        for index in range(self.fields.count()):
+            item = self.fields.item(index)
+            item.setHidden(query not in item.text().casefold() and query not in item.toolTip().casefold())
 
     def _refresh_data(self):
         info = self._store()
+        key = (self._config_key(), id(info))
+        if key == self._data_ui_key:
+            self._update_navigation()
+            self._refresh_pages()
+            self._busy()
+            return
+        self._data_ui_key = key
         self.fields.clear()
         self.record_count = info["metadata"]["record_count"] if info else 0
         self.record.blockSignals(True)
@@ -352,6 +420,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
                                       "Data source needs importing:\n" + self.template.data.path)
             self.data_summary.setText("Import the data source to preview and generate this project.")
             self.sample.setRowCount(0)
+        self._filter_fields()
         self._update_navigation()
         self._refresh_pages()
         self._busy()
@@ -367,22 +436,24 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
     def _mode_changed(self, index):
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
         self.canvas.set_preview_mode(index == 2)
-        self.properties_scroll.setVisible(index != 2 and self.actions["properties"].isChecked())
+        self._show_properties(self.actions["properties"].isChecked())
         self._schedule_preview()
 
     def _schedule_preview(self, *args):
         self.preview_generation += 1
+        self.preview_state.setText("Updating preview…" if self.tabs.currentIndex() in (1, 2) else "")
         self.canvas.set_preview(None)
         self.preview_timer.start()
 
     def _render_preview(self):
-        if self.close_pending or self.tabs.currentIndex() not in (1, 2):
+        if self.close_pending or self.content_invalid or self.tabs.currentIndex() not in (1, 2):
             return
         if self.preview_worker and self.preview_worker in self.workers:
             self.preview_worker.stop_preview()
         generation = self.preview_generation
         info = self._store() if self.tabs.currentIndex() == 2 else None
         if self.tabs.currentIndex() == 2 and not info:
+            self.preview_state.setText("Import data to preview actual records.")
             self._error("Import data before previewing records.")
             return
         request = {"task": "preview", "template": self.template.to_dict(),
@@ -394,7 +465,11 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def _preview_ready(self, result, generation):
         if generation == self.preview_generation:
+            self.preview_review.hide()
             self.canvas.set_preview(result["image"])
+            self.preview_state.setText(
+                f"Record {result['record']:,} · template page {result.get('page', 0)+1}"
+                if self.tabs.currentIndex() == 2 else "Design layout · field placeholders")
             repairs = result.get("glyph_repairs", [])
             count = sum(item["occurrences"] for item in repairs)
             self.message.setText(f"Preview uses {count} explicit glyph repair(s); primary fonts retained." if count else "")
@@ -403,10 +478,14 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def _preview_error(self, error, generation):
         if generation == self.preview_generation:
+            self.preview_state.setText("Preview failed — review the object or its content.")
             self._record_font_error(error)
+            self.preview_review.setVisible(bool(self.failed_object))
             self._error(error)
 
     def add_element(self, kind="text", value=None, x=20, y=20, font=None):
+        if self.content_invalid or self.import_worker or self.production_worker:
+            return
         if self.tabs.currentIndex() != 1:
             self.tabs.setCurrentIndex(1)
         element = Element(type=kind, value=value if value is not None else "Text",
@@ -453,7 +532,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self.edit_glyph_repairs()
 
     def edit_glyph_repairs(self):
-        if self.production_worker or self.import_worker or self.font_requests:
+        if self.content_invalid or self.production_worker or self.import_worker or self.font_requests:
             self._error("Finish the active font or job operation before configuring glyph repairs.")
             return
         element = self.properties.element
@@ -472,6 +551,8 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
             self._request_font(choice)
 
     def remove_glyph_repair(self, object_id, codepoint):
+        if self.content_invalid or self.import_worker or self.production_worker:
+            return
         before, after = self.template.to_dict(), self.template.to_dict()
         target = next((e for page in after["pages"] for e in page["elements"]
                        if e["id"] == object_id), None)
@@ -481,6 +562,8 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def use_cjk_font(self):
         self.properties.apply()
+        if self.content_invalid or self.import_worker or self.production_worker:
+            return
         selected = self.canvas.selected_ids()
         before, after = self.template.to_dict(), self.template.to_dict()
         changed = 0
@@ -496,6 +579,8 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
 
     def object_command(self, command):
+        if command != "copy" and (self.import_worker or self.production_worker or self.content_invalid or self.canvas.mode_preview):
+            return
         selected = set(self.canvas.selected_ids())
         if command == "cut":
             self.object_command("copy")
@@ -523,14 +608,17 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def _discard_check(self):
         self.properties.apply()
-        if self.undo.isClean():
+        if self.undo.isClean() and not self.content_invalid:
             return True
         answer = QMessageBox.question(self, "Unsaved document design", "Save changes to this project?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
             QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
         if answer == QMessageBox.StandardButton.Save:
             return self.save_project()
-        return answer == QMessageBox.StandardButton.Discard
+        if answer == QMessageBox.StandardButton.Discard:
+            self.revert_content_draft()
+            return True
+        return False
 
     def new_project(self):
         if self.import_worker or self.production_worker:
@@ -539,6 +627,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         if self._discard_check():
             self.font_epoch += 1
             self.font_requests.clear()
+            self.page_views.clear()
             self.project_path = None
             self.stores.clear()
             self.undo.clear()
@@ -564,6 +653,7 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
             return
         self.font_epoch += 1
         self.font_requests.clear()
+        self.page_views.clear()
         self.stores.clear()
         self.project_path = Path(path)
         self.undo.clear()
@@ -581,8 +671,11 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def save_project(self, checked=False, save_as=False):
         self.properties.apply()
-        if self.font_requests:
-            self._error("Wait for the selected font face to finish loading before saving.")
+        if self.content_invalid:
+            self._error("Finish or revert the unfinished content before saving.")
+            return False
+        if self.font_requests or any(getattr(w, "task", "") == "background" for w in self.workers):
+            self._error("Wait for the selected font or background to finish loading before saving.")
             return False
         path = str(self.project_path) if self.project_path and not save_as else ""
         if not path:
@@ -674,6 +767,9 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
         self._commit(before, after, "Remove background")
 
     def import_data(self):
+        if self.content_invalid:
+            self._error("Finish or revert the unfinished content before importing data.")
+            return
         if self.import_worker or self.production_worker:
             self._error("Finish or cancel the active job before importing another source.")
             return
@@ -711,6 +807,9 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
 
     def generate_pdf(self):
         self.properties.apply()
+        if self.content_invalid:
+            self._error("Finish or revert the unfinished edit before generation.")
+            return
         if not self._store() or self.production_worker or self.import_worker:
             self._error("Import data before production.")
             return
@@ -719,6 +818,9 @@ class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWin
             self.start_production(output)
 
     def start_production(self, output):
+        if self.content_invalid or any(getattr(w, "task", "") == "background" for w in self.workers):
+            self._error("Finish the content/background operation before generation.")
+            return
         if self.font_requests:
             self._error("Wait for the selected font face to finish loading before generation.")
             return

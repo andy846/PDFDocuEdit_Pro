@@ -126,7 +126,7 @@ class DesignerChrome:
         for key, label, slot in [("grid", "Show 5 mm grid", lambda on: self.canvas.set_grid(on)),
                                  ("snap", "Snap to 5 mm grid", lambda on: self.canvas.set_snap(on)),
                                  ("data_panel", "Data / Layers panel", lambda on: self.left_panel.setVisible(on)),
-                                 ("properties", "Properties panel", lambda on: self.properties_scroll.setVisible(on))]:
+                                 ("properties", "Properties panel", lambda on: self._show_properties(on))]:
             value = action(key, label, slot, "&View", symbol="settings")
             value.setCheckable(True)
             value.setChecked(key in {"data_panel", "properties"})
@@ -143,6 +143,14 @@ class DesignerChrome:
         for key in ("undo", "redo"):
             button = self.project_toolbar.widgetForAction(self.actions[key])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        for key in ("cut", "copy", "paste", "duplicate", "delete", "select_all"):
+            value = self.actions[key]
+            value.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            self.canvas.addAction(value)
+        self.canvas.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self._canvas_context_menu)
+        self.canvas.objectActivated.connect(self.focus_properties)
+        self.layers.itemDoubleClicked.connect(lambda: self.focus_properties())
         self.record.setPrefix("Record ")
         self.record.setMinimumWidth(105)
         self.insert_toolbar.addSeparator()
@@ -225,6 +233,8 @@ class DesignerChrome:
         self._update_page_actions()
         self.actions["page_previous"].setEnabled(self.page_index > 0)
         self.actions["page_next"].setEnabled(self.page_index < len(self.template.pages)-1)
+        self.actions["select_all"].setEnabled(not busy and not self.canvas.mode_preview)
+        self._restrict_editing()
         self.page_status.setText(f"Page {self.page_index+1}/{len(self.template.pages)} · {self.page.width_mm:.2f} × {self.page.height_mm:.2f} mm")
 
     def _refresh_layers(self):
@@ -259,6 +269,8 @@ class DesignerChrome:
         self.canvas.select_ids([element.id for element in self.page.elements])
 
     def arrange_objects(self, mode):
+        if self.content_invalid or self.import_worker or self.production_worker:
+            return
         selected = set(self.canvas.selected_ids())
         before, after = self.template.to_dict(), self.template.to_dict()
         values = [element for element in self._page_dict(after)["elements"] if element["id"] in selected]
@@ -371,8 +383,7 @@ class DesignerChrome:
             if index is not None:
                 self.select_template_page(index)
             self.canvas.select_ids([self.failed_object])
-            self.properties_scroll.setVisible(True)
-            self.actions["properties"].setChecked(True)
+            self.focus_properties()
         self.message.setText("Review the selected object's font/content, then preview the failed record.")
 
     def open_report_folder(self):
@@ -400,6 +411,20 @@ class DesignerChrome:
                     value.setIcon(icon(symbol))
             if hasattr(self, "barcode_button"):
                 self.barcode_button.setIcon(icon("scan"))
+
+    def _canvas_context_menu(self, position):
+        menu = QMenu(self.canvas)
+        for key in ("cut", "copy", "paste", "duplicate", "delete"):
+            menu.addAction(self.actions[key])
+        menu.addSeparator()
+        arrange = menu.addMenu("Arrange")
+        for key, value in self.actions.items():
+            if key.startswith("arrange_"):
+                arrange.addAction(value)
+        if self.properties.element:
+            menu.addAction("Edit properties", self.focus_properties)
+        menu.addAction(self.actions["repair_glyph"])
+        menu.exec(self.canvas.viewport().mapToGlobal(position))
 
     def _toolbar_font_size(self):
         if self.properties.element:

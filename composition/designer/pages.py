@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import uuid
 
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QInputDialog, QLabel, QPushButton
+from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton, QToolButton
 
 from composition.template.model import MAX_TEMPLATE_PAGES, PageSpec
 
@@ -26,23 +26,36 @@ class PageOperations:
     def _build_page_navigation(self, layout):
         row = QHBoxLayout()
         row.addWidget(QLabel("Template page"))
+        self.page_buttons = {}
+        def button(key, text):
+            value = QPushButton(text)
+            value.setMaximumWidth(40)
+            value.setToolTip(self.actions[key].text())
+            value.setAccessibleName(self.actions[key].text())
+            value.clicked.connect(self.actions[key].trigger)
+            self.page_buttons[key] = value
+            row.addWidget(value)
+        button("page_previous", "◀")
         self.page_combo = QComboBox()
         self.page_combo.setAccessibleName("Template page")
-        self.page_combo.setMinimumWidth(120)
+        self.page_combo.setMinimumWidth(100)
         self.page_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.page_combo.currentIndexChanged.connect(self.select_template_page)
         row.addWidget(self.page_combo, 1)
-        self.page_buttons = {}
-        for key, label in (("page_add", "+"), ("page_duplicate", "Duplicate"),
-                           ("page_delete", "−"), ("page_up", "←"), ("page_down", "→")):
-            button = QPushButton(label)
-            button.setToolTip(self.actions[key].text())
-            button.setAccessibleName(self.actions[key].text())
-            if key != "page_duplicate":
-                button.setMaximumWidth(55)
-            button.clicked.connect(self.actions[key].trigger)
-            self.page_buttons[key] = button
-            row.addWidget(button)
+        button("page_next", "▶")
+        button("page_add", "+")
+        self.page_menu = QToolButton()
+        self.page_menu.setText("Page actions")
+        self.page_menu.setAccessibleName("Template page actions")
+        menu = QMenu(self.page_menu)
+        for key in ("page_add", "page_duplicate", "page_delete", "page_rename", "page_size"):
+            menu.addAction(self.actions[key])
+        menu.addSeparator()
+        for key in ("page_up", "page_down"):
+            menu.addAction(self.actions[key])
+        self.page_menu.setMenu(menu)
+        self.page_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        row.addWidget(self.page_menu)
         layout.addLayout(row)
 
     def _refresh_pages(self):
@@ -60,7 +73,7 @@ class PageOperations:
     def _update_page_actions(self):
         if not hasattr(self, "page_buttons"):
             return
-        editable = not (self.import_worker or self.production_worker or self.font_requests)
+        editable = not (self.import_worker or self.production_worker or self.font_requests or self.content_invalid)
         count = len(self.template.pages)
         availability = {
             "page_add": editable and count < MAX_TEMPLATE_PAGES,
@@ -69,6 +82,8 @@ class PageOperations:
             "page_up": editable and self.page_index > 0,
             "page_down": editable and self.page_index < count-1,
             "page_rename": editable,
+            "page_previous": not self.content_invalid and self.page_index > 0,
+            "page_next": not self.content_invalid and self.page_index < count-1,
         }
         for key, enabled in availability.items():
             self.actions[key].setEnabled(enabled)
@@ -78,17 +93,22 @@ class PageOperations:
     def select_template_page(self, index):
         if not 0 <= index < len(self.template.pages) or index == self.page_index:
             return
+        if self.content_invalid:
+            self._refresh_pages()
+            return
         target = self.template.pages[index].id
         self.properties.apply()
+        if self.content_invalid:
+            self._refresh_pages()
+            return
         self._apply_template(self.template.to_dict(), page_id=target)
-        self.canvas.fit_page()
 
     def _page_editable(self):
-        if self.import_worker or self.production_worker or self.font_requests:
+        if self.import_worker or self.production_worker or self.font_requests or self.content_invalid:
             self._error("Finish the active font or job operation before editing template pages.")
             return False
         self.properties.apply()
-        return True
+        return not self.content_invalid
 
     def add_template_page(self, duplicate=False):
         if not self._page_editable():

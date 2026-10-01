@@ -119,6 +119,14 @@ def run(output: Path):
     window.actions["page_add"].trigger()
     check(window.page_index == 1, "Add template page did not select new page")
     window.add_element("text", "Continuation: {{Account}}", x=20, y=35)
+    window.properties.content.setFocus()
+    window.properties.content.selectAll()
+    QTest.keyClicks(window.properties.content, "Continuation: {{Account")
+    check(window.content_invalid and not window.actions["generate"].isEnabled(),
+          "Unfinished field reference must remain editable and block stale output")
+    QTest.keyClicks(window.properties.content, "}}")
+    check(not window.content_invalid and window.page.elements[0].value == "Continuation: {{Account}}",
+          "Typed field reference lost its draft")
     before, after = window.template.to_dict(), window.template.to_dict()
     after["pages"][1].update(width_mm=148, height_mm=210, name="Continuation")
     window._commit(before, after, "A5 continuation")
@@ -145,7 +153,23 @@ def run(output: Path):
         wait(lambda: window.canvas.preview_item is not None)
         window.canvas.select_ids([window.template.elements[0].id])
         check(window.properties.element is not None, "Selected object properties missing")
+        window._adjust_inspector()
+        check(window.compact_inspector, "Compact inspector missing at 960 px")
+        window.focus_properties()
+        app.processEvents()
+        check(window.properties.isVisible() and window.properties.content.width() > 30, "Compact properties were not laid out")
         window.grab().save(str(output/f"designer-{theme}.png"))
+    window.resize(1240, 820)
+    window._adjust_inspector()
+    check(not window.compact_inspector, "Wide inspector did not restore")
+    app.processEvents()
+    check(window.properties_scroll.width() >= 260 and window.properties.isVisible(), "Wide properties were not laid out")
+    window.grab().save(str(output/"designer-wide.png"))
+    window.resize(960, 640)
+    window._adjust_inspector()
+    window.field_filter.setText("account")
+    check(window.fields.item(0).isHidden() and not window.fields.item(1).isHidden(), "Field filter failed")
+    window.field_filter.clear()
     project = output/"statement.pdcx"
     original_save_dialog = QFileDialog.getSaveFileName
     QFileDialog.getSaveFileName = lambda *args, **kwargs: (str(project), "")
@@ -191,7 +215,7 @@ def run(output: Path):
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

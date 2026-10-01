@@ -34,6 +34,7 @@ class Properties(QWidget):
     fontRequested = pyqtSignal(dict)
     insertFieldRequested = pyqtSignal()
     glyphRepairRequested = pyqtSignal()
+    revertRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -88,6 +89,14 @@ class Properties(QWidget):
         self.content.setPlaceholderText("Text or {{Field_Name}}")
         self.content.setAccessibleName("Object content")
         content_layout.addWidget(self.content)
+        self.draft_status = QLabel()
+        self.draft_status.setWordWrap(True)
+        self.draft_status.hide()
+        layout.insertWidget(2, self.draft_status)
+        self.revert_content = QPushButton("Revert unfinished edit")
+        self.revert_content.clicked.connect(self.revertRequested)
+        self.revert_content.hide()
+        layout.insertWidget(3, self.revert_content)
         insert_field = QPushButton("Insert data field…")
         insert_field.clicked.connect(self.insertFieldRequested)
         content_layout.addWidget(insert_field)

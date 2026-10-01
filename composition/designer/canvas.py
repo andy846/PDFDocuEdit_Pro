@@ -50,6 +50,8 @@ class ElementItem(QGraphicsRectItem):
                              QColor("#2266aa"))
 
     def mousePressEvent(self, event):
+        if not self.canvas.editable:
+            return super().mousePressEvent(event)
         self.canvas.before = self.canvas.snapshot()
         self.resizing = (event.pos() - self.rect().bottomRight()).manhattanLength() < 5
         self.anchor = event.scenePos()
@@ -70,6 +72,8 @@ class ElementItem(QGraphicsRectItem):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if not self.canvas.editable:
+            return super().mouseReleaseEvent(event)
         if not self.resizing:
             super().mouseReleaseEvent(event)
         if self.canvas.snap_enabled:
@@ -107,6 +111,7 @@ class Canvas(QGraphicsView):
     fieldDropped = pyqtSignal(str, float, float)
     command = pyqtSignal(str)
     zoomChanged = pyqtSignal(float)
+    objectActivated = pyqtSignal()
     pointerMoved = pyqtSignal(float, float)
 
     def __init__(self, parent=None):
@@ -127,6 +132,7 @@ class Canvas(QGraphicsView):
         self.setMouseTracking(True)
         self.space = False
         self.mode_preview = False
+        self.editable = True
         self.design_selection = []
 
     def snapshot(self):
@@ -147,6 +153,7 @@ class Canvas(QGraphicsView):
         selected_ids = set(selected if isinstance(selected, list) else [selected])
         for item in self.element_items:
             self.scene_model.addItem(item)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, self.editable and not self.mode_preview)
             item.setVisible(not self.mode_preview)
             item.setSelected(item.element.id in selected_ids)
         self.setSceneRect(-15, -15, spec.width_mm+30, spec.height_mm+30)
@@ -167,15 +174,26 @@ class Canvas(QGraphicsView):
         self.scene_model.addItem(item)
         self.preview_item = item
 
+    def set_editable(self, enabled):
+        self.editable = bool(enabled)
+        for item in self.element_items:
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, self.editable and not self.mode_preview)
+
     def set_preview_mode(self, enabled):
         previous = self.mode_preview
         if enabled and not previous:
             self.design_selection = self.selected_ids()
         self.mode_preview = enabled
+        self.set_editable(self.editable)
         for item in self.element_items:
             item.setVisible(not enabled)
         if previous and not enabled:
             self.select_ids(self.design_selection)
+
+    def mouseDoubleClickEvent(self, event):
+        super().mouseDoubleClickEvent(event)
+        if self.editable and not self.mode_preview and self.selected_ids():
+            self.objectActivated.emit()
 
     def fit_page(self):
         self.fitInView(QRectF(-8, -8, self.page_width+16, self.page_height+16),
@@ -257,14 +275,15 @@ class Canvas(QGraphicsView):
                     QKeySequence.StandardKey.Delete: "delete"}
         for shortcut, name in commands.items():
             if event.matches(shortcut):
-                self.command.emit(name)
+                if name == "copy" or (self.editable and not self.mode_preview):
+                    self.command.emit(name)
                 return
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and key == Qt.Key.Key_D:
+        if self.editable and not self.mode_preview and event.modifiers() & Qt.KeyboardModifier.ControlModifier and key == Qt.Key.Key_D:
             self.command.emit("duplicate")
             return
         moves = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
                  Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
-        if key in moves and not self.mode_preview:
+        if key in moves and not self.mode_preview and self.editable:
             before = self.snapshot()
             dx, dy = moves[key]
             step = 5 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 0.5
@@ -287,7 +306,7 @@ class Canvas(QGraphicsView):
         super().keyReleaseEvent(event)
 
     def dragEnterEvent(self, event):
-        if not self.mode_preview and event.mimeData().hasFormat("application/x-pdc-field"):
+        if self.editable and not self.mode_preview and event.mimeData().hasFormat("application/x-pdc-field"):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -296,7 +315,7 @@ class Canvas(QGraphicsView):
         self.dragEnterEvent(event)
 
     def dropEvent(self, event):
-        if event.mimeData().hasFormat("application/x-pdc-field") and not self.mode_preview:
+        if event.mimeData().hasFormat("application/x-pdc-field") and not self.mode_preview and self.editable:
             point = self.mapToScene(event.position().toPoint())
             self.fieldDropped.emit(bytes(event.mimeData().data("application/x-pdc-field")).decode("utf-8"),
                                    max(0, point.x()), max(0, point.y()))
