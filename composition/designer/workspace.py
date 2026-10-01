@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from composition.template.model import CompositionError, Element, Template
+from composition.template.model import CompositionError, Element, FontSpec, Template
 from composition.template.serializer import load_project
 
 from .canvas import Canvas, FieldList
@@ -117,6 +117,11 @@ class CompositionWindow(QMainWindow):
         for label, name in [("Duplicate", "duplicate"), ("Delete", "delete"),
                             ("Copy", "copy"), ("Paste", "paste")]:
             edit.addAction(label, lambda checked=False, value=name: self.object_command(value))
+        edit.addSeparator()
+        cjk_action = edit.addAction("Use CJK font for selected text", self.use_cjk_font)
+        cjk_action.setToolTip(
+            "Apply Noto Sans CJK HK to selected text. Keeps size/bold; clears custom face/italic."
+        )
         outer = QWidget()
         layout = QVBoxLayout(outer)
         heading = QLabel("Print Composition")
@@ -382,10 +387,11 @@ class CompositionWindow(QMainWindow):
         if generation == self.preview_generation:
             self._error(error)
 
-    def add_element(self, kind="text", value=None, x=20, y=20):
+    def add_element(self, kind="text", value=None, x=20, y=20, font=None):
         if self.tabs.currentIndex() != 1:
             self.tabs.setCurrentIndex(1)
-        element = Element(type=kind, value=value if value is not None else "Text")
+        element = Element(type=kind, value=value if value is not None else "Text",
+                          font=font if font is not None else FontSpec())
         if kind == "image":
             path, _ = QFileDialog.getOpenFileName(self, "Static image", "", "Images (*.png *.jpg *.jpeg *.tif *.tiff)")
             if not path:
@@ -409,7 +415,24 @@ class CompositionWindow(QMainWindow):
         self._commit(before, after, "Add " + kind, element.id)
 
     def add_field(self, name, x, y):
-        self.add_element("text", "{{" + name + "}}", x, y)
+        self.add_element("text", "{{" + name + "}}", x, y,
+                         font=FontSpec(family="Noto Sans CJK HK"))
+
+    def use_cjk_font(self):
+        self.properties.apply()
+        selected = self.canvas.selected_ids()
+        before, after = self.template.to_dict(), self.template.to_dict()
+        changed = 0
+        for element in after["elements"]:
+            if element["id"] in selected and element["type"] == "text":
+                element["font"].update(family="Noto Sans CJK HK", file="", italic=False)
+                changed += 1
+        if not changed:
+            self.message.setText("Select one or more text objects to apply the CJK font.")
+            return
+        self._commit(before, after, "Use CJK font for selected text", selected)
+        self.message.setText(f"Noto Sans CJK HK applied to {changed} selected text object(s).")
+
 
     def object_command(self, command):
         selected = set(self.canvas.selected_ids())

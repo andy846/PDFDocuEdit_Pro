@@ -56,3 +56,6 @@ pytest_out*.txt
 !build_assets/composition/
 build_assets/composition/*
 !build_assets/composition/BUNDLE_INFO.json
+
+# Isolated Composition font-fix development build
+/dist-font-fix/

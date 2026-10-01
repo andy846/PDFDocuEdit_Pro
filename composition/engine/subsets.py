@@ -9,7 +9,7 @@ from fontTools.ttLib import TTFont
 
 from composition.template.model import resolve_value
 
-from .fonts import permits_subsetting
+from .fonts import RecordFontError, permits_subsetting, validate_glyphs
 
 
 def prepare_subsets(template, tokens, fonts, records, directory, progress=None, is_cancelled=None):
@@ -17,17 +17,25 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
                 if element.type == "text" or (element.type == "code128" and element.show_barcode_text)]
     original_paths = {str(fonts[element.id][1]) for element in elements}
     glyphs = {path: set() for path in original_paths if permits_subsetting(Path(path))}
-    if not glyphs:
-        return {}
+    checked = {path: set() for path in original_paths}
     for ordinal, record in records:
         if is_cancelled and is_cancelled():
             from composition.template.model import CompositionError
             raise CompositionError("Production cancelled while preparing fonts.")
         for element in elements:
-            path = str(fonts[element.id][1])
+            font, source = fonts[element.id]
+            path = str(source)
+            text = resolve_value(tokens[element.id], record)
+            used = {ord(char) for char in text if char not in "\r\n\t"}
+            unseen = used - checked[path]
+            try:
+                validate_glyphs(font, "".join(chr(code) for code in sorted(unseen)))
+            except ValueError as exc:
+                fields = [value for kind, value in tokens[element.id] if kind == "field"]
+                raise RecordFontError(ordinal, element, fields, str(exc)) from exc
+            checked[path].update(unseen)
             if path in glyphs:
-                glyphs[path].update(ord(char) for char in resolve_value(tokens[element.id], record)
-                                   if char not in "\r\n\t")
+                glyphs[path].update(used)
         if progress and ordinal % 500 == 0:
             progress(0, 0, f"Checking exact font usage: record {ordinal:,}")
     output = {}

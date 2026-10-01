@@ -17,6 +17,7 @@ import fitz
 
 from composition.data.source import RecordStore
 from composition.engine.assets import qpdf_executable
+from composition.engine.fonts import RecordFontError
 from composition.engine.renderer import Renderer
 from composition.template.model import CompositionError, Template, required_fields
 from composition.template.serializer import file_hash
@@ -220,6 +221,15 @@ def generate(
         was_cancelled = isinstance(exc, JobCancelled) or (is_cancelled is not None and is_cancelled())
         result.status = "cancelled" if was_cancelled else "failed"
         result.error = str(exc)
+        if isinstance(exc, RecordFontError):
+            result.error_record = exc.record_ordinal
+            result.failed_records = 1
+            result.processed_records = 1
+            result.warnings.append(
+                "Font validation failed before page composition. No records were composed. "
+                "Select the reported object and choose an exact font containing the character; "
+                "for Chinese, use Noto Sans CJK HK."
+            )
         result.finished_at = now()
         result.output_pdf = ""
         result.output_size = 0

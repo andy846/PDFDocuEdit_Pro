@@ -15,6 +15,19 @@ from .assets import asset_root
 FAMILIES = ("Noto Sans", "Noto Sans CJK HK")
 
 
+class RecordFontError(CompositionError):
+    """Exact face validation failure attributed before page composition."""
+
+    def __init__(self, ordinal, element, fields, reason):
+        self.record_ordinal = ordinal
+        super().__init__(
+            f"Font preflight: Record {ordinal}, object {element.id}"
+            + (f", field {', '.join(fields)}" if fields else "")
+            + f": {reason}"
+        )
+
+
+
 def resolve_font(spec: FontSpec) -> Path:
     if spec.file:
         if spec.bold or spec.italic:

@@ -137,3 +137,44 @@ def test_subset_output_matches_preview_and_retains_late_record_glyphs(tmp_path):
             preview = render_preview(template, {"Name": name}, index+1)
             with fitz.open(stream=preview, filetype="pdf") as before:
                 assert before[0].get_pixmap().samples == output[index].get_pixmap().samples
+
+
+def test_font_preflight_finds_record_two_before_rendering(tmp_path, monkeypatch):
+    from composition.engine.renderer import Renderer
+    rendered = []
+    monkeypatch.setattr(Renderer, "render", lambda *args: rendered.append(True))
+    result = generate(job_for(tmp_path, values=["Customer 1", "\u7530"]))
+    assert result.status == "failed"
+    assert result.error_record == 2
+    assert "Font preflight: Record 2" in result.error
+    assert "field Name" in result.error
+    assert "U+7530" in result.error
+    assert not rendered, "Check all record glyphs before composing even the first page"
+    assert result.successful_records == result.generated_pages == result.generated_files == 0
+    assert result.processed_records == result.failed_records == 1
+    assert not list((tmp_path / "output").rglob("*.pdf"))
+
+
+def test_font_preflight_also_checks_no_subsetting_faces(tmp_path, monkeypatch):
+    from composition.engine import subsets
+    monkeypatch.setattr(subsets, "permits_subsetting", lambda path: False)
+    result = generate(job_for(tmp_path, values=["Customer 1", "\u7530"]))
+    assert result.status == "failed"
+    assert result.error_record == 2
+    assert "U+7530" in result.error
+
+
+def test_398_records_after_explicit_cjk_font_selection(tmp_path):
+    from composition.template.model import FontSpec
+    values = ["Customer 1", "\u7530"] + [f"Customer {i}" for i in range(3, 399)]
+    job = job_for(tmp_path, values=values)
+    template = Template.from_dict(job.template)
+    template.elements[0].font = FontSpec(family="Noto Sans CJK HK")
+    job.template = template.to_dict()
+    result = generate(job)
+    assert result.status == "completed", result.error
+    assert result.input_records == result.processed_records == result.successful_records == 398
+    assert result.generated_pages == 398
+    with fitz.open(result.output_pdf) as doc:
+        assert "\u7530" in doc[1].get_text()
+        assert "Customer 398" in doc[-1].get_text()

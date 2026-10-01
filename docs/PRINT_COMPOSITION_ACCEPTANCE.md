@@ -105,3 +105,21 @@ Mixed：帳號、姓名地址、Box、Code 128、QR、Noto Sans CJK HK 中文文
 - v3.2：重印、history、OMR／inserter marks、watch-folder prototype。
 
 目前沒有正式 v3.0 發布日期，也沒有開啟排程、hot folder、自動背景續跑或遠端處理服務。
+
+## 使用者測試修正：後續記錄的中文字形
+
+失敗案例 Job 20261001-060341-350711a4：398 筆輸入，Record 2 / Field_2 在 Noto Sans 下缺少 U+7530（田）。當時未發佈 PDF；未保存的模板仍保留在原有視窗。
+
+修正：
+
+- 新拖入的變數欄位明確使用 Noto Sans CJK HK 作預設，已有模板不自動換字體。
+- Objects 提供選取文字批量套用 CJK 字體，保留大小／粗體，可 Undo。
+- 既有串流字元掃描同步檢查整批資料的字形，包括不許 subsetting 的字體。字元只需首次出現時檢查。
+- 缺字在任何頁開始組版前阻止生成，保留記錄／物件／欄位錯誤及診斷報告。失敗的 preflight 記錄計入 failed/processed；successful 為已組版記錄，故此時為 0。
+- 沒有靜默字體替代。
+
+52 項 Composition 測試通過。新增案例以合成資料驗證第二筆才出現「田」、不許 subsetting 仍會檢查、398 筆選擇 CJK 字體後成功生成、預設字段字體顯示，以及選取字體操作／Undo。這不是宣稱已對該使用者的 398 筆真實資料完成重跑。
+
+修正版另放 dist-font-fix，避免覆寫目前使用者開住的 executable。切換前先保存 .pdcx 並關閉原程式；可攜修正版名稱含 FontFix。
+
+打包後再次驗證：完整 100 筆 Welcome／預覽／中文字體／條碼／保存及生產 workflow 通過（build/qa-font-fix-frozen/result.json）；獨立 frozen worker 匯入及生成 398 筆合成資料通過（build/qa-font-fix-398/acceptance.json）。
