@@ -60,3 +60,8 @@ A subsequent toolbar-only draft protection change retains typed point sizes duri
 background preview and discards the draft when selection/model sizes change.
 All 179 Composition tests then passed (43.96 s), including 23 new bulk-format cases.
 The headless engine and other editor modules were unchanged by that final toolbar fix.
+
+Final frozen 200% and installed 100% acceptance both passed on product checkpoint 4871ead:
+100 records / 200 pages, bulk size/exact Windows face/one-command Undo/repair preservation,
+barcodes, rules, save/reopen, reconciliation and existing editor open. QA install removed.
+Portable ZIP CRC/hash verified. Final tag: document-designer-bulk-format-dev-20261001.

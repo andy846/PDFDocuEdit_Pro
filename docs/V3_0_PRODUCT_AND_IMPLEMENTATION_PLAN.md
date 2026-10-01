@@ -31,3 +31,11 @@ Product UI name updated to Document Designer on 2026-10-01. See DOCUMENT_DESIGNE
 ## Post-MVP progress — fixed multiple template pages
 
 The next V3.1 milestone now supports ordered fixed pages per record, page commands/Undo, selected-page preview and exact multi-page reconciliation. Schema 3 reads legacy v1/v2 without changing primary fonts or glyph repairs. See DOCUMENT_DESIGNER_MULTIPAGE.md for operation, evidence and limits. Conditional visibility/basic rules are now implemented in the next development milestone; output splitting remains a later milestone. See DOCUMENT_DESIGNER_RULES.md for schema 4, shared preview/production evaluation, operation and limits.
+
+## UX follow-up — selected-text typography
+
+Selected text objects on the current page now share partial-property editing for exact font
+face, point size, alignment, line spacing and colour. Mixed values are identified; unchanged
+properties and per-object glyph repairs are retained. Windows face preparation is shared by
+the selection and one format change is one Undo command. See DOCUMENT_DESIGNER_BULK_FORMAT.md.
+The headless engine, template schema 4 and public version remain unchanged.

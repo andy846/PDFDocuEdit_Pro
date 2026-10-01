@@ -167,3 +167,10 @@ python scripts/build.py --document-designer --portable-only --skip-tests
 --skip-tests 僅在該來源已完成完整回歸時使用。建置需 Windows x64、Python 3.12、現有 Tesseract／veraPDF／Ghostscript 素材及 Composition 字體／qpdf 素材；新相依的版本與授權見 BUNDLE_INFO.json 與 THIRD_PARTY_NOTICES.md。
 
 本次本機產物未簽署／未公開發佈；正式 v3.0 版本更新仍需原有 release 流程。
+
+## 多選文字格式 — 2026-10-01
+
+在目前模板頁框選文字，或在 Layers 用 Ctrl／Shift 多選，可於 Properties 一次更改
+字款、字號、行距、對齊及文字色。工具列字號亦可批量套用。Mixed 提示表示原值不同；
+只修改指定的項目，保留各欄位內容、位置、規則及補字設定。詳見
+DOCUMENT_DESIGNER_BULK_FORMAT.md。此更新不改模板 schema 4 或公共版本。

@@ -175,3 +175,19 @@ Operation, limits and delivery: DOCUMENT_DESIGNER_RULES.md. Full validation mani
 validation/document_designer_rules_20261001.json. Independent executable folder dist-rules;
 portable ZIP name includes Dev-Rules. Previous Git rollback: document-designer-usability-dev-20261001.
 Public version 2.5.15 unchanged; output splitting remains a later milestone.
+
+## Document Designer selected-text typography - 2026-10-01
+
+Current-page multi-selection now supports partial typography changes, shared exact Windows
+face preparation, retained per-object fonts/sizes/repairs/rules and one Undo per batch setting.
+Full regression passed: 1010 tests, zero failures/errors/skips (848.93 s) on 5196c18.
+The subsequent toolbar-only draft-context protection passed all 179 Composition tests on
+4871ead, including 23 new bulk-format cases. Final frozen 200% and installed 100% workflows
+passed 100 records / 200 pages; QA install removed; portable CRC and SHA256 verified.
+The first regression attempt had a Qt native style failure; the new test application fixture
+was changed to session scope and the full suite rerun. No product/theme code or test disabling.
+
+Full scope/evidence: validation/document_designer_bulk_format_20261001.json.
+Operation/limits: DOCUMENT_DESIGNER_BULK_FORMAT.md. Executable folder: dist-bulk-format.
+Git rollback: document-designer-rules-dev-20261001; current tag:
+document-designer-bulk-format-dev-20261001. Engine/schema/public version unchanged.
