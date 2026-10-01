@@ -132,7 +132,10 @@ def test_untrusted_rule_schema_rejected(mutation):
         visible["conditions"][0].update(data_type="number", value="NaN")
     elif mutation == "legacy_rules":
         raw["template_version"] = 3
-    with pytest.raises(CompositionError):
+        for key in ("sequences", "record_mode", "generated_count"):
+            raw.pop(key)
+    message = "Conditional rules require template version 4" if mutation == "legacy_rules" else None
+    with pytest.raises(CompositionError, match=message):
         Template.from_dict(raw)
 
 

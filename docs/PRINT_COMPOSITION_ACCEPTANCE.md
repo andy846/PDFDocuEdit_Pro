@@ -191,3 +191,29 @@ Full scope/evidence: validation/document_designer_bulk_format_20261001.json.
 Operation/limits: DOCUMENT_DESIGNER_BULK_FORMAT.md. Executable folder: dist-bulk-format.
 Git rollback: document-designer-rules-dev-20261001; current tag:
 document-designer-bulk-format-dev-20261001. Engine/schema/public version unchanged.
+
+
+## Document Designer running sequences — 2026-10-01
+
+Named stateless sequences and generated quantity mode are implemented on 266b437.
+Schema 5 reads v1–4; source field collisions are blocked. Shared values serve record/page
+preview, exact-font/rule preflight, PDF text/barcodes and production logs. No viewer rewrite,
+new dependencies or public version change. Old project originals must be retained for rollback.
+
+Full Windows regression: 1041 passed, zero failures/errors/skips in 1234.32 s.
+Composition-focused run: 208 passed, including 29 sequence cases.
+Frozen 200% and installed 100% acceptance passed existing CSV/CJK/background/rules/fonts
+and generated 100 records × two pages with QR/Code128 decoding; QA installation removed.
+Portable ZIP CRC/SHA256 verified. No tests disabled; one legacy-schema fixture was updated
+to contain only actual schema3 keys, retaining the original font/glyph-repair pixel assertion.
+
+Three-trial synthetic one-page sequence medians: 1,000 records 2.40 s; 10,000 22.05 s;
+50,000 157.41 s. Composer 50,000-record peak median 137.7 MiB; assembler 465.7 MiB.
+Host load/cache uncontrolled and other QA/build tasks overlapped parts of the trials.
+Do not treat these as real-printer/customer-PDF or constant-process-memory guarantees.
+
+Evidence: validation/document_designer_sequences_20261001.json and
+validation/document_designer_sequences_benchmark_20261001.json.
+Operation/limits: DOCUMENT_DESIGNER_SEQUENCES.md. Delivery folder: dist-sequences.
+Current tag: document-designer-sequences-dev-20261001; rollback:
+document-designer-bulk-format-dev-20261001.
