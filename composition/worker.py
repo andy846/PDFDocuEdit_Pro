@@ -89,7 +89,7 @@ def dispatch(request: dict) -> dict:
         repairs, rules = [], []
         page_index = request.get("page", 0)
         raw = render_preview(template, record, index, repair_details=repairs, page_index=page_index,
-                             design=design, rule_details=rules)
+                             design=design, rule_details=rules, auto_repair=request.get("auto_repair", False))
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")

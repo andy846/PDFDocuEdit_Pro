@@ -12,6 +12,7 @@ from pathlib import Path
 from PyQt6.QtCore import QEventLoop, QSettings, Qt, QTimer
 from PyQt6.QtGui import QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -237,15 +238,29 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.production_heading = QLabel()
         self.production_heading.setWordWrap(True)
         prod_layout.addWidget(self.production_heading)
+        self.auto_repair = QCheckBox("Automatically substitute missing glyphs and report changes")
+        self.auto_repair.setChecked(self.preferences.value("auto_glyph_repair", True, type=bool))
+        self.auto_repair.setToolTip("Keeps each object's primary font. Only missing characters use an available embeddable font. "
+                                   "Preview uses the same policy. CSV lists record, output page, character and replacement font; "
+                                   "substitutions may affect text width and wrapping. Uncheck for strict font validation.")
+        self.auto_repair.toggled.connect(self._auto_repair_changed)
+        prod_layout.addWidget(self.auto_repair)
         prod_layout.addWidget(QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
                                     "Only validated, reconciled output is published to a new job folder."))
         self.production_summary = QPlainTextEdit()
         self.production_summary.setReadOnly(True)
-        prod_layout.addWidget(self.production_summary)
+        prod_layout.addWidget(self.production_summary, 1)
+        self.production_actions = QHBoxLayout()
+        prod_layout.addLayout(self.production_actions)
         self.open_output_button = QPushButton("Open production PDF")
         self.open_output_button.setEnabled(False)
         self.open_output_button.clicked.connect(self._open_output)
-        prod_layout.addWidget(self.open_output_button)
+        self.production_actions.addWidget(self.open_output_button)
+        self.open_font_report_button = QPushButton("Open font substitution report")
+        self.open_font_report_button.setEnabled(False)
+        self.open_font_report_button.clicked.connect(self._open_font_report)
+        self.production_actions.addWidget(self.open_font_report_button)
+        self.last_font_report = ""
         self.last_output = ""
         self.stack.addWidget(self.production_page)
         layout.addWidget(self.stack, 1)
@@ -456,6 +471,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         busy = bool(self.import_worker or self.production_worker)
         self.sequence_button.setEnabled(not busy and not self.font_requests and not self.content_invalid)
         self.generate_button.setEnabled(bool(self._store()) and not busy and not self.font_requests)
+        self.auto_repair.setEnabled(not busy)
         self._update_actions()
         self.progress.setVisible(busy)
         self.cancel_button.setVisible(busy)
@@ -487,7 +503,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         request = {"task": "preview", "template": self.template.to_dict(),
                    "record": self.record.value(), "page": self.page_index, "store": info["store"] if info else "",
-                   "design": self.tabs.currentIndex() != 2,
+                   "design": self.tabs.currentIndex() != 2, "auto_repair": self.auto_repair.isChecked(),
                    "target": str(self.directory / f"preview-{generation}.pdf")}
         self.preview_worker = self._worker(request,
             lambda result: self._preview_ready(result, generation),
@@ -507,7 +523,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                 self.preview_state.setText(self.preview_state.text() + f" · {hidden} hidden / {alternate} alternative")
             repairs = result.get("glyph_repairs", [])
             count = sum(item["occurrences"] for item in repairs)
-            self.message.setText(f"Preview uses {count} explicit glyph repair(s); primary fonts retained." if count else "")
+            self.message.setText(f"Preview uses {count} glyph font substitution(s); primary fonts retained." if count else "")
         Path(result["pdf"]).unlink(missing_ok=True)
         Path(result["image"]).unlink(missing_ok=True)
 
@@ -848,6 +864,10 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.progress.setValue(done)
         self.message.setText(message)
 
+    def _auto_repair_changed(self, enabled):
+        self.preferences.setValue("auto_glyph_repair", enabled)
+        self._schedule_preview()
+
     def generate_pdf(self):
         self.properties.apply()
         if self.content_invalid:
@@ -871,7 +891,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if not info or self.production_worker or self.import_worker:
             return
         from composition.production.model import ProductionJob
-        job = ProductionJob(self.template.to_dict(), info["store"], output)
+        job = ProductionJob(self.template.to_dict(), info["store"], output, auto_repair=self.auto_repair.isChecked())
         self.tabs.setCurrentIndex(3)
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
                                              f"Pages per record: {len(self.template.pages)}\n"
@@ -879,6 +899,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                                              "Composing in an isolated process…")
         self.last_output = ""
         self.open_output_button.setEnabled(False)
+        self.last_font_report = ""
+        self.open_font_report_button.setEnabled(False)
         self.production_worker = self._worker({"task": "generate", "job": asdict(job)}, self._production_ready)
         self.production_worker.progress.connect(self._progress)
         self._busy()
@@ -897,6 +919,14 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if result["error"]:
             lines.append("Error: " + result["error"])
         lines.extend(result["warnings"])
+        scan = result.get("font_scan", {})
+        lines.extend([f"Auto font substitution: {result.get('auto_repair', False)}",
+                      f"Font scan records: {scan.get('checked_records', 0)}",
+                      f"Font scan complete: {scan.get('complete', False)}",
+                      f"Substituted characters: {result.get('repaired_glyphs', 0)}",
+                      f"Automatic substitutions: {scan.get('automatic_occurrences', 0)}",
+                      f"Unresolved characters: {scan.get('unresolved_occurrences', 0)}",
+                      "Font substitution report: " + result.get("glyph_repair_report", "")])
         if result.get("rule_summary"):
             rules = result["rule_summary"]
             lines.extend([f"Conditional objects: {rules.get('configured_objects', 0)}",
@@ -910,8 +940,16 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.report_button.setEnabled(bool(result["report_dir"]))
         self.last_report_dir = result["report_dir"]
         self.last_output = result["output_pdf"]
+        self.last_font_report = result.get("glyph_repair_report", "")
+        self.open_font_report_button.setEnabled(bool(self.last_font_report))
         self.open_output_button.setEnabled(bool(self.last_output))
         self.message.setText("Production " + result["status"] + ".")
+
+    def _open_font_report(self):
+        if self.last_font_report:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_font_report))
 
     def _open_output(self):
         if self.last_output:

@@ -107,7 +107,8 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "job_version": 2,
         **result.to_dict(),
         "template_name": template.name,
-        "font_policy": "template_only; imported data fonts ignored; explicit missing-glyph repairs only",
+        "font_policy": ("template_primary; imported data fonts ignored; automatic missing-glyph fallback enabled"
+                        if result.auto_repair else "template_only; imported data fonts ignored; explicit missing-glyph repairs only"),
         "template_fonts": [
             {"object": e.id, "template_page": i+1, "primary": asdict(e.font),
              "glyph_repairs": {key: asdict(font) for key, font in e.glyph_repairs.items()}}
@@ -170,6 +171,8 @@ def generate(
         raise CompositionError("Invalid job identity.")
     if not 1 <= job.chunk_size <= 1000:
         raise CompositionError("Chunk size must be between 1 and 1,000 pages.")
+    if type(job.auto_repair) is not bool:
+        raise CompositionError("Automatic glyph repair must be a boolean.")
     template = Template.from_dict(job.template)
     output_root = Path(job.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -177,7 +180,7 @@ def generate(
     if final.exists() or (output_root / f"{job.job_id}-failed").exists():
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))
-    result = JobResult(job.job_id, pages_per_record=len(template.pages))
+    result = JobResult(job.job_id, pages_per_record=len(template.pages), auto_repair=job.auto_repair)
     store = None
     current_record = None
     chunk = None
@@ -197,7 +200,9 @@ def generate(
                           *(spec.file for spec in element.glyph_repairs.values())) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
-        with tempfile.TemporaryDirectory(prefix="font-subsets-", dir=staging) as font_folder, Renderer(template) as renderer:
+        with tempfile.TemporaryDirectory(prefix="font-subsets-", dir=staging) as font_folder, Renderer(
+            template, auto_repair=job.auto_repair, fallback_directory=Path(font_folder)/"fallback", is_cancelled=is_cancelled,
+        ) as renderer:
             if progress:
                 progress(0, 0, "Preparing exact font subsets")
             repair_audit = staging / "glyph-repairs-preflight.csv"
@@ -205,6 +210,9 @@ def generate(
                 renderer.prepare_fonts(store.records(), font_folder, progress, is_cancelled, audit_path=repair_audit)
             finally:
                 result.rule_summary = dict(renderer.rule_summary)
+                result.font_scan = dict(renderer.repair_summary)
+                result.repaired_glyphs = renderer.repair_summary.get("occurrences", 0)
+                result.repaired_records = renderer.repair_summary.get("records", 0)
             repair_summary = dict(renderer.repair_summary)
             check_cancel(is_cancelled)
             chunk = fitz.open()
@@ -257,10 +265,14 @@ def generate(
             result.repaired_records = repair_summary["records"]
             result.glyph_repair_report = str(final / "glyph-repairs.csv")
             result.warnings.append(
-                f"Explicit glyph repairs: {result.repaired_glyphs} occurrence(s) in {result.repaired_records} record(s). "
+                f"Glyph font substitutions: {result.repaired_glyphs} occurrence(s) in {result.repaired_records} record(s); "
+                f"{result.font_scan.get('automatic_occurrences', 0)} automatic. "
                 "Primary fonts retained; review glyph-repairs.csv.")
         else:
             repair_audit.unlink(missing_ok=True)
+        if result.font_scan.get("private_use_occurrences", 0):
+            result.warnings.append("Private-use glyphs were substituted; verify their visual appearance against the source. "
+                                   "They are marked in glyph-repairs.csv.")
         result.output_size = pdf.stat().st_size
         result.output_pdf = str(final / pdf.name)
         result.report_dir = str(final)
@@ -304,6 +316,11 @@ def generate(
             path.unlink(missing_ok=True)
         failure_dir = output_root / f"{job.job_id}-failed"
         result.report_dir = str(failure_dir)
+        audit = staging / "glyph-repairs-preflight.csv"
+        if job.auto_repair and audit.exists():
+            audit.rename(staging / "glyph-repairs.csv")
+            result.glyph_repair_report = str(failure_dir / "glyph-repairs.csv")
+            result.warnings.append("Font scan report includes proposed substitutions and unresolved glyphs; no production PDF published.")
         try:
             _write_reports(staging, result, template, store)
             os.rename(staging, failure_dir)

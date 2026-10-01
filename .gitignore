@@ -77,3 +77,5 @@ build_assets/composition/*
 /dist-excel/
 
 /dist-font-diagnostics/
+
+/dist-auto-font/

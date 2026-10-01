@@ -199,7 +199,7 @@ class DesignerChrome:
         production_layout = self.production_page.layout()
         production_layout.addWidget(self.review_error_button)
         production_layout.addWidget(self.repair_error_button)
-        production_layout.addWidget(self.report_button)
+        self.production_actions.addWidget(self.report_button)
         self.last_report_dir = ""
         self.failed_record = None
         self.failed_object = ""

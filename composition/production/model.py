@@ -22,6 +22,7 @@ class ProductionJob:
     output_dir: str
     job_id: str = field(default_factory=new_job_id)
     chunk_size: int = 500
+    auto_repair: bool = False
 
 
 @dataclass
@@ -50,6 +51,8 @@ class JobResult:
     glyph_repair_report: str = ""
     warnings: list[str] = field(default_factory=list)
     rule_summary: dict = field(default_factory=dict)
+    font_scan: dict = field(default_factory=dict)
+    auto_repair: bool = False
 
     def to_dict(self):
         return asdict(self)

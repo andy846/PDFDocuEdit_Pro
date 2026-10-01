@@ -12,9 +12,10 @@ def codepoint(character):
 
 
 class GlyphFonts:
-    def __init__(self, primary, repairs=None, *, family=""):
+    def __init__(self, primary, repairs=None, *, family="", automatic=None):
         self.primary = primary
         self.family = family
+        self.automatic = automatic
         self.repairs = repairs or {}
         self.cache = {}
 
@@ -27,6 +28,8 @@ class GlyphFonts:
         else:
             key = codepoint(character)
             selected = self.repairs.get(key)
+            if selected is None and self.automatic is not None:
+                selected = self.automatic.select(character, font)
             if selected is None:
                 raise CompositionError(
                     f"Selected font cannot render {key} ({character}). "
@@ -42,7 +45,7 @@ class GlyphFonts:
         return selected
 
     def runs(self, text):
-        if not self.repairs:
+        if not self.repairs and self.automatic is None:
             for character in set(text):
                 self.select(character)
             if text:
@@ -54,12 +57,12 @@ class GlyphFonts:
             yield value, font, source
 
     def text_length(self, text, fontsize):
-        if not self.repairs:
+        if not self.repairs and self.automatic is None:
             return self.primary[0].text_length(text, fontsize=fontsize)
         return sum(font.text_length(value, fontsize=fontsize) for value, font, _ in self.runs(text))
 
     def repaired_counts(self, text):
-        if not self.repairs:
+        if not self.repairs and self.automatic is None:
             return {}
         counts = {}
         primary = str(self.primary[1])

@@ -81,6 +81,8 @@ def test_designer_undo_preview_production_and_save(app, tmp_path, monkeypatch):
 
 def test_preview_error_does_not_display_stale_success(app, tmp_path):
     window = CompositionWindow()
+    original_policy = window.auto_repair.isChecked()
+    window.auto_repair.setChecked(False)  # Explicitly exercise the retained strict mode.
     window.add_element("text", "Valid text")
     wait_until(lambda: window.canvas.preview_item is not None)
     selected = window.template.elements[0].id
@@ -90,4 +92,5 @@ def test_preview_error_does_not_display_stale_success(app, tmp_path):
     assert window.canvas.preview_item is None
     wait_until(lambda: "cannot render" in window.message.text())
     assert window.canvas.preview_item is None
+    window.preferences.setValue("auto_glyph_repair", original_policy)
     close_window(window)

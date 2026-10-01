@@ -55,7 +55,7 @@ def wrap_text(text: str, font: fitz.Font, size: float, width: float) -> list[str
 class Renderer:
     """Owns its font/background resources inside one process; no GUI state."""
 
-    def __init__(self, template: Template, *, page_index=None, design=False):
+    def __init__(self, template: Template, *, page_index=None, design=False, auto_repair=False, fallback_directory=None, is_cancelled=None):
         validate_template(template)
         if page_index is not None and (type(page_index) is not int or not 0 <= page_index < len(template.pages)):
             raise CompositionError("Template page number is out of range.")
@@ -69,6 +69,15 @@ class Renderer:
                              "records_checked": 0, "hidden_occurrences": 0,
                              "alternate_occurrences": 0, "complete": False}
         self.stack = ExitStack()
+        self.auto_repair = auto_repair
+        self.automatic = None
+        self.selectors = {}
+        if auto_repair:
+            from tempfile import TemporaryDirectory
+
+            from .fallback import AutoFallback
+            directory = fallback_directory or self.stack.enter_context(TemporaryDirectory(prefix="composition-fallback-"))
+            self.automatic = AutoFallback(directory, is_cancelled)
         self.backgrounds = {}
         self.fonts = {}
         self.repair_fonts = {}
@@ -104,6 +113,11 @@ class Renderer:
                                 raise CompositionError("Static images must have at most 50 million pixels.")
                             image.verify()
                         self.images[raw] = image_path.read_bytes()
+            self.selectors = {
+                e.id: GlyphFonts(self.fonts[e.id], self.repair_fonts.get(e.id),
+                                 family=e.font.family, automatic=self.automatic)
+                for spec in self.resource_pages for e in spec.elements if e.id in self.fonts
+            }
         except Exception:
             self.close()
             raise
@@ -124,7 +138,7 @@ class Renderer:
         self.output_fonts = prepare_subsets(
             self.template, self.tokens, self.fonts, records, directory, progress, is_cancelled,
             repair_fonts=self.repair_fonts, audit_path=audit_path, summary=self.repair_summary,
-            plans=self.plans, rule_summary=self.rule_summary,
+            plans=self.plans, rule_summary=self.rule_summary, selectors=self.selectors,
         )
 
     def glyph_usage(self, record, page_index=None, ordinal=1):
@@ -134,7 +148,7 @@ class Renderer:
         for element in elements:
             if element.id not in self.fonts:
                 continue
-            selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id), family=element.font.family)
+            selector = self.selectors[element.id]
             from composition.data.sequences import sequence_record
             index = next(i for i, p in enumerate(self.template.pages) if element in p.elements)
             values = sequence_record(self.template, record, ordinal, index, design=self.design)
@@ -145,7 +159,7 @@ class Renderer:
             for key, count in counts.items():
                 result.append({"object": element.id, "codepoint": key, "occurrences": count,
                                "primary_font": element.font.family,
-                               "repair_font": element.glyph_repairs[key].family})
+                               "repair_font": selector.select(chr(int(key[2:], 16)))[0].name})
         return result
 
     def rule_usage(self, record, page_index=None, ordinal=1):
@@ -228,10 +242,12 @@ class Renderer:
 
     def _text(self, page, rect, element, text):
         font, font_path = self.fonts[element.id]
-        selector = GlyphFonts((font, font_path), self.repair_fonts.get(element.id), family=element.font.family)
+        selector = self.selectors[element.id]
         used = [font] + [face for _value, face, _path in selector.runs(text)]
         lines = wrap_text(text, selector, element.font.size_pt, rect.width)
-        glyph_height = (font.ascender - font.descender) * element.font.size_pt
+        ascender = max(face.ascender for face in used) if self.auto_repair else font.ascender
+        descender = min(face.descender for face in used) if self.auto_repair else font.descender
+        glyph_height = (ascender - descender) * element.font.size_pt
         step = element.font.size_pt * element.line_spacing
         height = glyph_height + max(0, len(lines) - 1) * step
         if height > rect.height + 0.01:
@@ -239,7 +255,7 @@ class Renderer:
         offset = 0 if element.vertical_align == "top" else (
             (rect.height - height) / 2 if element.vertical_align == "center" else rect.height - height
         )
-        baseline = rect.y0 + offset + font.ascender * element.font.size_pt
+        baseline = rect.y0 + offset + ascender * element.font.size_pt
         if baseline - max(face.ascender for face in used) * element.font.size_pt < rect.y0 - 0.01:
             raise CompositionError("Repair font extends above the original baseline box. Choose compatible metrics or adjust the box alignment.")
         if baseline + max(0, len(lines)-1) * step - min(face.descender for face in used) * element.font.size_pt > rect.y1 + 0.01:
@@ -357,8 +373,8 @@ class Renderer:
 
 def render_preview(template: Template, record: dict[str, str], ordinal: int = 1,
                    repair_details: list | None = None, *, page_index: int | None = None,
-                   design=False, rule_details: list | None = None) -> bytes:
-    with Renderer(template, page_index=page_index, design=design) as renderer, fitz.open() as document:
+                   design=False, rule_details: list | None = None, auto_repair=False) -> bytes:
+    with Renderer(template, page_index=page_index, design=design, auto_repair=auto_repair) as renderer, fitz.open() as document:
         renderer.render(document, record, ordinal, page_index=page_index)
         if repair_details is not None:
             repair_details.extend(renderer.glyph_usage(record, page_index, ordinal))

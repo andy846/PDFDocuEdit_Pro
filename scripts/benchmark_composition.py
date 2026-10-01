@@ -36,7 +36,8 @@ def one_case(count, directory, fixture, pages=1):
         stream.write("Account,Name,Address,Scheme_Code,Balance\n" if fixture == "rules" else "Account,Name,Address\n")
         for index in range(count):
             suffix = f",{'GS' if index % 2 == 0 else 'IS'},{20001 if index % 2 == 0 else 0}" if fixture == "rules" else ""
-            stream.write(f'{index:010},Customer {index},"Hong Kong"{suffix}\n')
+            name = f"中文田 {index}" if fixture == "fallback" else f"Customer {index}"
+            stream.write(f'{index:010},{name},"Hong Kong"{suffix}\n')
     start = time.perf_counter()
     store = None if fixture == "sequences" else import_records(DataConfig(path=str(source)), directory / "records.db")
     imported = time.perf_counter()
@@ -50,6 +51,8 @@ def one_case(count, directory, fixture, pages=1):
             Element(value="\u9999\u6e2f\u5ba2\u6236", y_mm=235, height_mm=20,
                     font=FontSpec(family="Noto Sans CJK HK")),
         ])
+    if fixture == "fallback":
+        elements.append(Element(value="{{Name}}", y_mm=55, width_mm=130, height_mm=25))
     if fixture == "rules":
         elements[0].rules = ElementRules(alternative=AlternativeContent(
             ConditionGroup("all", [RuleCondition("Scheme_Code", value="GS")]),
@@ -69,7 +72,7 @@ def one_case(count, directory, fixture, pages=1):
         for element in copied:
             element.id = uuid.uuid4().hex
         model.pages.append(PageSpec(name=f"Page {index+1}", elements=copied))
-    result = generate(ProductionJob(model.to_dict(), str(store.path) if store else "", str(directory)))
+    result = generate(ProductionJob(model.to_dict(), str(store.path) if store else "", str(directory), auto_repair=fixture == "fallback"))
     end = time.perf_counter()
     if result.status != "completed":
         raise RuntimeError(result.error)
@@ -81,6 +84,7 @@ def one_case(count, directory, fixture, pages=1):
               "assembler_peak_memory_bytes": result.assembler_peak_memory_bytes,
               "job_log": str(Path(result.report_dir)/"job.json")}
     values["rule_summary"] = result.rule_summary
+    values["font_scan"] = result.font_scan
     print(json.dumps(values))
 
 
@@ -88,7 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", nargs="+", type=int, default=[100, 1000, 10000, 50000])
     parser.add_argument("--repeat", type=int, default=1)
-    parser.add_argument("--fixture", choices=["plain", "mixed", "rules", "sequences"], default="plain")
+    parser.add_argument("--fixture", choices=["plain", "mixed", "rules", "sequences", "fallback"], default="plain")
     parser.add_argument("--output", type=Path, default=ROOT / ".benchmarks" / "composition")
     parser.add_argument("--case", type=int)
     parser.add_argument("--pages", type=int, choices=range(1, 101), default=1)

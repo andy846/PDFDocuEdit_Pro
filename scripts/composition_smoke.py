@@ -418,6 +418,32 @@ def run(output: Path):
     with fitz.open(excel_window.last_output) as pdf:
         check(pdf.page_count == 100 and "000100" in pdf[-1].get_text(), "Legacy XLS production values wrong")
     excel_window.undo.setClean()
+    excel_window.new_project()
+    auto_source = output / "auto-font-data.csv"
+    auto_source.write_text('Name\nAlice\n田田\n\ue473\n', encoding="utf-8")
+    excel_window._start_import(DataConfig(str(auto_source)))
+    wait(lambda: excel_window.import_worker is None and excel_window.record_count == 3)
+    excel_window.auto_repair.setChecked(True)
+    excel_window.add_element("text", "{{Name}}")
+    primary = excel_window.template.elements[0].font.family
+    check(primary == "Noto Sans", "Auto fallback demo did not retain Latin primary font")
+    excel_window.tabs.setCurrentIndex(2)
+    excel_window.record.setValue(2)
+    wait(lambda: excel_window.canvas.preview_item is not None)
+    check("glyph font substitution" in excel_window.message.text(), "Automatic preview did not report fallback")
+    excel_window.start_production(str(output / "auto-font-output"))
+    wait(lambda: excel_window.production_worker is None, 90)
+    check(bool(excel_window.last_output), excel_window.production_summary.toPlainText())
+    auto_log = json.loads((Path(excel_window.last_output).parent / "job.json").read_text(encoding="utf-8"))
+    check(auto_log["auto_repair"] and auto_log["repaired_glyphs"] == 3, "Auto fallback counts wrong")
+    check(auto_log["successful_records"] == 3 and auto_log["generated_pages"] == 3, "Auto fallback reconciliation failed")
+    check(excel_window.template.elements[0].font.family == primary, "Auto fallback changed the primary font")
+    check(excel_window.open_font_report_button.isEnabled(), "Auto fallback report action unavailable")
+    with Path(excel_window.last_font_report).open(encoding="utf-8-sig", newline="") as stream:
+        auto_rows = list(__import__("csv").DictReader(stream))
+    check({row["Output page"] for row in auto_rows} == {"2", "3"}, "Auto fallback output pages wrong")
+    excel_window.grab().save(str(output / "auto-font-production.png"))
+    excel_window.undo.setClean()
     excel_window.close()
     wait(lambda: not excel_window.workers)
     summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
@@ -425,7 +451,7 @@ def run(output: Path):
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation", "running sequence dialog", "virtual records", "sequence Undo", "per-record/page sequence", "sequence QR/Code128 decoding", "generated project reopen", "XLSX sheet/header/mapping", "Excel dates/leading zeros", "Excel preview/sequence/QR/Code128", "Excel save/reimport", "OLE BIFF8 XLS import/production"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation", "running sequence dialog", "virtual records", "sequence Undo", "per-record/page sequence", "sequence QR/Code128 decoding", "generated project reopen", "XLSX sheet/header/mapping", "Excel dates/leading zeros", "Excel preview/sequence/QR/Code128", "Excel save/reimport", "OLE BIFF8 XLS import/production", "automatic glyph fallback preview/production", "private-use fallback/report", "substitution record/page report", "primary font retained"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)
