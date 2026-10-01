@@ -169,8 +169,11 @@ class DesignerChrome:
         self.font_size_tool.setDecimals(1)
         self.font_size_tool.setSuffix(" pt")
         self.font_size_tool.setMaximumWidth(100)
-        self.font_size_tool.setToolTip("Font size of the selected text object")
+        self.font_size_tool.setToolTip("Font size for selected text objects; other formatting is retained")
         self.font_size_tool.setAccessibleName("Selected text font size")
+        self.toolbar_size_dirty = False
+        self.font_size_tool.valueChanged.connect(lambda: setattr(self, "toolbar_size_dirty", True))
+        self.font_size_tool.lineEdit().textEdited.connect(lambda: setattr(self, "toolbar_size_dirty", True))
         self.font_size_tool.editingFinished.connect(self._toolbar_font_size)
         self.insert_toolbar.addWidget(self.font_size_tool)
         self.insert_toolbar.addWidget(self.zoom_combo)
@@ -217,9 +220,11 @@ class DesignerChrome:
             self.font_size_tool.blockSignals(True)
             self.font_size_tool.setValue(element.font.size_pt)
             self.font_size_tool.blockSignals(False)
+            self.toolbar_size_dirty = False
         busy = bool(self.import_worker or self.production_worker)
         for key in ("cut", "copy", "duplicate", "delete", "cjk", "repair_glyph"):
             self.actions[key].setEnabled(bool(selected) and not busy and not self.canvas.mode_preview)
+        self.actions["repair_glyph"].setEnabled(len(selected) == 1 and text_selected and not busy and not self.canvas.mode_preview)
         self.actions["paste"].setEnabled(bool(self.clipboard) and not busy)
         for key in ("new", "open", "save", "save_as", "background", "remove_background",
                     "rename", "import", "page_size", "select_all"):
@@ -437,6 +442,10 @@ class DesignerChrome:
         menu.exec(self.canvas.viewport().mapToGlobal(position))
 
     def _toolbar_font_size(self):
+        if not self.toolbar_size_dirty:
+            return
+        self.toolbar_size_dirty = False
         if self.properties.element:
             self.properties.numbers["font_size"].setValue(self.font_size_tool.value())
-            self.properties.apply()
+            self.properties._mark_bulk_dirty("font_size")
+            self.properties.apply_field("font_size")

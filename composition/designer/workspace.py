@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 from composition.template.model import CompositionError, Element, FontSpec, Template
 from composition.template.serializer import load_project
 
+from .bulk_typography import BulkTypography
 from .canvas import Canvas, FieldList
 from .chrome import DesignerChrome
 from .data_dialog import DataDialog
@@ -76,7 +77,7 @@ class TemplateEdit(QUndoCommand):
         return True
 
 
-class CompositionWindow(DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -372,14 +373,17 @@ class CompositionWindow(DesignerUsability, RuleOperations, PageOperations, Desig
                 self._error("Finish the unfinished content or use Revert unfinished edit before selecting another object.")
             self._sync_layers()
             return
-        element = next((e for e in self.page.elements if e.id == selected), None)
-        self.properties.show_element(element)
-        self._inspect_selected_font(element)
+        chosen = {selected} if selected else set(self.canvas.selected_ids())
+        self.properties.show_selection([e for e in self.page.elements if e.id in chosen])
+        self._inspect_selected_font(self.properties.element)
         self._sync_layers()
         self._update_actions()
 
     def _property_edit(self, values):
-        self._edit_property_values(values)
+        if self.properties.bulk_ids:
+            self._edit_bulk_properties(values)
+        else:
+            self._edit_property_values(values)
 
     def _filter_fields(self, text=None):
         query = self.field_filter.text().casefold()

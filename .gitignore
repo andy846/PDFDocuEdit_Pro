@@ -69,3 +69,5 @@ build_assets/composition/*
 /dist-designer-usability/
 
 /dist-rules/
+
+/dist-bulk-format/

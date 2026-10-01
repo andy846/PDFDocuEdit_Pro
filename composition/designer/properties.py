@@ -44,6 +44,8 @@ class Properties(QWidget):
         super().__init__(parent)
         self.loading = False
         self.element = None
+        self.bulk_ids = []
+        self.bulk_dirty = set()
         self.displayed_numbers = {}
         self.catalogue = {}
         self.file_faces = {}
@@ -84,7 +86,7 @@ class Properties(QWidget):
             row.addWidget(QLabel(label))
             row.addWidget(control)
             grid.addWidget(cell, index // 2, index % 2)
-            control.editingFinished.connect(self.apply)
+            control.editingFinished.connect(lambda name=key: self.apply_field(name))
         groups.addWidget(self.geometry)
         self.content_group = QGroupBox("Content")
         content_layout = QVBoxLayout(self.content_group)
@@ -155,7 +157,7 @@ class Properties(QWidget):
             control.setDecimals(2)
             control.setSingleStep(step)
             self.numbers[key] = control
-            control.editingFinished.connect(self.apply)
+            control.editingFinished.connect(lambda name=key: self.apply_field(name))
             if key == "font_size":
                 form.addRow("Size (pt)", control)
         self.alignment = QComboBox()
@@ -209,7 +211,7 @@ class Properties(QWidget):
         control.setRange(.1, 20)
         control.setDecimals(2)
         self.numbers["stroke_pt"] = control
-        control.editingFinished.connect(self.apply)
+        control.editingFinished.connect(lambda: self.apply_field("stroke_pt"))
         self.stroke_row = control
         form.addRow("Stroke (pt)", control)
         self.appearance_form = form
@@ -233,7 +235,7 @@ class Properties(QWidget):
         control.setDecimals(2)
         control.setSingleStep(.05)
         self.numbers["barcode_module_mm"] = control
-        control.editingFinished.connect(self.apply)
+        control.editingFinished.connect(lambda: self.apply_field("barcode_module_mm"))
         form.addRow("Min module (mm)", control)
         form.addRow("QR correction", self.ecc)
         form.addRow(self.human)
@@ -249,16 +251,25 @@ class Properties(QWidget):
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.apply)
         self.content.textChanged.connect(self._content_changed)
-        for signal in (self.alignment.currentTextChanged, self.vertical.currentTextChanged,
-                       self.ecc.currentTextChanged, self.human.toggled):
-            signal.connect(self.apply)
+        for signal, key in [(self.alignment.currentTextChanged, "align"),
+                            (self.vertical.currentTextChanged, "vertical_align"),
+                            (self.ecc.currentTextChanged, "qr_error"),
+                            (self.human.toggled, "show_barcode_text")]:
+            signal.connect(lambda *args, name=key: self.apply_field(name))
         self.bold.toggled.connect(self._bundled_style)
         self.italic.toggled.connect(self._bundled_style)
         self.font_family.currentIndexChanged.connect(self._family_changed)
+        self.font_family.activated.connect(lambda *args: self._family_changed(force=True) if self.bulk_ids else None)
         self.font_family.lineEdit().editingFinished.connect(self._typed_family)
         self.font_style.activated.connect(self._style_chosen)
-        self.colour.editingFinished.connect(self.apply)
-        self.fill.editingFinished.connect(self.apply)
+        self.colour.editingFinished.connect(lambda: self.apply_field("colour"))
+        self.fill.editingFinished.connect(lambda: self.apply_field("fill"))
+        for key, control in self.numbers.items():
+            control.valueChanged.connect(lambda *args, name=key: self._mark_bulk_dirty(name))
+            control.lineEdit().textEdited.connect(lambda *args, name=key: self._mark_bulk_dirty(name))
+        self.colour.textChanged.connect(lambda: self._mark_bulk_dirty("colour"))
+        self.alignment.activated.connect(lambda: self.apply_field("align") if self.bulk_ids else None)
+        self.vertical.activated.connect(lambda: self.apply_field("vertical_align") if self.bulk_ids else None)
         self._configure_completion()
 
     def _configure_completion(self):
@@ -310,6 +321,12 @@ class Properties(QWidget):
                     self.font_style.model().item(index).setEnabled(False)
 
     def show_element(self, element):
+        self.bulk_dirty.clear()
+        self.bulk_ids = []
+        self.empty.setText("Select an object on the page or in Layers to edit its properties.")
+        self.repair_button.setEnabled(True)
+        self.repair_button.show()
+        self.repair_status.show()
         self.loading = True
         self.element = element
         self.empty.setVisible(element is None)
@@ -369,12 +386,83 @@ class Properties(QWidget):
             self.human.setEnabled(element.type == "code128")
         self.loading = False
 
+    def show_selection(self, selected):
+        if len(selected) <= 1:
+            self.show_element(selected[0] if selected else None)
+            return
+        text = [e for e in selected if e.type == "text" or (e.type == "code128" and e.show_barcode_text)]
+        self.show_element(text[0] if text else None)
+        if not text:
+            self.empty.setText(f"{len(selected)} objects selected. Select text objects to format together.")
+            return
+        self.bulk_ids = [e.id for e in text]
+        self.font_family.lineEdit().setModified(False)
+        self.title.setText(f"{len(text)} text objects / {len(selected)} selected")
+        differing = []
+        for name, getter in [("fonts", lambda e: (e.font.family, e.font.file, e.font.bold, e.font.italic)),
+                             ("sizes", lambda e: e.font.size_pt),
+                             ("layouts", lambda e: (e.align, e.vertical_align, e.line_spacing)),
+                             ("colours", lambda e: e.colour)]:
+            if any(getter(e) != getter(text[0]) for e in text[1:]):
+                differing.append(name)
+        note = ("Mixed " + ", ".join(differing) + ". " if differing else "")
+        note += f"Shown values are from first text. Edited settings apply to {len(text)} text objects."
+        if len(selected) != len(text):
+            note += f" {len(selected)-len(text)} other objects excluded."
+        self.empty.setText(note)
+        self.empty.show()
+        for group in (self.geometry, self.rules_group, self.content_group, self.image_group, self.barcode_group):
+            group.hide()
+        self.font_group.show()
+        self.text_layout_group.show()
+        self.appearance_group.show()
+        self.appearance_form.setRowVisible(self.stroke_row, False)
+        self.appearance_form.setRowVisible(self.fill_row, False)
+        self.repair_button.hide()
+        self.repair_status.setText("Existing glyph repairs are retained.")
+        self.repair_status.setVisible(any(e.glyph_repairs for e in text))
+        self.font_status.setText("Exact face changes apply to selected text.")
+        self.font_style.setToolTip("Styles refer to the first selected text; choosing one applies it to all.")
+
+    def _mark_bulk_dirty(self, name):
+        if self.bulk_ids and not self.loading:
+            self.bulk_dirty.add(name)
+
+    def apply_field(self, name):
+        if self.loading or not self.element:
+            return
+        if not self.bulk_ids:
+            self.apply()
+            return
+        if name in {"font_size", "line_spacing", "colour"}:
+            if name not in self.bulk_dirty:
+                return
+            self.bulk_dirty.discard(name)
+        if name == "font_size":
+            values = {"font": {"size_pt": self.numbers[name].value()}}
+        elif name in ("line_spacing",):
+            values = {name: self.numbers[name].value()}
+        elif name == "align":
+            values = {name: self.alignment.currentText()}
+        elif name == "vertical_align":
+            values = {name: self.vertical.currentText()}
+        elif name == "colour":
+            values = {name: self.colour.text().strip()}
+        else:
+            return
+        self.edited.emit(values)
+
+    def _emit_font_request(self, request):
+        if self.bulk_ids:
+            request["element_ids"] = list(self.bulk_ids)
+        self.fontRequested.emit(request)
+
     def _content_changed(self):
         if not self.loading:
             self.apply()
 
     def apply(self, *args):
-        if self.loading or self.element is None:
+        if self.loading or self.element is None or self.bulk_ids:
             return
         values = {key: control.value() for key, control in self.numbers.items() if key != "font_size"}
         for key in values:
@@ -394,6 +482,8 @@ class Properties(QWidget):
     def _typed_family(self):
         if self.loading or not self.element:
             return
+        if self.bulk_ids and not self.font_family.lineEdit().isModified():
+            return
         text = self.font_family.currentText()
         if text not in FAMILIES and text not in self.catalogue:
             self.loading = True
@@ -401,9 +491,11 @@ class Properties(QWidget):
             self.loading = False
             self.font_status.setText("Font not installed. Choose a listed family or a font file.")
             return
-        self._family_changed()
+        self._family_changed(force=True)
 
-    def _family_changed(self, *args):
+    def _family_changed(self, *args, force=False):
+        if self.bulk_ids and not force:
+            return
         if self.loading or not self.element:
             return
         family = self.font_family.currentText()
@@ -422,9 +514,11 @@ class Properties(QWidget):
             return
         face = self.font_style.currentData()
         if not face:
+            if self.bulk_ids and self.font_choice.get("file") and self.font_style.currentIndex() == 0:
+                self._emit_font_request({"file": self.font_choice["file"], "element_id": self.element.id})
             return
         if face.get("bundled"):
-            self.fontRequested.emit({"cancel": True, "element_id": self.element.id})
+            self._emit_font_request({"cancel": True, "element_id": self.element.id})
             style = face["style"]
             self.loading = True
             self.font_choice.update(family=self.font_family.currentText(), file="",
@@ -435,10 +529,13 @@ class Properties(QWidget):
             self.bold.setChecked("Bold" in style)
             self.italic.setChecked("Italic" in style)
             self.loading = False
-            self.apply()
+            if self.bulk_ids:
+                self.edited.emit({"font": {key: self.font_choice[key] for key in ("family", "file", "bold", "italic")}})
+            else:
+                self.apply()
         else:
             self.font_status.setText("Preparing exact font face…")
-            self.fontRequested.emit({"face": {**face, "family": self.font_family.currentText()},
+            self._emit_font_request({"face": {**face, "family": self.font_family.currentText()},
                                      "element_id": self.element.id})
 
     def _bundled_style(self, *args):
@@ -449,13 +546,14 @@ class Properties(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose production font", "", "Fonts (*.ttf *.otf *.ttc *.otc)")
         if path and self.element:
-            self.fontRequested.emit({"file": path, "element_id": self.element.id})
+            self._emit_font_request({"file": path, "element_id": self.element.id})
 
     def _colour(self, control):
         colour = QColorDialog.getColor(QColor(control.text() or "#ffffff"), self, "Choose colour")
         if colour.isValid():
             control.setText(colour.name())
-            self.apply()
+            self._mark_bulk_dirty("colour" if control is self.colour else "fill")
+            self.apply_field("colour" if control is self.colour else "fill")
 
     def _image_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Static image", "",

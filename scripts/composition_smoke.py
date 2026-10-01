@@ -116,6 +116,37 @@ def run(output: Path):
     wait(lambda: not window.font_requests)
     check(asdict(window.template.elements[-1].font) == primary, "Repair changed primary font")
     check("U+7530" in window.template.elements[-1].glyph_repairs, "Repair setting not applied")
+    # Bulk size changes retain different primary faces, values and repairs.
+    from copy import deepcopy
+    bulk_before = window.template.to_dict()
+    window.canvas.select_ids([window.page.elements[0].id, window.page.elements[1].id])
+    window.font_size_tool.setValue(12)
+    window.font_size_tool.editingFinished.emit()
+    expected = deepcopy(bulk_before)
+    for element in expected["pages"][0]["elements"][:2]:
+        element["font"]["size_pt"] = 12
+    check(window.template.to_dict() == expected, "Bulk size changed unrelated formatting")
+    window.focus_properties()
+    window.properties_scroll.verticalScrollBar().setValue(0)
+    QApplication.processEvents()
+    wait(lambda: window.canvas.preview_item is not None)
+    window.grab().save(str(output/"bulk-text-format.png"))
+    window.undo.undo()
+    check(window.template.to_dict() == bulk_before, "Bulk size Undo failed")
+    window.canvas.select_ids([window.page.elements[1].id, window.page.elements[-1].id])
+    window.properties.loading = True
+    window.properties.font_family.setCurrentText("Arial")
+    window.properties._set_styles("Arial")
+    window.properties.font_style.setCurrentIndex(window.properties.font_style.findText("Bold"))
+    window.properties.loading = False
+    window.properties.font_style.activated.emit(window.properties.font_style.currentIndex())
+    wait(lambda: not window.font_requests)
+    for index in (1, 4):
+        check(load_font(window.page.elements[index].font)[0].is_bold, "Bulk exact face failed")
+        check(asdict(window.page.elements[index].font)["size_pt"] == bulk_before["pages"][0]["elements"][index]["font"]["size_pt"], "Bulk face changed individual size")
+    check(asdict(window.page.elements[-1])["glyph_repairs"] == bulk_before["pages"][0]["elements"][-1]["glyph_repairs"], "Bulk face lost glyph repair")
+    window.undo.undo()
+    check(window.template.to_dict() == bulk_before, "Bulk exact face Undo failed")
     window.actions["page_add"].trigger()
     check(window.page_index == 1, "Add template page did not select new page")
     window.add_element("text", "Continuation: {{Account}}", x=20, y=35)
@@ -271,7 +302,7 @@ def run(output: Path):
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

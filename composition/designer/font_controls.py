@@ -16,6 +16,9 @@ class FontOperations:
                      lambda error: self.properties.font_status.setText("Windows fonts unavailable: " + error))
 
     def _request_font(self, request):
+        if request.get("element_ids"):
+            self._request_bulk_font(request)
+            return
         if self.content_invalid or self.import_worker or self.production_worker:
             self._error("Finish or revert the unfinished edit, and finish the active job before changing fonts.")
             return
