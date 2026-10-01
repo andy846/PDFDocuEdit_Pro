@@ -49,3 +49,15 @@ The next isolated milestone adds declarative named sequences (integer start/incr
 ## User-requested Excel adapter milestone — 2026-10-02
 
 Excel input is now implemented in an isolated data adapter using the already bundled openpyxl/xlrd packages. Worksheet/header selection, normalized aliases, ISO dates, explicit leading-zero handling and saved-result formula policy reuse the snapshot/worker/preview/production pipeline. Schema 6 migrates v1–5 and retains running sequences. Record identity/report metadata now distinguish workbook sheets and import configuration. No editor rewrite or new dependencies. See DOCUMENT_DESIGNER_EXCEL_IMPORT.md for operation, architecture, resource limits and validation evidence.
+
+
+## Next upgrade plan — existing PDF envelope overlay (2026-10-02)
+
+The user-requested next path is fixed-envelope grouping of an existing production PDF,
+with envelope sequences and inserter barcode overlays. This is planned work, not an
+implemented capability. The existing template/data composition mode remains available.
+See [the concrete implementation and acceptance plan](DOCUMENT_DESIGNER_PDF_ENVELOPE_OVERLAY_PLAN.md)
+for PDF source snapshots, simplex/duplex page and sheet mapping, visual overlay scopes,
+barcode payload profiles, full reconciliation/reporting, repository mapping and P0–P5 gates.
+The target sample is 3,000 source pages / 3 pages per envelope = 1,000 envelopes.
+Machine compatibility requires the actual device protocol and physical print/insertion acceptance.
