@@ -72,6 +72,22 @@ class ElementItem(QGraphicsRectItem):
     def mouseReleaseEvent(self, event):
         if not self.resizing:
             super().mouseReleaseEvent(event)
+        if self.canvas.snap_enabled:
+            originals = {element["id"]: element for element in self.canvas.before["elements"]}
+            if self.resizing:
+                width = max(.1, min(self.canvas.page_width-self.pos().x(),
+                                   round(self.rect().width()/5)*5))
+                height = max(.1, min(self.canvas.page_height-self.pos().y(),
+                                    round(self.rect().height()/5)*5))
+                self.setRect(0, 0, width, height)
+            else:
+                origin = originals[self.element.id]
+                dx = round(self.pos().x()/5)*5-origin["x_mm"]
+                dy = round(self.pos().y()/5)*5-origin["y_mm"]
+                for selected in self.canvas.element_items:
+                    if selected.isSelected():
+                        original = originals[selected.element.id]
+                        selected.setPos(original["x_mm"]+dx, original["y_mm"]+dy)
         for item in self.canvas.element_items:
             x = max(0, min(self.canvas.page_width-item.rect().width(), item.pos().x()))
             y = max(0, min(self.canvas.page_height-item.rect().height(), item.pos().y()))
@@ -90,6 +106,8 @@ class Canvas(QGraphicsView):
     editCommitted = pyqtSignal(dict, dict)
     fieldDropped = pyqtSignal(str, float, float)
     command = pyqtSignal(str)
+    zoomChanged = pyqtSignal(float)
+    pointerMoved = pyqtSignal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,8 +122,12 @@ class Canvas(QGraphicsView):
         self.template = None
         self.preview_item = None
         self.page_width, self.page_height = 210, 297
+        self.grid_visible = False
+        self.snap_enabled = False
+        self.setMouseTracking(True)
         self.space = False
         self.mode_preview = False
+        self.design_selection = []
 
     def snapshot(self):
         return copy.deepcopy(self.template.to_dict())
@@ -144,13 +166,66 @@ class Canvas(QGraphicsView):
         self.preview_item = item
 
     def set_preview_mode(self, enabled):
+        previous = self.mode_preview
+        if enabled and not previous:
+            self.design_selection = self.selected_ids()
         self.mode_preview = enabled
         for item in self.element_items:
             item.setVisible(not enabled)
+        if previous and not enabled:
+            self.select_ids(self.design_selection)
 
     def fit_page(self):
         self.fitInView(QRectF(-8, -8, self.page_width+16, self.page_height+16),
                        Qt.AspectRatioMode.KeepAspectRatio)
+        self.zoomChanged.emit(self.transform().m11()/(96/25.4))
+
+    def set_zoom(self, value):
+        if not .1 <= value <= 8:
+            raise ValueError("Zoom must be between 10% and 800%.")
+        self.resetTransform()
+        self.scale(value*96/25.4, value*96/25.4)
+        self.zoomChanged.emit(value)
+
+    def zoom_by(self, factor):
+        self.set_zoom(max(.1, min(8, self.transform().m11()/(96/25.4)*factor)))
+
+    def set_grid(self, enabled):
+        self.grid_visible = bool(enabled)
+        self.viewport().update()
+
+    def set_snap(self, enabled):
+        self.snap_enabled = bool(enabled)
+
+    def select_ids(self, ids):
+        selected = set(ids)
+        self.scene_model.blockSignals(True)
+        for item in self.element_items:
+            item.setSelected(item.element.id in selected)
+        self.scene_model.blockSignals(False)
+        self._selected()
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        point = self.mapToScene(event.position().toPoint())
+        if 0 <= point.x() <= self.page_width and 0 <= point.y() <= self.page_height:
+            self.pointerMoved.emit(point.x(), point.y())
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        if not self.grid_visible or self.mode_preview:
+            return
+        painter.save()
+        painter.setClipRect(QRectF(0, 0, self.page_width, self.page_height))
+        pen = QPen(QColor(80, 115, 145, 65), 1)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        from PyQt6.QtCore import QLineF
+        for x in range(0, int(self.page_width)+1, 5):
+            painter.drawLine(QLineF(x, 0, x, self.page_height))
+        for y in range(0, int(self.page_height)+1, 5):
+            painter.drawLine(QLineF(0, y, self.page_width, y))
+        painter.restore()
 
     def selected_ids(self):
         return [item.element.id for item in self.element_items if item.isSelected()]
@@ -164,6 +239,7 @@ class Canvas(QGraphicsView):
             scale = 1.15 if event.angleDelta().y() > 0 else 1/1.15
             if 0.3 < self.transform().m11()*scale < 40:
                 self.scale(scale, scale)
+                self.zoomChanged.emit(self.transform().m11()/(96/25.4))
             event.accept()
         else:
             super().wheelEvent(event)

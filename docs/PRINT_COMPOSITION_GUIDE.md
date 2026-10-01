@@ -1,12 +1,14 @@
-# Print Composition 操作與開發手冊
+# Document Designer 操作與開發手冊
 
 更新日期：2026-10-01。這是可試用的 v3.0 MVP 開發版本，正式產品版本資料仍為 2.5.15。
 
+本輪 UX／Windows 字體更新及測試重點見 [更新說明](DOCUMENT_DESIGNER_UX_UPDATE.md)。
+
 ## 1. 啟動與入口
 
-Windows 可攜版：解壓整個 Composition-Dev ZIP，執行資料夾內的 **PDFDocuEdit Pro.exe**，在 Welcome 選 **Print Composition**。請保留 exe 旁的 _internal 資料夾。
+Windows 可攜版：解壓整個 Composition-Dev ZIP，執行資料夾內的 **PDFDocuEdit Pro.exe**，在 Welcome 選 **Document Designer**。請保留 exe 旁的 _internal 資料夾。
 
-Composition 使用獨立工作視窗，原有 PDF Editor 可繼續使用。視窗包含 Data、Template、Preview、Production 四個模式，以及資料欄位、版面、屬性三個區域。深淺主題沿用應用程式設定。
+Composition 使用獨立工作視窗，原有 PDF Editor 可繼續使用。視窗包含 Data、Design、Preview、Production 四個模式，以及資料欄位、版面、屬性三個區域。深淺主題沿用應用程式設定。
 
 從原始碼啟動時，先使用 Python 3.12 安裝專案相依套件及準備素材：
 
@@ -25,7 +27,7 @@ python main.py
 2. **Page size** 可選 A4、A5、Letter、自訂毫米尺寸。
 3. 如需要公司信紙，按 **PDF background**，選來源 PDF 及一個來源頁。
 4. 系統複製該頁作背景，背景頁尺寸成為模板尺寸，原始 PDF 保持不變。
-5. 使用 Text、Image、Line、Box、Code 128、QR 加入物件。
+5. 使用 Text、Image、Line、Box、Barcode → Code 128／QR 加入物件。
 
 背景是固定頁面，可透過 Project → Remove background 移除。多頁来源只選其中一頁；本版每個資料記錄產生一頁，並不將整份多頁 PDF 作每個記錄的模板。
 
@@ -63,9 +65,9 @@ Balance: {{Balance}}
 - Ctrl + 滑鼠滾輪縮放，Space 拖曳平移，Fit page 返回完整頁面。
 - 窄窗可使用工具列的溢出選單及可捲動屬性區。
 
-英文文字可選 Noto Sans；繁體中文請明確選 **Noto Sans CJK HK**。框選一個或多個文字物件後，也可用 Objects → Use CJK font for selected text 批量套用。此操作保留字號與粗體，清除自訂字體／斜體，可 Undo/Redo；不改動未選取物件。字體在最終 PDF 內嵌入。
+英文文字可選 Noto Sans；繁體中文請明確選 **Noto Sans CJK HK**。框選一個或多個文字物件後，也可用 Arrange → Use CJK font for selected text 批量套用。此操作保留字號與粗體，清除自訂字體／斜體，可 Undo/Redo；不改動未選取物件。字體在最終 PDF 內嵌入。
 
-自訂字體使用 **Choose TTF / OTF…** 選確切字體檔案。自訂粗體／斜體請選相應實體檔案，不使用模擬樣式。Noto CJK HK 提供 Regular／Bold；沒有斜體替代。
+Windows 系統字體可在 **Family** 搜尋，並在 **Style** 選確切字款。支援 TTF、OTF、TTC／OTC 及具名可變字體。另可使用 **Choose font file…** 選字體檔案。自訂粗體／斜體請選相應實體檔案，不使用模擬樣式。Noto CJK HK 提供 Regular／Bold；沒有斜體替代。
 
 生成前的字體掃描會檢查整批資料，包含後面的記錄才出現的中文。缺字體、缺字、超出版面文字框、無效欄位或禁止嵌入的字體會阻止生產，避免靜默替代／截字。調整內容、字體或文字框後重新預覽。
 
@@ -155,7 +157,7 @@ python scripts/verify_source.py
 python scripts/prepare_composition_assets.py --verify-only
 python scripts/benchmark_composition.py --records 100 1000 10000 50000 --fixture plain
 python scripts/benchmark_composition.py --records 1000 10000 50000 --fixture mixed
-python scripts/build.py --composition --portable-only --skip-tests
+python scripts/build.py --document-designer --portable-only --skip-tests
 ```
 
 --skip-tests 僅在該來源已完成完整回歸時使用。建置需 Windows x64、Python 3.12、現有 Tesseract／veraPDF／Ghostscript 素材及 Composition 字體／qpdf 素材；新相依的版本與授權見 BUNDLE_INFO.json 與 THIRD_PARTY_NOTICES.md。

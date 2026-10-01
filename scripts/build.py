@@ -185,7 +185,7 @@ def _clean_portable_tree(tree: Path) -> None:
 
 
 def _windows_artifact_prefix() -> str:
-    suffix = "-Composition-Dev" if os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION") == "1" else ""
+    suffix = "-Document-Designer-Dev" if os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION") == "1" else ""
     return f"PDFDocuEdit-Pro-v{VERSION}{suffix}"
 
 
@@ -314,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
     parser.add_argument("--skip-tests", action="store_true", help="Use only after the full suite passed on this source tree")
-    parser.add_argument("--composition", action="store_true", help="Build the opt-in Windows Print Composition development workspace")
+    parser.add_argument("--composition", "--document-designer", action="store_true", help="Build the opt-in Windows Document Designer development workspace")
     args = parser.parse_args(argv or [])
     if args.composition:
         if platform.system() != "Windows":

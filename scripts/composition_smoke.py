@@ -1,4 +1,4 @@
-"""Opt-in native/frozen Print Composition acceptance; generated data only."""
+"""Opt-in native/frozen Document Designer acceptance; generated data only."""
 from __future__ import annotations
 
 import json
@@ -57,7 +57,7 @@ def run(output: Path):
     editor = viewer_module.PDFViewer()
     editor.settings.set("animations_enabled", False)
     editor.show()
-    check(any(button.text() == "Print Composition" for button in editor.findChildren(QPushButton)),
+    check(any(button.text() == "Document Designer" for button in editor.findChildren(QPushButton)),
           "Welcome composition entry missing")
     editor._welcome_tool("composition")
     window = editor._composition_window
@@ -86,6 +86,17 @@ def run(output: Path):
     window._start_import(DataConfig(path=str(source)))
     wait(lambda: window.import_worker is None)
     check(window.record_count == 100, "Import count mismatch")
+    wait(lambda: "Arial" in window.properties.catalogue)
+    window.canvas.select_ids([window.template.elements[1].id])
+    window.properties.font_family.setCurrentIndex(window.properties.font_family.findText("Arial"))
+    wait(lambda: not window.font_requests and bool(window.template.elements[1].font.file))
+    bold = window.properties.font_style.findText("Bold")
+    check(bold >= 0, "Windows bold face not listed")
+    window.properties.font_style.setCurrentIndex(bold)
+    window.properties._style_chosen()
+    wait(lambda: not window.font_requests)
+    from composition.engine.fonts import load_font
+    check(load_font(window.template.elements[1].font)[0].is_bold, "Windows exact bold face not selected")
     window.resize(960, 640)
     window.tabs.setCurrentIndex(2)
     wait(lambda: window.canvas.preview_item is not None)
@@ -97,6 +108,8 @@ def run(output: Path):
         editor.apply_theme(theme)
         window.tabs.setCurrentIndex(1)
         wait(lambda: window.canvas.preview_item is not None)
+        window.canvas.select_ids([window.template.elements[0].id])
+        check(window.properties.element is not None, "Selected object properties missing")
         window.grab().save(str(output/f"designer-{theme}.png"))
     project = output/"statement.pdcx"
     original_save_dialog = QFileDialog.getSaveFileName
@@ -134,7 +147,7 @@ def run(output: Path):
     summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100,
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
-               "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts",
+               "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
                          "background production","existing editor open"]}
     window.undo.setClean()

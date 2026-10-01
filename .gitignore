@@ -59,3 +59,5 @@ build_assets/composition/*
 
 # Isolated Composition font-fix development build
 /dist-font-fix/
+
+/dist-designer-ux/

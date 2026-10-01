@@ -1,6 +1,7 @@
 """Install and remove a QA-only payload without registering PDF handlers or shortcuts."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -13,7 +14,7 @@ if not getattr(sys, "frozen", False):
 from scripts.build import ROOT, _find_inno_setup_compiler
 
 
-def run():
+def run(source=None):
     compiler = _find_inno_setup_compiler()
     if not compiler:
         raise RuntimeError("Inno Setup 6 is required for the installed-build acceptance.")
@@ -22,7 +23,9 @@ def run():
     if not directory.is_relative_to(ROOT.resolve()) or not installation.is_relative_to(directory):
         raise RuntimeError("Unsafe QA installation directory.")
     directory.mkdir(parents=True, exist_ok=True)
-    source = ROOT / "dist" / "PDFDocuEdit Pro"
+    source = Path(source).resolve() if source else ROOT / "dist" / "PDFDocuEdit Pro"
+    if not (source / "PDFDocuEdit Pro.exe").is_file():
+        raise RuntimeError("QA source does not contain the application executable.")
     script = directory / "qa.iss"
     # QA gets its own uninstall identity. No global file-handler/shortcut changes.
     script.write_text(f'''[Setup]
@@ -78,4 +81,6 @@ Source: "{source}\\*"; DestDir: "{{app}}"; Flags: ignoreversion recursesubdirs c
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, help="Frozen application folder to install and test")
+    run(parser.parse_args().source)

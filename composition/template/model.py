@@ -64,7 +64,7 @@ class DataConfig:
 @dataclass
 class Template:
     template_version: int = TEMPLATE_VERSION
-    name: str = "Untitled composition"
+    name: str = "Untitled document"
     width_mm: float = 210.0
     height_mm: float = 297.0
     background: str = ""

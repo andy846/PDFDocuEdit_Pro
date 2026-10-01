@@ -128,7 +128,7 @@ class EmptyState(QWidget):
         layout.addLayout(tools)
         from composition.enabled import is_enabled
         if is_enabled():
-            composition = QPushButton("Print Composition")
+            composition = QPushButton("Document Designer")
             composition.setProperty("primary", True)
             composition.clicked.connect(lambda: self.toolRequested.emit("composition"))
             layout.addWidget(composition)

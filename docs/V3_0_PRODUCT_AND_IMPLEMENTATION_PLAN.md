@@ -1,4 +1,4 @@
-# PDFDocuEdit Pro v3.0 — Print Composition
+# PDFDocuEdit Pro v3.0 — Document Designer
 
 Planning baseline: v2.5.15. This specification replaces the previous Search/workflow proposal. Existing editor version metadata stays at 2.5.15 until the release process is ready.
 
@@ -25,3 +25,5 @@ The Windows installed build must contain verified qpdf and font assets, all lice
 ## Implementation status — 2026-10-01
 
 The fixed-page MVP is implemented in the isolated feature/print-composition-v3 worktree. See PRINT_COMPOSITION_GUIDE.md for operation and PRINT_COMPOSITION_ACCEPTANCE.md for milestone evidence, measured performance and remaining release limits. This development delivery does not change the public version or declare a v3.0 release date.
+
+Product UI name updated to Document Designer on 2026-10-01. See DOCUMENT_DESIGNER_UX_UPDATE.md for Windows installed font selection and the menu/layers/property improvements; internal engine contracts retain their composition names.

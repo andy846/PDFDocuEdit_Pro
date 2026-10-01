@@ -8,13 +8,14 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
-from PyQt6.QtCore import QEventLoop, Qt, QTimer
-from PyQt6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
+from PyQt6.QtCore import QEventLoop, QSettings, Qt, QTimer
+from PyQt6.QtGui import QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -28,7 +29,7 @@ from PyQt6.QtWidgets import (
     QTabBar,
     QTableWidget,
     QTableWidgetItem,
-    QToolBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -37,7 +38,9 @@ from composition.template.model import CompositionError, Element, FontSpec, Temp
 from composition.template.serializer import load_project
 
 from .canvas import Canvas, FieldList
+from .chrome import DesignerChrome
 from .data_dialog import DataDialog
+from .font_controls import FontOperations
 from .process import Worker
 from .properties import Properties
 
@@ -52,7 +55,7 @@ class TemplateEdit(QUndoCommand):
         self.window._apply_template(self.after, self.selected)
 
 
-class CompositionWindow(QMainWindow):
+class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -68,6 +71,13 @@ class CompositionWindow(QMainWindow):
         self.stores = {}
         self.record_count = 0
         self.clipboard = []
+        self.font_requests = {}
+        self.font_inspections = set()
+        self.font_epoch = 0
+        self._layers_updating = False
+        self.preferences = QSettings()
+        self.preferences.beginGroup("document_designer")
+
         self.close_pending = False
         self.undo = QUndoStack(self)
         self.undo.cleanChanged.connect(self._title)
@@ -79,58 +89,19 @@ class CompositionWindow(QMainWindow):
         self._apply_template(self.template.to_dict())
         self.undo.setClean()
         QTimer.singleShot(0, self.canvas.fit_page)
+        QTimer.singleShot(0, self._load_windows_fonts)
 
     def _build_ui(self):
-        toolbar = QToolBar("Composition")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        for label, slot, shortcut in [
-            ("New", self.new_project, QKeySequence.StandardKey.New),
-            ("Open", self.open_project, QKeySequence.StandardKey.Open),
-            ("Save", self.save_project, QKeySequence.StandardKey.Save),
-            ("PDF background", self.add_background, None),
-        ]:
-            action = QAction(label, self)
-            action.triggered.connect(slot)
-            if shortcut:
-                action.setShortcut(shortcut)
-            toolbar.addAction(action)
-        toolbar.addSeparator()
-        for action, shortcut in [
-            (self.undo.createUndoAction(self, "Undo"), QKeySequence.StandardKey.Undo),
-            (self.undo.createRedoAction(self, "Redo"), QKeySequence.StandardKey.Redo),
-        ]:
-            action.setShortcut(shortcut)
-            toolbar.addAction(action)
-        for label, kind in [("Text", "text"), ("Image", "image"), ("Line", "line"),
-                            ("Box", "rectangle"), ("Code 128", "code128"), ("QR", "qr")]:
-            action = QAction(label, self)
-            action.triggered.connect(lambda checked=False, value=kind: self.add_element(value))
-            toolbar.addAction(action)
-        toolbar.addAction("Page size", self.page_size)
-        toolbar.addAction("Fit page", lambda: self.canvas.fit_page())
-        menu = self.menuBar().addMenu("Project")
-        menu.addAction("Save as…", lambda: self.save_project(save_as=True))
-        menu.addAction("Remove background", self.remove_background)
-        menu.addAction("Rename template...", self.rename_template)
-        edit = self.menuBar().addMenu("Objects")
-        for label, name in [("Duplicate", "duplicate"), ("Delete", "delete"),
-                            ("Copy", "copy"), ("Paste", "paste")]:
-            edit.addAction(label, lambda checked=False, value=name: self.object_command(value))
-        edit.addSeparator()
-        cjk_action = edit.addAction("Use CJK font for selected text", self.use_cjk_font)
-        cjk_action.setToolTip(
-            "Apply Noto Sans CJK HK to selected text. Keeps size/bold; clears custom face/italic."
-        )
+        self._build_actions()
         outer = QWidget()
         layout = QVBoxLayout(outer)
-        heading = QLabel("Print Composition")
-        heading.setStyleSheet("font-size: 22px; font-weight: 600;")
+        heading = QLabel("Document Designer")
+        heading.setStyleSheet("font-size: 18px; font-weight: 600;")
         layout.addWidget(heading)
-        layout.addWidget(QLabel("Create production documents using templates and variable data."))
+        layout.addWidget(QLabel("Design reusable documents with static content, variable data and production PDF output."))
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
-        for name in ("Data", "Template", "Preview", "Production"):
+        for name in ("Data", "Design", "Preview", "Production"):
             self.tabs.addTab(name)
         self.tabs.setCurrentIndex(1)
         self.tabs.currentChanged.connect(self._mode_changed)
@@ -158,6 +129,13 @@ class CompositionWindow(QMainWindow):
         help_label.setWordWrap(True)
         data_layout.addWidget(help_label)
         self.data_panel.setMinimumWidth(150)
+        self.left_panel = QTabWidget()
+        self.left_panel.addTab(self.data_panel, "Data fields")
+        self.layers = QListWidget()
+        self.layers.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.layers.setAccessibleName("Document layers")
+        self.layers.itemSelectionChanged.connect(self._layers_selected)
+        self.left_panel.addTab(self.layers, "Layers")
         self.canvas = Canvas()
         self.canvas.setToolTip("Ctrl + mouse wheel: zoom. Hold Space: pan. Arrow keys: move 0.5 mm; Shift: 5 mm.")
         self.canvas.selectionChanged.connect(self._selection)
@@ -166,11 +144,13 @@ class CompositionWindow(QMainWindow):
         self.canvas.command.connect(self.object_command)
         self.properties = Properties()
         self.properties.edited.connect(self._property_edit)
+        self.properties.fontRequested.connect(self._request_font)
+        self.properties.insertFieldRequested.connect(self.insert_field_into_text)
         self.properties_scroll = QScrollArea()
         self.properties_scroll.setWidgetResizable(True)
         self.properties_scroll.setWidget(self.properties)
-        self.properties_scroll.setMinimumWidth(210)
-        self.splitter.addWidget(self.data_panel)
+        self.properties_scroll.setMinimumWidth(260)
+        self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.canvas)
         self.splitter.addWidget(self.properties_scroll)
         self.splitter.setSizes([220, 700, 280])
@@ -210,6 +190,9 @@ class CompositionWindow(QMainWindow):
         self.message.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.message)
         bottom = QHBoxLayout()
+        self.first = QPushButton("|◀")
+        self.first.setAccessibleName("First record")
+        self.first.clicked.connect(lambda: self.record.setValue(1))
         self.previous = QPushButton("◀")
         self.previous.setAccessibleName("Previous record")
         self.previous.clicked.connect(lambda: self.record.setValue(self.record.value()-1))
@@ -219,8 +202,12 @@ class CompositionWindow(QMainWindow):
         self.record = QSpinBox()
         self.record.setRange(1, 1)
         self.record.valueChanged.connect(self._schedule_preview)
+        self.record.valueChanged.connect(self._update_navigation)
+        self.last = QPushButton("▶|")
+        self.last.setAccessibleName("Last record")
+        self.last.clicked.connect(lambda: self.record.setValue(self.record_count))
         self.record_label = QLabel("Record / 0")
-        for widget in (self.previous, self.record, self.next, self.record_label):
+        for widget in (self.first, self.previous, self.record, self.next, self.last, self.record_label):
             bottom.addWidget(widget)
         bottom.addStretch()
         self.generate_button = QPushButton("Generate Production PDF")
@@ -239,10 +226,12 @@ class CompositionWindow(QMainWindow):
         progress_row.addWidget(self.cancel_button)
         layout.addLayout(progress_row)
         self.setCentralWidget(outer)
+        self._finish_designer_ui()
+
 
     def _title(self, *args):
         name = self.project_path.name if self.project_path else self.template.name
-        self.setWindowTitle(f"{'* ' if not self.undo.isClean() else ''}{name} — Print Composition")
+        self.setWindowTitle(f"{'* ' if not self.undo.isClean() else ''}{name} — Document Designer")
 
     def _worker(self, request, result, failure=None):
         worker = Worker(self.directory, request, self)
@@ -274,11 +263,21 @@ class CompositionWindow(QMainWindow):
         return self.stores.get(self._config_key())
 
     def _apply_template(self, value, selected=None):
-        self.template = Template.from_dict(value)
+        template = Template.from_dict(value)
+        old = {e.id: e.font for e in self.template.elements}
+        new = {e.id: e.font for e in template.elements}
+        for object_id in list(self.font_requests):
+            if object_id not in new or object_id not in old or any(
+                getattr(old[object_id], key) != getattr(new[object_id], key)
+                for key in ("family", "file", "bold", "italic")
+            ):
+                self.font_requests.pop(object_id, None)
+        self.template = template
         self.canvas.set_template(self.template, selected)
         selected_ids = selected if isinstance(selected, list) else [selected]
         self._selection(selected_ids[0] if len(selected_ids) == 1 else "")
         self._refresh_data()
+        self._refresh_layers()
         self._title()
         self._schedule_preview()
 
@@ -298,6 +297,9 @@ class CompositionWindow(QMainWindow):
     def _selection(self, selected):
         element = next((e for e in self.template.elements if e.id == selected), None)
         self.properties.show_element(element)
+        self._inspect_selected_font(element)
+        self._sync_layers()
+        self._update_actions()
 
     def _property_edit(self, values):
         if not self.properties.element:
@@ -317,7 +319,7 @@ class CompositionWindow(QMainWindow):
         self.record.blockSignals(True)
         self.record.setRange(1, max(1, self.record_count))
         self.record.blockSignals(False)
-        self.record_label.setText(f"Record / {self.record_count:,}")
+        self.record_label.setText(f"of {self.record_count:,}")
         self.previous.setEnabled(self.record_count > 1)
         self.next.setEnabled(self.record_count > 1)
         if info:
@@ -339,11 +341,13 @@ class CompositionWindow(QMainWindow):
                                       "Data source needs importing:\n" + self.template.data.path)
             self.data_summary.setText("Import the data source to preview and generate this project.")
             self.sample.setRowCount(0)
+        self._update_navigation()
         self._busy()
 
     def _busy(self):
         busy = bool(self.import_worker or self.production_worker)
-        self.generate_button.setEnabled(bool(self._store()) and not busy)
+        self.generate_button.setEnabled(bool(self._store()) and not busy and not self.font_requests)
+        self._update_actions()
         self.progress.setVisible(busy)
         self.cancel_button.setVisible(busy)
         self.cancel_button.setEnabled(busy)
@@ -351,7 +355,7 @@ class CompositionWindow(QMainWindow):
     def _mode_changed(self, index):
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
         self.canvas.set_preview_mode(index == 2)
-        self.properties_scroll.setVisible(index != 2)
+        self.properties_scroll.setVisible(index != 2 and self.actions["properties"].isChecked())
         self._schedule_preview()
 
     def _schedule_preview(self, *args):
@@ -436,8 +440,13 @@ class CompositionWindow(QMainWindow):
 
     def object_command(self, command):
         selected = set(self.canvas.selected_ids())
+        if command == "cut":
+            self.object_command("copy")
+            self.object_command("delete")
+            return
         if command == "copy":
             self.clipboard = [asdict(e) for e in self.template.elements if e.id in selected]
+            self._update_actions()
             return
         before, after = self.template.to_dict(), self.template.to_dict()
         if command == "delete":
@@ -456,7 +465,7 @@ class CompositionWindow(QMainWindow):
         self.properties.apply()
         if self.undo.isClean():
             return True
-        answer = QMessageBox.question(self, "Unsaved composition", "Save changes to this project?",
+        answer = QMessageBox.question(self, "Unsaved document design", "Save changes to this project?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
             QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
         if answer == QMessageBox.StandardButton.Save:
@@ -468,6 +477,8 @@ class CompositionWindow(QMainWindow):
             self._error("Finish or cancel the active job before replacing the project.")
             return
         if self._discard_check():
+            self.font_epoch += 1
+            self.font_requests.clear()
             self.project_path = None
             self.stores.clear()
             self.undo.clear()
@@ -476,13 +487,14 @@ class CompositionWindow(QMainWindow):
             self.canvas.fit_page()
             self.undo.setClean()
 
-    def open_project(self):
+    def open_project(self, checked=False, path=None):
         if self.import_worker or self.production_worker:
             self._error("Finish or cancel the active job before replacing the project.")
             return
         if not self._discard_check():
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Open composition", "", "Composition (*.pdcx)")
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Document Designer projects (*.pdcx)")
         if not path:
             return
         try:
@@ -490,6 +502,8 @@ class CompositionWindow(QMainWindow):
         except (OSError, CompositionError, ValueError) as exc:
             self._error(str(exc))
             return
+        self.font_epoch += 1
+        self.font_requests.clear()
         self.stores.clear()
         self.project_path = Path(path)
         self.undo.clear()
@@ -497,6 +511,7 @@ class CompositionWindow(QMainWindow):
         self.undo.setClean()
         self.tabs.setCurrentIndex(1)
         self.canvas.fit_page()
+        self._remember_project(self.project_path)
         if template.data.path:
             if Path(template.data.path).is_file():
                 self._start_import(template.data)
@@ -506,9 +521,12 @@ class CompositionWindow(QMainWindow):
 
     def save_project(self, checked=False, save_as=False):
         self.properties.apply()
+        if self.font_requests:
+            self._error("Wait for the selected font face to finish loading before saving.")
+            return False
         path = str(self.project_path) if self.project_path and not save_as else ""
         if not path:
-            path, _ = QFileDialog.getSaveFileName(self, "Save composition", "", "Composition (*.pdcx)")
+            path, _ = QFileDialog.getSaveFileName(self, "Save Document Designer project", "", "Document Designer projects (*.pdcx)")
         if not path:
             return False
         loop = QEventLoop(self)
@@ -537,11 +555,12 @@ class CompositionWindow(QMainWindow):
         self._apply_template(outcome["template"], self.canvas.selected_ids())
         self.undo.setClean()
         self._title()
+        self._remember_project(self.project_path)
         self.message.setText("Project saved: " + str(self.project_path))
         return True
 
     def rename_template(self):
-        name, ok = QInputDialog.getText(self, "Template name", "Name", text=self.template.name)
+        name, ok = QInputDialog.getText(self, "Project name", "Name", text=self.template.name)
         if ok and name.strip():
             before, after = self.template.to_dict(), self.template.to_dict()
             after["name"] = name.strip()
@@ -634,6 +653,9 @@ class CompositionWindow(QMainWindow):
             self.start_production(output)
 
     def start_production(self, output):
+        if self.font_requests:
+            self._error("Wait for the selected font face to finish loading before generation.")
+            return
         info = self._store()
         if not info or self.production_worker or self.import_worker:
             return
@@ -661,6 +683,13 @@ class CompositionWindow(QMainWindow):
             lines.append("Error: " + result["error"])
         lines.extend(result["warnings"])
         self.production_summary.setPlainText("\n".join(lines))
+        self.failed_record = result.get("error_record")
+        import re
+        match = re.search(r"object ([a-f0-9]{32})", result["error"])
+        self.failed_object = match.group(1) if match else ""
+        self.review_error_button.setVisible(bool(self.failed_record or self.failed_object))
+        self.report_button.setEnabled(bool(result["report_dir"]))
+        self.last_report_dir = result["report_dir"]
         self.last_output = result["output_pdf"]
         self.open_output_button.setEnabled(bool(self.last_output))
         self.message.setText("Production " + result["status"] + ".")
@@ -686,6 +715,8 @@ class CompositionWindow(QMainWindow):
         elif not self._discard_check():
             event.ignore()
             return
+        self.preferences.setValue("geometry", self.saveGeometry())
+        self.preferences.setValue("splitter", self.splitter.saveState())
         self.close_pending = True
         self.preview_timer.stop()
         for worker in self.workers[:]:

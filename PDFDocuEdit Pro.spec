@@ -95,7 +95,7 @@ for _file in _VERA_ROOT.rglob("*"):
 _composition_enabled = os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION", "").lower() in {"1", "true", "yes", "on"}
 if _composition_enabled:
     if sys.platform != "win32":
-        raise RuntimeError("Initial Print Composition production builds target Windows x64.")
+        raise RuntimeError("Initial Document Designer production builds target Windows x64.")
     import json as _json
     import hashlib as _hashlib
     _composition_root = ROOT / "build_assets" / "composition"

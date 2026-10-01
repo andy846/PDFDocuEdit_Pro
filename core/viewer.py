@@ -499,6 +499,12 @@ class PDFViewer(QMainWindow):
         edit_menu.addAction(self.undo_history_action)
 
         tools_menu = menu.addMenu("&Tools")
+        from composition.enabled import is_enabled
+        if is_enabled():
+            tools_menu.addAction(self._action(
+                "Document Designer…", None, self._open_composition, command_id="document_designer"))
+            tools_menu.addSeparator()
+
         for label, key in (
             ("Merge PDFs…", "merge"),
             ("Compress PDF…", "compress"),
