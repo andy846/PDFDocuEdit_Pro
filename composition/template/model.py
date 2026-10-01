@@ -9,7 +9,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 2
+TEMPLATE_VERSION = 3
+MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "qr"})
 VARIABLE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
@@ -64,14 +65,68 @@ class DataConfig:
 
 
 @dataclass
-class Template:
-    template_version: int = TEMPLATE_VERSION
-    name: str = "Untitled document"
+class PageSpec:
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    name: str = "Page"
     width_mm: float = 210.0
     height_mm: float = 297.0
     background: str = ""
     elements: list[Element] = field(default_factory=list)
-    data: DataConfig = field(default_factory=DataConfig)
+
+
+@dataclass(init=False)
+class Template:
+    template_version: int
+    name: str
+    pages: list[PageSpec]
+    data: DataConfig
+
+    def __init__(self, template_version=TEMPLATE_VERSION, name="Untitled document",
+                 width_mm=210.0, height_mm=297.0, background="", elements=None, data=None,
+                 *, pages=None):
+        self.template_version = template_version
+        self.name = name
+        self.pages = pages if pages is not None else [
+            PageSpec(id="page_1", name="Page 1", width_mm=width_mm, height_mm=height_mm,
+                     background=background, elements=elements if elements is not None else [])]
+        self.data = data if data is not None else DataConfig()
+
+    # Existing headless callers can still construct/access a single-page template.
+    # Designer code explicitly chooses a page; serialization never duplicates page data.
+    @property
+    def width_mm(self):
+        return self.pages[0].width_mm
+
+    @width_mm.setter
+    def width_mm(self, value):
+        self.pages[0].width_mm = value
+
+    @property
+    def height_mm(self):
+        return self.pages[0].height_mm
+
+    @height_mm.setter
+    def height_mm(self, value):
+        self.pages[0].height_mm = value
+
+    @property
+    def background(self):
+        return self.pages[0].background
+
+    @background.setter
+    def background(self, value):
+        self.pages[0].background = value
+
+    @property
+    def elements(self):
+        return self.pages[0].elements
+
+    @elements.setter
+    def elements(self, value):
+        self.pages[0].elements = value
+
+    def all_elements(self):
+        return (element for page in self.pages for element in page.elements)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -80,25 +135,41 @@ class Template:
     def from_dict(cls, value: dict[str, Any]) -> Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
-        if type(value.get("template_version")) is not int or value["template_version"] not in (1, TEMPLATE_VERSION):
+        version = value.get("template_version")
+        if type(version) is not int or version not in (1, 2, TEMPLATE_VERSION):
             raise CompositionError(
-                f"Unsupported template version: {value.get('template_version')!r}. "
-                f"This build reads version {TEMPLATE_VERSION}."
-            )
+                f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
             raw = dict(value)
+            if version < 3:
+                if "pages" in raw:
+                    raise CompositionError("Legacy templates cannot contain a pages list.")
+                page = {"id": "page_1", "name": "Page 1"}
+                for key in ("width_mm", "height_mm", "background", "elements"):
+                    if key in raw:
+                        page[key] = raw.pop(key)
+                raw["pages"] = [page]
+            elif any(key in raw for key in ("width_mm", "height_mm", "background", "elements")):
+                raise CompositionError("Version 3 uses pages; remove ambiguous top-level page properties.")
+            if not isinstance(raw.get("pages"), list) or not 1 <= len(raw["pages"]) <= MAX_TEMPLATE_PAGES:
+                raise CompositionError(f"A template needs 1 to {MAX_TEMPLATE_PAGES} pages.")
+            pages = []
+            for page in raw["pages"]:
+                page = dict(page)
+                elements = page.get("elements", [])
+                if not isinstance(elements, list) or len(elements) > 5000:
+                    raise CompositionError("A template can contain at most 5,000 elements.")
+                page["elements"] = [
+                    Element(**{**element, "font": FontSpec(**element.get("font", {})),
+                               "glyph_repairs": {key: FontSpec(**spec) for key, spec
+                                                 in element.get("glyph_repairs", {}).items()}})
+                    for element in elements]
+                pages.append(PageSpec(**page))
+            raw["pages"] = pages
             raw["template_version"] = TEMPLATE_VERSION
-            if len(raw.get("elements", [])) > 5000:
-                raise CompositionError("A template can contain at most 5,000 elements.")
-            raw["elements"] = [
-                Element(**{**element, "font": FontSpec(**element.get("font", {})),
-                           "glyph_repairs": {key: FontSpec(**spec) for key, spec
-                                             in element.get("glyph_repairs", {}).items()}})
-                for element in raw.get("elements", [])
-            ]
             raw["data"] = DataConfig(**raw.get("data", {}))
             template = cls(**raw)
-        except (TypeError, KeyError, AttributeError) as exc:
+        except (TypeError, KeyError, AttributeError, ValueError) as exc:
             raise CompositionError(f"Invalid template schema: {exc}") from exc
         validate_template(template, check_assets=False)
         return template
@@ -154,7 +225,7 @@ def resolve_value(tokens: tuple[tuple[str, str], ...], record: dict[str, str]) -
 
 def required_fields(template: Template) -> set[str]:
     return {
-        text for element in template.elements
+        text for element in template.all_elements()
         if element.type in {"text", "code128", "qr"}
         for kind, text in parse_value(element.value) if kind == "field"
     }
@@ -163,13 +234,24 @@ def required_fields(template: Template) -> set[str]:
 def validate_template(template: Template, *, check_assets: bool = True) -> None:
     if type(template.template_version) is not int or template.template_version != TEMPLATE_VERSION:
         raise CompositionError("Unsupported template version.")
-    _number(template.width_mm, "Page width", 10, 2000)
-    _number(template.height_mm, "Page height", 10, 2000)
     if not isinstance(template.name, str) or len(template.name) > 500:
         raise CompositionError("Invalid template name.")
-    if not isinstance(template.background, str) or not isinstance(template.elements, list):
-        raise CompositionError("Invalid background or element list.")
-    if len(template.elements) > 5000:
+    if not isinstance(template.pages, list) or not 1 <= len(template.pages) <= MAX_TEMPLATE_PAGES:
+        raise CompositionError(f"A template needs 1 to {MAX_TEMPLATE_PAGES} pages.")
+    page_ids = set()
+    for page in template.pages:
+        if not isinstance(page, PageSpec) or not isinstance(page.id, str) or not page.id or page.id in page_ids:
+            raise CompositionError("Page IDs must be non-empty and unique.")
+        page_ids.add(page.id)
+        if not isinstance(page.name, str) or len(page.name) > 500:
+            raise CompositionError("Invalid page name.")
+        _number(page.width_mm, "Page width", 10, 2000)
+        _number(page.height_mm, "Page height", 10, 2000)
+        if not isinstance(page.background, str) or not isinstance(page.elements, list):
+            raise CompositionError("Invalid background or element list.")
+        if page.background and check_assets and not Path(page.background).is_file():
+            raise CompositionError(f"PDF background not found: {page.background}")
+    if sum(len(page.elements) for page in template.pages) > 5000:
         raise CompositionError("A template can contain at most 5,000 elements.")
     data = template.data
     if not all(isinstance(value, str) for value in (data.path, data.encoding, data.delimiter)):
@@ -185,7 +267,9 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
     ):
         raise CompositionError("Invalid variable field mapping.")
     seen = set()
-    for element in template.elements:
+    for page, element in ((spec, item) for spec in template.pages for item in spec.elements):
+        if not isinstance(element, Element):
+            raise CompositionError("Invalid page element.")
         if not isinstance(element.id, str) or not element.id or element.id in seen:
             raise CompositionError("Element IDs must be non-empty and unique.")
         seen.add(element.id)
@@ -195,9 +279,9 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             _number(getattr(element, prop), f"{element.id}: {prop}", 0, 2000)
         for prop in ("width_mm", "height_mm"):
             _number(getattr(element, prop), f"{element.id}: {prop}", 0.1, 2000)
-        if element.x_mm + element.width_mm > template.width_mm + 0.01:
+        if element.x_mm + element.width_mm > page.width_mm + 0.01:
             raise CompositionError(f"{element.id}: object extends beyond the page width.")
-        if element.y_mm + element.height_mm > template.height_mm + 0.01:
+        if element.y_mm + element.height_mm > page.height_mm + 0.01:
             raise CompositionError(f"{element.id}: object extends beyond the page height.")
         if not isinstance(element.align, str) or element.align not in {"left", "center", "right"}:
             raise CompositionError("Text alignment must be left, center or right.")
@@ -238,5 +322,3 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             parse_value(element.value)
         if element.type == "image" and check_assets and not Path(element.image).is_file():
             raise CompositionError(f"Image not found: {element.image}")
-    if template.background and check_assets and not Path(template.background).is_file():
-        raise CompositionError(f"PDF background not found: {template.background}")

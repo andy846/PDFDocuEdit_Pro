@@ -25,7 +25,7 @@ class DesignerChrome:
     def _build_actions(self):
         self.actions = {}
         menus = {name: self.menuBar().addMenu(name) for name in
-                 ("&File", "&Edit", "&Insert", "&Arrange", "&View", "&Data", "&Production", "&Help")}
+                 ("&File", "&Edit", "&Insert", "&Page", "&Arrange", "&View", "&Data", "&Production", "&Help")}
         self.project_toolbar = QToolBar("Project", self)
         self.project_toolbar.setMovable(False)
         self.project_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -106,7 +106,20 @@ class DesignerChrome:
                    "&Arrange", symbol="layers")
         action("repair_glyph", "Repair missing glyph…", self.edit_glyph_repairs, "&Arrange", symbol="font-inspect")
         action("cjk", "Use CJK font for selected text", self.use_cjk_font, "&Arrange", symbol="font-inspect")
-        action("page_size", "Page size…", self.page_size, "&View", symbol="square")
+        for key, label, slot in (
+            ("page_add", "Add blank template page", self.add_template_page),
+            ("page_duplicate", "Duplicate template page", lambda: self.add_template_page(duplicate=True)),
+            ("page_delete", "Delete template page", self.delete_template_page),
+            ("page_up", "Move template page earlier", lambda: self.move_template_page(-1)),
+            ("page_down", "Move template page later", lambda: self.move_template_page(1)),
+            ("page_rename", "Rename template page…", self.rename_template_page),
+        ):
+            action(key, label, slot, "&Page", symbol="file-text")
+        action("page_previous", "Previous template page", lambda: self.select_template_page(self.page_index-1),
+               "&Page", "Alt+PgUp")
+        action("page_next", "Next template page", lambda: self.select_template_page(self.page_index+1),
+               "&Page", "Alt+PgDown")
+        action("page_size", "Current page size…", self.page_size, "&Page", symbol="square")
         action("fit_page", "Fit page", lambda: self.canvas.fit_page(), "&View", "Ctrl+0", "monitor")
         action("zoom_in", "Zoom in", lambda: self.canvas.zoom_by(1.2), "&View", "Ctrl++", "plus")
         action("zoom_out", "Zoom out", lambda: self.canvas.zoom_by(1/1.2), "&View", "Ctrl+-", "minus")
@@ -209,12 +222,15 @@ class DesignerChrome:
         self.actions["generate"].setEnabled(bool(self._store()) and not busy and not self.font_requests)
         self.actions["cancel"].setEnabled(busy)
         self.selection_status.setText(f"{len(selected)} selected" if selected else "No selection")
-        self.page_status.setText(f"{self.template.width_mm:g} × {self.template.height_mm:g} mm")
+        self._update_page_actions()
+        self.actions["page_previous"].setEnabled(self.page_index > 0)
+        self.actions["page_next"].setEnabled(self.page_index < len(self.template.pages)-1)
+        self.page_status.setText(f"Page {self.page_index+1}/{len(self.template.pages)} · {self.page.width_mm:.2f} × {self.page.height_mm:.2f} mm")
 
     def _refresh_layers(self):
         self._layers_updating = True
         self.layers.clear()
-        for element in reversed(self.template.elements):
+        for element in reversed(self.page.elements):
             value = element.value.replace("\n", " ")[:45] if element.value else element.type.title()
             item = QListWidgetItem(f"{element.type.title()} · {value}")
             item.setData(Qt.ItemDataRole.UserRole, element.id)
@@ -240,17 +256,17 @@ class DesignerChrome:
     def select_all_objects(self):
         if self.tabs.currentIndex() != 1:
             self.tabs.setCurrentIndex(1)
-        self.canvas.select_ids([element.id for element in self.template.elements])
+        self.canvas.select_ids([element.id for element in self.page.elements])
 
     def arrange_objects(self, mode):
         selected = set(self.canvas.selected_ids())
         before, after = self.template.to_dict(), self.template.to_dict()
-        values = [element for element in after["elements"] if element["id"] in selected]
+        values = [element for element in self._page_dict(after)["elements"] if element["id"] in selected]
         if not values:
             return
         if mode in {"front", "back"}:
-            others = [element for element in after["elements"] if element["id"] not in selected]
-            after["elements"] = others + values if mode == "front" else values + others
+            others = [element for element in self._page_dict(after)["elements"] if element["id"] not in selected]
+            self._page_dict(after)["elements"] = others + values if mode == "front" else values + others
         else:
             x0, y0 = min(e["x_mm"] for e in values), min(e["y_mm"] for e in values)
             x1 = max(e["x_mm"] + e["width_mm"] for e in values)
@@ -350,6 +366,10 @@ class DesignerChrome:
         if self.failed_record:
             self.record.setValue(self.failed_record)
         if self.failed_object:
+            index = next((i for i, page in enumerate(self.template.pages)
+                          if any(e.id == self.failed_object for e in page.elements)), None)
+            if index is not None:
+                self.select_template_page(index)
             self.canvas.select_ids([self.failed_object])
             self.properties_scroll.setVisible(True)
             self.actions["properties"].setChecked(True)
@@ -367,6 +387,7 @@ class DesignerChrome:
             "Ctrl+Z / Y: Undo / Redo\nCtrl+C / V / X / D: Copy / Paste / Cut / Duplicate\n"
             "Ctrl+A: Select all objects (canvas)\nArrow keys: move 0.5 mm; Shift: 5 mm\n"
             "Ctrl+mouse wheel: zoom; Space+drag: pan\nCtrl+0: fit page\n"
+            "Alt+PgUp / PgDown: previous / next template page\n"
             "Ctrl+I: import data; F5: preview; Ctrl+Shift+G: generate PDF")
 
     def changeEvent(self, event):

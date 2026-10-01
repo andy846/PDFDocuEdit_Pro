@@ -100,13 +100,14 @@ def dispatch(request: dict) -> dict:
         else:
             record = {name: "{{" + name + "}}" for name in required_fields(template)}
         repairs = []
-        raw = render_preview(template, record, index, repair_details=repairs)
+        page_index = request.get("page", 0)
+        raw = render_preview(template, record, index, repair_details=repairs, page_index=page_index)
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")
         with fitz.open(stream=raw, filetype="pdf") as document:
             document[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).save(image)
-        return {"pdf": str(pdf), "image": str(image), "record": index, "glyph_repairs": repairs}
+        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs}
     if task == "save":
         from composition.template.serializer import load_project, save_project
         target = save_project(Template.from_dict(request["template"]), request["target"])

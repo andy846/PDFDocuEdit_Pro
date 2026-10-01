@@ -73,7 +73,7 @@ class ElementItem(QGraphicsRectItem):
         if not self.resizing:
             super().mouseReleaseEvent(event)
         if self.canvas.snap_enabled:
-            originals = {element["id"]: element for element in self.canvas.before["elements"]}
+            originals = {element["id"]: element for element in self.canvas.before["pages"][self.canvas.page_index]["elements"]}
             if self.resizing:
                 width = max(.1, min(self.canvas.page_width-self.pos().x(),
                                    round(self.rect().width()/5)*5))
@@ -132,22 +132,24 @@ class Canvas(QGraphicsView):
     def snapshot(self):
         return copy.deepcopy(self.template.to_dict())
 
-    def set_template(self, template, selected=None):
+    def set_template(self, template, selected=None, *, page_index=0):
         self.template = template
-        self.page_width, self.page_height = template.width_mm, template.height_mm
+        self.page_index = page_index
+        spec = template.pages[page_index]
+        self.page_width, self.page_height = spec.width_mm, spec.height_mm
         self.scene_model.blockSignals(True)
         self.scene_model.clear()
         self.preview_item = None
-        page = self.scene_model.addRect(0, 0, template.width_mm, template.height_mm,
+        page = self.scene_model.addRect(0, 0, spec.width_mm, spec.height_mm,
                                        QPen(Qt.PenStyle.NoPen), QColor("white"))
         page.setZValue(-2)
-        self.element_items = [ElementItem(element, self) for element in template.elements]
+        self.element_items = [ElementItem(element, self) for element in spec.elements]
         selected_ids = set(selected if isinstance(selected, list) else [selected])
         for item in self.element_items:
             self.scene_model.addItem(item)
             item.setVisible(not self.mode_preview)
             item.setSelected(item.element.id in selected_ids)
-        self.setSceneRect(-15, -15, template.width_mm+30, template.height_mm+30)
+        self.setSceneRect(-15, -15, spec.width_mm+30, spec.height_mm+30)
         self.scene_model.blockSignals(False)
 
     def set_preview(self, image):

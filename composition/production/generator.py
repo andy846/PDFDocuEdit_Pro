@@ -40,14 +40,16 @@ def reconcile(result: JobResult) -> None:
     if not (
         result.input_records == result.processed_records == result.successful_records
         and result.failed_records == 0
-        and result.generated_pages == result.input_records
+        and result.pages_per_record >= 1
+        and result.expected_pages == result.input_records * result.pages_per_record
+        and result.generated_pages == result.expected_pages
         and result.generated_files == 1
     ):
         raise CompositionError(
             "RECONCILIATION FAILED: "
             f"input={result.input_records}, processed={result.processed_records}, "
             f"successful={result.successful_records}, failed={result.failed_records}, "
-            f"pages={result.generated_pages}, files={result.generated_files}."
+            f"pages={result.generated_pages}, expected_pages={result.expected_pages}, files={result.generated_files}."
         )
 
 
@@ -98,7 +100,7 @@ def _csv_value(value):
 
 def _write_reports(directory: Path, result: JobResult, template: Template, store: RecordStore | None) -> None:
     log = {
-        "job_version": 1,
+        "job_version": 2,
         **result.to_dict(),
         "template_name": template.name,
         "template_sha256": hashlib.sha256(
@@ -106,7 +108,12 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         ).hexdigest(),
         "source": store.metadata["source"] if store else None,
         "record_identity": "source_sha256 + one-based imported record ordinal",
-        "page_mapping": "fixed single page: output page = record ordinal",
+        "page_mapping": {
+            "type": "fixed_pages", "pages_per_record": len(template.pages),
+            "formula": "output page = (record ordinal - 1) * pages_per_record + template page ordinal",
+            "template_pages": [{"ordinal": i+1, "id": p.id, "name": p.name}
+                               for i, p in enumerate(template.pages)],
+        },
     }
     (directory / "job.json").write_text(json.dumps(log, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     columns = {
@@ -114,6 +121,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Template Name": template.name, "Start Time": result.started_at, "End Time": result.finished_at,
         "Input Records": result.input_records, "Processed Records": result.processed_records,
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
+        "Pages Per Record": result.pages_per_record, "Expected Pages": result.expected_pages,
         "Page Count": result.generated_pages, "Output Files": result.generated_files,
         "Output File": result.output_pdf, "File Size": result.output_size,
         "Repaired Glyphs": result.repaired_glyphs, "Repaired Records": result.repaired_records,
@@ -141,7 +149,7 @@ def generate(
     if final.exists() or (output_root / f"{job.job_id}-failed").exists():
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))
-    result = JobResult(job.job_id)
+    result = JobResult(job.job_id, pages_per_record=len(template.pages))
     store = None
     current_record = None
     chunk = None
@@ -150,12 +158,13 @@ def generate(
         check_cancel(is_cancelled)
         store = RecordStore(job.record_store)
         result.input_records = store.count
+        result.expected_pages = store.count * len(template.pages)
         missing = required_fields(template) - set(store.fields)
         if missing:
             raise CompositionError(f"Missing mapped fields: {', '.join(sorted(missing))}")
         executable = qpdf_executable()
-        assets = [template.background] + [
-            value for element in template.elements for value in (element.image, element.font.file,
+        assets = [page.background for page in template.pages] + [
+            value for element in template.all_elements() for value in (element.image, element.font.file,
                           *(spec.file for spec in element.glyph_repairs.values())) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
@@ -171,15 +180,17 @@ def generate(
                 check_cancel(is_cancelled)
                 current_record = ordinal
                 try:
-                    renderer.render(chunk, record, ordinal)
+                    renderer.render(chunk, record, ordinal, is_cancelled=is_cancelled)
                 except Exception:
+                    if is_cancelled and is_cancelled():
+                        raise JobCancelled("Production cancelled between template pages.") from None
                     result.failed_records += 1
                     result.processed_records += 1
                     result.error_record = ordinal
                     raise
                 result.processed_records += 1
                 result.successful_records += 1
-                if chunk.page_count == job.chunk_size or ordinal == store.count:
+                if chunk.page_count >= job.chunk_size or ordinal == store.count:
                     check_cancel(is_cancelled)
                     renderer.finalize(chunk)
                     path = staging / f"chunk-{len(chunks):06}.pdf"
@@ -203,7 +214,7 @@ def generate(
         for path in chunks:
             path.unlink()
         check_cancel(is_cancelled)
-        validate_pdf_file(pdf, expected_page_count=store.count)
+        validate_pdf_file(pdf, expected_page_count=result.expected_pages)
         with fitz.open(pdf) as checked:
             result.generated_pages = checked.page_count
         result.generated_files = 1

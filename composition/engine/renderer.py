@@ -56,15 +56,19 @@ def wrap_text(text: str, font: fitz.Font, size: float, width: float) -> list[str
 class Renderer:
     """Owns its font/background resources inside one process; no GUI state."""
 
-    def __init__(self, template: Template):
+    def __init__(self, template: Template, *, page_index=None):
         validate_template(template)
+        if page_index is not None and (type(page_index) is not int or not 0 <= page_index < len(template.pages)):
+            raise CompositionError("Template page number is out of range.")
+        self.resource_pages = template.pages if page_index is None else [template.pages[page_index]]
+        self.preview_page_index = page_index
         self.template = template
         self.tokens = {
-            element.id: parse_value(element.value) for element in template.elements
+            element.id: parse_value(element.value) for spec in self.resource_pages for element in spec.elements
             if element.type in {"text", "qr", "code128"}
         }
         self.stack = ExitStack()
-        self.background = None
+        self.backgrounds = {}
         self.fonts = {}
         self.repair_fonts = {}
         self.repair_summary = {"occurrences": 0, "records": 0}
@@ -72,13 +76,14 @@ class Renderer:
         self.font_xrefs = {}
         self.output_fonts = {}
         self.images = {}
-        if template.background:
-            self.background = self.stack.enter_context(fitz.open(template.background))
-            if self.background.needs_pass or self.background.page_count != 1:
-                self.close()
-                raise CompositionError("The static background must be an unencrypted single-page PDF.")
         try:
-            for element in template.elements:
+            for spec in self.resource_pages:
+                if spec.background:
+                    background = self.stack.enter_context(fitz.open(spec.background))
+                    if background.needs_pass or background.page_count != 1:
+                        raise CompositionError("The static background must be an unencrypted single-page PDF.")
+                    self.backgrounds[spec.id] = background
+            for element in (item for spec in self.resource_pages for item in spec.elements):
                 if element.type == "text" or element.show_barcode_text:
                     self.fonts[element.id] = load_font(element.font)
                     self.repair_fonts[element.id] = {key: load_font(spec)
@@ -114,9 +119,11 @@ class Renderer:
             repair_fonts=self.repair_fonts, audit_path=audit_path, summary=self.repair_summary,
         )
 
-    def glyph_usage(self, record):
+    def glyph_usage(self, record, page_index=None):
         result = []
-        for element in self.template.elements:
+        elements = (self.template.all_elements() if page_index is None
+                    else self.template.pages[page_index].elements)
+        for element in elements:
             if element.id not in self.fonts:
                 continue
             selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id))
@@ -132,25 +139,36 @@ class Renderer:
         if all(permits_subsetting(path) for _font, path in paths):
             document.subset_fonts()
 
-    def render(self, document: fitz.Document, record: dict[str, str], ordinal: int = 1) -> None:
+    def render(self, document: fitz.Document, record: dict[str, str], ordinal: int = 1,
+               *, page_index: int | None = None, is_cancelled=None) -> None:
+        if page_index is not None and (type(page_index) is not int or not 0 <= page_index < len(self.template.pages)):
+            raise CompositionError("Template page number is out of range.")
+        if self.preview_page_index is not None:
+            if page_index is not None and page_index != self.preview_page_index:
+                raise CompositionError("Preview renderer owns only the requested template page.")
+            page_index = self.preview_page_index
         if self.resource_document is not document:
             self.resource_document = document
             self.font_xrefs.clear()
-        page = document.new_page(
-            width=self.template.width_mm * MM_TO_PT, height=self.template.height_mm * MM_TO_PT
-        )
-        if self.background is not None:
-            page.show_pdf_page(page.rect, self.background, 0, overlay=False)
-        for element in self.template.elements:
-            try:
-                self._render_element(page, element, record)
-            except Exception as exc:
-                fields = [text for kind, text in self.tokens.get(element.id, ()) if kind == "field"]
-                raise CompositionError(
-                    f"Record {ordinal}, object {element.id}"
-                    + (f", field {', '.join(fields)}" if fields else "")
-                    + f": {exc}"
-                ) from exc
+        indices = range(len(self.template.pages)) if page_index is None else [page_index]
+        for index in indices:
+            if is_cancelled and is_cancelled():
+                raise CompositionError("Production cancelled between template pages.")
+            spec = self.template.pages[index]
+            page = document.new_page(width=spec.width_mm * MM_TO_PT, height=spec.height_mm * MM_TO_PT)
+            background = self.backgrounds.get(spec.id)
+            if background is not None:
+                page.show_pdf_page(page.rect, background, 0, overlay=False)
+            for element in spec.elements:
+                try:
+                    self._render_element(page, element, record)
+                except Exception as exc:
+                    fields = [text for kind, text in self.tokens.get(element.id, ()) if kind == "field"]
+                    raise CompositionError(
+                        f"Record {ordinal}, template page {index+1}, object {element.id}"
+                        + (f", field {', '.join(fields)}" if fields else "")
+                        + f": {exc}"
+                    ) from exc
 
     def _render_element(self, page, element: Element, record) -> None:
         rect = fitz.Rect(
@@ -303,11 +321,11 @@ class Renderer:
 
 
 def render_preview(template: Template, record: dict[str, str], ordinal: int = 1,
-                   repair_details: list | None = None) -> bytes:
-    with Renderer(template) as renderer, fitz.open() as document:
-        renderer.render(document, record, ordinal)
+                   repair_details: list | None = None, *, page_index: int | None = None) -> bytes:
+    with Renderer(template, page_index=page_index) as renderer, fitz.open() as document:
+        renderer.render(document, record, ordinal, page_index=page_index)
         if repair_details is not None:
-            repair_details.extend(renderer.glyph_usage(record))
+            repair_details.extend(renderer.glyph_usage(record, page_index))
         renderer.finalize(document)
         return document.tobytes(deflate=True, garbage=1)
 

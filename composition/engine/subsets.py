@@ -20,8 +20,9 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
     repair_fonts = repair_fonts or {}
     summary = summary if summary is not None else {}
     summary.update(occurrences=0, records=0)
-    elements = [element for element in template.elements
+    elements = [element for element in template.all_elements()
                 if element.type == "text" or (element.type == "code128" and element.show_barcode_text)]
+    page_numbers = {e.id: index+1 for index, page in enumerate(template.pages) for e in page.elements}
     pairs = list(fonts.values()) + [pair for mapping in repair_fonts.values() for pair in mapping.values()]
     original_paths = {str(path) for _font, path in pairs}
     glyphs = {path: set() for path in original_paths if permits_subsetting(Path(path))}
@@ -32,7 +33,7 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
             stream = resources.enter_context(Path(audit_path).open("w", encoding="utf-8-sig", newline=""))
             writer = csv.writer(stream)
             writer.writerow(["Record", "Object", "Fields", "Code point", "Occurrences",
-                             "Primary font", "Repair font"])
+                             "Primary font", "Repair font", "Template page"])
         for ordinal, record in records:
             if is_cancelled and is_cancelled():
                 from composition.template.model import CompositionError
@@ -49,13 +50,14 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
                             glyphs[str(source)].add(ord(character))
                     counts = selector.repaired_counts(text)
                 except ValueError as exc:
-                    raise RecordFontError(ordinal, element, fields, str(exc)) from exc
+                    raise RecordFontError(ordinal, element, fields,
+                                          f"Template page {page_numbers[element.id]}: {exc}") from exc
                 for key, count in counts.items():
                     repaired_record = True
                     summary["occurrences"] += count
                     if writer:
                         values = [ordinal, element.id, ", ".join(fields), key, count,
-                                  element.font.family, element.glyph_repairs[key].family]
+                                  element.font.family, element.glyph_repairs[key].family, page_numbers[element.id]]
                         writer.writerow(["'"+v if isinstance(v, str) and v.startswith(("=", "+", "-", "@"))
                                          else v for v in values])
             summary["records"] += int(repaired_record)

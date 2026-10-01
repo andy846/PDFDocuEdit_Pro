@@ -78,8 +78,8 @@ def run(output: Path):
     wait(lambda: bool(window.template.background))
     window.add_field("Name", 20, 65)
     before, after = window.template.to_dict(), window.template.to_dict()
-    after["elements"][-1]["font"]["family"] = "Noto Sans CJK HK"
-    window._commit(before, after, "CJK output font", after["elements"][-1]["id"])
+    after["pages"][0]["elements"][-1]["font"]["family"] = "Noto Sans CJK HK"
+    window._commit(before, after, "CJK output font", after["pages"][0]["elements"][-1]["id"])
     window.add_element("text", "Account: {{Account}}", x=20, y=95)
     window.add_element("code128", "{{Account}}", x=20, y=125)
     window.add_element("qr", "{{Account}}", x=140, y=125)
@@ -103,8 +103,8 @@ def run(output: Path):
     from composition.designer.glyph_dialog import GlyphRepairDialog
     window.add_element("text", "Client face: \u7530, only this glyph repaired", x=20, y=150)
     before, after = window.template.to_dict(), window.template.to_dict()
-    after["elements"][-1].update(height_mm=20, width_mm=170, vertical_align="center")
-    window._commit(before, after, "Repair demonstration box", after["elements"][-1]["id"])
+    after["pages"][0]["elements"][-1].update(height_mm=20, width_mm=170, vertical_align="center")
+    window._commit(before, after, "Repair demonstration box", after["pages"][0]["elements"][-1]["id"])
     primary = asdict(window.template.elements[-1].font)
     dialog = GlyphRepairDialog(window.template.elements[-1], window.properties.catalogue, "U+7530", window)
     dialog.family.setCurrentText("Noto Sans CJK HK")
@@ -116,6 +116,22 @@ def run(output: Path):
     wait(lambda: not window.font_requests)
     check(asdict(window.template.elements[-1].font) == primary, "Repair changed primary font")
     check("U+7530" in window.template.elements[-1].glyph_repairs, "Repair setting not applied")
+    window.actions["page_add"].trigger()
+    check(window.page_index == 1, "Add template page did not select new page")
+    window.add_element("text", "Continuation: {{Account}}", x=20, y=35)
+    before, after = window.template.to_dict(), window.template.to_dict()
+    after["pages"][1].update(width_mm=148, height_mm=210, name="Continuation")
+    window._commit(before, after, "A5 continuation")
+    window.actions["page_up"].trigger()
+    check(window.page_index == 0, "Page reorder failed")
+    window.undo.undo()
+    check(window.page_index == 1, "Page reorder undo failed")
+    window.tabs.setCurrentIndex(2)
+    wait(lambda: window.canvas.preview_item is not None)
+    window.record.setValue(18)
+    wait(lambda: window.canvas.preview_item is not None)
+    window.grab().save(str(output/"preview-page-two.png"))
+    window.page_combo.setCurrentIndex(0)
     window.resize(960, 640)
     window.tabs.setCurrentIndex(2)
     wait(lambda: window.canvas.preview_item is not None)
@@ -138,7 +154,7 @@ def run(output: Path):
     finally:
         QFileDialog.getSaveFileName = original_save_dialog
     loaded = load_project(project)
-    check(len(loaded.elements) == 5, "Saved template lost objects")
+    check(len(loaded.pages) == 2 and len(loaded.elements) == 5, "Saved template lost pages/objects")
     check(Path(loaded.background).is_file(), "Saved background missing")
     check("U+7530" in loaded.elements[-1].glyph_repairs, "Saved glyph repair missing")
     ticks = []
@@ -151,7 +167,9 @@ def run(output: Path):
     check(bool(ticks), "GUI event loop stopped during production")
     check(bool(window.last_output), window.production_summary.toPlainText())
     with fitz.open(window.last_output) as doc:
-        check(doc.page_count == 100, "Production page count mismatch")
+        check(doc.page_count == 200, "Production page count mismatch")
+        check("Continuation: 00000000" in doc[1].get_text(), "Record/page order mismatch")
+        check(abs(doc[1].rect.width-148*72/25.4) < .01, "Independent page size lost")
         check("\u9673\u5c0f\u660e" in doc[0].get_text(), "Chinese output text missing")
         check("00000099" in doc[-1].get_text(), "Record order mismatch")
         check("Company Statement" in doc[0].get_text(), "Background text missing")
@@ -169,11 +187,11 @@ def run(output: Path):
     wait(lambda: editor.engine.is_loaded())
     check("Company Statement" in editor.engine.document[0].get_text(), "Existing editor regressed")
     summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
-               "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100,
+               "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

@@ -68,7 +68,7 @@ class FontOperations:
             self._busy()
             return
         before, after = self.template.to_dict(), self.template.to_dict()
-        target = next((e for e in after["elements"] if e["id"] == object_id), None)
+        target = next((e for page in after["pages"] for e in page["elements"] if e["id"] == object_id), None)
         if target is not None:
             if result["file"]:
                 self.properties.file_faces[result["file"]] = result

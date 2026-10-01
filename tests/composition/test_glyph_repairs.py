@@ -55,14 +55,14 @@ def test_unmapped_or_incompatible_repair_still_blocks_output():
 def test_v1_migration_and_portable_repair_font(tmp_path):
     from composition.engine.assets import asset_root
     template = Template.from_dict({"template_version": 1, "elements": [{"value": "{{Name}}"}]})
-    assert template.template_version == 2
+    assert template.template_version == 3
     assert not template.elements[0].glyph_repairs
     template.elements[0].glyph_repairs["U+7530"] = FontSpec(
         family="Noto Sans CJK HK", file=str(asset_root() / "fonts/NotoSansCJKhk-Regular.otf"))
     target = save_project(template, tmp_path/"repairs.pdcx")
     saved = json.loads(target.read_text(encoding="utf-8"))
-    assert saved["template_version"] == 2
-    assert not saved["elements"][0]["glyph_repairs"]["U+7530"]["file"].startswith(str(asset_root()))
+    assert saved["template_version"] == 3
+    assert not saved["pages"][0]["elements"][0]["glyph_repairs"]["U+7530"]["file"].startswith(str(asset_root()))
     loaded = load_project(target)
     assert loaded.elements[0].glyph_repairs["U+7530"].file.startswith(str(tmp_path))
     assert loaded.elements[0].font.family == "Noto Sans"
@@ -71,7 +71,7 @@ def test_v1_migration_and_portable_repair_font(tmp_path):
 @pytest.mark.parametrize("key", ["田", "U+110000", "U+D800", "U+07530", "U+e473"])
 def test_invalid_repair_codepoints_rejected(key):
     raw = Template(elements=[element()]).to_dict()
-    raw["elements"][0]["glyph_repairs"] = {key: FontSpec().__dict__}
+    raw["pages"][0]["elements"][0]["glyph_repairs"] = {key: FontSpec().__dict__}
     with pytest.raises(CompositionError):
         Template.from_dict(raw)
 

@@ -41,27 +41,31 @@ from .canvas import Canvas, FieldList
 from .chrome import DesignerChrome
 from .data_dialog import DataDialog
 from .font_controls import FontOperations
+from .pages import PageOperations
 from .process import Worker
 from .properties import Properties
 
 
 class TemplateEdit(QUndoCommand):
-    def __init__(self, window, before, after, label, selected=None):
+    def __init__(self, window, before, after, label, selected=None, page_id=None):
         super().__init__(label)
         self.window, self.before, self.after, self.selected = window, before, after, selected
+        self.before_page = window.active_page_id
+        self.after_page = page_id or window.active_page_id
     def undo(self):
-        self.window._apply_template(self.before, self.selected)
+        self.window._apply_template(self.before, self.selected, page_id=self.before_page)
     def redo(self):
-        self.window._apply_template(self.after, self.selected)
+        self.window._apply_template(self.after, self.selected, page_id=self.after_page)
 
 
-class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(PageOperations, DesignerChrome, FontOperations, QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(1240, 820)
         self.setMinimumSize(760, 580)
         self.template = Template()
+        self.active_page_id = self.template.pages[0].id
         self.project_path = None
         self.temp = tempfile.TemporaryDirectory(prefix="pdfdocuedit-composition-")
         self.directory = Path(self.temp.name)
@@ -110,6 +114,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         self.design_page = QWidget()
         design_layout = QVBoxLayout(self.design_page)
         design_layout.setContentsMargins(0, 0, 0, 0)
+        self._build_page_navigation(design_layout)
         self.splitter = QSplitter()
         self.data_panel = QWidget()
         data_layout = QVBoxLayout(self.data_panel)
@@ -172,7 +177,9 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         self.stack.addWidget(self.data_page)
         self.production_page = QWidget()
         prod_layout = QVBoxLayout(self.production_page)
-        prod_layout.addWidget(QLabel("Production: fixed one-record / one-page output"))
+        self.production_heading = QLabel()
+        self.production_heading.setWordWrap(True)
+        prod_layout.addWidget(self.production_heading)
         prod_layout.addWidget(QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
                                     "Only validated, reconciled output is published to a new job folder."))
         self.production_summary = QPlainTextEdit()
@@ -263,10 +270,10 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
     def _store(self):
         return self.stores.get(self._config_key())
 
-    def _apply_template(self, value, selected=None):
+    def _apply_template(self, value, selected=None, *, page_id=None):
         template = Template.from_dict(value)
-        old = {e.id: e.font for e in self.template.elements}
-        new = {e.id: e.font for e in template.elements}
+        old = {e.id: e.font for e in self.template.all_elements()}
+        new = {e.id: e.font for e in template.all_elements()}
         for object_id in list(self.font_requests):
             if object_id not in new or object_id not in old or any(
                 getattr(old[object_id], key) != getattr(new[object_id], key)
@@ -274,15 +281,18 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             ):
                 self.font_requests.pop(object_id, None)
         self.template = template
-        self.canvas.set_template(self.template, selected)
+        target = page_id or self.active_page_id
+        self.active_page_id = target if any(p.id == target for p in template.pages) else template.pages[0].id
+        self.canvas.set_template(self.template, selected, page_index=self.page_index)
         selected_ids = selected if isinstance(selected, list) else [selected]
         self._selection(selected_ids[0] if len(selected_ids) == 1 else "")
         self._refresh_data()
         self._refresh_layers()
+        self._refresh_pages()
         self._title()
         self._schedule_preview()
 
-    def _commit(self, before, after, label, selected=None):
+    def _commit(self, before, after, label, selected=None, *, page_id=None):
         if before == after:
             return
         try:
@@ -293,10 +303,10 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             return
         if selected is None:
             selected = self.canvas.selected_ids()
-        self.undo.push(TemplateEdit(self, before, after, label, selected))
+        self.undo.push(TemplateEdit(self, before, after, label, selected, page_id))
 
     def _selection(self, selected):
-        element = next((e for e in self.template.elements if e.id == selected), None)
+        element = next((e for e in self.page.elements if e.id == selected), None)
         self.properties.show_element(element)
         self._inspect_selected_font(element)
         self._sync_layers()
@@ -308,7 +318,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         before = self.template.to_dict()
         after = copy.deepcopy(before)
         selected = self.properties.element.id
-        for element in after["elements"]:
+        for element in self._page_dict(after)["elements"]:
             if element["id"] == selected:
                 element.update(values)
         self._commit(before, after, "Edit object properties", selected)
@@ -343,6 +353,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             self.data_summary.setText("Import the data source to preview and generate this project.")
             self.sample.setRowCount(0)
         self._update_navigation()
+        self._refresh_pages()
         self._busy()
 
     def _busy(self):
@@ -375,7 +386,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             self._error("Import data before previewing records.")
             return
         request = {"task": "preview", "template": self.template.to_dict(),
-                   "record": self.record.value(), "store": info["store"] if info else "",
+                   "record": self.record.value(), "page": self.page_index, "store": info["store"] if info else "",
                    "target": str(self.directory / f"preview-{generation}.pdf")}
         self.preview_worker = self._worker(request,
             lambda result: self._preview_ready(result, generation),
@@ -413,13 +424,13 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             element.value, element.width_mm, element.height_mm = value or "000123456", 100, 20
         elif kind == "qr":
             element.value, element.width_mm, element.height_mm = value or "https://example.com", 40, 40
-        element.width_mm = min(element.width_mm, self.template.width_mm)
-        element.height_mm = min(element.height_mm, self.template.height_mm)
-        element.x_mm = min(max(0, x), self.template.width_mm-element.width_mm)
-        element.y_mm = min(max(0, y), self.template.height_mm-element.height_mm)
+        element.width_mm = min(element.width_mm, self.page.width_mm)
+        element.height_mm = min(element.height_mm, self.page.height_mm)
+        element.x_mm = min(max(0, x), self.page.width_mm-element.width_mm)
+        element.y_mm = min(max(0, y), self.page.height_mm-element.height_mm)
         before = self.template.to_dict()
         after = copy.deepcopy(before)
-        after["elements"].append(asdict(element))
+        self._page_dict(after)["elements"].append(asdict(element))
         self._commit(before, after, "Add " + kind, element.id)
 
     def add_field(self, name, x, y):
@@ -462,7 +473,8 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
 
     def remove_glyph_repair(self, object_id, codepoint):
         before, after = self.template.to_dict(), self.template.to_dict()
-        target = next((e for e in after["elements"] if e["id"] == object_id), None)
+        target = next((e for page in after["pages"] for e in page["elements"]
+                       if e["id"] == object_id), None)
         if target and codepoint in target["glyph_repairs"]:
             target["glyph_repairs"].pop(codepoint)
             self._commit(before, after, "Remove missing-glyph repair", self.canvas.selected_ids())
@@ -472,7 +484,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         selected = self.canvas.selected_ids()
         before, after = self.template.to_dict(), self.template.to_dict()
         changed = 0
-        for element in after["elements"]:
+        for element in self._page_dict(after)["elements"]:
             if element["id"] in selected and element["type"] == "text":
                 element["font"].update(family="Noto Sans CJK HK", file="", italic=False)
                 changed += 1
@@ -490,20 +502,23 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             self.object_command("delete")
             return
         if command == "copy":
-            self.clipboard = [asdict(e) for e in self.template.elements if e.id in selected]
+            self.clipboard = [asdict(e) for e in self.page.elements if e.id in selected]
             self._update_actions()
             return
         before, after = self.template.to_dict(), self.template.to_dict()
         if command == "delete":
-            after["elements"] = [e for e in after["elements"] if e["id"] not in selected]
+            self._page_dict(after)["elements"] = [e for e in self._page_dict(after)["elements"] if e["id"] not in selected]
         elif command in {"paste", "duplicate"}:
             source = (self.clipboard if command == "paste" else
-                      [asdict(e) for e in self.template.elements if e.id in selected])
+                      [asdict(e) for e in self.page.elements if e.id in selected])
             for element in copy.deepcopy(source):
+                if element["width_mm"] > self.page.width_mm or element["height_mm"] > self.page.height_mm:
+                    self._error("The copied object is larger than this page. Resize it on the source page first.")
+                    return
                 element["id"] = uuid.uuid4().hex
-                element["x_mm"] = min(self.template.width_mm-element["width_mm"], element["x_mm"]+3)
-                element["y_mm"] = min(self.template.height_mm-element["height_mm"], element["y_mm"]+3)
-                after["elements"].append(element)
+                element["x_mm"] = min(self.page.width_mm-element["width_mm"], element["x_mm"]+3)
+                element["y_mm"] = min(self.page.height_mm-element["height_mm"], element["y_mm"]+3)
+                self._page_dict(after)["elements"].append(element)
         self._commit(before, after, command.title())
 
     def _discard_check(self):
@@ -527,7 +542,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             self.project_path = None
             self.stores.clear()
             self.undo.clear()
-            self._apply_template(Template().to_dict())
+            self._apply_template(Template().to_dict(), page_id="page_1")
             self.tabs.setCurrentIndex(1)
             self.canvas.fit_page()
             self.undo.setClean()
@@ -552,7 +567,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         self.stores.clear()
         self.project_path = Path(path)
         self.undo.clear()
-        self._apply_template(template.to_dict())
+        self._apply_template(template.to_dict(), page_id=template.pages[0].id)
         self.undo.setClean()
         self.tabs.setCurrentIndex(1)
         self.canvas.fit_page()
@@ -617,16 +632,16 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
             return
         sizes = {"A4": (210, 297), "A5": (148, 210), "Letter": (215.9, 279.4)}
         if size == "Custom":
-            width, ok = QInputDialog.getDouble(self, "Custom page", "Width (mm)", self.template.width_mm, 10, 2000, 2)
+            width, ok = QInputDialog.getDouble(self, "Custom page", "Width (mm)", self.page.width_mm, 10, 2000, 2)
             if not ok:
                 return
-            height, ok = QInputDialog.getDouble(self, "Custom page", "Height (mm)", self.template.height_mm, 10, 2000, 2)
+            height, ok = QInputDialog.getDouble(self, "Custom page", "Height (mm)", self.page.height_mm, 10, 2000, 2)
             if not ok:
                 return
         else:
             width, height = sizes[size]
         before, after = self.template.to_dict(), self.template.to_dict()
-        after.update(width_mm=width, height_mm=height)
+        self._page_dict(after).update(width_mm=width, height_mm=height)
         self._commit(before, after, "Change page size")
         self.canvas.fit_page()
 
@@ -637,19 +652,25 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         page, ok = QInputDialog.getInt(self, "Background page", "Source page (one-based)", 1, 1, 1000000)
         if not ok:
             return
+        page_id, epoch = self.active_page_id, self.font_epoch
         self._worker({"task": "background", "source": path, "page": page-1,
                       "target": str(self.directory / f"background-{uuid.uuid4().hex}.pdf")},
-                     self._background_ready)
+                     lambda result: self._background_ready(result, page_id, epoch))
 
-    def _background_ready(self, result):
+    def _background_ready(self, result, page_id=None, epoch=None):
         before, after = self.template.to_dict(), self.template.to_dict()
-        after.update(background=result["background"], width_mm=result["width_mm"], height_mm=result["height_mm"])
+        if epoch is not None and epoch != self.font_epoch:
+            return
+        if page_id and not any(p["id"] == page_id for p in after["pages"]):
+            return
+        self._page_dict(after, page_id).update(
+            background=result["background"], width_mm=result["width_mm"], height_mm=result["height_mm"])
         self._commit(before, after, "Use PDF background")
         self.canvas.fit_page()
 
     def remove_background(self):
         before, after = self.template.to_dict(), self.template.to_dict()
-        after["background"] = ""
+        self._page_dict(after)["background"] = ""
         self._commit(before, after, "Remove background")
 
     def import_data(self):
@@ -708,6 +729,8 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         job = ProductionJob(self.template.to_dict(), info["store"], output)
         self.tabs.setCurrentIndex(3)
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
+                                             f"Pages per record: {len(self.template.pages)}\n"
+                                             f"Expected pages: {self.record_count * len(self.template.pages):,}\n"
                                              "Composing in an isolated process…")
         self.last_output = ""
         self.open_output_button.setEnabled(False)
@@ -721,6 +744,8 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
                  f"Processed records: {result['processed_records']:,}",
                  f"Successful records: {result['successful_records']:,}",
                  f"Failed records: {result['failed_records']:,}",
+                 f"Pages per record: {result.get('pages_per_record', 1)}",
+                 f"Expected pages: {result.get('expected_pages', result['input_records']):,}",
                  f"Generated pages: {result['generated_pages']:,}",
                  f"Published files: {result['generated_files']}",
                  "PDF: " + result["output_pdf"], "Reports: " + result["report_dir"]]

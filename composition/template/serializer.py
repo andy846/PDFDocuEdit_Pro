@@ -41,8 +41,9 @@ def save_project(template: Template, path: str | Path) -> Path:
                 shutil.copyfile(source, staged)
         return copied.relative_to(target.parent).as_posix()
 
-    value["background"] = store_asset(value["background"])
-    for element in value["elements"]:
+    for page in value["pages"]:
+        page["background"] = store_asset(page["background"])
+    for element in (element for page in value["pages"] for element in page["elements"]):
         element["image"] = store_asset(element["image"])
         # Custom fonts are copied only after font embedding permissions are checked.
         if element["font"]["file"]:
@@ -86,9 +87,10 @@ def load_project(path: str | Path) -> Template:
         path = Path(raw).expanduser()
         return str((path if path.is_absolute() else source.parent / path).resolve())
 
-    template.background = resolve(template.background)
+    for page in template.pages:
+        page.background = resolve(page.background)
     template.data.path = resolve(template.data.path)
-    for element in template.elements:
+    for element in template.all_elements():
         element.image = resolve(element.image)
         element.font.file = resolve(element.font.file)
         for spec in element.glyph_repairs.values():
