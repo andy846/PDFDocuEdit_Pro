@@ -32,6 +32,15 @@ def dispatch(request: dict) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task == "fonts":
+        from composition.engine.system_fonts import font_catalogue
+        return font_catalogue(progress=progress, is_cancelled=cancelled)
+    if task == "font_export":
+        from composition.engine.system_fonts import export_face
+        return export_face(request["face"], request["directory"])
+    if task == "font_info":
+        from composition.engine.system_fonts import inspect_font_file
+        return {"faces": inspect_font_file(request["file"])}
     if task == "suggest":
         from dataclasses import asdict
         return {"config": asdict(suggest_import(request["source"]))}
