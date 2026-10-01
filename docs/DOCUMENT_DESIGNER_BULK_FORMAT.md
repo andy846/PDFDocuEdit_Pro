@@ -49,3 +49,8 @@ chrome.py 工具列字號加入修改追蹤。使用既有 font_info/font_export
 回退至上個里程碑：document-designer-rules-dev-20261001。
 新測試版：dist-bulk-format/PDFDocuEdit Pro/PDFDocuEdit Pro.exe。
 本次公共版本仍為 2.5.15，屬於開發測試交付。
+
+Validation note: the first full run stopped in the existing Qt proxy-style polish callback
+while creating an annotation viewer after the new GUI module. The new test application
+fixture now has session scope, retaining one QApplication across subsequent modules.
+Product/theme code is unchanged; the complete suite is rerun, with no disabled tests.

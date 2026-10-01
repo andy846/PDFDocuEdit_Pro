@@ -19,8 +19,9 @@ from composition.template.model import (
 from tests.composition.test_designer_controls import cleanup, wait
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def app():
+    # Qt permits one application per process; keep it alive across later GUI modules.
     return QApplication.instance() or QApplication([])
 
 
