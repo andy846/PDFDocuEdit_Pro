@@ -107,6 +107,13 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "job_version": 2,
         **result.to_dict(),
         "template_name": template.name,
+        "font_policy": "template_only; imported data fonts ignored; explicit missing-glyph repairs only",
+        "template_fonts": [
+            {"object": e.id, "template_page": i+1, "primary": asdict(e.font),
+             "glyph_repairs": {key: asdict(font) for key, font in e.glyph_repairs.items()}}
+            for i, page in enumerate(template.pages) for e in page.elements
+            if e.type == "text" or e.show_barcode_text
+        ],
         "template_sha256": hashlib.sha256(
             json.dumps(template.to_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest(),
@@ -278,8 +285,9 @@ def generate(
             result.processed_records = 1
             result.warnings.append(
                 "Font validation failed before page composition. No records were composed. "
-                "Select the reported object and configure an explicit repair for the missing code point. "
-                "Keep the required primary font; review any private-use glyph against its source."
+                "Review the reported object's template font; imported data fonts are not used. "
+                "Keep any required primary font and configure an explicit repair when appropriate; "
+                "review any private-use glyph against its source."
             )
         if isinstance(exc, RecordRuleError):
             result.error_record = exc.record_ordinal

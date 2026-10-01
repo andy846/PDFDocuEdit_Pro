@@ -1,0 +1,71 @@
+{
+  "date_local": "2026-10-02",
+  "composition_tests": {
+    "passed": 242,
+    "seconds": 75.43,
+    "xml": "build/qa-font-diagnostics.xml"
+  },
+  "frozen_smoke": {
+    "passed": true,
+    "scale": "2",
+    "checks": [
+      "Welcome entry",
+      "PDF background",
+      "CSV import",
+      "Chinese preview",
+      "exact fonts",
+      "Windows font family/style selection",
+      "Code128 decoding",
+      "QR decoding",
+      "save and reopen",
+      "reconciliation",
+      "background production",
+      "existing editor open",
+      "per-glyph repair preserves primary face",
+      "glyph repair audit",
+      "multi-page template/save/preview",
+      "page reorder and undo",
+      "independent page sizes",
+      "record/page reconciliation",
+      "typed variable drafts",
+      "compact/wide inspector",
+      "field filtering",
+      "rules editor",
+      "conditional visibility",
+      "alternative text/image",
+      "rules save/reopen",
+      "rule reconciliation",
+      "bulk text size",
+      "bulk exact Windows face",
+      "bulk one-command Undo",
+      "bulk glyph repair preservation",
+      "running sequence dialog",
+      "virtual records",
+      "sequence Undo",
+      "per-record/page sequence",
+      "sequence QR/Code128 decoding",
+      "generated project reopen",
+      "XLSX sheet/header/mapping",
+      "Excel dates/leading zeros",
+      "Excel preview/sequence/QR/Code128",
+      "Excel save/reimport",
+      "OLE BIFF8 XLS import/production"
+    ]
+  },
+  "customer_reproduction": {
+    "input_records": 398,
+    "error_record": 2,
+    "field": "Field_2",
+    "template_page": 1,
+    "template_font": "Noto Sans",
+    "pdf_face": "Noto Sans Regular",
+    "supports_U7530": false,
+    "published_files": 0,
+    "template_modified": false,
+    "source_modified": false
+  },
+  "limitations": [
+    "The original customer template still requires an explicit font choice or glyph repair; no automatic substitution.",
+    "The complete editor suite was passed on the prior Excel commit; this diagnostic-only change ran all 242 Composition tests and frozen smoke."
+  ]
+}

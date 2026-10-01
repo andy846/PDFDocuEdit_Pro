@@ -32,7 +32,7 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
     pairs = list(fonts.values()) + [pair for mapping in repair_fonts.values() for pair in mapping.values()]
     original_paths = {str(path) for _font, path in pairs}
     glyphs = {path: set() for path in original_paths if permits_subsetting(Path(path))}
-    selectors = {e.id: GlyphFonts(fonts[e.id], repair_fonts.get(e.id)) for e in elements}
+    selectors = {e.id: GlyphFonts(fonts[e.id], repair_fonts.get(e.id), family=e.font.family) for e in elements}
     with ExitStack() as resources:
         writer = None
         if audit_path:

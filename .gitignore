@@ -75,3 +75,5 @@ build_assets/composition/*
 /dist-sequences/
 
 /dist-excel/
+
+/dist-font-diagnostics/

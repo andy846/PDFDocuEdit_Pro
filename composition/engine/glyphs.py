@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from itertools import groupby
+from pathlib import Path
 
 from composition.template.model import CompositionError
 
@@ -11,8 +12,9 @@ def codepoint(character):
 
 
 class GlyphFonts:
-    def __init__(self, primary, repairs=None):
+    def __init__(self, primary, repairs=None, *, family=""):
         self.primary = primary
+        self.family = family
         self.repairs = repairs or {}
         self.cache = {}
 
@@ -28,7 +30,11 @@ class GlyphFonts:
             if selected is None:
                 raise CompositionError(
                     f"Selected font cannot render {key} ({character}). "
-                    "Configure an explicit missing-glyph repair without changing the primary font."
+                    f"Template font: {self.family or font.name}; PDF face: {font.name}; "
+                    f"font file: {Path(self.primary[1]).name}. "
+                    "Imported data supplies values only; its fonts are not used. "
+                    "Review this object's selected font or configure an explicit missing-glyph repair "
+                    "without changing the primary font."
                 )
             if not selected[0].has_glyph(ord(character), fallback=False):
                 raise CompositionError(f"Configured repair font cannot render {key} ({character}).")

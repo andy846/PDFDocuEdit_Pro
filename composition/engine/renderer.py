@@ -134,7 +134,7 @@ class Renderer:
         for element in elements:
             if element.id not in self.fonts:
                 continue
-            selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id))
+            selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id), family=element.font.family)
             from composition.data.sequences import sequence_record
             index = next(i for i, p in enumerate(self.template.pages) if element in p.elements)
             values = sequence_record(self.template, record, ordinal, index, design=self.design)
@@ -228,7 +228,7 @@ class Renderer:
 
     def _text(self, page, rect, element, text):
         font, font_path = self.fonts[element.id]
-        selector = GlyphFonts((font, font_path), self.repair_fonts.get(element.id))
+        selector = GlyphFonts((font, font_path), self.repair_fonts.get(element.id), family=element.font.family)
         used = [font] + [face for _value, face, _path in selector.runs(text)]
         lines = wrap_text(text, selector, element.font.size_pt, rect.width)
         glyph_height = (font.ascender - font.descender) * element.font.size_pt
