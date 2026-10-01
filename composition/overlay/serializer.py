@@ -59,6 +59,8 @@ def load_project(path):
         from composition.template.model import CompositionError
         raise CompositionError("Overlay project exceeds 10 MB.")
     value = json.loads(source.read_text(encoding="utf-8"))
+    # Validate the declarative structure before traversing asset references.
+    value = EnvelopeSpec.from_dict(value).to_dict()
     for owner, key, _font in _references(value):
         if owner[key]:
             owner[key] = str((source.parent / owner[key]).resolve())

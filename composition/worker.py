@@ -33,6 +33,38 @@ def dispatch(request: dict) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task == "overlay_inspect":
+        from dataclasses import asdict
+
+        from composition.pdf_source.model import EnvelopeSettings
+        from composition.pdf_source.source import inspect_source
+        return asdict(inspect_source(request["source"], EnvelopeSettings(**request["settings"]),
+                                     progress=progress, is_cancelled=cancelled))
+    if task == "overlay_preview":
+        import fitz
+
+        from composition.overlay.model import EnvelopeSpec
+        from composition.overlay.renderer import render_preview as overlay_preview
+        raw, fields = overlay_preview(EnvelopeSpec.from_dict(request["project"]),
+                                      request["envelope"], request["print_page"],
+                                      auto_repair=request.get("auto_repair", True))
+        pdf = Path(request["target"])
+        pdf.write_bytes(raw)
+        image = pdf.with_suffix(".png")
+        with fitz.open(stream=raw, filetype="pdf") as document:
+            document[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).save(image)
+        return {"pdf": str(pdf), "image": str(image), "fields": fields}
+    if task == "overlay_generate":
+        from dataclasses import asdict
+
+        from composition.overlay.generator import generate as overlay_generate
+        from composition.overlay.model import OverlayJob
+        return asdict(overlay_generate(OverlayJob(**request["job"]), progress=progress, is_cancelled=cancelled))
+    if task == "overlay_save":
+        from composition.overlay.model import EnvelopeSpec
+        from composition.overlay.serializer import load_project, save_project
+        target = save_project(EnvelopeSpec.from_dict(request["project"]), request["target"])
+        return {"project": str(target), "spec": load_project(target).to_dict()}
     if task == "fonts":
         from composition.engine.system_fonts import font_catalogue
         return font_catalogue(progress=progress, is_cancelled=cancelled)

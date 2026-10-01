@@ -191,8 +191,12 @@ class OverlayResult:
     started_at: str = field(default_factory=now)
     finished_at: str = ""
     source_pages: int = 0
+    copied_source_pages: int = 0
+    rendered_inserted_blanks: int = 0
     input_envelopes: int = 0
     processed_envelopes: int = 0
+    composed_envelopes: int = 0
+    unverified_envelopes: int = 0
     successful_envelopes: int = 0
     failed_envelopes: int = 0
     expected_pages: int = 0
