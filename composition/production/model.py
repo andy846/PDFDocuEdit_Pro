@@ -43,6 +43,9 @@ class JobResult:
     assembler_peak_memory_bytes: int = 0
     error: str = ""
     error_record: int | None = None
+    repaired_glyphs: int = 0
+    repaired_records: int = 0
+    glyph_repair_report: str = ""
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self):

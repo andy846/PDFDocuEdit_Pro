@@ -116,6 +116,8 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
         "Page Count": result.generated_pages, "Output Files": result.generated_files,
         "Output File": result.output_pdf, "File Size": result.output_size,
+        "Repaired Glyphs": result.repaired_glyphs, "Repaired Records": result.repaired_records,
+        "Glyph Repair Report": result.glyph_repair_report,
         "Status": result.status, "Error Record": result.error_record or "", "Error": result.error,
     }
     with (directory / "control.csv").open("w", encoding="utf-8-sig", newline="") as stream:
@@ -153,13 +155,16 @@ def generate(
             raise CompositionError(f"Missing mapped fields: {', '.join(sorted(missing))}")
         executable = qpdf_executable()
         assets = [template.background] + [
-            value for element in template.elements for value in (element.image, element.font.file) if value
+            value for element in template.elements for value in (element.image, element.font.file,
+                          *(spec.file for spec in element.glyph_repairs.values())) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
         with tempfile.TemporaryDirectory(prefix="font-subsets-", dir=staging) as font_folder, Renderer(template) as renderer:
             if progress:
                 progress(0, 0, "Preparing exact font subsets")
-            renderer.prepare_fonts(store.records(), font_folder, progress, is_cancelled)
+            repair_audit = staging / "glyph-repairs-preflight.csv"
+            renderer.prepare_fonts(store.records(), font_folder, progress, is_cancelled, audit_path=repair_audit)
+            repair_summary = dict(renderer.repair_summary)
             check_cancel(is_cancelled)
             chunk = fitz.open()
             for ordinal, record in store.records():
@@ -203,6 +208,16 @@ def generate(
             result.generated_pages = checked.page_count
         result.generated_files = 1
         reconcile(result)
+        if repair_summary["occurrences"]:
+            repair_audit.rename(staging / "glyph-repairs.csv")
+            result.repaired_glyphs = repair_summary["occurrences"]
+            result.repaired_records = repair_summary["records"]
+            result.glyph_repair_report = str(final / "glyph-repairs.csv")
+            result.warnings.append(
+                f"Explicit glyph repairs: {result.repaired_glyphs} occurrence(s) in {result.repaired_records} record(s). "
+                "Primary fonts retained; review glyph-repairs.csv.")
+        else:
+            repair_audit.unlink(missing_ok=True)
         result.output_size = pdf.stat().st_size
         result.output_pdf = str(final / pdf.name)
         result.report_dir = str(final)
@@ -227,8 +242,8 @@ def generate(
             result.processed_records = 1
             result.warnings.append(
                 "Font validation failed before page composition. No records were composed. "
-                "Select the reported object and choose an exact font containing the character; "
-                "for Chinese, use Noto Sans CJK HK."
+                "Select the reported object and configure an explicit repair for the missing code point. "
+                "Keep the required primary font; review any private-use glyph against its source."
             )
         result.finished_at = now()
         result.output_pdf = ""

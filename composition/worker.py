@@ -10,7 +10,7 @@ from composition.data.source import RecordStore, import_records, suggest_import
 from composition.engine.renderer import import_background, render_preview
 from composition.production.generator import generate
 from composition.production.model import ProductionJob
-from composition.template.model import DataConfig, Template, required_fields
+from composition.template.model import DataConfig, FontSpec, Template, canonical_codepoint, required_fields
 
 EVENTS_FILE = None
 
@@ -35,9 +35,24 @@ def dispatch(request: dict) -> dict:
     if task == "fonts":
         from composition.engine.system_fonts import font_catalogue
         return font_catalogue(progress=progress, is_cancelled=cancelled)
+    def checked_repair(result):
+        if request.get("codepoint"):
+            from composition.engine.fonts import load_font
+            key = canonical_codepoint(request["codepoint"])
+            spec = FontSpec(**result["spec"]) if "spec" in result else FontSpec(
+                family=result["family"], file=result["file"])
+            font, _ = load_font(spec)
+            if not font.has_glyph(int(key[2:], 16), fallback=False):
+                raise ValueError(f"Selected repair face cannot render {key}. Primary font unchanged.")
+        return result
+    if task == "glyph_repair_font":
+        from dataclasses import asdict
+        spec = FontSpec(**request["spec"])
+        return checked_repair({"spec": asdict(spec), "family": spec.family, "file": spec.file,
+                               "style": "Saved exact face", "note": ""})
     if task == "font_export":
         from composition.engine.system_fonts import export_face
-        return export_face(request["face"], request["directory"])
+        return checked_repair(export_face(request["face"], request["directory"]))
     if task == "font_info":
         from composition.engine.system_fonts import inspect_font_file
         return {"faces": inspect_font_file(request["file"])}
@@ -84,13 +99,14 @@ def dispatch(request: dict) -> dict:
             record = RecordStore(request["store"]).record(index)
         else:
             record = {name: "{{" + name + "}}" for name in required_fields(template)}
-        raw = render_preview(template, record, index)
+        repairs = []
+        raw = render_preview(template, record, index, repair_details=repairs)
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")
         with fitz.open(stream=raw, filetype="pdf") as document:
             document[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).save(image)
-        return {"pdf": str(pdf), "image": str(image), "record": index}
+        return {"pdf": str(pdf), "image": str(image), "record": index, "glyph_repairs": repairs}
     if task == "save":
         from composition.template.serializer import load_project, save_project
         target = save_project(Template.from_dict(request["template"]), request["target"])

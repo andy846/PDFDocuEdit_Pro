@@ -21,7 +21,8 @@ from composition.template.model import (
     validate_template,
 )
 
-from .fonts import load_font, permits_subsetting, validate_glyphs
+from .fonts import load_font, permits_subsetting
+from .glyphs import GlyphFonts
 
 
 def rgb(value: str):
@@ -65,6 +66,8 @@ class Renderer:
         self.stack = ExitStack()
         self.background = None
         self.fonts = {}
+        self.repair_fonts = {}
+        self.repair_summary = {"occurrences": 0, "records": 0}
         self.resource_document = None
         self.font_xrefs = {}
         self.output_fonts = {}
@@ -78,6 +81,8 @@ class Renderer:
             for element in template.elements:
                 if element.type == "text" or element.show_barcode_text:
                     self.fonts[element.id] = load_font(element.font)
+                    self.repair_fonts[element.id] = {key: load_font(spec)
+                                                     for key, spec in element.glyph_repairs.items()}
                 if element.type == "image":
                     image_path = Path(element.image)
                     if image_path.stat().st_size > 50 * 1024 * 1024:
@@ -102,14 +107,29 @@ class Renderer:
         self.resource_document = None
         self.font_xrefs.clear()
 
-    def prepare_fonts(self, records, directory, progress=None, is_cancelled=None):
+    def prepare_fonts(self, records, directory, progress=None, is_cancelled=None, audit_path=None):
         from .subsets import prepare_subsets
         self.output_fonts = prepare_subsets(
             self.template, self.tokens, self.fonts, records, directory, progress, is_cancelled,
+            repair_fonts=self.repair_fonts, audit_path=audit_path, summary=self.repair_summary,
         )
 
+    def glyph_usage(self, record):
+        result = []
+        for element in self.template.elements:
+            if element.id not in self.fonts:
+                continue
+            selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id))
+            counts = selector.repaired_counts(resolve_value(self.tokens[element.id], record))
+            for key, count in counts.items():
+                result.append({"object": element.id, "codepoint": key, "occurrences": count,
+                               "primary_font": element.font.family,
+                               "repair_font": element.glyph_repairs[key].family})
+        return result
+
     def finalize(self, document):
-        if all(permits_subsetting(path) for _font, path in self.fonts.values()):
+        paths = list(self.fonts.values()) + [pair for mapping in self.repair_fonts.values() for pair in mapping.values()]
+        if all(permits_subsetting(path) for _font, path in paths):
             document.subset_fonts()
 
     def render(self, document: fitz.Document, record: dict[str, str], ordinal: int = 1) -> None:
@@ -155,8 +175,9 @@ class Renderer:
 
     def _text(self, page, rect, element, text):
         font, font_path = self.fonts[element.id]
-        validate_glyphs(font, text)
-        lines = wrap_text(text, font, element.font.size_pt, rect.width)
+        selector = GlyphFonts((font, font_path), self.repair_fonts.get(element.id))
+        used = [font] + [face for _value, face, _path in selector.runs(text)]
+        lines = wrap_text(text, selector, element.font.size_pt, rect.width)
         glyph_height = (font.ascender - font.descender) * element.font.size_pt
         step = element.font.size_pt * element.line_spacing
         height = glyph_height + max(0, len(lines) - 1) * step
@@ -165,6 +186,27 @@ class Renderer:
         offset = 0 if element.vertical_align == "top" else (
             (rect.height - height) / 2 if element.vertical_align == "center" else rect.height - height
         )
+        baseline = rect.y0 + offset + font.ascender * element.font.size_pt
+        if baseline - max(face.ascender for face in used) * element.font.size_pt < rect.y0 - 0.01:
+            raise CompositionError("Repair font extends above the original baseline box. Choose compatible metrics or adjust the box alignment.")
+        if baseline + max(0, len(lines)-1) * step - min(face.descender for face in used) * element.font.size_pt > rect.y1 + 0.01:
+            raise CompositionError("Repair font extends below the original text box. Adjust the box or choose compatible metrics.")
+        for index, line in enumerate(lines):
+            length = selector.text_length(line, fontsize=element.font.size_pt)
+            x = rect.x0
+            if element.align == "center":
+                x += (rect.width - length) / 2
+            elif element.align == "right":
+                x += rect.width - length
+            for value, face, source in selector.runs(line):
+                fontname = self._embed_font(page, source)
+                page.insert_text(
+                    (x, baseline + index * step), value,
+                    fontname=fontname, fontsize=element.font.size_pt, color=rgb(element.colour),
+                )
+                x += face.text_length(value, fontsize=element.font.size_pt)
+
+    def _embed_font(self, page, font_path):
         # A non-reserved font name embeds the exact selected TTF/OTF.
         font_path = self.output_fonts.get(str(font_path), font_path)
         fontname = "font_" + str(abs(hash(str(font_path))))
@@ -185,19 +227,7 @@ class Renderer:
                 document.xref_set_key(int(fonts.split()[0]), fontname, f"{font_xref} 0 R")
             else:
                 document.xref_set_key(resource_xref, f"Font/{fontname}", f"{font_xref} 0 R")
-        baseline = rect.y0 + offset + font.ascender * element.font.size_pt
-        for index, line in enumerate(lines):
-            length = font.text_length(line, fontsize=element.font.size_pt)
-            x = rect.x0
-            if element.align == "center":
-                x += (rect.width - length) / 2
-            elif element.align == "right":
-                x += rect.width - length
-            if line:
-                page.insert_text(
-                    (x, baseline + index * step), line,
-                    fontname=fontname, fontsize=element.font.size_pt, color=rgb(element.colour),
-                )
+        return fontname
 
     def _barcode(self, page, rect, element, value):
         if not value:
@@ -272,9 +302,12 @@ class Renderer:
             self._text(page, label, element, value)
 
 
-def render_preview(template: Template, record: dict[str, str], ordinal: int = 1) -> bytes:
+def render_preview(template: Template, record: dict[str, str], ordinal: int = 1,
+                   repair_details: list | None = None) -> bytes:
     with Renderer(template) as renderer, fitz.open() as document:
         renderer.render(document, record, ordinal)
+        if repair_details is not None:
+            repair_details.extend(renderer.glyph_usage(record))
         renderer.finalize(document)
         return document.tobytes(deflate=True, garbage=1)
 

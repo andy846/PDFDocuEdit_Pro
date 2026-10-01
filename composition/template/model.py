@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 1
+TEMPLATE_VERSION = 2
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "qr"})
 VARIABLE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
@@ -49,6 +49,8 @@ class Element:
     # Quiet zones are included in the element bounding box.
     barcode_module_mm: float = 0.25
     show_barcode_text: bool = False
+    # Explicit repairs apply only when the primary face lacks that exact code point.
+    glyph_repairs: dict[str, FontSpec] = field(default_factory=dict)
 
 
 @dataclass
@@ -78,17 +80,20 @@ class Template:
     def from_dict(cls, value: dict[str, Any]) -> Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
-        if type(value.get("template_version")) is not int or value["template_version"] != TEMPLATE_VERSION:
+        if type(value.get("template_version")) is not int or value["template_version"] not in (1, TEMPLATE_VERSION):
             raise CompositionError(
                 f"Unsupported template version: {value.get('template_version')!r}. "
                 f"This build reads version {TEMPLATE_VERSION}."
             )
         try:
             raw = dict(value)
+            raw["template_version"] = TEMPLATE_VERSION
             if len(raw.get("elements", [])) > 5000:
                 raise CompositionError("A template can contain at most 5,000 elements.")
             raw["elements"] = [
-                Element(**{**element, "font": FontSpec(**element.get("font", {}))})
+                Element(**{**element, "font": FontSpec(**element.get("font", {})),
+                           "glyph_repairs": {key: FontSpec(**spec) for key, spec
+                                             in element.get("glyph_repairs", {}).items()}})
                 for element in raw.get("elements", [])
             ]
             raw["data"] = DataConfig(**raw.get("data", {}))
@@ -97,6 +102,17 @@ class Template:
             raise CompositionError(f"Invalid template schema: {exc}") from exc
         validate_template(template, check_assets=False)
         return template
+
+
+def canonical_codepoint(value: str) -> str:
+    if len(value) == 1:
+        value = f"U+{ord(value):04X}"
+    if not re.fullmatch(r"U\+[0-9A-Fa-f]{4,6}", value):
+        raise CompositionError("Enter one character or a code point such as U+E473.")
+    code = int(value[2:], 16)
+    if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF or code < 32 or 0x7F <= code <= 0x9F:
+        raise CompositionError("Choose a printable Unicode scalar value.")
+    return f"U+{code:04X}"
 
 
 def _number(value: object, label: str, low: float, high: float) -> None:
@@ -195,6 +211,20 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             raise CompositionError("Invalid font specification.")
         if type(element.font.bold) is not bool or type(element.font.italic) is not bool:
             raise CompositionError("Font styles must be boolean values.")
+        if not isinstance(element.glyph_repairs, dict) or len(element.glyph_repairs) > 1000:
+            raise CompositionError("Invalid missing-glyph repair map.")
+        for key, spec in element.glyph_repairs.items():
+            if not isinstance(key, str) or not re.fullmatch(r"U\+[0-9A-F]{4,6}", key):
+                raise CompositionError("Glyph repair keys must use U+XXXX.")
+            if canonical_codepoint(key) != key:
+                raise CompositionError("Invalid glyph repair code point.")
+            if element.type != "text" and not (element.type == "code128" and element.show_barcode_text):
+                raise CompositionError("Glyph repairs require a text object.")
+            if not isinstance(spec, FontSpec) or not isinstance(spec.family, str) or not isinstance(spec.file, str):
+                raise CompositionError("Invalid glyph repair font.")
+            if type(spec.bold) is not bool or type(spec.italic) is not bool:
+                raise CompositionError("Invalid glyph repair font style.")
+            _number(spec.size_pt, "Repair font size", 1, 500)
         if not isinstance(element.qr_error, str) or element.qr_error not in {"L", "M", "Q", "H"}:
             raise CompositionError("Invalid QR error correction level.")
         if not isinstance(element.image, str) or type(element.show_barcode_text) is not bool:

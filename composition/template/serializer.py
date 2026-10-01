@@ -52,6 +52,12 @@ def save_project(template: Template, path: str | Path) -> Path:
 
             load_font(FontSpec(**element["font"]))
             element["font"]["file"] = store_asset(element["font"]["file"])
+        for spec in element["glyph_repairs"].values():
+            from composition.engine.fonts import load_font
+
+            from .model import FontSpec
+            load_font(FontSpec(**spec))
+            spec["file"] = store_asset(spec["file"])
     if value["data"]["path"]:
         source = Path(value["data"]["path"]).resolve()
         try:
@@ -85,4 +91,6 @@ def load_project(path: str | Path) -> Template:
     for element in template.elements:
         element.image = resolve(element.image)
         element.font.file = resolve(element.font.file)
+        for spec in element.glyph_repairs.values():
+            spec.file = resolve(spec.file)
     return template
