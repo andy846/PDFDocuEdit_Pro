@@ -43,6 +43,7 @@ from composition.template.serializer import load_project
 from .bulk_typography import BulkTypography
 from .canvas import Canvas, FieldList
 from .chrome import DesignerChrome
+from .compact_chrome import CompactMessage
 from .data_dialog import DataDialog
 from .font_controls import FontOperations
 from .pages import PageOperations
@@ -123,12 +124,10 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._build_actions()
         outer = QWidget()
         layout = QVBoxLayout(outer)
-        heading = QLabel("Document Designer")
-        heading.setStyleSheet("font-size: 18px; font-weight: 600;")
-        layout.addWidget(heading)
-        self.description = QLabel("Design reusable documents with static content, variable data and production PDF output.")
-        self.description.setWordWrap(True)
-        layout.addWidget(self.description)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+        self.description = QLabel("Design reusable documents with static content, variable data and production PDF output.", outer)
+        self.description.hide()
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         for name in ("Data", "Design", "Preview", "Production"):
@@ -200,7 +199,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         self.preview_state = QLabel("Design layout")
         self.preview_state.setWordWrap(True)
-        preview_row = QHBoxLayout()
+        preview_row = self.document_control_row
         preview_row.addWidget(self.preview_state, 1)
         self.preview_review = QPushButton("Review object")
         self.preview_review.hide()
@@ -210,12 +209,11 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.preview_retry.setToolTip("Render the current template page again")
         self.preview_retry.clicked.connect(self._schedule_preview)
         preview_row.addWidget(self.preview_retry)
-        canvas_layout.addLayout(preview_row)
         canvas_layout.addWidget(self.canvas, 1)
         self.splitter.addWidget(self.canvas_panel)
         self.splitter.addWidget(self.properties_scroll)
         self.splitter.setSizes([220, 700, 280])
-        design_layout.addWidget(self.splitter)
+        design_layout.addWidget(self.splitter, 1)
         self.stack.addWidget(self.design_page)
         self.data_page = QWidget()
         data_layout = QVBoxLayout(self.data_page)
@@ -264,12 +262,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.last_output = ""
         self.stack.addWidget(self.production_page)
         layout.addWidget(self.stack, 1)
-        self.message = QLabel("")
-        self.message.setTextFormat(Qt.TextFormat.PlainText)
-        self.message.setWordWrap(True)
-        self.message.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.message)
-        bottom = QHBoxLayout()
+        self.message = CompactMessage(self)
+        self.record_navigation = QWidget()
+        bottom = QHBoxLayout(self.record_navigation)
         self.first = QPushButton("|◀")
         self.first.setAccessibleName("First record")
         self.first.clicked.connect(lambda: self.record.setValue(1))
@@ -289,22 +284,17 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.record_label = QLabel("Record / 0")
         for widget in (self.first, self.previous, self.record, self.next, self.last, self.record_label):
             bottom.addWidget(widget)
-        bottom.addStretch()
-        self.generate_button = QPushButton("Generate Production PDF")
+        self.document_control_row.insertWidget(6, self.record_navigation)
+        self.generate_button = QPushButton("Generate PDF")
+        self.generate_button.setAccessibleName("Generate Production PDF")
         self.generate_button.setProperty("primary", True)
         self.generate_button.clicked.connect(self.generate_pdf)
-        bottom.addWidget(self.generate_button)
-        layout.addLayout(bottom)
-        progress_row = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.hide()
         self.cancel_button = QPushButton("Cancel job")
         self.cancel_button.hide()
         self.cancel_button.clicked.connect(self.cancel_job)
-        progress_row.addWidget(self.progress)
-        progress_row.addWidget(self.cancel_button)
-        layout.addLayout(progress_row)
         self.setCentralWidget(outer)
         self._finish_designer_ui()
 
@@ -480,6 +470,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
     def _mode_changed(self, index):
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
         self.canvas.set_preview_mode(index == 2)
+        self.record_navigation.setVisible(index == 2)
         self._show_properties(self.actions["properties"].isChecked())
         self._update_actions()
         self._schedule_preview()

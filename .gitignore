@@ -79,3 +79,5 @@ build_assets/composition/*
 /dist-font-diagnostics/
 
 /dist-auto-font/
+
+/dist-compact-designer/

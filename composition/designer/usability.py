@@ -39,7 +39,7 @@ class DesignerUsability:
                 self.splitter.addWidget(self.properties_scroll)
                 self.left_panel.setMinimumWidth(150)
                 self.splitter.setSizes([200, max(260, self.width()-500), 280])
-        self.description.setVisible(not compact)
+        self.description.hide()
         self._show_properties(self.actions["properties"].isChecked())
         self._update_actions()
 

@@ -1,0 +1,171 @@
+{
+  "date_local": "2026-10-02",
+  "rollback_commit": "0bf1304",
+  "rollback_tag": "document-designer-auto-font-dev-20261002",
+  "checkpoint_tag": "document-designer-compact-layout-dev-20261002",
+  "public_version_changed": false,
+  "new_dependencies": [],
+  "schema_migration": null,
+  "composition_tests": {
+    "passed": 255,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 93.786,
+    "scale": "2",
+    "xml": "build/qa-compact-layout.xml"
+  },
+  "layout": {
+    "platform": "Windows x64/offscreen Qt",
+    "scale": "2",
+    "font": "Noto Sans 9 pt; bundled Noto fonts registered",
+    "baseline_commit": "0bf1304",
+    "before": [
+      {
+        "theme": "dark",
+        "width": 960,
+        "height": 640,
+        "toolbars": [
+          47,
+          47
+        ],
+        "canvas_height": 258,
+        "canvas_width": 632,
+        "work_area_height": 344,
+        "status_height": 22
+      },
+      {
+        "theme": "light",
+        "width": 960,
+        "height": 640,
+        "toolbars": [
+          47,
+          47
+        ],
+        "canvas_height": 258,
+        "canvas_width": 632,
+        "work_area_height": 344,
+        "status_height": 22
+      }
+    ],
+    "after": [
+      {
+        "theme": "dark",
+        "width": 960,
+        "height": 640,
+        "toolbars": [
+          37
+        ],
+        "canvas_height": 486,
+        "canvas_width": 636,
+        "work_area_height": 518,
+        "status_height": 22
+      },
+      {
+        "theme": "light",
+        "width": 960,
+        "height": 640,
+        "toolbars": [
+          37
+        ],
+        "canvas_height": 486,
+        "canvas_width": 636,
+        "work_area_height": 518,
+        "status_height": 22
+      }
+    ],
+    "canvas_height_gain_pixels": 228,
+    "canvas_height_gain_percent": 88.4,
+    "limitations": "Fixed-size viewport measurement; not a speed benchmark or physical-monitor acceptance."
+  },
+  "frozen_smoke": {
+    "passed": true,
+    "frozen": true,
+    "scale": "2",
+    "records": 100,
+    "pages": 200,
+    "pdf": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\build\\qa-compact-frozen-200\\production\\20261001-182750-a54adc04\\production.pdf",
+    "event_loop_ticks": 465,
+    "layout": [
+      {
+        "theme": "dark",
+        "size": [
+          960,
+          640
+        ],
+        "canvas_height": 486,
+        "toolbar_height": 37,
+        "status_height": 22
+      },
+      {
+        "theme": "light",
+        "size": [
+          960,
+          640
+        ],
+        "canvas_height": 486,
+        "toolbar_height": 37,
+        "status_height": 22
+      }
+    ],
+    "checks": [
+      "compact toolbar/canvas",
+      "narrow preview navigation",
+      "single-line full status message",
+      "Welcome entry",
+      "PDF background",
+      "CSV import",
+      "Chinese preview",
+      "exact fonts",
+      "Windows font family/style selection",
+      "Code128 decoding",
+      "QR decoding",
+      "save and reopen",
+      "reconciliation",
+      "background production",
+      "existing editor open",
+      "per-glyph repair preserves primary face",
+      "glyph repair audit",
+      "multi-page template/save/preview",
+      "page reorder and undo",
+      "independent page sizes",
+      "record/page reconciliation",
+      "typed variable drafts",
+      "compact/wide inspector",
+      "field filtering",
+      "rules editor",
+      "conditional visibility",
+      "alternative text/image",
+      "rules save/reopen",
+      "rule reconciliation",
+      "bulk text size",
+      "bulk exact Windows face",
+      "bulk one-command Undo",
+      "bulk glyph repair preservation",
+      "running sequence dialog",
+      "virtual records",
+      "sequence Undo",
+      "per-record/page sequence",
+      "sequence QR/Code128 decoding",
+      "generated project reopen",
+      "XLSX sheet/header/mapping",
+      "Excel dates/leading zeros",
+      "Excel preview/sequence/QR/Code128",
+      "Excel save/reimport",
+      "OLE BIFF8 XLS import/production",
+      "automatic glyph fallback preview/production",
+      "private-use fallback/report",
+      "substitution record/page report",
+      "primary font retained"
+    ]
+  },
+  "exe": "dist-compact-designer/PDFDocuEdit Pro/PDFDocuEdit Pro.exe",
+  "full_regression": {
+    "passed": 1088,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 873.399,
+    "xml": "build/qa-compact-all-tests.xml"
+  },
+  "ruff": "ruff check .: All checks passed"
+}

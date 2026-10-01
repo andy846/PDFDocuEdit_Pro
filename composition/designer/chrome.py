@@ -30,11 +30,8 @@ class DesignerChrome:
         self.project_toolbar.setMovable(False)
         self.project_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(self.project_toolbar)
-        self.insert_toolbar = QToolBar("Insert & view", self)
-        self.insert_toolbar.setMovable(False)
-        self.insert_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.addToolBarBreak()
-        self.addToolBar(self.insert_toolbar)
+        # One toolbar; menu actions remain the authoritative command entry points.
+        self.insert_toolbar = self.project_toolbar
 
         def action(key, text, slot, menu, shortcut=None, symbol=None, toolbar=None):
             value = QAction(icon(symbol or "file-text"), text, self)
@@ -137,7 +134,7 @@ class DesignerChrome:
         action("sequences", "Running sequences…", self.edit_sequences, "&Data", symbol="table")
         action("preview", "Preview records", lambda: self.tabs.setCurrentIndex(2), "&Data", "F5", "search")
         action("generate", "Generate PDF…", self.generate_pdf, "&Production", "Ctrl+Shift+G",
-               "printer", self.project_toolbar)
+               "printer")
         action("cancel", "Cancel job", self.cancel_job, "&Production", symbol="x")
         action("help", "Designer shortcuts", self.show_shortcuts, "&Help", "F1", "keyboard")
         self._refresh_recent()
@@ -161,7 +158,7 @@ class DesignerChrome:
         self.zoom_combo.setEditable(True)
         self.zoom_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.zoom_combo.addItems(["Fit page", "25%", "50%", "75%", "100%", "125%", "150%", "200%", "300%"])
-        self.zoom_combo.setMaximumWidth(105)
+        self.zoom_combo.setMaximumWidth(90)
         self.zoom_combo.setAccessibleName("Canvas zoom")
         self.zoom_combo.activated.connect(self._zoom_selected)
         self.zoom_combo.lineEdit().editingFinished.connect(self._zoom_selected)
@@ -169,7 +166,7 @@ class DesignerChrome:
         self.font_size_tool.setRange(1, 500)
         self.font_size_tool.setDecimals(1)
         self.font_size_tool.setSuffix(" pt")
-        self.font_size_tool.setMaximumWidth(100)
+        self.font_size_tool.setMaximumWidth(80)
         self.font_size_tool.setToolTip("Font size for selected text objects; other formatting is retained")
         self.font_size_tool.setAccessibleName("Selected text font size")
         self.toolbar_size_dirty = False
@@ -180,9 +177,12 @@ class DesignerChrome:
         self.insert_toolbar.addWidget(self.font_size_tool)
         self.insert_toolbar.addWidget(self.zoom_combo)
         self.insert_toolbar.addAction(self.actions["fit_page"])
+        self.project_toolbar.addSeparator()
+        self.project_toolbar.addWidget(self.generate_button)
         self.canvas.zoomChanged.connect(self._zoom_changed)
         self.canvas.pointerMoved.connect(
-            lambda x, y: self.statusBar().showMessage(f"X {x:.2f} mm · Y {y:.2f} mm", 2000))
+            lambda x, y: self.statusBar().showMessage(f"X {x:.2f} mm · Y {y:.2f} mm", 2000)
+            if not self.message.text() else None)
         self.selection_status = QLabel("No selection")
         self.statusBar().addPermanentWidget(self.selection_status)
         self.page_status = QLabel("A4 · 210 × 297 mm")
@@ -204,6 +204,8 @@ class DesignerChrome:
         self.failed_record = None
         self.failed_object = ""
         self.failed_codepoint = ""
+        from .compact_chrome import configure_compact_chrome
+        configure_compact_chrome(self)
         geometry = self.preferences.value("geometry")
         splitter = self.preferences.value("splitter")
         if geometry:
@@ -256,7 +258,8 @@ class DesignerChrome:
                 allowed = allowed and bool(element.rules.visible_when or element.rules.alternative)
             self.actions[key].setEnabled(allowed)
         self._restrict_editing()
-        self.page_status.setText(f"Page {self.page_index+1}/{len(self.template.pages)} · {self.page.width_mm:.2f} × {self.page.height_mm:.2f} mm")
+        self.page_status.setText(f"Page {self.page_index+1}/{len(self.template.pages)}")
+        self.page_status.setToolTip(f"{self.page.width_mm:.2f} × {self.page.height_mm:.2f} mm")
 
     def _refresh_layers(self):
         self._layers_updating = True
@@ -433,6 +436,10 @@ class DesignerChrome:
                     value.setIcon(icon(symbol))
             if hasattr(self, "barcode_button"):
                 self.barcode_button.setIcon(icon("scan"))
+            if hasattr(self, "page_menu"):
+                self.page_menu.setIcon(icon("settings"))
+            if hasattr(self, "preview_retry"):
+                self.preview_retry.setIcon(icon("rotate-cw"))
 
     def _canvas_context_menu(self, position):
         menu = QMenu(self.canvas)

@@ -62,6 +62,8 @@ def run(output: Path):
     editor._welcome_tool("composition")
     window = editor._composition_window
     check(window is not None, "Composition workspace did not launch")
+    from scripts.composition_layout_qa import verify_layout
+    layout_metrics = verify_layout(window, output)
     background = output/"company.pdf"
     with fitz.open() as doc:
         page = doc.new_page()
@@ -448,8 +450,8 @@ def run(output: Path):
     wait(lambda: not excel_window.workers)
     summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
-               "pdf":window.last_output, "event_loop_ticks":len(ticks),
-               "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
+               "pdf":window.last_output, "event_loop_ticks":len(ticks), "layout":layout_metrics,
+               "checks":["compact toolbar/canvas", "narrow preview navigation", "single-line full status message", "Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
                          "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation", "running sequence dialog", "virtual records", "sequence Undo", "per-record/page sequence", "sequence QR/Code128 decoding", "generated project reopen", "XLSX sheet/header/mapping", "Excel dates/leading zeros", "Excel preview/sequence/QR/Code128", "Excel save/reimport", "OLE BIFF8 XLS import/production", "automatic glyph fallback preview/production", "private-use fallback/report", "substitution record/page report", "primary font retained"]}
     window.undo.setClean()

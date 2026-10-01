@@ -4,7 +4,16 @@ from __future__ import annotations
 import copy
 import uuid
 
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton, QToolButton
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QToolButton,
+    QWidget,
+)
 
 from composition.template.model import MAX_TEMPLATE_PAGES, PageSpec
 
@@ -24,12 +33,14 @@ class PageOperations:
         return next((page for page in value["pages"] if page["id"] == target), value["pages"][0])
 
     def _build_page_navigation(self, layout):
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Template page"))
+        self.document_controls = QWidget()
+        row = self.document_control_row = QHBoxLayout(self.document_controls)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Page"))
         self.page_buttons = {}
         def button(key, text):
             value = QPushButton(text)
-            value.setMaximumWidth(40)
+            value.setMaximumWidth(26)
             value.setToolTip(self.actions[key].text())
             value.setAccessibleName(self.actions[key].text())
             value.clicked.connect(self.actions[key].trigger)
@@ -41,11 +52,14 @@ class PageOperations:
         self.page_combo.setMinimumWidth(100)
         self.page_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.page_combo.currentIndexChanged.connect(self.select_template_page)
-        row.addWidget(self.page_combo, 1)
+        self.page_combo.setMaximumWidth(180)
+        row.addWidget(self.page_combo)
         button("page_next", "▶")
         button("page_add", "+")
         self.page_menu = QToolButton()
-        self.page_menu.setText("Page actions")
+        from ui.icons import icon
+        self.page_menu.setIcon(icon("settings"))
+        self.page_menu.setToolTip("Template page actions")
         self.page_menu.setAccessibleName("Template page actions")
         menu = QMenu(self.page_menu)
         for key in ("page_add", "page_duplicate", "page_delete", "page_rename", "page_size"):
@@ -56,7 +70,7 @@ class PageOperations:
         self.page_menu.setMenu(menu)
         self.page_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         row.addWidget(self.page_menu)
-        layout.addLayout(row)
+        layout.addWidget(self.document_controls)
 
     def _refresh_pages(self):
         self.page_combo.blockSignals(True)
