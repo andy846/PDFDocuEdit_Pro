@@ -39,7 +39,7 @@ chrome.py 工具列字號加入修改追蹤。使用既有 font_info/font_export
 
 ## 驗收及交付
 
-21 個新增自動測試涵蓋 Mixed 字款／字號、只改指定屬性、工具列、
+23 個新增自動測試涵蓋 Mixed 字款／字號、只改指定屬性、工具列、
 明確重輸相同字號、焦點移動、只修改合資格文字、一次 Undo、
 一次 Windows Arial Bold 準備、保留補字／規則、非同步失敗／取消／舊回調。
 原生及 Windows 打包驗收仍測試 100 筆／200 頁、Barcode／QR 解碼、
@@ -54,3 +54,9 @@ Validation note: the first full run stopped in the existing Qt proxy-style polis
 while creating an annotation viewer after the new GUI module. The new test application
 fixture now has session scope, retaining one QApplication across subsequent modules.
 Product/theme code is unchanged; the complete suite is rerun, with no disabled tests.
+
+Full Windows regression: 1010 passed, zero failures/errors/skips (848.93 s) on 5196c18.
+A subsequent toolbar-only draft protection change retains typed point sizes during
+background preview and discards the draft when selection/model sizes change.
+All 179 Composition tests then passed (43.96 s), including 23 new bulk-format cases.
+The headless engine and other editor modules were unchanged by that final toolbar fix.

@@ -273,3 +273,20 @@ def test_late_error_after_cancel_does_not_replace_current_message(window):
     window.message.setText("Current project")
     failed("Stale missing font error")
     assert not window.font_requests and window.message.text() == "Current project"
+
+def test_toolbar_draft_survives_real_background_preview_refresh(window):
+    window.font_size_tool.setValue(12)
+    window._schedule_preview()
+    wait(lambda: window.canvas.preview_item is not None)
+    assert window.font_size_tool.value() == 12 and window.toolbar_size_dirty
+    window.font_size_tool.editingFinished.emit()
+    assert [e.font.size_pt for e in window.page.elements[:2]] == [12, 12]
+
+
+def test_toolbar_draft_does_not_apply_to_a_later_selection(window):
+    before = snapshots(window)
+    window.font_size_tool.setValue(12)
+    window.canvas.select_ids([window.page.elements[2].id])
+    assert not window.toolbar_size_dirty and window.font_size_tool.value() == 10
+    window.font_size_tool.editingFinished.emit()
+    assert snapshots(window) == before

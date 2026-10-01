@@ -172,6 +172,7 @@ class DesignerChrome:
         self.font_size_tool.setToolTip("Font size for selected text objects; other formatting is retained")
         self.font_size_tool.setAccessibleName("Selected text font size")
         self.toolbar_size_dirty = False
+        self.toolbar_size_context = None
         self.font_size_tool.valueChanged.connect(lambda: setattr(self, "toolbar_size_dirty", True))
         self.font_size_tool.lineEdit().textEdited.connect(lambda: setattr(self, "toolbar_size_dirty", True))
         self.font_size_tool.editingFinished.connect(self._toolbar_font_size)
@@ -216,11 +217,16 @@ class DesignerChrome:
         element = self.properties.element
         text_selected = bool(element and (element.type == "text" or element.show_barcode_text))
         self.font_size_tool.setEnabled(text_selected)
-        if text_selected:
+        context = (self.active_page_id, tuple(sorted(selected)),
+                   tuple((e.id, e.font.size_pt) for e in self._selected_text()))
+        if text_selected and (not self.toolbar_size_dirty or context != self.toolbar_size_context):
             self.font_size_tool.blockSignals(True)
             self.font_size_tool.setValue(element.font.size_pt)
             self.font_size_tool.blockSignals(False)
             self.toolbar_size_dirty = False
+        elif not text_selected:
+            self.toolbar_size_dirty = False
+        self.toolbar_size_context = context
         busy = bool(self.import_worker or self.production_worker)
         for key in ("cut", "copy", "duplicate", "delete", "cjk", "repair_glyph"):
             self.actions[key].setEnabled(bool(selected) and not busy and not self.canvas.mode_preview)
