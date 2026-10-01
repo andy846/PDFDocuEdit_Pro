@@ -48,6 +48,7 @@ from .pages import PageOperations
 from .process import Worker
 from .properties import Properties
 from .rule_controls import RuleOperations
+from .sequence_controls import SequenceOperations
 from .usability import DesignerUsability
 
 
@@ -77,7 +78,7 @@ class TemplateEdit(QUndoCommand):
         return True
 
 
-class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -146,6 +147,9 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
         self.import_button = QPushButton("Import CSV / TXT…")
         self.import_button.clicked.connect(self.import_data)
         data_layout.addWidget(self.import_button)
+        self.sequence_button = QPushButton("Running sequences…")
+        self.sequence_button.clicked.connect(self.edit_sequences)
+        data_layout.addWidget(self.sequence_button)
         self.source_label = QLabel("No data source")
         self.source_label.setTextFormat(Qt.TextFormat.PlainText)
         self.source_label.setWordWrap(True)
@@ -221,6 +225,9 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
         import_large = self.remap_button = QPushButton("Import / remap data…")
         import_large.clicked.connect(self.import_data)
         data_layout.addWidget(import_large)
+        sequences_large = QPushButton("Running sequences / generated quantity…")
+        sequences_large.clicked.connect(self.edit_sequences)
+        data_layout.addWidget(sequences_large)
         self.sample = QTableWidget()
         self.sample.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         data_layout.addWidget(self.sample)
@@ -320,7 +327,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
         return json.dumps(asdict(self.template.data), sort_keys=True)
 
     def _store(self):
-        return self.stores.get(self._config_key())
+        return self._sequence_info(self.stores.get(self._config_key()))
 
     def _apply_template(self, value, selected=None, *, page_id=None, content_only=False):
         template = Template.from_dict(value)
@@ -393,7 +400,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
 
     def _refresh_data(self):
         info = self._store()
-        key = (self._config_key(), id(info))
+        key = (self._config_key(), id(info), repr(self.template.sequences))
         if key == self._data_ui_key:
             self._update_navigation()
             self._refresh_pages()
@@ -413,9 +420,19 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
             self.fields.addItems(meta["fields"])
             for index, original in enumerate(meta["original_fields"]):
                 self.fields.item(index).setToolTip(f"Original: {original}")
-            self.source_label.setText(Path(self.template.data.path).name + f"\n{self.record_count:,} records")
-            self.data_summary.setText(f"{self.template.data.path}\n{self.record_count:,} records · "
-                                      "Imported snapshot; re-import to apply source changes.")
+            label = "Generated records" if self.template.record_mode == "generated" else Path(self.template.data.path).name
+            self.source_label.setText(label + f"\n{self.record_count:,} records")
+            sequence_names = {seq.name for seq in self.template.sequences}
+            for index in range(self.fields.count()):
+                item = self.fields.item(index)
+                if item.text() in sequence_names:
+                    item.setToolTip("Running sequence · preview and production use the same values")
+            self.data_summary.setText(
+                f"Generated records · {self.record_count:,} records · no data file required.\n"
+                "Sequence samples show template page 1; use Preview to inspect other pages."
+                if self.template.record_mode == "generated" else
+                f"{self.template.data.path}\n{self.record_count:,} records · Imported snapshot.\n"
+                "Sequence samples show template page 1; re-import to apply source changes.")
             self.sample.setColumnCount(len(meta["fields"]))
             self.sample.setHorizontalHeaderLabels(meta["fields"])
             self.sample.setRowCount(len(info["sample"]))
@@ -423,6 +440,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
                 for column, name in enumerate(meta["fields"]):
                     self.sample.setItem(row, column, QTableWidgetItem(record[name]))
         else:
+            self.fields.addItems([seq.name for seq in self.template.sequences])
             self.source_label.setText("Import data" if not self.template.data.path else
                                       "Data source needs importing:\n" + self.template.data.path)
             self.data_summary.setText("Import the data source to preview and generate this project.")
@@ -434,6 +452,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
 
     def _busy(self):
         busy = bool(self.import_worker or self.production_worker)
+        self.sequence_button.setEnabled(not busy and not self.font_requests and not self.content_invalid)
         self.generate_button.setEnabled(bool(self._store()) and not busy and not self.font_requests)
         self._update_actions()
         self.progress.setVisible(busy)
@@ -461,11 +480,12 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
         generation = self.preview_generation
         info = self._store() if self.tabs.currentIndex() == 2 else None
         if self.tabs.currentIndex() == 2 and not info:
-            self.preview_state.setText("Import data to preview actual records.")
-            self._error("Import data before previewing records.")
+            self.preview_state.setText("Import data or configure generated quantity in Running sequences.")
+            self._error("Import data or choose generated records before previewing.")
             return
         request = {"task": "preview", "template": self.template.to_dict(),
                    "record": self.record.value(), "page": self.page_index, "store": info["store"] if info else "",
+                   "design": self.tabs.currentIndex() != 2,
                    "target": str(self.directory / f"preview-{generation}.pdf")}
         self.preview_worker = self._worker(request,
             lambda result: self._preview_ready(result, generation),
@@ -675,7 +695,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
         self.tabs.setCurrentIndex(1)
         self.canvas.fit_page()
         self._remember_project(self.project_path)
-        if template.data.path:
+        if template.record_mode == "imported" and template.data.path:
             if Path(template.data.path).is_file():
                 self._start_import(template.data)
             elif QMessageBox.question(self, "Data source not found", "Data source not found. Locate File?",
@@ -808,6 +828,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
         self.stores[json.dumps(asdict(config), sort_keys=True)] = result
         before, after = self.template.to_dict(), self.template.to_dict()
         after["data"] = asdict(config)
+        after["record_mode"] = "imported"
         self._commit(before, after, "Import data")
         self._refresh_data()
         self._schedule_preview()
@@ -824,7 +845,7 @@ class CompositionWindow(BulkTypography, DesignerUsability, RuleOperations, PageO
             self._error("Finish or revert the unfinished edit before generation.")
             return
         if not self._store() or self.production_worker or self.import_worker:
-            self._error("Import data before production.")
+            self._error("Import data or choose generated records in Running sequences before production.")
             return
         output = QFileDialog.getExistingDirectory(self, "Production output folder")
         if output:

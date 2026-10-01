@@ -134,6 +134,7 @@ class DesignerChrome:
             value.setChecked(key in {"data_panel", "properties"})
         self.project_toolbar.addSeparator()
         action("import", "Import data…", self.import_data, "&Data", "Ctrl+I", "table", self.project_toolbar)
+        action("sequences", "Running sequences…", self.edit_sequences, "&Data", symbol="table")
         action("preview", "Preview records", lambda: self.tabs.setCurrentIndex(2), "&Data", "F5", "search")
         action("generate", "Generate PDF…", self.generate_pdf, "&Production", "Ctrl+Shift+G",
                "printer", self.project_toolbar)
@@ -240,6 +241,7 @@ class DesignerChrome:
                 value.setEnabled(bool(selected) and not busy)
             elif key.startswith("insert_") or key == "variable":
                 value.setEnabled(not busy)
+        self.actions["sequences"].setEnabled(not busy and not self.font_requests and not self.content_invalid)
         self.actions["generate"].setEnabled(bool(self._store()) and not busy and not self.font_requests)
         self.actions["cancel"].setEnabled(busy)
         self.selection_status.setText(f"{len(selected)} selected" if selected else "No selection")

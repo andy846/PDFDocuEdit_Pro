@@ -11,11 +11,12 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 
 import fitz
 
-from composition.data.source import RecordStore
+from composition.data.sequences import CompositionRecords, open_records, sequence_value
 from composition.engine.assets import qpdf_executable
 from composition.engine.fonts import RecordFontError
 from composition.engine.renderer import Renderer
@@ -101,7 +102,7 @@ def _csv_value(value):
     return value
 
 
-def _write_reports(directory: Path, result: JobResult, template: Template, store: RecordStore | None) -> None:
+def _write_reports(directory: Path, result: JobResult, template: Template, store: CompositionRecords | None) -> None:
     log = {
         "job_version": 2,
         **result.to_dict(),
@@ -110,7 +111,15 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
             json.dumps(template.to_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest(),
         "source": store.metadata["source"] if store else None,
-        "record_identity": "source_sha256 + one-based imported record ordinal",
+        "record_identity": ("template_sha256 + generated record ordinal" if template.record_mode == "generated"
+                            else "source_sha256 + one-based imported record ordinal"),
+        "record_mode": template.record_mode,
+        "sequences": [
+            {**asdict(seq),
+             "first": sequence_value(seq, 1, 0, len(template.pages)),
+             "last": sequence_value(seq, store.count, len(template.pages)-1, len(template.pages)) if store else None}
+            for seq in template.sequences
+        ],
         "page_mapping": {
             "type": "fixed_pages", "pages_per_record": len(template.pages),
             "formula": "output page = (record ordinal - 1) * pages_per_record + template page ordinal",
@@ -120,7 +129,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
     }
     (directory / "job.json").write_text(json.dumps(log, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     columns = {
-        "Job ID": result.job_id, "Source File": store.metadata["source"]["path"] if store else "",
+        "Job ID": result.job_id, "Record Mode": template.record_mode, "Sequence Fields": ", ".join(seq.name for seq in template.sequences), "Source File": store.metadata["source"]["path"] if store else "",
         "Template Name": template.name, "Start Time": result.started_at, "End Time": result.finished_at,
         "Input Records": result.input_records, "Processed Records": result.processed_records,
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
@@ -164,7 +173,7 @@ def generate(
     chunks = []
     try:
         check_cancel(is_cancelled)
-        store = RecordStore(job.record_store)
+        store = open_records(template, job.record_store)
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)
         missing = required_fields(template) - set(store.fields)

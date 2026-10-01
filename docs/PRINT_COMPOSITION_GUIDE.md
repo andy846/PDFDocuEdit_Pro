@@ -174,3 +174,8 @@ python scripts/build.py --document-designer --portable-only --skip-tests
 字款、字號、行距、對齊及文字色。工具列字號亦可批量套用。Mixed 提示表示原值不同；
 只修改指定的項目，保留各欄位內容、位置、規則及補字設定。詳見
 DOCUMENT_DESIGNER_BULK_FORMAT.md。此更新不改模板 schema 4 或公共版本。
+
+
+## 流水號與免 CSV 生成 — 2026-10-01
+
+Data → Running sequences 可設定多個起始值／增量／補零／前後綴欄位，並選擇每筆或每輸出頁遞增。Generate records without CSV / TXT 可直接指定 Quantity；文字、Code128、QR 及規則共用同一個值。保存為 schema 5；旧版模板可讀，回退須保留原模板。詳見 DOCUMENT_DESIGNER_SEQUENCES.md。

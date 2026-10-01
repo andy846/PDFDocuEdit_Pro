@@ -9,6 +9,8 @@ from pathlib import Path
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
+from composition.data.sequences import sequence_record
+
 from .fonts import RecordFontError, permits_subsetting
 from .glyphs import GlyphFonts
 from .rules import ElementPlan, RecordRuleError
@@ -43,10 +45,11 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
                 from composition.template.model import CompositionError
                 raise CompositionError("Production cancelled while preparing fonts.")
             repaired_record = False
+            page_records = [sequence_record(template, record, ordinal, i) for i in range(len(template.pages))]
             for element in all_elements:
                 plan = plans[element.id]
                 try:
-                    selected = plan.resolve(record)
+                    selected = plan.resolve(page_records[page_numbers[element.id]-1])
                 except ValueError as exc:
                     raise RecordRuleError(ordinal, element, page_numbers[element.id], exc) from exc
                 rule_summary["hidden_occurrences"] += int(not selected.visible)

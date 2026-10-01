@@ -297,12 +297,64 @@ def run(output: Path):
     editor.load_file(str(background))
     wait(lambda: editor.engine.is_loaded())
     check("Company Statement" in editor.engine.document[0].get_text(), "Existing editor regressed")
+    # Exercise the real sequence dialog, virtual records and the frozen worker path.
+    from composition.designer.sequence_dialog import SequenceDialog
+    from composition.designer.workspace import CompositionWindow
+    seq_window = CompositionWindow()
+    seq_window.show()
+    seq_dialog = SequenceDialog(seq_window.template, parent=seq_window)
+    seq_dialog.show()
+    seq_dialog.mode.setCurrentIndex(1)
+    seq_dialog.quantity.setValue(100)
+    seq_dialog.table.item(0, 0).setText("Ticket")
+    seq_dialog.table.item(0, 3).setText("5")
+    seq_dialog.table.item(0, 4).setText("T-")
+    seq_dialog.add_sequence()
+    seq_dialog.table.item(1, 0).setText("PageSeq")
+    seq_dialog.table.cellWidget(1, 6).setCurrentIndex(1)
+    app.processEvents()
+    seq_dialog.grab().save(str(output/"running-sequences.png"))
+    seq_dialog.accept()
+    choice = seq_dialog.choice
+    check(choice is not None, "Sequence dialog did not produce settings")
+    check(seq_window.apply_sequences(choice.sequences, choice.record_mode, choice.generated_count), "Sequence commit failed")
+    seq_window.undo.undo()
+    check(seq_window.record_count == 0, "Sequence Undo failed")
+    seq_window.undo.redo()
+    seq_window.add_element("text", "{{Ticket}} / {{PageSeq}}", x=20, y=30)
+    seq_window.add_element("code128", "{{Ticket}}", x=20, y=70)
+    seq_window.add_element("qr", "{{Ticket}}", x=140, y=70)
+    seq_window.add_template_page(duplicate=True)
+    seq_window.tabs.setCurrentIndex(2)
+    seq_window.record.setValue(100)
+    wait(lambda: seq_window.canvas.preview_item is not None and "Record 100" in seq_window.preview_state.text())
+    seq_window.grab().save(str(output/"sequence-preview.png"))
+    from composition.template.serializer import save_project
+    seq_project = save_project(seq_window.template, output/"tickets.pdcx")
+    seq_window.start_production(str(output/"tickets-output"))
+    wait(lambda: seq_window.production_worker is None, 90)
+    check(bool(seq_window.last_output), seq_window.production_summary.toPlainText())
+    with fitz.open(seq_window.last_output) as pdf:
+        check(pdf.page_count == 200, "Virtual production reconciliation failed")
+        check("T-00001 / 000001" in pdf[0].get_text(), "First sequence wrong")
+        check("T-00100 / 000200" in pdf[-1].get_text(), "Last/page sequence wrong")
+        pix = pdf[-1].get_pixmap(matrix=fitz.Matrix(3,3), alpha=False)
+        image = Image.frombytes("RGB", (pix.width,pix.height), pix.samples)
+        decoded = decode(image)
+        check({item.type for item in decoded} >= {"CODE128", "QRCODE"}, "Sequence barcode decoding failed")
+        check(all(item.data == b"T-00100" for item in decoded), "Barcode sequence value wrong")
+    seq_window.undo.setClean()
+    seq_window.open_project(path=str(seq_project))
+    check(seq_window.record_count == 100 and seq_window.import_worker is None, "Virtual project reopened with wrong source")
+    seq_window.undo.setClean()
+    seq_window.close()
+    wait(lambda: not seq_window.workers)
     summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation", "running sequence dialog", "virtual records", "sequence Undo", "per-record/page sequence", "sequence QR/Code128 decoding", "generated project reopen"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

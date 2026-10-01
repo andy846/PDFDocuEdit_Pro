@@ -127,7 +127,7 @@ class Renderer:
             plans=self.plans, rule_summary=self.rule_summary,
         )
 
-    def glyph_usage(self, record, page_index=None):
+    def glyph_usage(self, record, page_index=None, ordinal=1):
         result = []
         elements = (self.template.all_elements() if page_index is None
                     else self.template.pages[page_index].elements)
@@ -135,7 +135,10 @@ class Renderer:
             if element.id not in self.fonts:
                 continue
             selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id))
-            selected = self.plans[element.id].resolve(record, design=self.design)
+            from composition.data.sequences import sequence_record
+            index = next(i for i, p in enumerate(self.template.pages) if element in p.elements)
+            values = sequence_record(self.template, record, ordinal, index, design=self.design)
+            selected = self.plans[element.id].resolve(values, design=self.design)
             if not selected.visible:
                 continue
             counts = selector.repaired_counts(selected.value)
@@ -145,7 +148,7 @@ class Renderer:
                                "repair_font": element.glyph_repairs[key].family})
         return result
 
-    def rule_usage(self, record, page_index=None):
+    def rule_usage(self, record, page_index=None, ordinal=1):
         if self.design:
             return []
         elements = (self.template.all_elements() if page_index is None
@@ -154,7 +157,9 @@ class Renderer:
         for element in elements:
             plan = self.plans[element.id]
             if plan.has_rules:
-                selected = plan.resolve(record)
+                from composition.data.sequences import sequence_record
+                index = next(i for i, p in enumerate(self.template.pages) if element in p.elements)
+                selected = plan.resolve(sequence_record(self.template, record, ordinal, index))
                 result.append({"object": element.id, "visible": selected.visible,
                                "alternative": selected.alternative})
         return result
@@ -179,6 +184,8 @@ class Renderer:
         for index in indices:
             if is_cancelled and is_cancelled():
                 raise CompositionError("Production cancelled between template pages.")
+            from composition.data.sequences import sequence_record
+            values = sequence_record(self.template, record, ordinal, index, design=self.design)
             spec = self.template.pages[index]
             page = document.new_page(width=spec.width_mm * MM_TO_PT, height=spec.height_mm * MM_TO_PT)
             background = self.backgrounds.get(spec.id)
@@ -186,7 +193,7 @@ class Renderer:
                 page.show_pdf_page(page.rect, background, 0, overlay=False)
             for element in spec.elements:
                 try:
-                    self._render_element(page, element, record)
+                    self._render_element(page, element, values)
                 except Exception as exc:
                     fields = sorted(self.plans[element.id].fields)
                     raise CompositionError(
@@ -354,9 +361,9 @@ def render_preview(template: Template, record: dict[str, str], ordinal: int = 1,
     with Renderer(template, page_index=page_index, design=design) as renderer, fitz.open() as document:
         renderer.render(document, record, ordinal, page_index=page_index)
         if repair_details is not None:
-            repair_details.extend(renderer.glyph_usage(record, page_index))
+            repair_details.extend(renderer.glyph_usage(record, page_index, ordinal))
         if rule_details is not None:
-            rule_details.extend(renderer.rule_usage(record, page_index))
+            rule_details.extend(renderer.rule_usage(record, page_index, ordinal))
         renderer.finalize(document)
         return document.tobytes(deflate=True, garbage=1)
 

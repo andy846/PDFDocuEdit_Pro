@@ -6,7 +6,8 @@ import json
 import sys
 from pathlib import Path
 
-from composition.data.source import RecordStore, import_records, suggest_import
+from composition.data.sequences import open_records
+from composition.data.source import import_records, suggest_import
 from composition.engine.renderer import import_background, render_preview
 from composition.production.generator import generate
 from composition.production.model import ProductionJob
@@ -95,14 +96,15 @@ def dispatch(request: dict) -> dict:
         import fitz
         template = Template.from_dict(request["template"])
         index = request.get("record", 1)
-        if request.get("store"):
-            record = RecordStore(request["store"]).record(index)
+        design = request.get("design", not bool(request.get("store")))
+        if not design:
+            record = open_records(template, request.get("store", "")).record(index)
         else:
             record = {name: "{{" + name + "}}" for name in required_fields(template)}
         repairs, rules = [], []
         page_index = request.get("page", 0)
         raw = render_preview(template, record, index, repair_details=repairs, page_index=page_index,
-                             design=not bool(request.get("store")), rule_details=rules)
+                             design=design, rule_details=rules)
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")

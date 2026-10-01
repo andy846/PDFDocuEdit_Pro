@@ -39,3 +39,8 @@ face, point size, alignment, line spacing and colour. Mixed values are identifie
 properties and per-object glyph repairs are retained. Windows face preparation is shared by
 the selection and one format change is one Undo command. See DOCUMENT_DESIGNER_BULK_FORMAT.md.
 The headless engine, template schema 4 and public version remain unchanged.
+
+
+## Running sequences and virtual records — 2026-10-01
+
+The next isolated milestone adds declarative named sequences (integer start/increment, digit padding, prefix/suffix, per-record/per-output-page scope) and a generated record-count mode requiring no data file. Preview, rule/font preflight and production share ordinal-based values. JSON schema 5 migrates v1–4; CSV field collisions block output. Existing chunk/reconciliation/report pipelines and public version remain in place. See DOCUMENT_DESIGNER_SEQUENCES.md for implementation mapping, operation and limits. Output splitting and reprint remain future work.

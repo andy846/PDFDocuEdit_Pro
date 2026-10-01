@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 4
+TEMPLATE_VERSION = 5
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "qr"})
@@ -113,6 +113,17 @@ class DataConfig:
 
 
 @dataclass
+class SequenceSpec:
+    name: str = "Seq"
+    start: int = 1
+    step: int = 1
+    padding: int = 6
+    prefix: str = ""
+    suffix: str = ""
+    scope: str = "record"
+
+
+@dataclass
 class PageSpec:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "Page"
@@ -128,16 +139,22 @@ class Template:
     name: str
     pages: list[PageSpec]
     data: DataConfig
+    sequences: list[SequenceSpec]
+    record_mode: str
+    generated_count: int
 
     def __init__(self, template_version=TEMPLATE_VERSION, name="Untitled document",
                  width_mm=210.0, height_mm=297.0, background="", elements=None, data=None,
-                 *, pages=None):
+                 *, pages=None, sequences=None, record_mode="imported", generated_count=100):
         self.template_version = template_version
         self.name = name
         self.pages = pages if pages is not None else [
             PageSpec(id="page_1", name="Page 1", width_mm=width_mm, height_mm=height_mm,
                      background=background, elements=elements if elements is not None else [])]
         self.data = data if data is not None else DataConfig()
+        self.sequences = sequences if sequences is not None else []
+        self.record_mode = record_mode
+        self.generated_count = generated_count
 
     # Existing headless callers can still construct/access a single-page template.
     # Designer code explicitly chooses a page; serialization never duplicates page data.
@@ -184,11 +201,16 @@ class Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
         version = value.get("template_version")
-        if type(version) is not int or version not in (1, 2, 3, TEMPLATE_VERSION):
+        if type(version) is not int or version not in (1, 2, 3, 4, TEMPLATE_VERSION):
             raise CompositionError(
                 f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
             raw = dict(value)
+            if version < 5 and any(key in raw for key in ("sequences", "record_mode", "generated_count")):
+                raise CompositionError("Running sequences require template version 5.")
+            if not isinstance(raw.get("sequences", []), list) or len(raw.get("sequences", [])) > 100:
+                raise CompositionError("Use at most 100 running sequence fields.")
+            raw["sequences"] = [SequenceSpec(**item) for item in raw.get("sequences", [])]
             if version < 3:
                 if "pages" in raw:
                     raise CompositionError("Legacy templates cannot contain a pages list.")
@@ -198,7 +220,7 @@ class Template:
                         page[key] = raw.pop(key)
                 raw["pages"] = [page]
             elif any(key in raw for key in ("width_mm", "height_mm", "background", "elements")):
-                raise CompositionError("Version 3/4 uses pages; remove ambiguous top-level page properties.")
+                raise CompositionError("Version 3 or later uses pages; remove ambiguous top-level page properties.")
             if not isinstance(raw.get("pages"), list) or not 1 <= len(raw["pages"]) <= MAX_TEMPLATE_PAGES:
                 raise CompositionError(f"A template needs 1 to {MAX_TEMPLATE_PAGES} pages.")
             pages = []
@@ -296,6 +318,8 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
         raise CompositionError("Invalid template name.")
     if not isinstance(template.pages, list) or not 1 <= len(template.pages) <= MAX_TEMPLATE_PAGES:
         raise CompositionError(f"A template needs 1 to {MAX_TEMPLATE_PAGES} pages.")
+    from composition.data.sequences import validate_sequences
+    validate_sequences(template)
     page_ids = set()
     for page in template.pages:
         if not isinstance(page, PageSpec) or not isinstance(page.id, str) or not page.id or page.id in page_ids:

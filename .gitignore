@@ -71,3 +71,5 @@ build_assets/composition/*
 /dist-rules/
 
 /dist-bulk-format/
+
+/dist-sequences/

@@ -27,6 +27,7 @@ def one_case(count, directory, fixture, pages=1):
         FontSpec,
         PageSpec,
         RuleCondition,
+        SequenceSpec,
         Template,
     )
     directory.mkdir(parents=True, exist_ok=True)
@@ -37,7 +38,7 @@ def one_case(count, directory, fixture, pages=1):
             suffix = f",{'GS' if index % 2 == 0 else 'IS'},{20001 if index % 2 == 0 else 0}" if fixture == "rules" else ""
             stream.write(f'{index:010},Customer {index},"Hong Kong"{suffix}\n')
     start = time.perf_counter()
-    store = import_records(DataConfig(path=str(source)), directory / "records.db")
+    store = None if fixture == "sequences" else import_records(DataConfig(path=str(source)), directory / "records.db")
     imported = time.perf_counter()
     elements = [Element(value="Account: {{Account}}", height_mm=20)]
     if fixture == "mixed":
@@ -59,12 +60,16 @@ def one_case(count, directory, fixture, pages=1):
     import copy
     import uuid
     model = Template(elements=elements)
+    if fixture == "sequences":
+        model.record_mode = "generated"
+        model.generated_count = count
+        model.sequences = [SequenceSpec("Account", start=1, padding=10, prefix="SEQ-")]
     for index in range(1, pages):
         copied = copy.deepcopy(elements)
         for element in copied:
             element.id = uuid.uuid4().hex
         model.pages.append(PageSpec(name=f"Page {index+1}", elements=copied))
-    result = generate(ProductionJob(model.to_dict(), str(store.path), str(directory)))
+    result = generate(ProductionJob(model.to_dict(), str(store.path) if store else "", str(directory)))
     end = time.perf_counter()
     if result.status != "completed":
         raise RuntimeError(result.error)
@@ -83,7 +88,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", nargs="+", type=int, default=[100, 1000, 10000, 50000])
     parser.add_argument("--repeat", type=int, default=1)
-    parser.add_argument("--fixture", choices=["plain", "mixed", "rules"], default="plain")
+    parser.add_argument("--fixture", choices=["plain", "mixed", "rules", "sequences"], default="plain")
     parser.add_argument("--output", type=Path, default=ROOT / ".benchmarks" / "composition")
     parser.add_argument("--case", type=int)
     parser.add_argument("--pages", type=int, choices=range(1, 101), default=1)
