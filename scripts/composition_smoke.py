@@ -97,6 +97,25 @@ def run(output: Path):
     wait(lambda: not window.font_requests)
     from composition.engine.fonts import load_font
     check(load_font(window.template.elements[1].font)[0].is_bold, "Windows exact bold face not selected")
+    # Configure the repair through the actual dialog controls, retaining the primary face.
+    from dataclasses import asdict
+
+    from composition.designer.glyph_dialog import GlyphRepairDialog
+    window.add_element("text", "Client face: \u7530, only this glyph repaired", x=20, y=150)
+    before, after = window.template.to_dict(), window.template.to_dict()
+    after["elements"][-1].update(height_mm=20, width_mm=170, vertical_align="center")
+    window._commit(before, after, "Repair demonstration box", after["elements"][-1]["id"])
+    primary = asdict(window.template.elements[-1].font)
+    dialog = GlyphRepairDialog(window.template.elements[-1], window.properties.catalogue, "U+7530", window)
+    dialog.family.setCurrentText("Noto Sans CJK HK")
+    dialog.show()
+    QApplication.processEvents()
+    dialog.grab().save(str(output/"glyph-repair-dialog.png"))
+    dialog._apply()
+    window._request_font(dialog.choice)
+    wait(lambda: not window.font_requests)
+    check(asdict(window.template.elements[-1].font) == primary, "Repair changed primary font")
+    check("U+7530" in window.template.elements[-1].glyph_repairs, "Repair setting not applied")
     window.resize(960, 640)
     window.tabs.setCurrentIndex(2)
     wait(lambda: window.canvas.preview_item is not None)
@@ -119,8 +138,9 @@ def run(output: Path):
     finally:
         QFileDialog.getSaveFileName = original_save_dialog
     loaded = load_project(project)
-    check(len(loaded.elements) == 4, "Saved template lost objects")
+    check(len(loaded.elements) == 5, "Saved template lost objects")
     check(Path(loaded.background).is_file(), "Saved background missing")
+    check("U+7530" in loaded.elements[-1].glyph_repairs, "Saved glyph repair missing")
     ticks = []
     timer = QTimer()
     timer.timeout.connect(lambda: ticks.append(time.monotonic()))
@@ -139,6 +159,10 @@ def run(output: Path):
         image = Image.frombytes("RGB",(pix.width,pix.height),pix.samples)
         from pyzbar.pyzbar import decode
         check({item.type for item in decode(image)} >= {"CODE128","QRCODE"}, "Barcode decoding failed")
+    import json as json_report
+    report = json_report.loads((Path(window.last_output).parent/"job.json").read_text(encoding="utf-8"))
+    check(report["repaired_glyphs"] == report["repaired_records"] == 100, "Repair reconciliation missing")
+    check(Path(report["glyph_repair_report"]).is_file(), "Repair audit CSV missing")
     window.grab().save(str(output/"production.png"))
     # Existing editor still opens PDFs while the new workspace exists.
     editor.load_file(str(background))
@@ -149,7 +173,7 @@ def run(output: Path):
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

@@ -146,6 +146,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         self.properties.edited.connect(self._property_edit)
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
+        self.properties.glyphRepairRequested.connect(self.edit_glyph_repairs)
         self.properties_scroll = QScrollArea()
         self.properties_scroll.setWidgetResizable(True)
         self.properties_scroll.setWidget(self.properties)
@@ -383,12 +384,15 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
     def _preview_ready(self, result, generation):
         if generation == self.preview_generation:
             self.canvas.set_preview(result["image"])
-            self.message.setText("")
+            repairs = result.get("glyph_repairs", [])
+            count = sum(item["occurrences"] for item in repairs)
+            self.message.setText(f"Preview uses {count} explicit glyph repair(s); primary fonts retained." if count else "")
         Path(result["pdf"]).unlink(missing_ok=True)
         Path(result["image"]).unlink(missing_ok=True)
 
     def _preview_error(self, error, generation):
         if generation == self.preview_generation:
+            self._record_font_error(error)
             self._error(error)
 
     def add_element(self, kind="text", value=None, x=20, y=20, font=None):
@@ -421,6 +425,47 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
     def add_field(self, name, x, y):
         self.add_element("text", "{{" + name + "}}", x, y,
                          font=FontSpec(family="Noto Sans CJK HK"))
+
+    def _record_font_error(self, error, record=None):
+        import re
+        object_match = re.search(r"object ([a-f0-9]{32})", error)
+        code_match = re.search(r"U\+[0-9A-F]{4,6}", error)
+        record_match = re.search(r"Record (\d+)", error)
+        self.failed_object = object_match.group(1) if object_match else ""
+        self.failed_codepoint = code_match.group(0) if code_match else ""
+        self.failed_record = record or (int(record_match.group(1)) if record_match else None)
+        self.review_error_button.setVisible(bool(self.failed_record or self.failed_object))
+        self.repair_error_button.setVisible(bool(self.failed_object and self.failed_codepoint))
+
+    def repair_failed_glyph(self):
+        self.review_failed_object()
+        self.edit_glyph_repairs()
+
+    def edit_glyph_repairs(self):
+        if self.production_worker or self.import_worker or self.font_requests:
+            self._error("Finish the active font or job operation before configuring glyph repairs.")
+            return
+        element = self.properties.element
+        if not element or not (element.type == "text" or element.show_barcode_text):
+            self._error("Select a text object to configure missing-glyph repairs.")
+            return
+        from .glyph_dialog import GlyphRepairDialog
+        code = self.failed_codepoint if self.failed_object == element.id else ""
+        dialog = GlyphRepairDialog(element, self.properties.catalogue, code, self)
+        if not dialog.exec() or not dialog.choice:
+            return
+        choice = dialog.choice
+        if choice.get("remove"):
+            self.remove_glyph_repair(element.id, choice["codepoint"])
+        else:
+            self._request_font(choice)
+
+    def remove_glyph_repair(self, object_id, codepoint):
+        before, after = self.template.to_dict(), self.template.to_dict()
+        target = next((e for e in after["elements"] if e["id"] == object_id), None)
+        if target and codepoint in target["glyph_repairs"]:
+            target["glyph_repairs"].pop(codepoint)
+            self._commit(before, after, "Remove missing-glyph repair", self.canvas.selected_ids())
 
     def use_cjk_font(self):
         self.properties.apply()
@@ -684,10 +729,7 @@ class CompositionWindow(DesignerChrome, FontOperations, QMainWindow):
         lines.extend(result["warnings"])
         self.production_summary.setPlainText("\n".join(lines))
         self.failed_record = result.get("error_record")
-        import re
-        match = re.search(r"object ([a-f0-9]{32})", result["error"])
-        self.failed_object = match.group(1) if match else ""
-        self.review_error_button.setVisible(bool(self.failed_record or self.failed_object))
+        self._record_font_error(result["error"], result.get("error_record"))
         self.report_button.setEnabled(bool(result["report_dir"]))
         self.last_report_dir = result["report_dir"]
         self.last_output = result["output_pdf"]

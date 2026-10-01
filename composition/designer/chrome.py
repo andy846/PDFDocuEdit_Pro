@@ -104,6 +104,7 @@ class DesignerChrome:
                             ("front", "Bring to front"), ("back", "Send to back")]:
             action("arrange_"+name, label, lambda checked=False, mode=name: self.arrange_objects(mode),
                    "&Arrange", symbol="layers")
+        action("repair_glyph", "Repair missing glyph…", self.edit_glyph_repairs, "&Arrange", symbol="font-inspect")
         action("cjk", "Use CJK font for selected text", self.use_cjk_font, "&Arrange", symbol="font-inspect")
         action("page_size", "Page size…", self.page_size, "&View", symbol="square")
         action("fit_page", "Fit page", lambda: self.canvas.fit_page(), "&View", "Ctrl+0", "monitor")
@@ -160,16 +161,21 @@ class DesignerChrome:
         self.statusBar().addPermanentWidget(self.page_status)
         self.review_error_button = QPushButton("Review failed object / record")
         self.review_error_button.hide()
+        self.repair_error_button = QPushButton("Repair missing glyph — keep primary font")
+        self.repair_error_button.hide()
+        self.repair_error_button.clicked.connect(self.repair_failed_glyph)
         self.review_error_button.clicked.connect(self.review_failed_object)
         self.report_button = QPushButton("Open reports folder")
         self.report_button.setEnabled(False)
         self.report_button.clicked.connect(self.open_report_folder)
         production_layout = self.production_page.layout()
         production_layout.addWidget(self.review_error_button)
+        production_layout.addWidget(self.repair_error_button)
         production_layout.addWidget(self.report_button)
         self.last_report_dir = ""
         self.failed_record = None
         self.failed_object = ""
+        self.failed_codepoint = ""
         geometry = self.preferences.value("geometry")
         splitter = self.preferences.value("splitter")
         if geometry:
@@ -189,7 +195,7 @@ class DesignerChrome:
             self.font_size_tool.setValue(element.font.size_pt)
             self.font_size_tool.blockSignals(False)
         busy = bool(self.import_worker or self.production_worker)
-        for key in ("cut", "copy", "duplicate", "delete", "cjk"):
+        for key in ("cut", "copy", "duplicate", "delete", "cjk", "repair_glyph"):
             self.actions[key].setEnabled(bool(selected) and not busy and not self.canvas.mode_preview)
         self.actions["paste"].setEnabled(bool(self.clipboard) and not busy)
         for key in ("new", "open", "save", "save_as", "background", "remove_background",

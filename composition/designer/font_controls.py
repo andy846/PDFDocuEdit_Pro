@@ -5,6 +5,8 @@ import uuid
 
 from PyQt6.QtWidgets import QInputDialog
 
+from composition.template.model import FontSpec
+
 
 class FontOperations:
     def _load_windows_fonts(self):
@@ -26,7 +28,12 @@ class FontOperations:
         self.font_requests[object_id] = token
         epoch = self.font_epoch
         self._busy()
-        if "file" in request:
+        repair = request.get("codepoint")
+        if "spec" in request:
+            self._worker({"task": "glyph_repair_font", "spec": request["spec"], "codepoint": repair},
+                         lambda result: self._font_ready(result, object_id, token, epoch, repair),
+                         lambda error: self._font_failed(object_id, token, error))
+        elif "file" in request:
             def inspected(result):
                 if self.font_requests.get(object_id) != token or epoch != self.font_epoch:
                     return
@@ -41,19 +48,19 @@ class FontOperations:
                     face = faces[labels.index(label)]
                 else:
                     face = faces[0]
-                self._export_font(face, object_id, token, epoch)
+                self._export_font(face, object_id, token, epoch, repair)
             self._worker({"task": "font_info", "file": request["file"]}, inspected,
                          lambda error: self._font_failed(object_id, token, error))
         else:
-            self._export_font(request["face"], object_id, token, epoch)
+            self._export_font(request["face"], object_id, token, epoch, repair)
 
-    def _export_font(self, face, object_id, token, epoch):
-        self._worker({"task": "font_export", "face": face,
+    def _export_font(self, face, object_id, token, epoch, repair=None):
+        self._worker({"task": "font_export", "face": face, "codepoint": repair,
                       "directory": str(self.directory / "font-faces")},
-                     lambda result: self._font_ready(result, object_id, token, epoch),
+                     lambda result: self._font_ready(result, object_id, token, epoch, repair),
                      lambda error: self._font_failed(object_id, token, error))
 
-    def _font_ready(self, result, object_id, token, epoch):
+    def _font_ready(self, result, object_id, token, epoch, repair=None):
         if self.font_requests.get(object_id) != token:
             return
         self.font_requests.pop(object_id, None)
@@ -63,11 +70,21 @@ class FontOperations:
         before, after = self.template.to_dict(), self.template.to_dict()
         target = next((e for e in after["elements"] if e["id"] == object_id), None)
         if target is not None:
-            self.properties.file_faces[result["file"]] = result
-            target["font"].update(family=result["family"], file=result["file"], bold=False, italic=False)
-            self._commit(before, after, "Select exact Windows font face", self.canvas.selected_ids())
-            self.message.setText(result.get("note") or
-                                 f"{result['family']} · {result['style']} selected for PDF embedding.")
+            if result["file"]:
+                self.properties.file_faces[result["file"]] = result
+            if repair:
+                from dataclasses import asdict
+                spec = result.get("spec") or asdict(FontSpec(family=result["family"], file=result["file"]))
+                spec["size_pt"] = target["font"]["size_pt"]
+                target["glyph_repairs"][repair] = spec
+                label = f"Configure repair for {repair}; primary font retained"
+                message = f"{repair}: {result['family']} configured only for missing glyphs; primary font retained."
+            else:
+                target["font"].update(family=result["family"], file=result["file"], bold=False, italic=False)
+                label = "Select exact Windows font face"
+                message = result.get("note") or f"{result['family']} · {result['style']} selected for PDF embedding."
+            self._commit(before, after, label, self.canvas.selected_ids())
+            self.message.setText(message)
         self._busy()
 
     def _font_failed(self, object_id, token, error):

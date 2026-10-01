@@ -33,6 +33,7 @@ class Properties(QWidget):
     edited = pyqtSignal(dict)
     fontRequested = pyqtSignal(dict)
     insertFieldRequested = pyqtSignal()
+    glyphRepairRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -114,6 +115,12 @@ class Properties(QWidget):
         form.addRow("Family", self.font_family)
         form.addRow("Style", self.font_style)
         form.addRow(self.font_status)
+        self.repair_status = QLabel("No missing-glyph repairs configured")
+        self.repair_status.setWordWrap(True)
+        form.addRow(self.repair_status)
+        self.repair_button = QPushButton("Repair missing glyph…")
+        self.repair_button.clicked.connect(self.glyphRepairRequested)
+        form.addRow(self.repair_button)
         self.bold, self.italic = QCheckBox("Bold"), QCheckBox("Italic")
         self.bold.hide()
         self.italic.hide()
@@ -305,6 +312,9 @@ class Properties(QWidget):
                          "Bold" if element.font.bold else "Italic" if element.font.italic else "Regular")
                 self.font_style.setCurrentText(style)
                 self.font_status.setText("Bundled font · embedded in PDF")
+            repairs = element.glyph_repairs
+            self.repair_status.setText("\n".join(f"{key}: {spec.family}" for key, spec in repairs.items())
+                                       or "No missing-glyph repairs configured")
             self.custom_font.setText(element.font.file)
             self.bold.setChecked(element.font.bold)
             self.italic.setChecked(element.font.italic)

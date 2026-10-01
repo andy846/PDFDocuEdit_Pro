@@ -61,3 +61,5 @@ build_assets/composition/*
 /dist-font-fix/
 
 /dist-designer-ux/
+
+/dist-glyph-repair/
