@@ -72,3 +72,16 @@ read_only 支持逐列解析，但 shared strings／styles 仍可能佔用與檔
 Windows native/frozen/installed smoke 覆蓋原有 CSV/字型/背景/規則/流水號流程，另驗證 Excel 工作表／標題列／映射、100 筆 XLSX＋流水號＋QR/Code128 解碼、100 筆 XLS 生成及工作表設定重開。
 完整結果见 validation/document_designer_excel_20261002.json；匯入原始量測見 validation/document_designer_excel_benchmark_20261002.json。
 合成／offscreen 驗收没有代替客戶實際工作簿或印表機驗收。
+
+## 本輪匯入量測
+
+單一合成 worksheet（inline strings，五欄）每個規模 3 個独立匯入程序的中位數：
+
+| Excel 紀錄數 | 匯入秒數 | 紀錄／秒 | 匯入程序峰值 MiB |
+|---:|---:|---:|---:|
+| 1,000 | 0.40 | 2,505 | 44.6 |
+| 10,000 | 1.20 | 8,315 | 47.0 |
+| 50,000 | 5.25 | 9,523 | 52.5 |
+
+9 個 snapshot 的紀錄數和末筆帳號均核對成功。部分試次与完整回歸並行，系统負载及缓存未控制；
+这是 XLSX 匯入的量測，不是 PDF 生成或前後版比較，也不代表真實 shared-string／style 密集工作簿或 .xls 的記憶體保証。

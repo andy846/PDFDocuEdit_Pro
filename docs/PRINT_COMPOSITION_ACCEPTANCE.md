@@ -217,3 +217,29 @@ validation/document_designer_sequences_benchmark_20261001.json.
 Operation/limits: DOCUMENT_DESIGNER_SEQUENCES.md. Delivery folder: dist-sequences.
 Current tag: document-designer-sequences-dev-20261001; rollback:
 document-designer-bulk-format-dev-20261001.
+
+
+## Document Designer Excel input — 2026-10-02
+
+Excel adapter on abc1110 supports .xlsx / .xls, sheet/header selection, aliases, ISO dates,
+text/simple-format leading zeros, explicit saved-result formula policies and SQLite snapshots.
+Schema 6 reads 1–5. Workbook sheet/import configuration distinguish report record identity.
+Existing sequence/render/font/validation/reconciliation machinery is reused; no viewer
+rewrite, new dependencies or public version change.
+
+Full Windows regression: 1073 passed; zero failures/errors/skips; 1004.65 s.
+Composition: 240 passed, including 32 new Excel/CSV regression cases.
+Native/frozen 200% and installed 100% acceptance passed the existing editor/Designer flows,
+plus XLSX sheet/header/mapping, CJK/zero-padding/date/sequence/Code128/QR generation,
+save/reimport, and actual OLE/BIFF8 XLS generation. XLSX and XLS each reconciled 100 pages.
+QA installation removed; portable ZIP CRC/SHA256 verified. No tests disabled.
+
+Three-trial synthetic inline-string XLSX import medians: 1,000 rows 0.40 s / 44.6 MiB;
+10,000 1.20 s / 47.0 MiB; 50,000 5.25 s / 52.5 MiB. This measures import only, with
+uncontrolled host load/cache and overlapping regression; not a guarantee for shared-string
+or style-heavy workbooks, XLS memory, actual customers or printers.
+
+Evidence: validation/document_designer_excel_20261002.json and
+validation/document_designer_excel_benchmark_20261002.json.
+Guide: DOCUMENT_DESIGNER_EXCEL_IMPORT.md. Delivery: dist-excel.
+Tag: document-designer-excel-dev-20261002; rollback: document-designer-sequences-dev-20261001.

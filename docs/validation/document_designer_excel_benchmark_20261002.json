@@ -1,0 +1,106 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+  "results": [
+    {
+      "records": 1000,
+      "import_seconds": 0.4226450999849476,
+      "records_per_second": 2366.0513277821387,
+      "peak_memory_bytes": 46718976,
+      "snapshot_bytes": 135168,
+      "trial": 0
+    },
+    {
+      "records": 1000,
+      "import_seconds": 0.37789850000990555,
+      "records_per_second": 2646.2132026821696,
+      "peak_memory_bytes": 46710784,
+      "snapshot_bytes": 135168,
+      "trial": 1
+    },
+    {
+      "records": 1000,
+      "import_seconds": 0.39919730002293363,
+      "records_per_second": 2505.0269627138027,
+      "peak_memory_bytes": 46776320,
+      "snapshot_bytes": 135168,
+      "trial": 2
+    },
+    {
+      "records": 10000,
+      "import_seconds": 1.2026943999808282,
+      "records_per_second": 8314.664140915105,
+      "peak_memory_bytes": 49291264,
+      "snapshot_bytes": 1187840,
+      "trial": 0
+    },
+    {
+      "records": 10000,
+      "import_seconds": 1.3284426999744028,
+      "records_per_second": 7527.611089430267,
+      "peak_memory_bytes": 49250304,
+      "snapshot_bytes": 1187840,
+      "trial": 1
+    },
+    {
+      "records": 10000,
+      "import_seconds": 1.1451479000388645,
+      "records_per_second": 8732.496474613119,
+      "peak_memory_bytes": 49401856,
+      "snapshot_bytes": 1187840,
+      "trial": 2
+    },
+    {
+      "records": 50000,
+      "import_seconds": 5.330621799977962,
+      "records_per_second": 9379.768791739589,
+      "peak_memory_bytes": 54804480,
+      "snapshot_bytes": 6000640,
+      "trial": 0
+    },
+    {
+      "records": 50000,
+      "import_seconds": 5.250575499958359,
+      "records_per_second": 9522.765647384089,
+      "peak_memory_bytes": 55160832,
+      "snapshot_bytes": 6000640,
+      "trial": 1
+    },
+    {
+      "records": 50000,
+      "import_seconds": 5.089640699967276,
+      "records_per_second": 9823.87617269751,
+      "peak_memory_bytes": 55001088,
+      "snapshot_bytes": 6000640,
+      "trial": 2
+    }
+  ],
+  "limitations": "Synthetic local XLSX with inline strings; cache/host load uncontrolled. Read-only XML rows do not imply constant memory for shared strings/styles. Legacy XLS loads the selected worksheet. Full regression overlapped portions of the trials; this is not an isolated version comparison.",
+  "product_commit": "abc1110",
+  "medians": [
+    {
+      "records": 1000,
+      "trials": 3,
+      "import_seconds_median": 0.39919730002293363,
+      "records_per_second_median": 2505.0269627138027,
+      "peak_memory_mib_median": 44.5546875,
+      "snapshot_bytes_median": 135168
+    },
+    {
+      "records": 10000,
+      "trials": 3,
+      "import_seconds_median": 1.2026943999808282,
+      "records_per_second_median": 8314.664140915105,
+      "peak_memory_mib_median": 47.0078125,
+      "snapshot_bytes_median": 1187840
+    },
+    {
+      "records": 50000,
+      "trials": 3,
+      "import_seconds_median": 5.250575499958359,
+      "records_per_second_median": 9522.765647384089,
+      "peak_memory_mib_median": 52.453125,
+      "snapshot_bytes_median": 6000640
+    }
+  ]
+}
