@@ -9,7 +9,8 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable
-from contextlib import closing
+from contextlib import closing, contextmanager
+from dataclasses import asdict
 from pathlib import Path
 
 from composition.template.model import CompositionError, DataConfig
@@ -29,6 +30,13 @@ def normalize_field(name: str, position: int) -> str:
 
 def suggest_import(path: str | Path) -> DataConfig:
     source = Path(path)
+    if source.suffix.lower() in (".xlsm", ".xlsb"):
+        raise CompositionError("Use .xlsx or .xls; macro-enabled/binary workbooks are not supported.")
+    from .excel_source import is_excel, workbook_info
+    if is_excel(source):
+        info = workbook_info(source)
+        return DataConfig(path=str(source.resolve()), sheet=info["default_sheet"],
+                          excel_formulas="cached" if source.suffix.lower() == ".xls" else "reject")
     with source.open("rb") as stream:
         sample = stream.read(64 * 1024)
     if sample.startswith(codecs.BOM_UTF16_LE) or sample.startswith(codecs.BOM_UTF16_BE):
@@ -83,78 +91,126 @@ class RecordStore:
                 yield ordinal, json.loads(value)
 
 
-def import_records(
-    config: DataConfig,
-    target: str | Path,
-    *,
-    progress: Callable | None = None,
-    is_cancelled: Callable[[], bool] | None = None,
-) -> RecordStore:
+@contextmanager
+def source_rows(config, diagnostics):
+    from .excel_source import excel_rows, is_excel
+    if type(config.header) is not bool:
+        raise CompositionError("Header setting must be true or false.")
+    if type(config.header_row) is not int or not 1 <= config.header_row <= 100_000:
+        raise CompositionError("Header/start row is out of range.")
+    diagnostics.setdefault("warnings", [])
+    if Path(config.path).suffix.lower() in (".xlsm", ".xlsb"):
+        raise CompositionError("Use .xlsx or .xls; macro-enabled/binary workbooks are not supported.")
+    if is_excel(config.path):
+        with excel_rows(config, diagnostics) as rows:
+            yield rows
+    else:
+        if len(config.delimiter) != 1 or config.delimiter in "\r\n\0":
+            raise CompositionError("Choose a single-character delimiter.")
+        codecs.lookup(config.encoding)
+        csv.field_size_limit(MAX_RECORD_CHARS)
+        with Path(config.path).open("r", encoding=config.encoding, newline="", errors="strict") as stream:
+            reader = csv.reader(stream, delimiter=config.delimiter, strict=True)
+            for _ in range(config.header_row - 1):
+                next(reader, None)
+            yield enumerate(reader, config.header_row)
+
+
+def field_names(first, config):
+    if not 1 <= len(first) <= MAX_FIELDS:
+        raise CompositionError("Selected header/start row is empty or has too many fields.")
+    original = first if config.header else [f"Field_{i+1}" for i in range(len(first))]
+    if len(set(original)) != len(original) or any(not name.strip() for name in original):
+        raise CompositionError("Header fields must be non-empty and unique.")
+    fields = [config.mapping.get(name, normalize_field(name, i+1)) for i, name in enumerate(original)]
+    if len(set(fields)) != len(fields) or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in fields):
+        raise CompositionError("Mapped field names must be unique valid variable names.")
+    return original, fields
+
+
+def sample_records(config):
+    diagnostics = {}
+    with source_rows(config, diagnostics) as reader:
+        first = next(reader, None)
+        if first is None:
+            raise CompositionError("The source contains no records.")
+        # Permit normalization collisions in the sample so aliases can be fixed in the dialog.
+        names = first[1] if config.header else [f"Field_{i+1}" for i in range(len(first[1]))]
+        if not 1 <= len(names) <= MAX_FIELDS or len(set(names)) != len(names) or any(not v.strip() for v in names):
+            raise CompositionError("Selected header/start row needs non-empty, unique field names.")
+        from .excel_source import is_excel
+        excel = is_excel(config.path)
+        sample = [] if config.header else [first[1]]
+        for _row, values in reader:
+            if not values:
+                continue
+            if excel:
+                if len(values) > len(names):
+                    raise CompositionError(f"Worksheet {diagnostics.get('sheet', '')}, row {_row}: values exist outside the selected field columns.")
+                values += [""] * (len(names)-len(values))
+            sample.append(values)
+            if len(sample) == 5:
+                break
+    if not sample:
+        raise CompositionError("The selected worksheet/source contains no data records.")
+    return {"originals": names, "fields": [normalize_field(name, i+1) for i, name in enumerate(names)],
+            "sample": [[cell[:500] for cell in row] for row in sample],
+            "warnings": diagnostics["warnings"]}
+
+
+def import_records(config: DataConfig, target: str | Path, *, progress: Callable | None = None,
+                   is_cancelled: Callable[[], bool] | None = None) -> RecordStore:
+    from .excel_source import is_excel
     source = Path(config.path).expanduser().resolve()
     before = _fingerprint(source)
-    if len(config.delimiter) != 1 or config.delimiter in "\r\n\0":
-        raise CompositionError("Choose a single-character delimiter.")
-    if not 1 <= config.header_row <= 100_000:
-        raise CompositionError("Header/start row is out of range.")
-    codecs.lookup(config.encoding)
     destination = Path(target)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         raise CompositionError("The import snapshot already exists.")
-    csv.field_size_limit(MAX_RECORD_CHARS)
+    diagnostics = {}
+    excel = is_excel(source)
+    skipped = 0
     try:
-        with closing(sqlite3.connect(destination)) as connection, connection, source.open(
-            "r", encoding=config.encoding, newline="", errors="strict"
-        ) as stream:
-            connection.execute("CREATE TABLE records(ordinal INTEGER PRIMARY KEY,value TEXT NOT NULL)")
+        with closing(sqlite3.connect(destination)) as connection, connection, source_rows(config, diagnostics) as reader:
+            connection.execute("CREATE TABLE records(ordinal INTEGER PRIMARY KEY,value TEXT NOT NULL,source_row INTEGER)")
             connection.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
-            reader = csv.reader(stream, delimiter=config.delimiter, strict=True)
-            for _ in range(config.header_row - 1):
-                next(reader, None)
             first = next(reader, None)
             if first is None:
                 raise CompositionError("The source contains no records.")
-            if not 1 <= len(first) <= MAX_FIELDS:
-                raise CompositionError("Invalid number of fields.")
-            original = first if config.header else [f"Field_{i+1}" for i in range(len(first))]
-            if len(set(original)) != len(original) or any(not name.strip() for name in original):
-                raise CompositionError("Header fields must be non-empty and unique.")
-            fields = [config.mapping.get(name, normalize_field(name, index + 1)) for index, name in enumerate(original)]
-            if len(set(fields)) != len(fields) or any(
-                not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field) for field in fields
-            ):
-                raise CompositionError("Mapped field names must be unique valid variable names.")
+            original, fields = field_names(first[1], config)
             count = 0
 
-            def append(values: list[str]) -> None:
+            def append(row, values):
                 nonlocal count
                 if is_cancelled and is_cancelled():
                     raise CompositionError("Data import cancelled.")
+                if excel:
+                    if len(values) > len(fields):
+                        raise CompositionError(f"Worksheet {diagnostics.get('sheet', '')}, row {row}: values exist outside the selected field columns.")
+                    values += [""] * (len(fields)-len(values))
                 if len(values) != len(fields):
-                    raise CompositionError(
-                        f"Record {count + 1}: expected {len(fields)} fields, got {len(values)}."
-                    )
+                    raise CompositionError(f"Record {count+1}: expected {len(fields)} fields, got {len(values)}.")
                 if sum(map(len, values)) > MAX_RECORD_CHARS:
-                    raise CompositionError(f"Record {count + 1} is too large.")
+                    raise CompositionError(f"Record {count+1} is too large.")
                 if any("\0" in value for value in values):
-                    raise CompositionError(f"Record {count + 1} contains a NUL character.")
+                    raise CompositionError(f"Record {count+1} contains a NUL character.")
                 count += 1
-                connection.execute(
-                    "INSERT INTO records VALUES(?,?)",
-                    (count, json.dumps(dict(zip(fields, values, strict=True)), ensure_ascii=False)),
-                )
+                connection.execute("INSERT INTO records VALUES(?,?,?)",
+                    (count, json.dumps(dict(zip(fields, values, strict=True)), ensure_ascii=False), row))
                 if count % 500 == 0:
                     connection.commit()
                     if progress:
                         progress(count, 0, f"Imported {count:,} records")
 
             if not config.header:
-                append(first)
-            for values in reader:
-                # Ignore truly blank physical records, not rows containing empty fields.
+                append(*first)
+            for row, values in reader:
+                if is_cancelled and is_cancelled():
+                    raise CompositionError("Data import cancelled.")
                 if not values:
+                    skipped += 1
                     continue
-                append(values)
+                append(row, values)
             if count == 0:
                 raise CompositionError("The source contains no data records.")
             after = _fingerprint(source)
@@ -163,14 +219,16 @@ def import_records(
             digest = hashlib.sha256()
             with source.open("rb") as raw:
                 for chunk in iter(lambda: raw.read(1024 * 1024), b""):
+                    if is_cancelled and is_cancelled():
+                        raise CompositionError("Data import cancelled.")
                     digest.update(chunk)
             if _fingerprint(source) != after:
                 raise CompositionError("The data source changed during import. Import it again.")
-            metadata = {
-                "fields": fields, "original_fields": original, "record_count": count,
-                "source": {**after, "sha256": digest.hexdigest()},
-                "config": {"encoding": config.encoding, "delimiter": config.delimiter, "header": config.header},
-            }
+            metadata = {"fields": fields, "original_fields": original, "record_count": count,
+                "source": {**after, "sha256": digest.hexdigest(), **({"worksheet":diagnostics["sheet"]} if excel else {})},
+                "config": asdict(config), "warnings": diagnostics["warnings"],
+                "skipped_blank_rows": skipped, "source_row_mapping": "records.source_row",
+                "source_row_kind": "Excel worksheet row" if excel else "delimited logical row"}
             connection.execute("INSERT INTO metadata VALUES('import',?)", (json.dumps(metadata),))
             connection.commit()
     except Exception as exc:

@@ -59,30 +59,15 @@ def dispatch(request: dict) -> dict:
         return {"faces": inspect_font_file(request["file"])}
     if task == "suggest":
         from dataclasses import asdict
-        return {"config": asdict(suggest_import(request["source"]))}
-    if task == "sample":
-        import csv
 
-        from composition.data.source import MAX_FIELDS, MAX_RECORD_CHARS, normalize_field
-        csv.field_size_limit(MAX_RECORD_CHARS)
-        config = DataConfig(**request["config"])
-        with Path(config.path).open("r", encoding=config.encoding, newline="") as stream:
-            reader = csv.reader(stream, delimiter=config.delimiter, strict=True)
-            for _ in range(config.header_row-1):
-                next(reader, None)
-            first = next(reader)
-            if len(first) > MAX_FIELDS:
-                raise ValueError("The source has too many fields.")
-            originals = first if config.header else [f"Field_{i+1}" for i in range(len(first))]
-            sample = [] if config.header else [first]
-            for _ in range(5):
-                values = next(reader, None)
-                if values is None:
-                    break
-                sample.append(values)
-        return {"originals": originals,
-                "fields": [normalize_field(name, i+1) for i, name in enumerate(originals)],
-                "sample": [[cell[:500] for cell in row] for row in sample]}
+        from composition.data.excel_source import is_excel, workbook_info
+        result = {"config": asdict(suggest_import(request["source"]))}
+        if is_excel(request["source"]):
+            result.update(workbook_info(request["source"]))
+        return result
+    if task == "sample":
+        from composition.data.source import sample_records
+        return sample_records(DataConfig(**request["config"]))
     if task == "import":
         store = import_records(DataConfig(**request["config"]), request["target"],
                                progress=progress, is_cancelled=cancelled)

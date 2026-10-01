@@ -179,3 +179,8 @@ DOCUMENT_DESIGNER_BULK_FORMAT.md。此更新不改模板 schema 4 或公共版�
 ## 流水號與免 CSV 生成 — 2026-10-01
 
 Data → Running sequences 可設定多個起始值／增量／補零／前後綴欄位，並選擇每筆或每輸出頁遞增。Generate records without CSV / TXT 可直接指定 Quantity；文字、Code128、QR 及規則共用同一個值。保存為 schema 5；旧版模板可讀，回退須保留原模板。詳見 DOCUMENT_DESIGNER_SEQUENCES.md。
+
+
+## Excel 匯入 — 2026-10-02
+
+Import data 可選 .xlsx / .xls，指定工作表、標題列及映射。中文、ISO 日期、文字前置零及單一 000000 補零格式可用；公式不會重算，.xlsx 預設拒絕公式，可顯式選用已儲存結果；.xls 使用 saved values 並警告無法稽核公式快取。模板保存為 schema 6；請 Save as 保留原檔。詳見 DOCUMENT_DESIGNER_EXCEL_IMPORT.md。

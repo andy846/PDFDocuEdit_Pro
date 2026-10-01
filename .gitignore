@@ -73,3 +73,5 @@ build_assets/composition/*
 /dist-bulk-format/
 
 /dist-sequences/
+
+/dist-excel/

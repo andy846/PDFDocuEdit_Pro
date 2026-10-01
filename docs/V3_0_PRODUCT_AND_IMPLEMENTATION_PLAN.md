@@ -44,3 +44,8 @@ The headless engine, template schema 4 and public version remain unchanged.
 ## Running sequences and virtual records — 2026-10-01
 
 The next isolated milestone adds declarative named sequences (integer start/increment, digit padding, prefix/suffix, per-record/per-output-page scope) and a generated record-count mode requiring no data file. Preview, rule/font preflight and production share ordinal-based values. JSON schema 5 migrates v1–4; CSV field collisions block output. Existing chunk/reconciliation/report pipelines and public version remain in place. See DOCUMENT_DESIGNER_SEQUENCES.md for implementation mapping, operation and limits. Output splitting and reprint remain future work.
+
+
+## User-requested Excel adapter milestone — 2026-10-02
+
+Excel input is now implemented in an isolated data adapter using the already bundled openpyxl/xlrd packages. Worksheet/header selection, normalized aliases, ISO dates, explicit leading-zero handling and saved-result formula policy reuse the snapshot/worker/preview/production pipeline. Schema 6 migrates v1–5 and retains running sequences. Record identity/report metadata now distinguish workbook sheets and import configuration. No editor rewrite or new dependencies. See DOCUMENT_DESIGNER_EXCEL_IMPORT.md for operation, architecture, resource limits and validation evidence.

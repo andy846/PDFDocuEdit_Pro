@@ -132,6 +132,8 @@ def test_untrusted_rule_schema_rejected(mutation):
         visible["conditions"][0].update(data_type="number", value="NaN")
     elif mutation == "legacy_rules":
         raw["template_version"] = 3
+        for key in ("sheet", "excel_formulas", "preserve_zeros"):
+            raw["data"].pop(key)
         for key in ("sequences", "record_mode", "generated_count"):
             raw.pop(key)
     message = "Conditional rules require template version 4" if mutation == "legacy_rules" else None
@@ -150,12 +152,14 @@ def test_schema3_migration_preserves_exact_font_repair_and_output_pixels():
         vertical_align="center", height_mm=20, glyph_repairs={"U+7530": FontSpec(family="Noto Sans CJK HK")})])
     raw = model.to_dict()
     raw["template_version"] = 3
+    for key in ("sheet", "excel_formulas", "preserve_zeros"):
+        raw["data"].pop(key)
     raw["pages"][0]["elements"][0].pop("rules")
     for key in ("sequences", "record_mode", "generated_count"):
         raw.pop(key)
     before = copy.deepcopy(raw)
     migrated = Template.from_dict(raw)
-    assert raw == before and migrated.template_version == 5
+    assert raw == before and migrated.template_version == 6
     assert migrated.elements[0].rules == ElementRules()
     assert asdict(migrated.elements[0].font) == asdict(model.elements[0].font)
     assert migrated.elements[0].glyph_repairs == model.elements[0].glyph_repairs

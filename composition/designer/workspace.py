@@ -144,7 +144,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.data_panel = QWidget()
         data_layout = QVBoxLayout(self.data_panel)
         data_layout.addWidget(QLabel("DATA"))
-        self.import_button = QPushButton("Import CSV / TXT…")
+        self.import_button = QPushButton("Import CSV / TXT / Excel…")
         self.import_button.clicked.connect(self.import_data)
         data_layout.addWidget(self.import_button)
         self.sequence_button = QPushButton("Running sequences…")
@@ -421,6 +421,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             for index, original in enumerate(meta["original_fields"]):
                 self.fields.item(index).setToolTip(f"Original: {original}")
             label = "Generated records" if self.template.record_mode == "generated" else Path(self.template.data.path).name
+            if self.template.record_mode == "imported" and self.template.data.sheet:
+                label += " · " + self.template.data.sheet
             self.source_label.setText(label + f"\n{self.record_count:,} records")
             sequence_names = {seq.name for seq in self.template.sequences}
             for index in range(self.fields.count()):
@@ -807,7 +809,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self._error("Finish or cancel the active job before importing another source.")
             return
         path, _ = QFileDialog.getOpenFileName(self, "Import data", self.template.data.path,
-                                             "Structured data (*.csv *.txt *.tsv);;All files (*)")
+                                             "Structured data (*.csv *.txt *.tsv *.xlsx *.xls);;Excel (*.xlsx *.xls);;CSV / TXT (*.csv *.txt *.tsv);;All files (*)")
         if not path:
             return
         initial = self.template.data if path == self.template.data.path else None
@@ -832,7 +834,14 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._commit(before, after, "Import data")
         self._refresh_data()
         self._schedule_preview()
-        self.message.setText(f"Imported {result['metadata']['record_count']:,} records.")
+        if self._store():
+            meta = result["metadata"]
+            notes = f"Imported {meta['record_count']:,} records."
+            if meta.get("skipped_blank_rows"):
+                notes += f" Skipped {meta['skipped_blank_rows']} blank rows."
+            if meta.get("warnings"):
+                notes += " " + " ".join(meta["warnings"])
+            self.message.setText(notes)
 
     def _progress(self, done, total, message):
         self.progress.setRange(0, total if total else 0)

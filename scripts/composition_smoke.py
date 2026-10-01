@@ -349,12 +349,83 @@ def run(output: Path):
     seq_window.undo.setClean()
     seq_window.close()
     wait(lambda: not seq_window.workers)
+    # Excel adapter acceptance uses the actual sheet/header/mapping controls.
+    from composition.data.source import suggest_import
+    from composition.designer.data_dialog import DataDialog
+    from composition.template.model import FontSpec, SequenceSpec
+    from scripts.composition_excel_fixture import make_xls, make_xlsx
+    excel_window = CompositionWindow()
+    excel_window.show()
+    workbook = make_xlsx(output/"statements.xlsx", 100)
+    import_dialog = DataDialog(str(workbook), excel_window.directory, excel_window)
+    import_dialog.show()
+    wait(lambda: import_dialog.sample_valid and import_dialog.sheet.count() == 2)
+    import_dialog.sheet.setCurrentIndex(import_dialog.sheet.findData("Statements"))
+    import_dialog.start_row.setValue(2)
+    wait(lambda: import_dialog.sample_valid and import_dialog.mapping.rowCount() == 6)
+    import_dialog.mapping.item(0, 1).setText("Name")
+    check(import_dialog.sample.item(0, 1).text() == "000001", "Excel leading-zero sample wrong")
+    app.processEvents()
+    import_dialog.grab().save(str(output/"excel-import.png"))
+    excel_config = import_dialog.config()
+    import_dialog.accept()
+    wait(lambda: not import_dialog.workers)
+    excel_window._start_import(excel_config)
+    wait(lambda: excel_window.import_worker is None and excel_window.record_count == 100)
+    excel_window.add_element("text", "{{Name}} / {{Account}}", x=20, y=35,
+                             font=FontSpec(family="Noto Sans CJK HK"))
+    excel_window.add_element("text", "{{Date}} / {{Balance}}", x=20, y=60)
+    excel_window.add_element("code128", "{{Account}}", x=20, y=90)
+    excel_window.add_element("qr", "{{Account}}", x=140, y=90)
+    check(excel_window.apply_sequences([SequenceSpec("Batch", 500001, padding=6)], "imported", 100),
+          "Excel plus sequence configuration failed")
+    excel_window.add_element("text", "Batch: {{Batch}}", x=20, y=140)
+    excel_window.tabs.setCurrentIndex(2)
+    excel_window.record.setValue(100)
+    wait(lambda: excel_window.canvas.preview_item is not None and "Record 100" in excel_window.preview_state.text())
+    excel_window.grab().save(str(output/"excel-preview.png"))
+    excel_project = save_project(excel_window.template, output/"excel-project.pdcx")
+    excel_window.start_production(str(output/"excel-output"))
+    wait(lambda: excel_window.production_worker is None, 90)
+    check(bool(excel_window.last_output), excel_window.production_summary.toPlainText())
+    with fitz.open(excel_window.last_output) as pdf:
+        check(pdf.page_count == 100, "Excel PDF reconciliation failed")
+        check("000100" in pdf[-1].get_text() and "2026-10-02" in pdf[-1].get_text(), "Excel values changed")
+        check("500100" in pdf[-1].get_text(), "Excel plus running sequence failed")
+        pix = pdf[-1].get_pixmap(matrix=fitz.Matrix(3,3), alpha=False)
+        image = Image.frombytes("RGB", (pix.width,pix.height), pix.samples)
+        decoded = decode(image)
+        check({item.type for item in decoded} >= {"CODE128", "QRCODE"}, "Excel barcode decode failed")
+        check(all(item.data == b"000100" for item in decoded), "Excel barcode value wrong")
+    excel_window.undo.setClean()
+    excel_window.open_project(path=str(excel_project))
+    wait(lambda: excel_window.import_worker is None and excel_window.record_count == 100)
+    check(excel_window.template.data.sheet == "Statements" and excel_window.template.data.header_row == 2,
+          "Excel source configuration lost on reopen")
+    check(excel_window.template.data.mapping["Customer Name"] == "Name", "Excel mapping lost on reopen")
+    excel_window.undo.setClean()
+    excel_window.new_project()
+    legacy = make_xls(output/"legacy-statements.xls", 100)
+    excel_window._start_import(suggest_import(legacy))
+    wait(lambda: excel_window.import_worker is None and excel_window.record_count == 100)
+    excel_window.add_element("text", "{{Name}} / {{Account}} / {{Date}}", x=20, y=35,
+                             font=FontSpec(family="Noto Sans CJK HK"))
+    excel_window.properties.numbers["width_mm"].setValue(170)
+    excel_window.properties.numbers["width_mm"].editingFinished.emit()
+    excel_window.start_production(str(output/"xls-output"))
+    wait(lambda: excel_window.production_worker is None, 90)
+    check(bool(excel_window.last_output), excel_window.production_summary.toPlainText())
+    with fitz.open(excel_window.last_output) as pdf:
+        check(pdf.page_count == 100 and "000100" in pdf[-1].get_text(), "Legacy XLS production values wrong")
+    excel_window.undo.setClean()
+    excel_window.close()
+    wait(lambda: not excel_window.workers)
     summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation", "running sequence dialog", "virtual records", "sequence Undo", "per-record/page sequence", "sequence QR/Code128 decoding", "generated project reopen"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation", "bulk text size", "bulk exact Windows face", "bulk one-command Undo", "bulk glyph repair preservation", "running sequence dialog", "virtual records", "sequence Undo", "per-record/page sequence", "sequence QR/Code128 decoding", "generated project reopen", "XLSX sheet/header/mapping", "Excel dates/leading zeros", "Excel preview/sequence/QR/Code128", "Excel save/reimport", "OLE BIFF8 XLS import/production"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

@@ -112,7 +112,10 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         ).hexdigest(),
         "source": store.metadata["source"] if store else None,
         "record_identity": ("template_sha256 + generated record ordinal" if template.record_mode == "generated"
-                            else "source_sha256 + one-based imported record ordinal"),
+                            else ("source_sha256 + worksheet + import_configuration + one-based imported record ordinal"
+                                  if store and store.metadata["source"].get("worksheet") else
+                                  "source_sha256 + one-based imported record ordinal")),
+        "import_configuration": store.metadata.get("config", {}) if store else None,
         "record_mode": template.record_mode,
         "sequences": [
             {**asdict(seq),
@@ -130,6 +133,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
     (directory / "job.json").write_text(json.dumps(log, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     columns = {
         "Job ID": result.job_id, "Record Mode": template.record_mode, "Sequence Fields": ", ".join(seq.name for seq in template.sequences), "Source File": store.metadata["source"]["path"] if store else "",
+        "Source Worksheet": store.metadata["source"].get("worksheet", "") if store else "",
         "Template Name": template.name, "Start Time": result.started_at, "End Time": result.finished_at,
         "Input Records": result.input_records, "Processed Records": result.processed_records,
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
@@ -174,6 +178,7 @@ def generate(
     try:
         check_cancel(is_cancelled)
         store = open_records(template, job.record_store)
+        result.warnings.extend(store.metadata.get("warnings", []))
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)
         missing = required_fields(template) - set(store.fields)

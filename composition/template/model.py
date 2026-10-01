@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 5
+TEMPLATE_VERSION = 6
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "qr"})
@@ -110,6 +110,9 @@ class DataConfig:
     header: bool = True
     header_row: int = 1
     mapping: dict[str, str] = field(default_factory=dict)
+    sheet: str = ""
+    excel_formulas: str = "reject"
+    preserve_zeros: bool = True
 
 
 @dataclass
@@ -201,11 +204,13 @@ class Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
         version = value.get("template_version")
-        if type(version) is not int or version not in (1, 2, 3, 4, TEMPLATE_VERSION):
+        if type(version) is not int or version not in (1, 2, 3, 4, 5, TEMPLATE_VERSION):
             raise CompositionError(
                 f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
             raw = dict(value)
+            if version < 6 and any(key in raw.get("data", {}) for key in ("sheet", "excel_formulas", "preserve_zeros")):
+                raise CompositionError("Excel source settings require template version 6.")
             if version < 5 and any(key in raw for key in ("sequences", "record_mode", "generated_count")):
                 raise CompositionError("Running sequences require template version 5.")
             if not isinstance(raw.get("sequences", []), list) or len(raw.get("sequences", [])) > 100:
@@ -348,6 +353,10 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
         for key, value in data.mapping.items()
     ):
         raise CompositionError("Invalid variable field mapping.")
+    if not isinstance(data.sheet, str) or len(data.sheet) > 255:
+        raise CompositionError("Invalid Excel worksheet name.")
+    if data.excel_formulas not in ("reject", "cached") or type(data.preserve_zeros) is not bool:
+        raise CompositionError("Invalid Excel formula/number-format configuration.")
     seen = set()
     for page, element in ((spec, item) for spec in template.pages for item in spec.elements):
         if not isinstance(element, Element):

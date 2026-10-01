@@ -69,9 +69,11 @@ def test_schema_versions_and_declarative_save_restore(tmp_path):
     target = save_project(template, tmp_path/"tickets.pdcx")
     loaded = load_project(target)
     assert loaded.to_dict() == template.to_dict()
-    assert json.loads(target.read_text(encoding="utf-8"))["template_version"] == 5
+    assert json.loads(target.read_text(encoding="utf-8"))["template_version"] == 6
     legacy = Template(elements=[Element(value="Client unchanged")]).to_dict()
     legacy["template_version"] = 4
+    for key in ("sheet", "excel_formulas", "preserve_zeros"):
+        legacy["data"].pop(key)
     for key in ("sequences", "record_mode", "generated_count"):
         legacy.pop(key)
     migrated = Template.from_dict(legacy)

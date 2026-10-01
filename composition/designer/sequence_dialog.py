@@ -34,7 +34,7 @@ class SequenceDialog(QDialog):
         layout.addWidget(intro)
         row = QHBoxLayout()
         self.mode = QComboBox()
-        self.mode.addItems(["Use imported CSV / TXT records", "Generate records without CSV / TXT"])
+        self.mode.addItems(["Use imported data records", "Generate records without a data file"])
         self.mode.setCurrentIndex(int(template.record_mode == "generated"))
         self.quantity = QSpinBox()
         self.quantity.setRange(1, 1_000_000)
