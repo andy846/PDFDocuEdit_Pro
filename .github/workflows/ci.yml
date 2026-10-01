@@ -54,6 +54,8 @@ jobs:
         run: python -m pytest
       - name: Composition performance smoke
         run: python scripts/benchmark_composition.py --records 100 --output build/composition-benchmark
+      - name: Multi-page composition performance smoke
+        run: python scripts/benchmark_composition.py --records 100 --pages 2 --output build/composition-benchmark/multipage
       - name: Retain composition benchmark
         uses: actions/upload-artifact@v4
         with:

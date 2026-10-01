@@ -82,3 +82,7 @@ CSV 不寫姓名、地址或完整資料值。job.json／control.csv 加入補�
 
 新測試版：dist-glyph-repair/PDFDocuEdit Pro/PDFDocuEdit Pro.exe。
 Portable：release/PDFDocuEdit-Pro-v2.5.15-Document-Designer-Dev-GlyphRepair-Portable-Windows-x64.zip。
+
+## Multiple-page build compatibility
+
+The subsequent multi-page build writes schema 3 and migrates both v1 and v2 projects. Glyph repair semantics and exact primary font preservation remain unchanged. The audit adds a Template page column. See DOCUMENT_DESIGNER_MULTIPAGE.md for the latest build and acceptance.

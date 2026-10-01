@@ -123,3 +123,13 @@ Mixed：帳號、姓名地址、Box、Code 128、QR、Noto Sans CJK HK 中文文
 修正版另放 dist-font-fix，避免覆寫目前使用者開住的 executable。切換前先保存 .pdcx 並關閉原程式；可攜修正版名稱含 FontFix。
 
 打包後再次驗證：完整 100 筆 Welcome／預覽／中文字體／條碼／保存及生產 workflow 通過（build/qa-font-fix-frozen/result.json）；獨立 frozen worker 匯入及生成 398 筆合成資料通過（build/qa-font-fix-398/acceptance.json）。
+
+## Document Designer fixed multiple pages — 2026-10-01
+
+The next accepted V3.1 milestone is delivered locally: fixed ordered pages per record, independent page size/backgrounds, page add/duplicate/delete/reorder/rename with Undo/Redo, selected-record/page preview, all-page font validation, explicit repairs and exact multi-page reconciliation.
+
+Evidence: full existing Windows regression 920 passed (814.70 s); final Composition suite 88 passed, including the subsequently added between-pages cancellation case. Ruff/source checks passed. Native 200%, frozen 200% and installed 100% smoke generated 100 records / 200 pages; QA installation was removed. Original schema-2 customer template migrated to schema 3 with all 398 output pages pixel-identical to its previous successful PDF and the same single glyph repair.
+
+Five non-overlapping plain-text trials: 1,000 records / 2,000 pages median 2.71 s, composer 77.0 MiB, assembler 27.8 MiB; 10,000 records / 20,000 pages median 25.95 s, composer 99.2 MiB, assembler 191.5 MiB. Synthetic fixed-page/local fixtures, without separately controlled cold/warm cache; no comparison to older one-page measurements or guarantee for image-heavy documents. Raw samples/selection: validation/document_designer_multipage_benchmark_20261001.json.
+
+This is a development delivery; public version remains 2.5.15. Schema 3 reads v1/v2; older builds cannot open newly saved schema-3 projects. Use Save as to retain an older project for rollback. Conditional visibility/basic rules and output splitting remain next milestones. See DOCUMENT_DESIGNER_MULTIPAGE.md for operation and limits.

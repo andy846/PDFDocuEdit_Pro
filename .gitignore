@@ -63,3 +63,5 @@ build_assets/composition/*
 /dist-designer-ux/
 
 /dist-glyph-repair/
+
+/dist-multipage/

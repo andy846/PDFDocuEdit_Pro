@@ -13,12 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def one_case(count, directory, fixture):
+def one_case(count, directory, fixture, pages=1):
     sys.path.insert(0, str(ROOT))
     from composition.data.source import import_records
     from composition.production.generator import generate
     from composition.production.model import ProductionJob
-    from composition.template.model import DataConfig, Element, FontSpec, Template
+    from composition.template.model import DataConfig, Element, FontSpec, PageSpec, Template
     directory.mkdir(parents=True, exist_ok=True)
     source = directory / "input.csv"
     with source.open("w", encoding="utf-8", newline="") as stream:
@@ -38,14 +38,22 @@ def one_case(count, directory, fixture):
             Element(value="\u9999\u6e2f\u5ba2\u6236", y_mm=235, height_mm=20,
                     font=FontSpec(family="Noto Sans CJK HK")),
         ])
-    result = generate(ProductionJob(Template(elements=elements).to_dict(), str(store.path), str(directory)))
+    import copy
+    import uuid
+    model = Template(elements=elements)
+    for index in range(1, pages):
+        copied = copy.deepcopy(elements)
+        for element in copied:
+            element.id = uuid.uuid4().hex
+        model.pages.append(PageSpec(name=f"Page {index+1}", elements=copied))
+    result = generate(ProductionJob(model.to_dict(), str(store.path), str(directory)))
     end = time.perf_counter()
     if result.status != "completed":
         raise RuntimeError(result.error)
-    values = {"records": count, "fixture": fixture, "import_seconds": imported-start,
+    values = {"records": count, "pages_per_record": pages, "generated_pages": result.generated_pages, "fixture": fixture, "import_seconds": imported-start,
               "generation_seconds": end-imported, "total_seconds": end-start,
               "records_per_second": count/(end-imported),
-              "pages_per_second": count/(end-imported), "output_size_bytes": result.output_size,
+              "pages_per_second": result.generated_pages/(end-imported), "output_size_bytes": result.output_size,
               "composer_peak_memory_bytes": result.composer_peak_memory_bytes,
               "assembler_peak_memory_bytes": result.assembler_peak_memory_bytes,
               "job_log": str(Path(result.report_dir)/"job.json")}
@@ -59,9 +67,10 @@ def main():
     parser.add_argument("--fixture", choices=["plain", "mixed"], default="plain")
     parser.add_argument("--output", type=Path, default=ROOT / ".benchmarks" / "composition")
     parser.add_argument("--case", type=int)
+    parser.add_argument("--pages", type=int, choices=range(1, 101), default=1)
     args = parser.parse_args()
     if args.case:
-        one_case(args.case, args.output, args.fixture)
+        one_case(args.case, args.output, args.fixture, args.pages)
         return
     destination = args.output.resolve() / time.strftime("%Y%m%d-%H%M%S")
     destination.mkdir(parents=True, exist_ok=True)
@@ -70,7 +79,7 @@ def main():
         for repeat in range(args.repeat):
             case = destination / f"{count}-{repeat}"
             process = subprocess.run([sys.executable, __file__, "--case", str(count),
-                                      "--output", str(case), "--fixture", args.fixture],
+                                      "--output", str(case), "--fixture", args.fixture, "--pages", str(args.pages)],
                                      check=True, capture_output=True, text=True,
                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             result = json.loads(process.stdout.strip().splitlines()[-1])

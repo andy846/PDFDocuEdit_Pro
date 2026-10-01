@@ -33,3 +33,7 @@ The GUI's frozen windowed executable has no usable stdout. QProcess communicates
 The pipeline uses single-job publication, not a batch transaction: temporary chunk PDFs and final assembly are validated in a unique staging directory; same-parent rename publishes the PDF and both reports together. qpdf is a separate cancellable process, and its object metadata memory remains proportional to page/object count. The acceptance report records both process peaks separately.
 
 New dependencies: segno 1.6.6, python-barcode 0.16.1, pinned qpdf 12.4.2 and bundled OFL Noto fonts. Existing PyMuPDF/fontTools/Pillow/PyQt are reused. Composition-enabled ZIP/Setup names include Composition-Dev, while stable build filenames are unchanged. The feature remains opt-in and no user-preferences schema migration is required.
+
+## Fixed multiple template pages (2026-10-01)
+
+Schema 3 uses ordered PageSpec objects with stable page IDs and independent size/background/elements. Preview loads only the requested page resources. Production validates font usage across all pages and streams complete records into chunks; the bound is chunk_size + pages_per_record - 1 pages. Reconciliation checks records multiplied by fixed pages per record. Job log version 2 records the exact one-based mapping formula and template page order. No editor integration changes or new dependencies were required.

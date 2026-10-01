@@ -27,3 +27,7 @@ The Windows installed build must contain verified qpdf and font assets, all lice
 The fixed-page MVP is implemented in the isolated feature/print-composition-v3 worktree. See PRINT_COMPOSITION_GUIDE.md for operation and PRINT_COMPOSITION_ACCEPTANCE.md for milestone evidence, measured performance and remaining release limits. This development delivery does not change the public version or declare a v3.0 release date.
 
 Product UI name updated to Document Designer on 2026-10-01. See DOCUMENT_DESIGNER_UX_UPDATE.md for Windows installed font selection and the menu/layers/property improvements; internal engine contracts retain their composition names.
+
+## Post-MVP progress — fixed multiple template pages
+
+The next V3.1 milestone now supports ordered fixed pages per record, page commands/Undo, selected-page preview and exact multi-page reconciliation. Schema 3 reads legacy v1/v2 without changing primary fonts or glyph repairs. See DOCUMENT_DESIGNER_MULTIPAGE.md for operation, evidence and limits. Conditional visibility/rules and output splitting remain next milestones.
