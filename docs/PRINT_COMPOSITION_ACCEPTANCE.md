@@ -133,3 +133,21 @@ Evidence: full existing Windows regression 920 passed (814.70 s); final Composit
 Five non-overlapping plain-text trials: 1,000 records / 2,000 pages median 2.71 s, composer 77.0 MiB, assembler 27.8 MiB; 10,000 records / 20,000 pages median 25.95 s, composer 99.2 MiB, assembler 191.5 MiB. Synthetic fixed-page/local fixtures, without separately controlled cold/warm cache; no comparison to older one-page measurements or guarantee for image-heavy documents. Raw samples/selection: validation/document_designer_multipage_benchmark_20261001.json.
 
 This is a development delivery; public version remains 2.5.15. Schema 3 reads v1/v2; older builds cannot open newly saved schema-3 projects. Use Save as to retain an older project for rollback. Conditional visibility/basic rules and output splitting remain next milestones. See DOCUMENT_DESIGNER_MULTIPAGE.md for operation and limits.
+
+
+## Document Designer usability consolidation - 2026-10-01
+
+Code checkpoint 066d7bb: retained incomplete property drafts, validation before page actions,
+per-page zoom/selection, compact Properties tab below 1100 px, searchable fields, double-click
+properties, canvas context menu/scoped shortcuts, grouped text Undo and async preview protection.
+Cross-object Undo restores the selected object's exact font controls. Engine/schema unchanged.
+
+Final full regression: 934 passed, 0 failures/errors/skips (818.68 s); Composition 101 tests,
+including 13 new interaction cases. Ruff/source/diff checks passed. Final Windows frozen 200%
+and QA-installed 100% workflows passed: 100 records / 200 pages, exact Windows faces, CJK,
+explicit glyph repair/audit, barcodes, save/reopen, reconciliation and existing editor open.
+QA installation removed. Synthetic data/offscreen Qt; customer source data was not changed.
+
+See DOCUMENT_DESIGNER_USABILITY.md and validation/document_designer_usability_20261001.json.
+Portable development delivery: dist-designer-usability; public version remains 2.5.15.
+Rollback to the preceding milestone: document-designer-multipage-dev-20261001.

@@ -28,7 +28,7 @@ Acceptance: focused suite, full regression, native/frozen and installed smoke; s
 2. 用 Page → Add blank template page 新增頁面；Duplicate template page 會保留版面、主字體、補字設定及背景，並產生新的物件 ID。
 3. 畫布上方 Template page 清單切換頁面；Alt+PgUp / Alt+PgDown 亦可。
 4. Page → Current page size 改本頁尺寸；File → Use PDF background 只設定本頁背景。
-5. ← / → 將目前頁提早／延後；− 刪除目前頁。最少保留一頁。所有頁面修改支援 Undo / Redo。
+5. Page actions → Move page earlier / later 調整頁序；Delete template page 刪除目前頁。最少保留一頁。所有頁面修改支援 Undo / Redo。
 6. 可在不同頁之間複製／貼上物件。大於目標頁的物件會提示先縮小，不會悄悄改其尺寸或字體。
 7. Preview 中，Record 控制資料筆數，Template page 控制該筆資料的模板頁。背景 worker 只渲染當前頁，不生成整份工作。
 8. Production 先顯示每筆頁數與預期總頁數。輸出順序固定為第一筆的所有頁、第二筆的所有頁，以此類推。

@@ -2,6 +2,8 @@
 
 日期：2026-10-01。這是 v3.0 功能的開發測試版；正式產品版本仍為 2.5.15。
 
+Latest operation update: [UI/UX consolidation](DOCUMENT_DESIGNER_USABILITY.md). This document retains the earlier font/UI milestone acceptance.
+
 ## 本輪更新
 
 ### 名稱與入口

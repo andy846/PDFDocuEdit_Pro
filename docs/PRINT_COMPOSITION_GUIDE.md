@@ -4,6 +4,8 @@
 
 本輪 UX／Windows 字體更新及測試重點見 [更新說明](DOCUMENT_DESIGNER_UX_UPDATE.md)。
 
+Current operation updates: [UI/UX consolidation](DOCUMENT_DESIGNER_USABILITY.md) and [fixed multiple pages](DOCUMENT_DESIGNER_MULTIPAGE.md).
+
 ## 1. 啟動與入口
 
 Windows 可攜版：解壓整個 Composition-Dev ZIP，執行資料夾內的 **PDFDocuEdit Pro.exe**，在 Welcome 選 **Document Designer**。請保留 exe 旁的 _internal 資料夾。
@@ -29,7 +31,7 @@ python main.py
 4. 系統複製該頁作背景，背景頁尺寸成為模板尺寸，原始 PDF 保持不變。
 5. 使用 Text、Image、Line、Box、Barcode → Code 128／QR 加入物件。
 
-背景是固定頁面，可透過 Project → Remove background 移除。多頁来源只選其中一頁；本版每個資料記錄產生一頁，並不將整份多頁 PDF 作每個記錄的模板。
+背景是固定頁面，可透過 File → Remove background 移除。每個模板頁可選擇一個 PDF 來源頁作背景，並可新增多個固定模板頁；每筆資料依順序產生這些頁面。
 
 ## 3. 匯入 CSV／TXT
 
