@@ -151,3 +151,27 @@ QA installation removed. Synthetic data/offscreen Qt; customer source data was n
 See DOCUMENT_DESIGNER_USABILITY.md and validation/document_designer_usability_20261001.json.
 Portable development delivery: dist-designer-usability; public version remains 2.5.15.
 Rollback to the preceding milestone: document-designer-multipage-dev-20261001.
+
+## Document Designer conditional rules - 2026-10-01
+
+Checkpoint 889b4e6: declarative All/Any text/Decimal conditions, per-object visibility and
+one alternative text/barcode/static image branch; shared headless preview/glyph preflight/
+production selection. Object properties/Rules menu, row limits, sample check, Undo/Redo,
+copy/page duplication, explicit font repairs and static asset save/load are retained.
+Schema 4 reads v1-v3; old builds cannot open newly saved projects.
+
+Full regression: 989 passed, 0 failures/errors/skips (797.17 s), including 156 Composition
+cases / 55 new rule cases. Ruff/source/assets/diff checks passed. Native 200%, final frozen
+200% and installed 100% passed 100 records / 200 pages; QA installation removed.
+Four-record synthetic demo exercised GS/IS and high/low balance branches; its four output
+pages rendered without warnings, and qpdf --check returned 0.
+
+Five-trial 10,000-record / 20,000-page conditional fixture median: 41.11 s, composer 101.7 MiB,
+assembler 223.0 MiB. No-rule median 27.00 s (+4.04% vs prior same-fixture baseline).
+Synthetic local measurements with uncontrolled cache/host activity; see raw samples and
+limitations in validation/document_designer_rules_benchmark_20261001.json.
+
+Operation, limits and delivery: DOCUMENT_DESIGNER_RULES.md. Full validation manifest:
+validation/document_designer_rules_20261001.json. Independent executable folder dist-rules;
+portable ZIP name includes Dev-Rules. Previous Git rollback: document-designer-usability-dev-20261001.
+Public version 2.5.15 unchanged; output splitting remains a later milestone.

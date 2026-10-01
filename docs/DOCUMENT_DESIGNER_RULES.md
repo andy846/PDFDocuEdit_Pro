@@ -83,3 +83,50 @@ Use **Save as** and retain the preceding project/asset folder if you need rollba
 
 Public application version remains 2.5.15 for this development delivery. No new dependency,
 editor rewrite, public release, output splitting or automatic processing is included.
+
+## Validation - rules development milestone
+
+Code checkpoint: 889b4e6. The focused Composition run passed 156 tests; the final 21
+rule/usability interaction checks passed after the mode/button synchronization improvement.
+Existing schema-version assertions now use TEMPLATE_VERSION; legacy v1/v2/v3 fixtures remain
+explicit. No existing test was disabled or removed.
+
+Native 200%, frozen 200% and QA-installed 100% workflows passed, each composing 100 records
+into 200 pages. Checks include conditional visibility, normal/alternative text and static
+images, rule save/reopen, summary reconciliation, exact Windows font face, CJK, explicit
+per-glyph repairs, QR/Code 128 decoding, and the existing editor opening a PDF.
+Screenshots were inspected using offscreen Qt. This does not certify physical printer output.
+The isolated QA installation was removed; no PDF file handler was registered.
+
+### Performance (five trials per fixture/size)
+
+| Fixture (2 pages/record) | Records | Median generation | Composer peak (median) | Assembler peak (median) |
+| --- | ---: | ---: | ---: | ---: |
+| Plain (no rules) | 1,000 | 2.98 s | 78.7 MiB | 27.5 MiB |
+| Plain (no rules) | 10,000 | 27.00 s | 101.0 MiB | 191.5 MiB |
+| Conditional text/visibility | 1,000 | 4.66 s | 78.9 MiB | 30.4 MiB |
+| Conditional text/visibility | 10,000 | 41.11 s | 101.7 MiB | 223.0 MiB |
+
+The no-rule generation medians are +9.93% / +4.04% against the previous two-page fixture
+baseline (2.710956 / 25.954071 s). Conditional fixtures contain an extra object on each page,
+so their times are not an isolated estimate of predicate overhead. All five 10,000-record
+conditional trials reconciled 20,000 pages, 10,000 hidden occurrences and 10,000 alternatives.
+
+These are synthetic local fixed-page results. Cold/warm caches and host activity were not
+controlled; focused GUI checks overlapped parts of the series. They are observations, not a
+strict performance guarantee. Composition is chunked; qpdf still scales memory with output
+objects. Raw samples: validation/document_designer_rules_benchmark_20261001.json.
+
+### Local test delivery
+
+- Executable: dist-rules/PDFDocuEdit Pro/PDFDocuEdit Pro.exe.
+- Portable: release/PDFDocuEdit-Pro-v2.5.15-Document-Designer-Dev-Rules-Portable-Windows-x64.zip
+  and .zip.sha256.
+- Synthetic example: release/Document-Designer-Rules-Demo/Conditional-statement.pdcx, source.csv,
+  copied static assets and README.txt.
+- Previous rollback: document-designer-usability-dev-20261001. Retain older templates as well as
+  the older executable. This milestone saves schema 4.
+
+Final full Windows regression on checkpoint 889b4e6: **989 passed, 0 failures/errors/skips**
+(797.17 s), including all **156 Composition tests** / 55 new rule cases. Full evidence:
+validation/document_designer_rules_20261001.json. Final Git tag: document-designer-rules-dev-20261001.

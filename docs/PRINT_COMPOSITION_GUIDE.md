@@ -73,7 +73,7 @@ Windows 系統字體可在 **Family** 搜尋，並在 **Style** 選確切字款�
 
 生成前的字體掃描會檢查整批資料，包含後面的記錄才出現的中文。缺字體、缺字、超出版面文字框、無效欄位或禁止嵌入的字體會阻止生產，避免靜默替代／截字。調整內容、字體或文字框後重新預覽。
 
-補字及客戶主字體保留：選擇 **Repair missing glyph…**，設定單一 code point，詳見 [補字指引](DOCUMENT_DESIGNER_GLYPH_REPAIRS.md)。新版讀取 v1／v2，保存為 template_version 2。
+補字及客戶主字體保留：選擇 **Repair missing glyph…**，設定單一 code point，詳見 [補字指引](DOCUMENT_DESIGNER_GLYPH_REPAIRS.md)。目前規則開發版讀取 v1／v2／v3，保存為 template_version 4；回退請保留舊模板。
 
 ## 5. 條碼
 
