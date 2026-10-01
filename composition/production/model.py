@@ -49,6 +49,7 @@ class JobResult:
     repaired_records: int = 0
     glyph_repair_report: str = ""
     warnings: list[str] = field(default_factory=list)
+    rule_summary: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)

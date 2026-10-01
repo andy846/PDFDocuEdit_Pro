@@ -70,9 +70,9 @@ def run(output: Path):
         doc.save(background)
     source = output/"source.csv"
     with source.open("w", encoding="utf-8", newline="") as stream:
-        stream.write("Name,Account\n")
+        stream.write("Name,Account,Scheme_Code,Balance\n")
         for index in range(100):
-            stream.write(f"\u9673\u5c0f\u660e,{index:08}\n")
+            stream.write(f"\u9673\u5c0f\u660e,{index:08},{'GS' if index % 2 == 0 else 'IS'},{20001 if index % 2 == 0 else 0}\n")
     window._worker({"task":"background","source":str(background),"page":0,
                     "target":str(window.directory/"company.pdf")}, window._background_ready)
     wait(lambda: bool(window.template.background))
@@ -134,10 +134,56 @@ def run(output: Path):
     check(window.page_index == 0, "Page reorder failed")
     window.undo.undo()
     check(window.page_index == 1, "Page reorder undo failed")
+    # Exercise real rule editor controls on the continuation page.
+    from composition.designer.rules_dialog import RulesDialog
+
+    def set_condition(group, field, operator="eq", kind="text", value="", row=0):
+        group.setChecked(True)
+        field_box, compare, data_type, target = (group.table.cellWidget(row, col) for col in range(4))
+        field_box.setCurrentText(field)
+        data_type.setCurrentIndex(data_type.findData(kind))
+        compare.setCurrentIndex(compare.findData(operator))
+        target.setText(value)
+
+    fields = ["Name", "Account", "Scheme_Code", "Balance"]
+    window.canvas.select_ids([window.page.elements[0].id])
+    rules_dialog = RulesDialog(window.page.elements[0], fields, parent=window)
+    set_condition(rules_dialog.variant, "Scheme_Code", value="GS")
+    rules_dialog.alt_text.setPlainText("GS continuation: {{Account}}")
+    rules_dialog.show()
+    QApplication.processEvents()
+    rules_dialog.grab().save(str(output/"rules-dialog.png"))
+    rules_dialog.apply_rules()
+    window.apply_object_rules(rules_dialog.choice)
+    window.add_element("text", "GS-only message", x=20, y=80)
+    rules_dialog = RulesDialog(window.page.elements[-1], fields, parent=window)
+    set_condition(rules_dialog.visibility, "Scheme_Code", value="GS")
+    rules_dialog.visibility.add_condition()
+    set_condition(rules_dialog.visibility, "Balance", "gt", "number", "10000", row=1)
+    rules_dialog.apply_rules()
+    window.apply_object_rules(rules_dialog.choice)
+    red, blue = output/"normal.png", output/"alternate.png"
+    Image.new("RGB", (20, 20), "red").save(red)
+    Image.new("RGB", (20, 20), "blue").save(blue)
+    original_open_dialog = QFileDialog.getOpenFileName
+    QFileDialog.getOpenFileName = lambda *args, **kwargs: (str(red), "")
+    try:
+        window.add_element("image", x=20, y=115)
+    finally:
+        QFileDialog.getOpenFileName = original_open_dialog
+    before, after = window.template.to_dict(), window.template.to_dict()
+    after["pages"][1]["elements"][-1].update(image=str(red), width_mm=20, height_mm=20)
+    window._commit(before, after, "Image rule demonstration", after["pages"][1]["elements"][-1]["id"])
+    rules_dialog = RulesDialog(window.page.elements[-1], fields, parent=window)
+    set_condition(rules_dialog.variant, "Scheme_Code", value="GS")
+    rules_dialog.alt_image.setText(str(blue))
+    rules_dialog.apply_rules()
+    window.apply_object_rules(rules_dialog.choice)
     window.tabs.setCurrentIndex(2)
     wait(lambda: window.canvas.preview_item is not None)
     window.record.setValue(18)
     wait(lambda: window.canvas.preview_item is not None)
+    check("1 hidden / 0 alternative" in window.preview_state.text(), "Record rule preview mismatch")
     window.grab().save(str(output/"preview-page-two.png"))
     window.page_combo.setCurrentIndex(0)
     window.resize(960, 640)
@@ -179,6 +225,8 @@ def run(output: Path):
         QFileDialog.getSaveFileName = original_save_dialog
     loaded = load_project(project)
     check(len(loaded.pages) == 2 and len(loaded.elements) == 5, "Saved template lost pages/objects")
+    check(len(loaded.pages[1].elements) == 3 and loaded.pages[1].elements[0].rules.alternative is not None, "Saved rules missing")
+    check(Path(loaded.pages[1].elements[-1].rules.alternative.image).is_file(), "Saved alternative asset missing")
     check(Path(loaded.background).is_file(), "Saved background missing")
     check("U+7530" in loaded.elements[-1].glyph_repairs, "Saved glyph repair missing")
     ticks = []
@@ -192,7 +240,13 @@ def run(output: Path):
     check(bool(window.last_output), window.production_summary.toPlainText())
     with fitz.open(window.last_output) as doc:
         check(doc.page_count == 200, "Production page count mismatch")
-        check("Continuation: 00000000" in doc[1].get_text(), "Record/page order mismatch")
+        check("GS continuation: 00000000" in doc[1].get_text(), "Alternative text/order mismatch")
+        check("GS-only message" in doc[1].get_text() and "GS-only message" not in doc[3].get_text(), "Conditional visibility failed")
+        check("Continuation: 00000001" in doc[3].get_text(), "Normal content failed")
+        for page_index, colour in [(1, (0, 0, 255)), (3, (255, 0, 0))]:
+            pix = doc[page_index].get_pixmap(alpha=False)
+            rendered = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            check(rendered.getpixel((85, 354)) == colour, "Alternative image failed")
         check(abs(doc[1].rect.width-148*72/25.4) < .01, "Independent page size lost")
         check("\u9673\u5c0f\u660e" in doc[0].get_text(), "Chinese output text missing")
         check("00000099" in doc[-1].get_text(), "Record order mismatch")
@@ -204,6 +258,8 @@ def run(output: Path):
     import json as json_report
     report = json_report.loads((Path(window.last_output).parent/"job.json").read_text(encoding="utf-8"))
     check(report["repaired_glyphs"] == report["repaired_records"] == 100, "Repair reconciliation missing")
+    check(report["rule_summary"] == {"configured_objects": 3, "records_checked": 100,
+          "hidden_occurrences": 50, "alternate_occurrences": 100, "complete": True}, "Rule reconciliation failed")
     check(Path(report["glyph_repair_report"]).is_file(), "Repair audit CSV missing")
     window.grab().save(str(output/"production.png"))
     # Existing editor still opens PDFs while the new workspace exists.
@@ -215,7 +271,7 @@ def run(output: Path):
                "pdf":window.last_output, "event_loop_ticks":len(ticks),
                "checks":["Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",
                          "Code128 decoding","QR decoding","save and reopen","reconciliation",
-                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering"]}
+                         "background production","existing editor open", "per-glyph repair preserves primary face", "glyph repair audit", "multi-page template/save/preview", "page reorder and undo", "independent page sizes", "record/page reconciliation", "typed variable drafts", "compact/wide inspector", "field filtering", "rules editor", "conditional visibility", "alternative text/image", "rules save/reopen", "rule reconciliation"]}
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

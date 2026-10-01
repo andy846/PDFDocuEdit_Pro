@@ -67,3 +67,5 @@ build_assets/composition/*
 /dist-multipage/
 
 /dist-designer-usability/
+
+/dist-rules/

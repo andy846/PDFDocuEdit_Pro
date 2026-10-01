@@ -128,7 +128,7 @@ Production 顯示進度、數量、錯誤及報告路徑。完成後可 **Open p
 
 最後的 qpdf 合併仍需要 PDF 物件記憶體，並不是整條管線固定記憶體。50,000 頁中文＋條碼合成測試的組版峰值約 260 MiB，合併峰值約 1,657 MiB；詳見驗收報告。
 
-本版是一筆一頁。多頁模板、條件規則、動態表格／溢出、分檔、重印、watch folder、AFP／IPDS 留待後續 v3.x。
+開發版已支援固定多頁模板與條件規則；動態表格／溢出、分檔、重印、watch folder、AFP／IPDS 留待後續 v3.x。多頁操作見 DOCUMENT_DESIGNER_MULTIPAGE.md；條件顯示及替代文字／圖片见 DOCUMENT_DESIGNER_RULES.md。
 
 ## 10. 無 GUI 使用核心
 

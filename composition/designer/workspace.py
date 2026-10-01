@@ -46,6 +46,7 @@ from .font_controls import FontOperations
 from .pages import PageOperations
 from .process import Worker
 from .properties import Properties
+from .rule_controls import RuleOperations
 from .usability import DesignerUsability
 
 
@@ -75,7 +76,7 @@ class TemplateEdit(QUndoCommand):
         return True
 
 
-class CompositionWindow(DesignerUsability, PageOperations, DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -180,6 +181,8 @@ class CompositionWindow(DesignerUsability, PageOperations, DesignerChrome, FontO
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
         self.properties.glyphRepairRequested.connect(self.edit_glyph_repairs)
+        self.properties.rulesRequested.connect(self.edit_object_rules)
+        self.properties.rulesClearRequested.connect(self.clear_object_rules)
         self.properties.revertRequested.connect(self.revert_content_draft)
         self.properties_scroll = QScrollArea()
         self.properties_scroll.setWidgetResizable(True)
@@ -437,6 +440,7 @@ class CompositionWindow(DesignerUsability, PageOperations, DesignerChrome, FontO
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
         self.canvas.set_preview_mode(index == 2)
         self._show_properties(self.actions["properties"].isChecked())
+        self._update_actions()
         self._schedule_preview()
 
     def _schedule_preview(self, *args):
@@ -470,6 +474,11 @@ class CompositionWindow(DesignerUsability, PageOperations, DesignerChrome, FontO
             self.preview_state.setText(
                 f"Record {result['record']:,} · template page {result.get('page', 0)+1}"
                 if self.tabs.currentIndex() == 2 else "Design layout · field placeholders")
+            if self.tabs.currentIndex() == 2 and result.get("rules"):
+                states = result["rules"]
+                hidden = sum(not row["visible"] for row in states)
+                alternate = sum(row["alternative"] for row in states)
+                self.preview_state.setText(self.preview_state.text() + f" · {hidden} hidden / {alternate} alternative")
             repairs = result.get("glyph_repairs", [])
             count = sum(item["occurrences"] for item in repairs)
             self.message.setText(f"Preview uses {count} explicit glyph repair(s); primary fonts retained." if count else "")
@@ -854,6 +863,13 @@ class CompositionWindow(DesignerUsability, PageOperations, DesignerChrome, FontO
         if result["error"]:
             lines.append("Error: " + result["error"])
         lines.extend(result["warnings"])
+        if result.get("rule_summary"):
+            rules = result["rule_summary"]
+            lines.extend([f"Conditional objects: {rules.get('configured_objects', 0)}",
+                          f"Rules checked records: {rules.get('records_checked', 0)}",
+                          f"Rules check complete: {rules.get('complete', False)}",
+                          f"Hidden object occurrences: {rules.get('hidden_occurrences', 0)}",
+                          f"Alternative content occurrences: {rules.get('alternate_occurrences', 0)}"])
         self.production_summary.setPlainText("\n".join(lines))
         self.failed_record = result.get("error_record")
         self._record_font_error(result["error"], result.get("error_record"))

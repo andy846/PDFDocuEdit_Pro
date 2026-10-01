@@ -45,6 +45,9 @@ def save_project(template: Template, path: str | Path) -> Path:
         page["background"] = store_asset(page["background"])
     for element in (element for page in value["pages"] for element in page["elements"]):
         element["image"] = store_asset(element["image"])
+        if element["rules"]["alternative"]:
+            variant = element["rules"]["alternative"]
+            variant["image"] = store_asset(variant["image"])
         # Custom fonts are copied only after font embedding permissions are checked.
         if element["font"]["file"]:
             from composition.engine.fonts import load_font
@@ -92,6 +95,8 @@ def load_project(path: str | Path) -> Template:
     template.data.path = resolve(template.data.path)
     for element in template.all_elements():
         element.image = resolve(element.image)
+        if element.rules.alternative:
+            element.rules.alternative.image = resolve(element.rules.alternative.image)
         element.font.file = resolve(element.font.file)
         for spec in element.glyph_repairs.values():
             spec.file = resolve(spec.file)

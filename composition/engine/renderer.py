@@ -16,13 +16,12 @@ from composition.template.model import (
     CompositionError,
     Element,
     Template,
-    parse_value,
-    resolve_value,
     validate_template,
 )
 
 from .fonts import load_font, permits_subsetting
 from .glyphs import GlyphFonts
+from .rules import ElementPlan
 
 
 def rgb(value: str):
@@ -56,17 +55,19 @@ def wrap_text(text: str, font: fitz.Font, size: float, width: float) -> list[str
 class Renderer:
     """Owns its font/background resources inside one process; no GUI state."""
 
-    def __init__(self, template: Template, *, page_index=None):
+    def __init__(self, template: Template, *, page_index=None, design=False):
         validate_template(template)
         if page_index is not None and (type(page_index) is not int or not 0 <= page_index < len(template.pages)):
             raise CompositionError("Template page number is out of range.")
         self.resource_pages = template.pages if page_index is None else [template.pages[page_index]]
         self.preview_page_index = page_index
         self.template = template
-        self.tokens = {
-            element.id: parse_value(element.value) for spec in self.resource_pages for element in spec.elements
-            if element.type in {"text", "qr", "code128"}
-        }
+        self.design = design
+        self.plans = {element.id: ElementPlan(element) for spec in self.resource_pages for element in spec.elements}
+        self.tokens = {key: plan.tokens for key, plan in self.plans.items() if plan.tokens}
+        self.rule_summary = {"configured_objects": sum(plan.has_rules for plan in self.plans.values()),
+                             "records_checked": 0, "hidden_occurrences": 0,
+                             "alternate_occurrences": 0, "complete": False}
         self.stack = ExitStack()
         self.backgrounds = {}
         self.fonts = {}
@@ -89,14 +90,20 @@ class Renderer:
                     self.repair_fonts[element.id] = {key: load_font(spec)
                                                      for key, spec in element.glyph_repairs.items()}
                 if element.type == "image":
-                    image_path = Path(element.image)
-                    if image_path.stat().st_size > 50 * 1024 * 1024:
-                        raise CompositionError("Static images must be smaller than 50 MB.")
-                    with Image.open(image_path) as image:
-                        if image.width * image.height > 50_000_000:
-                            raise CompositionError("Static images must have at most 50 million pixels.")
-                        image.verify()
-                    self.images[element.id] = image_path.read_bytes()
+                    paths = [element.image]
+                    if element.rules.alternative:
+                        paths.append(element.rules.alternative.image)
+                    for raw in paths:
+                        if raw in self.images:
+                            continue
+                        image_path = Path(raw)
+                        if image_path.stat().st_size > 50 * 1024 * 1024:
+                            raise CompositionError("Static images must be smaller than 50 MB.")
+                        with Image.open(image_path) as image:
+                            if image.width * image.height > 50_000_000:
+                                raise CompositionError("Static images must have at most 50 million pixels.")
+                            image.verify()
+                        self.images[raw] = image_path.read_bytes()
         except Exception:
             self.close()
             raise
@@ -117,6 +124,7 @@ class Renderer:
         self.output_fonts = prepare_subsets(
             self.template, self.tokens, self.fonts, records, directory, progress, is_cancelled,
             repair_fonts=self.repair_fonts, audit_path=audit_path, summary=self.repair_summary,
+            plans=self.plans, rule_summary=self.rule_summary,
         )
 
     def glyph_usage(self, record, page_index=None):
@@ -127,11 +135,28 @@ class Renderer:
             if element.id not in self.fonts:
                 continue
             selector = GlyphFonts(self.fonts[element.id], self.repair_fonts.get(element.id))
-            counts = selector.repaired_counts(resolve_value(self.tokens[element.id], record))
+            selected = self.plans[element.id].resolve(record, design=self.design)
+            if not selected.visible:
+                continue
+            counts = selector.repaired_counts(selected.value)
             for key, count in counts.items():
                 result.append({"object": element.id, "codepoint": key, "occurrences": count,
                                "primary_font": element.font.family,
                                "repair_font": element.glyph_repairs[key].family})
+        return result
+
+    def rule_usage(self, record, page_index=None):
+        if self.design:
+            return []
+        elements = (self.template.all_elements() if page_index is None
+                    else self.template.pages[page_index].elements)
+        result = []
+        for element in elements:
+            plan = self.plans[element.id]
+            if plan.has_rules:
+                selected = plan.resolve(record)
+                result.append({"object": element.id, "visible": selected.visible,
+                               "alternative": selected.alternative})
         return result
 
     def finalize(self, document):
@@ -163,7 +188,7 @@ class Renderer:
                 try:
                     self._render_element(page, element, record)
                 except Exception as exc:
-                    fields = [text for kind, text in self.tokens.get(element.id, ()) if kind == "field"]
+                    fields = sorted(self.plans[element.id].fields)
                     raise CompositionError(
                         f"Record {ordinal}, template page {index+1}, object {element.id}"
                         + (f", field {', '.join(fields)}" if fields else "")
@@ -171,15 +196,18 @@ class Renderer:
                     ) from exc
 
     def _render_element(self, page, element: Element, record) -> None:
+        selected = self.plans[element.id].resolve(record, design=self.design)
+        if not selected.visible:
+            return
         rect = fitz.Rect(
             element.x_mm * MM_TO_PT, element.y_mm * MM_TO_PT,
             (element.x_mm + element.width_mm) * MM_TO_PT,
             (element.y_mm + element.height_mm) * MM_TO_PT,
         )
         if element.type == "text":
-            self._text(page, rect, element, resolve_value(self.tokens[element.id], record))
+            self._text(page, rect, element, selected.value)
         elif element.type == "image":
-            page.insert_image(rect, stream=self.images[element.id], keep_proportion=True)
+            page.insert_image(rect, stream=self.images[selected.image], keep_proportion=True)
         elif element.type == "line":
             page.draw_line(rect.tl, rect.br, color=rgb(element.colour), width=element.stroke_pt)
         elif element.type == "rectangle":
@@ -188,7 +216,7 @@ class Renderer:
                 fill=rgb(element.fill) if element.fill else None,
             )
         else:
-            value = resolve_value(self.tokens[element.id], record)
+            value = selected.value
             self._barcode(page, rect, element, value)
 
     def _text(self, page, rect, element, text):
@@ -321,11 +349,14 @@ class Renderer:
 
 
 def render_preview(template: Template, record: dict[str, str], ordinal: int = 1,
-                   repair_details: list | None = None, *, page_index: int | None = None) -> bytes:
-    with Renderer(template, page_index=page_index) as renderer, fitz.open() as document:
+                   repair_details: list | None = None, *, page_index: int | None = None,
+                   design=False, rule_details: list | None = None) -> bytes:
+    with Renderer(template, page_index=page_index, design=design) as renderer, fitz.open() as document:
         renderer.render(document, record, ordinal, page_index=page_index)
         if repair_details is not None:
             repair_details.extend(renderer.glyph_usage(record, page_index))
+        if rule_details is not None:
+            rule_details.extend(renderer.rule_usage(record, page_index))
         renderer.finalize(document)
         return document.tobytes(deflate=True, garbage=1)
 

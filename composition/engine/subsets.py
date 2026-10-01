@@ -9,18 +9,22 @@ from pathlib import Path
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
-from composition.template.model import resolve_value
-
 from .fonts import RecordFontError, permits_subsetting
 from .glyphs import GlyphFonts
+from .rules import ElementPlan, RecordRuleError
 
 
 def prepare_subsets(template, tokens, fonts, records, directory, progress=None, is_cancelled=None,
-                    *, repair_fonts=None, audit_path=None, summary=None):
+                    *, repair_fonts=None, audit_path=None, summary=None, plans=None, rule_summary=None):
     repair_fonts = repair_fonts or {}
     summary = summary if summary is not None else {}
     summary.update(occurrences=0, records=0)
-    elements = [element for element in template.all_elements()
+    all_elements = list(template.all_elements())
+    plans = plans if plans is not None else {e.id: ElementPlan(e) for e in all_elements}
+    rule_summary = rule_summary if rule_summary is not None else {}
+    rule_summary.update(configured_objects=sum(plan.has_rules for plan in plans.values()), records_checked=0,
+                        hidden_occurrences=0, alternate_occurrences=0, complete=False)
+    elements = [element for element in all_elements
                 if element.type == "text" or (element.type == "code128" and element.show_barcode_text)]
     page_numbers = {e.id: index+1 for index, page in enumerate(template.pages) for e in page.elements}
     pairs = list(fonts.values()) + [pair for mapping in repair_fonts.values() for pair in mapping.values()]
@@ -39,10 +43,19 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
                 from composition.template.model import CompositionError
                 raise CompositionError("Production cancelled while preparing fonts.")
             repaired_record = False
-            for element in elements:
-                text = resolve_value(tokens[element.id], record)
+            for element in all_elements:
+                plan = plans[element.id]
+                try:
+                    selected = plan.resolve(record)
+                except ValueError as exc:
+                    raise RecordRuleError(ordinal, element, page_numbers[element.id], exc) from exc
+                rule_summary["hidden_occurrences"] += int(not selected.visible)
+                rule_summary["alternate_occurrences"] += int(selected.alternative)
+                if not selected.visible or element.id not in selectors:
+                    continue
+                text = selected.value
                 selector = selectors[element.id]
-                fields = [value for kind, value in tokens[element.id] if kind == "field"]
+                fields = plan.selected_fields(selected.alternative)
                 try:
                     for character in set(text) - set("\r\n\t"):
                         _font, source = selector.select(character)
@@ -61,8 +74,10 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
                         writer.writerow(["'"+v if isinstance(v, str) and v.startswith(("=", "+", "-", "@"))
                                          else v for v in values])
             summary["records"] += int(repaired_record)
+            rule_summary["records_checked"] += 1
             if progress and ordinal % 500 == 0:
-                progress(0, 0, f"Checking exact font usage: record {ordinal:,}")
+                progress(0, 0, f"Checking rules and exact font usage: record {ordinal:,}")
+    rule_summary["complete"] = True
     output = {}
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

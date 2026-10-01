@@ -30,4 +30,4 @@ Product UI name updated to Document Designer on 2026-10-01. See DOCUMENT_DESIGNE
 
 ## Post-MVP progress — fixed multiple template pages
 
-The next V3.1 milestone now supports ordered fixed pages per record, page commands/Undo, selected-page preview and exact multi-page reconciliation. Schema 3 reads legacy v1/v2 without changing primary fonts or glyph repairs. See DOCUMENT_DESIGNER_MULTIPAGE.md for operation, evidence and limits. Conditional visibility/rules and output splitting remain next milestones.
+The next V3.1 milestone now supports ordered fixed pages per record, page commands/Undo, selected-page preview and exact multi-page reconciliation. Schema 3 reads legacy v1/v2 without changing primary fonts or glyph repairs. See DOCUMENT_DESIGNER_MULTIPAGE.md for operation, evidence and limits. Conditional visibility/basic rules are now implemented in the next development milestone; output splitting remains a later milestone. See DOCUMENT_DESIGNER_RULES.md for schema 4, shared preview/production evaluation, operation and limits.

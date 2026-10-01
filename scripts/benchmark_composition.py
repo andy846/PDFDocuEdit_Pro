@@ -18,13 +18,24 @@ def one_case(count, directory, fixture, pages=1):
     from composition.data.source import import_records
     from composition.production.generator import generate
     from composition.production.model import ProductionJob
-    from composition.template.model import DataConfig, Element, FontSpec, PageSpec, Template
+    from composition.template.model import (
+        AlternativeContent,
+        ConditionGroup,
+        DataConfig,
+        Element,
+        ElementRules,
+        FontSpec,
+        PageSpec,
+        RuleCondition,
+        Template,
+    )
     directory.mkdir(parents=True, exist_ok=True)
     source = directory / "input.csv"
     with source.open("w", encoding="utf-8", newline="") as stream:
-        stream.write("Account,Name,Address\n")
+        stream.write("Account,Name,Address,Scheme_Code,Balance\n" if fixture == "rules" else "Account,Name,Address\n")
         for index in range(count):
-            stream.write(f'{index:010},Customer {index},"Hong Kong"\n')
+            suffix = f",{'GS' if index % 2 == 0 else 'IS'},{20001 if index % 2 == 0 else 0}" if fixture == "rules" else ""
+            stream.write(f'{index:010},Customer {index},"Hong Kong"{suffix}\n')
     start = time.perf_counter()
     store = import_records(DataConfig(path=str(source)), directory / "records.db")
     imported = time.perf_counter()
@@ -38,6 +49,13 @@ def one_case(count, directory, fixture, pages=1):
             Element(value="\u9999\u6e2f\u5ba2\u6236", y_mm=235, height_mm=20,
                     font=FontSpec(family="Noto Sans CJK HK")),
         ])
+    if fixture == "rules":
+        elements[0].rules = ElementRules(alternative=AlternativeContent(
+            ConditionGroup("all", [RuleCondition("Scheme_Code", value="GS")]),
+            value="GS Account: {{Account}}"))
+        elements.append(Element(value="High balance: {{Account}}", y_mm=55, height_mm=20,
+            rules=ElementRules(visible_when=ConditionGroup("all", [
+                RuleCondition("Balance", operator="gt", data_type="number", value="10000")]))))
     import copy
     import uuid
     model = Template(elements=elements)
@@ -57,6 +75,7 @@ def one_case(count, directory, fixture, pages=1):
               "composer_peak_memory_bytes": result.composer_peak_memory_bytes,
               "assembler_peak_memory_bytes": result.assembler_peak_memory_bytes,
               "job_log": str(Path(result.report_dir)/"job.json")}
+    values["rule_summary"] = result.rule_summary
     print(json.dumps(values))
 
 
@@ -64,7 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", nargs="+", type=int, default=[100, 1000, 10000, 50000])
     parser.add_argument("--repeat", type=int, default=1)
-    parser.add_argument("--fixture", choices=["plain", "mixed"], default="plain")
+    parser.add_argument("--fixture", choices=["plain", "mixed", "rules"], default="plain")
     parser.add_argument("--output", type=Path, default=ROOT / ".benchmarks" / "composition")
     parser.add_argument("--case", type=int)
     parser.add_argument("--pages", type=int, choices=range(1, 101), default=1)

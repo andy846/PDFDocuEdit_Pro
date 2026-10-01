@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 3
+TEMPLATE_VERSION = 4
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "qr"})
@@ -27,6 +27,53 @@ class FontSpec:
     bold: bool = False
     italic: bool = False
     file: str = ""
+
+@dataclass
+class RuleCondition:
+    field: str = ""
+    operator: str = "eq"
+    data_type: str = "text"
+    value: str = ""
+
+
+@dataclass
+class ConditionGroup:
+    mode: str = "all"
+    conditions: list[RuleCondition] = field(default_factory=list)
+
+
+@dataclass
+class AlternativeContent:
+    when: ConditionGroup = field(default_factory=ConditionGroup)
+    value: str = ""
+    image: str = ""
+
+
+@dataclass
+class ElementRules:
+    visible_when: ConditionGroup | None = None
+    alternative: AlternativeContent | None = None
+
+    @classmethod
+    def from_dict(cls, raw):
+        if not isinstance(raw, dict):
+            raise CompositionError("Object rules must be a JSON object.")
+        def group(value):
+            if not isinstance(value, dict) or not isinstance(value.get("conditions"), list):
+                raise CompositionError("A condition group needs a conditions list.")
+            if len(value["conditions"]) > 20:
+                raise CompositionError("Use at most 20 conditions per group.")
+            return ConditionGroup(**{**value, "conditions": [RuleCondition(**item) for item in value["conditions"]]})
+        values = dict(raw)
+        if values.get("visible_when") is not None:
+            values["visible_when"] = group(values["visible_when"])
+        if values.get("alternative") is not None:
+            alternative = values["alternative"]
+            if not isinstance(alternative, dict) or "when" not in alternative:
+                raise CompositionError("Alternative content needs a condition group.")
+            values["alternative"] = AlternativeContent(**{**alternative, "when": group(alternative["when"])})
+        return cls(**values)
+
 
 
 @dataclass
@@ -52,6 +99,7 @@ class Element:
     show_barcode_text: bool = False
     # Explicit repairs apply only when the primary face lacks that exact code point.
     glyph_repairs: dict[str, FontSpec] = field(default_factory=dict)
+    rules: ElementRules = field(default_factory=ElementRules)
 
 
 @dataclass
@@ -136,7 +184,7 @@ class Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
         version = value.get("template_version")
-        if type(version) is not int or version not in (1, 2, TEMPLATE_VERSION):
+        if type(version) is not int or version not in (1, 2, 3, TEMPLATE_VERSION):
             raise CompositionError(
                 f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
@@ -150,7 +198,7 @@ class Template:
                         page[key] = raw.pop(key)
                 raw["pages"] = [page]
             elif any(key in raw for key in ("width_mm", "height_mm", "background", "elements")):
-                raise CompositionError("Version 3 uses pages; remove ambiguous top-level page properties.")
+                raise CompositionError("Version 3/4 uses pages; remove ambiguous top-level page properties.")
             if not isinstance(raw.get("pages"), list) or not 1 <= len(raw["pages"]) <= MAX_TEMPLATE_PAGES:
                 raise CompositionError(f"A template needs 1 to {MAX_TEMPLATE_PAGES} pages.")
             pages = []
@@ -159,8 +207,12 @@ class Template:
                 elements = page.get("elements", [])
                 if not isinstance(elements, list) or len(elements) > 5000:
                     raise CompositionError("A template can contain at most 5,000 elements.")
+                if version < 4 and any(e.get("rules", {}).get("visible_when") is not None or
+                                       e.get("rules", {}).get("alternative") is not None for e in elements):
+                    raise CompositionError("Conditional rules require template version 4.")
                 page["elements"] = [
                     Element(**{**element, "font": FontSpec(**element.get("font", {})),
+                               "rules": ElementRules.from_dict(element.get("rules", {})),
                                "glyph_repairs": {key: FontSpec(**spec) for key, spec
                                                  in element.get("glyph_repairs", {}).items()}})
                     for element in elements]
@@ -224,11 +276,17 @@ def resolve_value(tokens: tuple[tuple[str, str], ...], record: dict[str, str]) -
 
 
 def required_fields(template: Template) -> set[str]:
-    return {
+    from composition.engine.rules import rule_fields
+    fields = {
         text for element in template.all_elements()
         if element.type in {"text", "code128", "qr"}
         for kind, text in parse_value(element.value) if kind == "field"
     }
+    for element in template.all_elements():
+        fields.update(rule_fields(element.rules))
+        if element.rules.alternative and element.type != "image":
+            fields.update(text for kind, text in parse_value(element.rules.alternative.value) if kind == "field")
+    return fields
 
 
 def validate_template(template: Template, *, check_assets: bool = True) -> None:
@@ -273,6 +331,8 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
         if not isinstance(element.id, str) or not element.id or element.id in seen:
             raise CompositionError("Element IDs must be non-empty and unique.")
         seen.add(element.id)
+        from composition.engine.rules import validate_rules
+        validate_rules(element, check_assets)
         if not isinstance(element.type, str) or element.type not in ELEMENT_TYPES:
             raise CompositionError(f"Unsupported element type: {element.type}")
         for prop in ("x_mm", "y_mm"):

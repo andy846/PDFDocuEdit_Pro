@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
 
 from composition.engine.fonts import FAMILIES
 
+from .rule_controls import rules_summary
+
 
 class Properties(QWidget):
     edited = pyqtSignal(dict)
@@ -35,6 +37,8 @@ class Properties(QWidget):
     insertFieldRequested = pyqtSignal()
     glyphRepairRequested = pyqtSignal()
     revertRequested = pyqtSignal()
+    rulesRequested = pyqtSignal()
+    rulesClearRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,6 +165,21 @@ class Properties(QWidget):
         groups.addWidget(self.font_group)
         groups.removeWidget(self.font_group)
         groups.insertWidget(1, self.font_group)
+        self.rules_group = QGroupBox("Object rules")
+        rules_layout = QVBoxLayout(self.rules_group)
+        self.rules_summary = QLabel()
+        self.rules_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.rules_summary.setWordWrap(True)
+        rules_layout.addWidget(self.rules_summary)
+        rule_buttons = QHBoxLayout()
+        self.rules_button = QPushButton("Edit rules…")
+        self.rules_button.clicked.connect(self.rulesRequested)
+        self.rules_clear = QPushButton("Clear")
+        self.rules_clear.clicked.connect(self.rulesClearRequested)
+        rule_buttons.addWidget(self.rules_button)
+        rule_buttons.addWidget(self.rules_clear)
+        rules_layout.addLayout(rule_buttons)
+        groups.insertWidget(1, self.rules_group)
         self.text_layout_group = QGroupBox("Text layout")
         text_layout = QFormLayout(self.text_layout_group)
         text_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -219,7 +238,7 @@ class Properties(QWidget):
         form.addRow("QR correction", self.ecc)
         form.addRow(self.human)
         groups.addWidget(self.barcode_group)
-        for group in (self.geometry, self.font_group, self.content_group,
+        for group in (self.geometry, self.rules_group, self.font_group, self.content_group,
                       self.text_layout_group, self.appearance_group, self.image_group, self.barcode_group):
             group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
             group.layout().setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
@@ -298,6 +317,8 @@ class Properties(QWidget):
         self.title.setText(element.type.title() + " properties" if element else "Properties")
         if element:
             self.font_choice = asdict(element.font)
+            self.rules_summary.setText(rules_summary(element.rules))
+            self.rules_clear.setEnabled(bool(element.rules.visible_when or element.rules.alternative))
             for key, control in self.numbers.items():
                 control.setValue(element.font.size_pt if key == "font_size" else getattr(element, key))
             self.displayed_numbers = {key: control.value() for key, control in self.numbers.items()}

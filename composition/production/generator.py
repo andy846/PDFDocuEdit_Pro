@@ -19,6 +19,7 @@ from composition.data.source import RecordStore
 from composition.engine.assets import qpdf_executable
 from composition.engine.fonts import RecordFontError
 from composition.engine.renderer import Renderer
+from composition.engine.rules import RecordRuleError
 from composition.template.model import CompositionError, Template, required_fields
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
@@ -44,6 +45,8 @@ def reconcile(result: JobResult) -> None:
         and result.expected_pages == result.input_records * result.pages_per_record
         and result.generated_pages == result.expected_pages
         and result.generated_files == 1
+        and (not result.rule_summary or (result.rule_summary.get("complete") is True
+             and result.rule_summary.get("records_checked") == result.input_records))
     ):
         raise CompositionError(
             "RECONCILIATION FAILED: "
@@ -126,6 +129,11 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Output File": result.output_pdf, "File Size": result.output_size,
         "Repaired Glyphs": result.repaired_glyphs, "Repaired Records": result.repaired_records,
         "Glyph Repair Report": result.glyph_repair_report,
+        "Conditional Objects": result.rule_summary.get("configured_objects", 0),
+        "Rules Checked Records": result.rule_summary.get("records_checked", 0),
+        "Rules Check Complete": result.rule_summary.get("complete", False),
+        "Hidden Object Occurrences": result.rule_summary.get("hidden_occurrences", 0),
+        "Alternate Content Occurrences": result.rule_summary.get("alternate_occurrences", 0),
         "Status": result.status, "Error Record": result.error_record or "", "Error": result.error,
     }
     with (directory / "control.csv").open("w", encoding="utf-8-sig", newline="") as stream:
@@ -164,7 +172,7 @@ def generate(
             raise CompositionError(f"Missing mapped fields: {', '.join(sorted(missing))}")
         executable = qpdf_executable()
         assets = [page.background for page in template.pages] + [
-            value for element in template.all_elements() for value in (element.image, element.font.file,
+            value for element in template.all_elements() for value in (element.image, element.rules.alternative.image if element.rules.alternative else "", element.font.file,
                           *(spec.file for spec in element.glyph_repairs.values())) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
@@ -172,7 +180,10 @@ def generate(
             if progress:
                 progress(0, 0, "Preparing exact font subsets")
             repair_audit = staging / "glyph-repairs-preflight.csv"
-            renderer.prepare_fonts(store.records(), font_folder, progress, is_cancelled, audit_path=repair_audit)
+            try:
+                renderer.prepare_fonts(store.records(), font_folder, progress, is_cancelled, audit_path=repair_audit)
+            finally:
+                result.rule_summary = dict(renderer.rule_summary)
             repair_summary = dict(renderer.repair_summary)
             check_cancel(is_cancelled)
             chunk = fitz.open()
@@ -256,6 +267,10 @@ def generate(
                 "Select the reported object and configure an explicit repair for the missing code point. "
                 "Keep the required primary font; review any private-use glyph against its source."
             )
+        if isinstance(exc, RecordRuleError):
+            result.error_record = exc.record_ordinal
+            result.failed_records = result.processed_records = 1
+            result.warnings.append("Rule validation failed before composition. Review the reported condition; no records composed.")
         result.finished_at = now()
         result.output_pdf = ""
         result.output_size = 0

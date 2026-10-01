@@ -6,6 +6,8 @@ from PyQt6.QtGui import QTransform
 
 from composition.template.model import CompositionError, Template
 
+from .rule_controls import rules_summary
+
 
 class DesignerUsability:
     def _init_usability(self):
@@ -129,7 +131,7 @@ class DesignerUsability:
         elements = {e.id: e for e in self.page.elements}
         for item in self.canvas.element_items:
             item.element = elements[item.element.id]
-            item.setToolTip(item.element.type + ": " + item.element.value)
+            item.setToolTip(item.element.type + ": " + item.element.value + "\n" + rules_summary(item.element.rules))
         element = elements.get(selected)
         self.properties.element = element
         if element and self.properties.content.toPlainText() != element.value:
@@ -141,7 +143,8 @@ class DesignerUsability:
             element = elements.get(item.data(256))
             if element:
                 value = element.value.replace("\n", " ")[:45] or element.type.title()
-                item.setText(f"{element.type.title()} · {value}")
+                badge = "[Rule] " if element.rules.visible_when or element.rules.alternative else ""
+                item.setText(f"{badge}{element.type.title()} · {value}")
                 item.setToolTip(value + "\n" + element.id)
         self._title()
         self._schedule_preview()
@@ -153,12 +156,17 @@ class DesignerUsability:
         editable = not (busy or self.content_invalid)
         for key, action in self.actions.items():
             if not editable and (key.startswith(("insert_", "arrange_")) or
-                                 key in {"variable", "cut", "paste", "duplicate", "delete", "cjk", "repair_glyph"}):
+                                 key in {"variable", "cut", "paste", "duplicate", "delete", "cjk", "repair_glyph", "edit_rules", "clear_rules"}):
                 action.setEnabled(False)
         self.actions["preview"].setEnabled(not self.content_invalid)
         self.remap_button.setEnabled(not (busy or self.content_invalid))
         self.canvas.set_editable(editable)
         self.properties.setEnabled(not (busy or self.font_requests))
+        self.properties.rules_button.setEnabled(self.actions["edit_rules"].isEnabled() and not pending)
+        self.properties.rules_clear.setEnabled(self.actions["clear_rules"].isEnabled() and not pending)
+        if pending:
+            self.actions["edit_rules"].setEnabled(False)
+            self.actions["clear_rules"].setEnabled(False)
         self.import_button.setEnabled(not busy and not self.content_invalid)
         for key in ("save", "save_as", "generate"):
             self.actions[key].setEnabled(self.actions[key].isEnabled()

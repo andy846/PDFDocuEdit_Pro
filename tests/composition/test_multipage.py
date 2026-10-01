@@ -11,7 +11,15 @@ from composition.data.source import import_records
 from composition.engine.renderer import Renderer, render_preview
 from composition.production.generator import generate
 from composition.production.model import ProductionJob
-from composition.template.model import CompositionError, DataConfig, Element, FontSpec, PageSpec, Template
+from composition.template.model import (
+    TEMPLATE_VERSION,
+    CompositionError,
+    DataConfig,
+    Element,
+    FontSpec,
+    PageSpec,
+    Template,
+)
 from composition.template.serializer import load_project, save_project
 from composition.worker import dispatch
 
@@ -46,7 +54,7 @@ def test_legacy_migration_preserves_layout_and_exact_fonts(version):
     assert model.width_mm == 215.9 and model.elements[0].font.file == "exact.ttf"
     assert model.elements[0].glyph_repairs["U+E473"].file == "repair.ttf"
     canonical = model.to_dict()
-    assert canonical["template_version"] == 3
+    assert canonical["template_version"] == TEMPLATE_VERSION
     assert "elements" not in canonical and "width_mm" not in canonical
     assert Template.from_dict(canonical).to_dict() == canonical
 

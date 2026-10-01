@@ -10,7 +10,14 @@ from composition.data.source import import_records
 from composition.engine.renderer import render_preview
 from composition.production.generator import generate
 from composition.production.model import ProductionJob
-from composition.template.model import CompositionError, DataConfig, Element, FontSpec, Template
+from composition.template.model import (
+    TEMPLATE_VERSION,
+    CompositionError,
+    DataConfig,
+    Element,
+    FontSpec,
+    Template,
+)
 from composition.template.serializer import load_project, save_project
 
 
@@ -55,13 +62,13 @@ def test_unmapped_or_incompatible_repair_still_blocks_output():
 def test_v1_migration_and_portable_repair_font(tmp_path):
     from composition.engine.assets import asset_root
     template = Template.from_dict({"template_version": 1, "elements": [{"value": "{{Name}}"}]})
-    assert template.template_version == 3
+    assert template.template_version == TEMPLATE_VERSION
     assert not template.elements[0].glyph_repairs
     template.elements[0].glyph_repairs["U+7530"] = FontSpec(
         family="Noto Sans CJK HK", file=str(asset_root() / "fonts/NotoSansCJKhk-Regular.otf"))
     target = save_project(template, tmp_path/"repairs.pdcx")
     saved = json.loads(target.read_text(encoding="utf-8"))
-    assert saved["template_version"] == 3
+    assert saved["template_version"] == TEMPLATE_VERSION
     assert not saved["pages"][0]["elements"][0]["glyph_repairs"]["U+7530"]["file"].startswith(str(asset_root()))
     loaded = load_project(target)
     assert loaded.elements[0].glyph_repairs["U+7530"].file.startswith(str(tmp_path))

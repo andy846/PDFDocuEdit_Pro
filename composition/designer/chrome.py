@@ -25,7 +25,7 @@ class DesignerChrome:
     def _build_actions(self):
         self.actions = {}
         menus = {name: self.menuBar().addMenu(name) for name in
-                 ("&File", "&Edit", "&Insert", "&Page", "&Arrange", "&View", "&Data", "&Production", "&Help")}
+                 ("&File", "&Edit", "&Insert", "&Page", "&Arrange", "&View", "&Data", "&Rules", "&Production", "&Help")}
         self.project_toolbar = QToolBar("Project", self)
         self.project_toolbar.setMovable(False)
         self.project_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -104,6 +104,8 @@ class DesignerChrome:
                             ("front", "Bring to front"), ("back", "Send to back")]:
             action("arrange_"+name, label, lambda checked=False, mode=name: self.arrange_objects(mode),
                    "&Arrange", symbol="layers")
+        action("edit_rules", "Edit object rules…", self.edit_object_rules, "&Rules", "Ctrl+Shift+R", "settings")
+        action("clear_rules", "Clear object rules", self.clear_object_rules, "&Rules", symbol="x")
         action("repair_glyph", "Repair missing glyph…", self.edit_glyph_repairs, "&Arrange", symbol="font-inspect")
         action("cjk", "Use CJK font for selected text", self.use_cjk_font, "&Arrange", symbol="font-inspect")
         for key, label, slot in (
@@ -234,6 +236,12 @@ class DesignerChrome:
         self.actions["page_previous"].setEnabled(self.page_index > 0)
         self.actions["page_next"].setEnabled(self.page_index < len(self.template.pages)-1)
         self.actions["select_all"].setEnabled(not busy and not self.canvas.mode_preview)
+        for key in ("edit_rules", "clear_rules"):
+            allowed = bool(element and len(selected) == 1 and not busy and not self.font_requests
+                           and not self.canvas.mode_preview)
+            if key == "clear_rules":
+                allowed = allowed and bool(element.rules.visible_when or element.rules.alternative)
+            self.actions[key].setEnabled(allowed)
         self._restrict_editing()
         self.page_status.setText(f"Page {self.page_index+1}/{len(self.template.pages)} · {self.page.width_mm:.2f} × {self.page.height_mm:.2f} mm")
 
@@ -242,7 +250,8 @@ class DesignerChrome:
         self.layers.clear()
         for element in reversed(self.page.elements):
             value = element.value.replace("\n", " ")[:45] if element.value else element.type.title()
-            item = QListWidgetItem(f"{element.type.title()} · {value}")
+            badge = "[Rule] " if element.rules.visible_when or element.rules.alternative else ""
+            item = QListWidgetItem(f"{badge}{element.type.title()} · {value}")
             item.setData(Qt.ItemDataRole.UserRole, element.id)
             item.setToolTip(value + "\n" + element.id)
             self.layers.addItem(item)
@@ -423,6 +432,7 @@ class DesignerChrome:
                 arrange.addAction(value)
         if self.properties.element:
             menu.addAction("Edit properties", self.focus_properties)
+        menu.addAction(self.actions["edit_rules"])
         menu.addAction(self.actions["repair_glyph"])
         menu.exec(self.canvas.viewport().mapToGlobal(position))
 
