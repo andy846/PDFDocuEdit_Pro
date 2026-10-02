@@ -33,13 +33,38 @@ def dispatch(request: dict) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task == "mailpiece_preview":
+        import fitz
+
+        from composition.pdf_source.source import _stat, geometry
+        from composition.template.model import CompositionError
+        source = Path(request["source"])
+        expected = (request["size"], request["mtime_ns"])
+        if _stat(source) != expected:
+            raise CompositionError("Source changed. Reinspect and scan again.")
+        check_page = request["page"]
+        with fitz.open(source) as pdf:
+            if pdf.needs_pass or type(check_page) is not int or not 1 <= check_page <= pdf.page_count:
+                raise CompositionError("Source page is unavailable.")
+            page = pdf[check_page-1]
+            image = Path(request["target"])
+            page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False).save(image)
+            geom = geometry(page)
+        if _stat(source) != expected:
+            image.unlink(missing_ok=True)
+            raise CompositionError("Source changed during preview.")
+        return {"image": str(image), "geometry": geom}
+    if task == "mailpiece_scan":
+        from composition.pdf_source.detection import DetectionConfig, scan_pdf
+        return scan_pdf(request["source"], DetectionConfig(**request["config"]),
+                        expected_sha256=request.get("expected_sha256"), progress=progress, is_cancelled=cancelled)
     if task == "overlay_inspect":
         from dataclasses import asdict
 
         from composition.pdf_source.model import EnvelopeSettings
         from composition.pdf_source.source import inspect_source
         return asdict(inspect_source(request["source"], EnvelopeSettings(**request["settings"]),
-                                     progress=progress, is_cancelled=cancelled))
+                                     progress=progress, is_cancelled=cancelled, uniform=request.get("uniform", False)))
     if task == "overlay_preview":
         import fitz
 

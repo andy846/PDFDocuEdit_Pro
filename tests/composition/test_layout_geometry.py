@@ -111,7 +111,7 @@ def test_overlay_legacy_migration_requires_new_version_for_rotation(tmp_path):
         obj["element"].pop("rotation_deg")
     original = copy.deepcopy(raw)
     migrated = EnvelopeSpec.from_dict(raw)
-    assert migrated.overlay_version == 2
+    assert migrated.overlay_version == 3
     assert raw == original
     assert all(obj.element.rotation_deg == 0 for obj in migrated.objects)
     raw["objects"][0]["element"]["rotation_deg"] = 90

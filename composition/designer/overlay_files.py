@@ -1,7 +1,7 @@
 """Source inspection, project persistence and production transport for PDF overlays."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from PyQt6.QtCore import QTimer, QUrl
@@ -35,7 +35,7 @@ class OverlayFiles:
             return
         dialog = GroupingDialog(self.spec.settings if self.spec else None, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.inspect_source(path, dialog.settings, preserve=preserve)
+            self.inspect_source(path, dialog.settings, preserve=preserve, detect=dialog.detect.isChecked())
 
     def edit_grouping(self):
         if not self.spec:
@@ -44,23 +44,54 @@ class OverlayFiles:
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.inspect_source(self.spec.source.path, dialog.settings, preserve=True)
 
-    def inspect_source(self, path, settings=None, *, preserve=False):
+    def inspect_source(self, path, settings=None, *, preserve=False, detect=False):
         settings = settings or EnvelopeSettings()
         def ready(info):
+            if self.close_pending:
+                return
+            requires_scan = detect
             spec = EnvelopeSpec(SourceInfo(**info), settings)
             self.active_worker = None
             if preserve and self.spec:
+                same_source = spec.source.sha256 == self.spec.source.sha256
+                if settings.groups and not same_source:
+                    spec.settings = replace(settings, pages_per_envelope=1, groups=[], excluded_pages=[])
+                    requires_scan = True
+                elif settings.groups:
+                    spec.detection_review = self.spec.detection_review
+                if requires_scan:
+                    spec.detection_review = {"required": True, "accepted": False, "source_sha256": spec.source.sha256}
                 spec.objects = self.spec.objects
                 spec.required_scope = self.spec.required_scope
-                self.commit(spec.to_dict(), "Reinspect PDF / change grouping")
+                if not self.commit(spec.to_dict(), "Reinspect PDF / change grouping"):
+                    return
             else:
+                if requires_scan:
+                    spec.detection_review = {"required": True, "accepted": False, "source_sha256": spec.source.sha256}
                 self.project_path = None
                 self.undo.clear()
                 self.apply_spec(spec.to_dict())
                 self.add_object("text")
             self.fit_canvas()
             self.tabs.setCurrentIndex(0)
-        self.worker({"task": "overlay_inspect", "source": str(path), "settings": asdict(settings)}, ready, active=True)
+            if requires_scan:
+                QTimer.singleShot(0, self.detect_mailpieces)
+        inspection_settings = replace(settings, pages_per_envelope=1, groups=[], excluded_pages=[]) if settings.groups else settings
+        self.worker({"task": "overlay_inspect", "source": str(path), "settings": asdict(inspection_settings),
+                     "uniform": detect or bool(settings.groups)}, ready, active=True)
+
+    def detect_mailpieces(self, checked=False):
+        if not self.spec or self.active_worker or self.font_token or self.draft_error:
+            return
+        dialog = getattr(self, "detection_dialog", None)
+        if dialog and dialog.context_sha256 == self.spec.source.sha256:
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+        from .mailpiece_dialog import MailpieceDialog
+        self.detection_dialog = MailpieceDialog(self)
+        self.detection_dialog.show()
 
     def open_project(self, checked=False, *, path=None):
         if self.project_host:
@@ -106,6 +137,9 @@ class OverlayFiles:
         self.worker({"task": "overlay_save", "project": self.spec.to_dict(), "target": str(path)}, saved, active=True)
 
     def generate_pdf(self, checked=False, *, output_dir=None):
+        if self.spec and self.spec.needs_detection_review:
+            self.error("Scan, review and accept mailpiece boundaries before generating.")
+            return
         if not self.spec or self.active_worker or self.font_token or self.draft_error:
             return
         if not output_dir:
@@ -122,7 +156,7 @@ class OverlayFiles:
 
     def production_ready(self, result):
         self.last_result = result
-        labels = [("Job", "job_id"), ("Status", "status"), ("Source pages", "source_pages"),
+        labels = [("Job", "job_id"), ("Status", "status"), ("Source pages", "source_pages"), ("Excluded separators", "excluded_source_pages"),
                   ("Input envelopes", "input_envelopes"), ("Composed envelopes", "composed_envelopes"),
                   ("Verified envelopes", "successful_envelopes"), ("Failed envelopes", "failed_envelopes"),
                   ("Unverified envelopes", "unverified_envelopes"), ("Expected output pages", "expected_pages"),
@@ -185,6 +219,8 @@ class OverlayFiles:
 
     def begin_close(self):
         self.close_pending = True
+        if getattr(self, "detection_dialog", None):
+            self.detection_dialog.reject()
         self.timer.stop()
         self.layout_timer.stop()
         for worker in self.workers[:]:

@@ -130,10 +130,14 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         obj = next(obj for obj in self.spec.objects if obj.element.id == self.canvas.selected_ids()[0])
         plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
         fields = plan.page(self.envelope.value(), self.print_page.value()).fields("preview")
-        positions = [page for page in range(1, self.spec.settings.output_pages_per_envelope + 1)
-                     if applies(obj.scope, plan.page(1, page).fields("preview"), obj.letter_page)]
-        samples = [("First applicable mark", plan.page(1, positions[0]).fields("preview")),
-                   ("Last applicable mark", plan.page(plan.envelopes, positions[-1]).fields("preview"))]
+        first = next((page for page in plan.pages() if applies(obj.scope, page.fields("preview"), obj.letter_page)), None)
+        last = next((plan.page(env, p) for env in range(plan.envelopes, 0, -1)
+                     for p in range(plan.settings_for(env).output_pages_per_envelope, 0, -1)
+                     if applies(obj.scope, plan.page(env, p).fields("preview"), obj.letter_page)), None)
+        if not first or not last:
+            self.error("This barcode has no applicable page in the reviewed mailpieces.")
+            return
+        samples = [("First applicable mark", first.fields("preview")), ("Last applicable mark", last.fields("preview"))]
         dialog = BarcodeProfileDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             raw = self.spec.to_dict()

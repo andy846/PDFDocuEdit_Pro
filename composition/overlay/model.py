@@ -80,16 +80,21 @@ class EnvelopeSpec:
     objects: list[OverlayObject] = field(default_factory=list)
     required_scope: str = "all_source"
     name: str = "Envelope overlay"
-    overlay_version: int = 2
+    overlay_version: int = 3
     project_kind: str = "pdf_overlay"
+    detection_review: dict = field(default_factory=dict)
 
     @property
     def requires_control_barcode(self) -> bool:
         """A declared machine-control object opts the project into read-position checks."""
         return any(obj.control for obj in self.objects)
 
+    @property
+    def needs_detection_review(self):
+        return self.detection_review.get("required") is True and self.detection_review.get("accepted") is not True
+
     def validate(self):
-        if type(self.overlay_version) is not int or self.overlay_version != 2 or self.project_kind != "pdf_overlay":
+        if type(self.overlay_version) is not int or self.overlay_version != 3 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if not isinstance(self.name, str) or len(self.name) > 200:
             raise CompositionError("Invalid envelope project name.")
@@ -99,7 +104,11 @@ class EnvelopeSpec:
             raise CompositionError("Invalid source fingerprint.")
         if not isinstance(self.source.geometries, list):
             raise CompositionError("Invalid source geometry.")
-        if len(self.source.geometries) != self.settings.pages_per_envelope:
+        if self.source.geometry_mode not in ("roles", "uniform"):
+            raise CompositionError("Unsupported source geometry mode.")
+        if self.settings.groups and self.source.geometry_mode != "uniform":
+            raise CompositionError("Reinspect the source for dynamic grouping.")
+        if len(self.source.geometries) != (1 if self.source.geometry_mode == "uniform" else self.settings.pages_per_envelope):
             raise CompositionError("Reinspect the source after changing pages per envelope.")
         import math
         for item in self.source.geometries:
@@ -108,7 +117,39 @@ class EnvelopeSpec:
                 any(type(item.get(key)) not in (int, float) or not math.isfinite(item[key])
                     or not 1 <= item[key] <= 2000*72/25.4 for key in ("width_pt", "height_pt"))):
                 raise CompositionError("Invalid source page dimensions/rotation.")
-        EnvelopePlan(self.source.pages, self.settings)
+        plan = EnvelopePlan(self.source.pages, self.settings)
+        if (not isinstance(self.detection_review, dict) or
+                ("required" in self.detection_review and type(self.detection_review["required"]) is not bool)):
+            raise CompositionError("Invalid detection review.")
+        if self.settings.groups and (self.detection_review.get("accepted") is not True or
+                self.detection_review.get("source_sha256") != self.source.sha256 or
+                self.detection_review.get("groups") != self.settings.groups or
+                self.detection_review.get("excluded_pages") != self.settings.excluded_pages):
+            raise CompositionError("Review and accept detection boundaries for this source before production.")
+        if self.settings.groups:
+            from composition.pdf_source.detection import DetectionConfig
+            try:
+                DetectionConfig(**self.detection_review["config"]).validate()
+                findings = self.detection_review["findings"]
+                evidence = self.detection_review["evidence"]
+                edits = self.detection_review["edits"]
+                if (self.detection_review["pages"] != self.source.pages or
+                        not isinstance(findings, list) or len(findings) > self.source.pages*6+10 or
+                        not isinstance(evidence, list) or not isinstance(edits, list)):
+                    raise CompositionError("Invalid detection audit record.")
+                for finding in findings:
+                    if (not isinstance(finding, dict) or type(finding.get("page")) is not int or
+                            not 1 <= finding["page"] <= self.source.pages or
+                            not isinstance(finding.get("message"), str) or len(finding["message"]) > 1000):
+                        raise CompositionError("Invalid detection finding.")
+                for boundary in evidence:
+                    if (not isinstance(boundary, dict) or type(boundary.get("page")) is not int or
+                            not 1 <= boundary["page"] <= self.source.pages or
+                            not isinstance(boundary.get("matched"), list) or
+                            any(not isinstance(item, str) for item in boundary["matched"])):
+                        raise CompositionError("Invalid boundary evidence.")
+            except (KeyError, TypeError) as exc:
+                raise CompositionError("Invalid detection audit record.") from exc
         if self.required_scope not in SCOPES[:-1]:
             raise CompositionError("Choose a supported required barcode read scope.")
         template = render_template(self)
@@ -116,7 +157,10 @@ class EnvelopeSpec:
         if unknown:
             raise CompositionError("Unknown overlay fields: " + ", ".join(sorted(unknown)))
         for obj in self.objects:
-            if obj.scope not in SCOPES or type(obj.letter_page) is not int or not 1 <= obj.letter_page <= self.settings.pages_per_envelope:
+            page_limit = self.source.pages if self.needs_detection_review else plan.max_source_pages
+            if obj.scope != "letter_page":
+                page_limit = max(100, page_limit)
+            if obj.scope not in SCOPES or type(obj.letter_page) is not int or not 1 <= obj.letter_page <= page_limit:
                 raise CompositionError("Invalid overlay object page scope.")
             if type(obj.control) is not bool or (obj.control and obj.element.type not in ("code128", "i25", "qr")):
                 raise CompositionError("A machine control object must be a barcode.")
@@ -135,11 +179,14 @@ class EnvelopeSpec:
         try:
             data = dict(raw)
             version = data.get("overlay_version", 1)
-            if type(version) is not int or version not in (1, 2):
+            if type(version) is not int or version not in (1, 2, 3):
                 raise CompositionError("Unsupported envelope project version.")
             if version == 1 and any(obj.get("element", {}).get("rotation_deg", 0) != 0 for obj in data.get("objects", [])):
                 raise CompositionError("Object rotation requires envelope project version 2.")
-            data["overlay_version"] = 2
+            if version < 3 and (data.get("settings", {}).get("groups") or
+                    data.get("settings", {}).get("excluded_pages") or data.get("source", {}).get("geometry_mode", "roles") != "roles"):
+                raise CompositionError("Dynamic detection requires envelope project version 3.")
+            data["overlay_version"] = 3
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()
@@ -203,6 +250,7 @@ class OverlayResult:
     finished_at: str = ""
     source_pages: int = 0
     copied_source_pages: int = 0
+    excluded_source_pages: int = 0
     rendered_inserted_blanks: int = 0
     input_envelopes: int = 0
     processed_envelopes: int = 0

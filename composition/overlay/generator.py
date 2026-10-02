@@ -33,9 +33,9 @@ def reconcile(result):
     if not (result.input_envelopes==result.processed_envelopes==result.successful_envelopes
             and result.failed_envelopes==0 and result.unverified_envelopes==0 and result.composed_envelopes==result.input_envelopes
             and result.generated_files==1
-            and result.copied_source_pages==result.source_pages
+            and result.copied_source_pages+result.excluded_source_pages==result.source_pages
             and result.rendered_inserted_blanks==result.inserted_blanks
-            and result.expected_pages==result.source_pages+result.inserted_blanks==result.generated_pages
+            and result.expected_pages==result.source_pages-result.excluded_source_pages+result.inserted_blanks==result.generated_pages
             and result.expected_barcodes==result.rendered_barcodes==result.decoded_barcodes
             and result.font_scan.get("complete") is True):
         raise CompositionError("RECONCILIATION FAILED: envelope/source/output/blank/barcode counts do not agree.")
@@ -49,6 +49,8 @@ def _error_page(result, page):
 
 def generate(job, *, progress=None, is_cancelled=None):
     spec=EnvelopeSpec.from_dict(job.project)
+    if spec.needs_detection_review:
+        raise CompositionError("Scan, review and accept mailpiece boundaries before generating this PDF.")
     if not isinstance(job.job_id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",job.job_id):
         raise CompositionError("Invalid job identity.")
     if type(job.chunk_size) is not int or not 1 <= job.chunk_size <= 1000 or type(job.auto_repair) is not bool:
@@ -67,6 +69,7 @@ def generate(job, *, progress=None, is_cancelled=None):
     renderer=None
     chunk=layers=None
     plan=EnvelopePlan(spec.source.pages,spec.settings)
+    result.excluded_source_pages=plan.excluded_pages
     result.source_pages=plan.source_pages
     result.input_envelopes=plan.envelopes
     result.expected_pages=plan.output_pages
@@ -80,7 +83,8 @@ def generate(job, *, progress=None, is_cancelled=None):
         if progress:
             progress(0,plan.output_pages,"Creating hash-checked source snapshot")
         snapshot=snapshot_source(spec.source.path,staging/"source-snapshot.pdf",spec.source.sha256,is_cancelled=is_cancelled)
-        verified=inspect_source(snapshot,spec.settings,is_cancelled=is_cancelled,progress=progress)
+        verified=inspect_source(snapshot,spec.settings,is_cancelled=is_cancelled,progress=progress,
+                                uniform=spec.source.geometry_mode == "uniform")
         if verified.pages != spec.source.pages or verified.geometries != spec.source.geometries:
             raise CompositionError("Inspected source page count/geometry does not match the saved project. Reinspect the source.")
         executable=qpdf_executable()
@@ -104,7 +108,7 @@ def generate(job, *, progress=None, is_cancelled=None):
                 check_cancel(is_cancelled)
                 current=page
                 fields=page_values(spec,page,job.job_id)
-                selected=renderer.selections(fields,verified.geometries[page.role])
+                selected=renderer.selections(fields,verified.page_geometry(page))
                 result.expected_barcodes+=sum(element.type in ("qr","code128","i25") for element,_obj,_value in selected)
             current=None
             pages_file=resources.enter_context((staging/"pages.csv").open("w",encoding="utf-8-sig",newline=""))
@@ -115,7 +119,7 @@ def generate(job, *, progress=None, is_cancelled=None):
             chunks=[]
             pending = iter(plan.pages())
             per_envelope = spec.settings.output_pages_per_envelope
-            batch_size = ((job.chunk_size + per_envelope-1)//per_envelope)*per_envelope
+            batch_size = job.chunk_size if spec.settings.groups else ((job.chunk_size + per_envelope-1)//per_envelope)*per_envelope
             while batch := list(islice(pending, batch_size)):
                 chunk, layers = fitz.open(), fitz.open()
                 prepared = []
@@ -123,7 +127,7 @@ def generate(job, *, progress=None, is_cancelled=None):
                     check_cancel(is_cancelled)
                     current = page
                     fields = page_values(spec, page, job.job_id)
-                    geom = verified.geometries[page.role]
+                    geom = verified.page_geometry(page)
                     layer_index, marks = renderer.build_layer(layers, page, fields, geom)
                     prepared.append((page, fields, geom, layer_index, marks))
                 # Freeze layer resources before copying them into the output chunk.
@@ -138,14 +142,10 @@ def generate(job, *, progress=None, is_cancelled=None):
                         marks_file.write(json.dumps(mark, ensure_ascii=False)+"\n")
                     row(pages_writer, [page.source_page or "", page.output_page, fields["EnvelopeSeq"], fields["LetterPage"],
                                        page.print_page, fields["SheetNo"], fields["Side"], fields["IsInsertedBlank"]])
-                    if page.print_page == per_envelope:
+                    if page.print_page == page.settings.output_pages_per_envelope:
                         result.processed_envelopes += 1
                         result.composed_envelopes += 1
-                        row(env_writer, [page.envelope, fields["EnvelopeSeq"], (page.envelope-1)*spec.settings.pages_per_envelope+1,
-                                         page.envelope*spec.settings.pages_per_envelope,
-                                         (page.envelope-1)*per_envelope+1, page.output_page,
-                                         spec.settings.pages_per_envelope, per_envelope,
-                                         spec.settings.sheets_per_envelope, "Composed; final QC pending"])
+                        row(env_writer, plan.envelope_row(page.envelope, "Composed; final QC pending"))
                     if progress and (page.output_page % 25 == 0 or page.output_page == plan.output_pages):
                         progress(page.output_page, plan.output_pages,
                                  f"Overlay envelope {page.envelope:,}/{plan.envelopes:,}; page {page.output_page:,}")
@@ -177,7 +177,7 @@ def generate(job, *, progress=None, is_cancelled=None):
                 for raw in marks:
                     check_cancel(is_cancelled)
                     mark=json.loads(raw)
-                    current=plan.page(mark["envelope"],(mark["output_page"]-1)%spec.settings.output_pages_per_envelope+1)
+                    current=plan.output_page(mark["output_page"])
                     if qc_envelope is not None and qc_envelope != mark["envelope"]:
                         result.successful_envelopes+=1
                     qc_envelope=mark["envelope"]
@@ -207,10 +207,7 @@ def generate(job, *, progress=None, is_cancelled=None):
             writer=csv.writer(stream)
             row(writer,["Envelope index","Envelope sequence","Source start","Source end","Output start","Output end","Source pages","Output pages","Sheets","Status"])
             for envelope in range(1,plan.envelopes+1):
-                row(writer,[envelope,spec.settings.sequence(envelope),
-                    (envelope-1)*spec.settings.pages_per_envelope+1,envelope*spec.settings.pages_per_envelope,
-                    (envelope-1)*spec.settings.output_pages_per_envelope+1,envelope*spec.settings.output_pages_per_envelope,
-                    spec.settings.pages_per_envelope,spec.settings.output_pages_per_envelope,spec.settings.sheets_per_envelope,"Completed"])
+                row(writer, plan.envelope_row(envelope, "Completed"))
         result.status="completed"
         result.finished_at=now()
         write_summary(staging,result,spec)
@@ -237,8 +234,7 @@ def generate(job, *, progress=None, is_cancelled=None):
             result.successful_envelopes=min(result.successful_envelopes,result.processed_envelopes-1)
         elif getattr(exc,"record_ordinal",None):
             index=exc.record_ordinal
-            page=plan.page((index-1)//spec.settings.output_pages_per_envelope+1,
-                           (index-1)%spec.settings.output_pages_per_envelope+1)
+            page=plan.output_page(index)
             _error_page(result,page)
             if result.status == "failed":
                 result.failed_envelopes = 1

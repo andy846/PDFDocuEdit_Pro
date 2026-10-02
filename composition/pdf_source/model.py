@@ -15,6 +15,8 @@ class EnvelopeSettings:
     digits: int = 6
     prefix: str = ""
     suffix: str = ""
+    groups: list[list[int]] = field(default_factory=list)
+    excluded_pages: list[int] = field(default_factory=list)
 
     def validate(self):
         for key, low, high in (("pages_per_envelope", 1, 100), ("start", 0, 10**18-1),
@@ -22,6 +24,18 @@ class EnvelopeSettings:
             value = getattr(self, key)
             if type(value) is not int or not low <= value <= high:
                 raise CompositionError(f"{key} must be an integer from {low} to {high}.")
+        if not isinstance(self.groups, list) or len(self.groups) > 100000:
+            raise CompositionError("Invalid envelope boundaries.")
+        for group in self.groups:
+            if (not isinstance(group, list) or len(group) != 2 or
+                    any(type(n) is not int or n < 1 for n in group) or group[1] < group[0]):
+                raise CompositionError("Envelope boundaries must be one-based start/end page pairs.")
+        if (not isinstance(self.excluded_pages, list) or
+                any(type(n) is not int or n < 1 for n in self.excluded_pages) or
+                self.excluded_pages != sorted(set(self.excluded_pages))):
+            raise CompositionError("Invalid excluded separator pages.")
+        if self.excluded_pages and not self.groups:
+            raise CompositionError("Separator exclusions require reviewed boundaries.")
         if type(self.duplex) is not bool:
             raise CompositionError("Duplex must be explicitly enabled or disabled.")
         for value in (self.prefix, self.suffix):
@@ -52,3 +66,7 @@ class SourceInfo:
     pages: int
     geometries: list[dict]
     warnings: list[str] = field(default_factory=list)
+    geometry_mode: str = "roles"
+
+    def page_geometry(self, plan):
+        return self.geometries[0 if self.geometry_mode == "uniform" else plan.role]

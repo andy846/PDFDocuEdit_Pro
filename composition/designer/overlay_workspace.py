@@ -136,6 +136,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
         action("save", "Save", self.save_project, "&File", "Ctrl+S", "save", True)
         action("save_as", "Save as…", lambda: self.save_project(save_as=True), "&File", "Ctrl+Shift+S")
         action("grouping", "Grouping & running sequence…", self.edit_grouping, "&File", symbol="settings", bar=True)
+        action("detect", "Mailpiece detection…", self.detect_mailpieces, "&File", symbol="scan", bar=True)
+        self.actions["detect"].setIconText("Detect mailpieces")
+        toolbar.widgetForAction(self.actions["detect"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         action("reinspect", "Reinspect / locate source PDF…", lambda: self.choose_source(replace=True), "&File")
         action("close", "Close overlay designer", self.close, "&File", "Ctrl+W", "x")
         for name in ("undo", "redo"):
@@ -363,8 +366,10 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def busy(self):
         locked = bool(self.active_worker or self.font_token)
         valid = self.spec is not None and not self.draft_error
-        for name in ("source", "open", "save", "save_as", "grouping", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate"):
+        for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate"):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
+        if self.spec and self.spec.needs_detection_review:
+            self.actions["generate"].setEnabled(False)
         self.actions["cancel"].setEnabled(bool(self.active_worker))
         self.actions["cancel"].setVisible(bool(self.active_worker))
         self.canvas.set_editable(valid and not locked)
@@ -408,7 +413,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.draft_error = ""
         self.properties.revert_content.hide()
         plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
-        for control, maximum in ((self.envelope, plan.envelopes), (self.print_page, self.spec.settings.output_pages_per_envelope)):
+        for control, maximum in ((self.envelope, plan.envelopes), (self.print_page, plan.settings_for(self.envelope.value()).output_pages_per_envelope)):
             control.blockSignals(True)
             control.setRange(1, maximum)
             control.blockSignals(False)
@@ -417,6 +422,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.required_scope.blockSignals(False)
         self.source_summary.setText(f"{Path(self.spec.source.path).name}\n{plan.source_pages:,} source pages\n"
             f"{plan.envelopes:,} envelopes\n{plan.output_pages:,} output pages\n{plan.sheets:,} sheets · {plan.inserted_blanks:,} blank backs")
+        if self.spec.needs_detection_review:
+            self.source_summary.setText(f"{Path(self.spec.source.path).name}\n{plan.source_pages:,} source pages\nDetection pending: scan and review boundaries before generation.")
         self.source_summary.setToolTip(self.spec.source.path)
         self.refresh_canvas(selected=selected)
         self.busy()
@@ -438,9 +445,13 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def refresh_canvas(self, *args, selected=None):
         if not self.spec:
             return
-        page = EnvelopePlan(self.spec.source.pages, self.spec.settings).page(self.envelope.value(), self.print_page.value())
+        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        self.print_page.blockSignals(True)
+        self.print_page.setMaximum(plan.settings_for(self.envelope.value()).output_pages_per_envelope)
+        self.print_page.blockSignals(False)
+        page = plan.page(self.envelope.value(), self.print_page.value())
         fields = page.fields("preview")
-        geom = self.spec.source.geometries[page.role]
+        geom = self.spec.source.page_geometry(page)
         chosen = self.canvas.selected_ids() if selected is None else selected
         elements = [copy.deepcopy(obj.element) for obj in self.spec.objects if applies(obj.scope, fields, obj.letter_page)]
         self.canvas.set_template(Template(width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT, elements=elements), chosen)

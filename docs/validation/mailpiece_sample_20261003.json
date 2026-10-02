@@ -1,0 +1,114 @@
+{
+  "source_name": "merged.pdf",
+  "source_pages": 2497,
+  "production_generated": false,
+  "operator_accepted": false,
+  "cases": [
+    {
+      "config": {
+        "rules": [
+          {
+            "kind": "first_text",
+            "terms": [
+              "Member Account No."
+            ]
+          }
+        ],
+        "combine": "any",
+        "region_mm": null,
+        "remove_separators": true,
+        "version": 1
+      },
+      "mailpieces": 796,
+      "pages_per_mailpiece": {
+        "4": 169,
+        "3": 561,
+        "2": 64,
+        "5": 2
+      },
+      "first_ranges": [
+        [
+          1,
+          4
+        ],
+        [
+          5,
+          8
+        ],
+        [
+          9,
+          12
+        ],
+        [
+          13,
+          16
+        ]
+      ],
+      "last_ranges": [
+        [
+          2491,
+          2493
+        ],
+        [
+          2494,
+          2497
+        ]
+      ],
+      "warnings": 0,
+      "accepted": false
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "kind": "document_id",
+            "pattern": "Member Account No. : {ID}",
+            "allow_missing_continuation": true
+          }
+        ],
+        "combine": "any",
+        "region_mm": null,
+        "remove_separators": true,
+        "version": 1
+      },
+      "mailpieces": 398,
+      "pages_per_mailpiece": {
+        "8": 5,
+        "7": 163,
+        "6": 166,
+        "5": 64
+      },
+      "first_ranges": [
+        [
+          1,
+          8
+        ],
+        [
+          9,
+          16
+        ],
+        [
+          17,
+          24
+        ],
+        [
+          25,
+          31
+        ]
+      ],
+      "last_ranges": [
+        [
+          2484,
+          2490
+        ],
+        [
+          2491,
+          2497
+        ]
+      ],
+      "warnings": 0,
+      "accepted": false
+    }
+  ],
+  "source_sha256": "8be9fe20457215a02050117a221877bff6074e1c7af7d8b27d820aff6c885c46"
+}

@@ -32,7 +32,7 @@ def _hash(path, is_cancelled=None):
     return digest.hexdigest()
 
 
-def inspect_source(path, settings, *, is_cancelled=None, progress=None):
+def inspect_source(path, settings, *, is_cancelled=None, progress=None, uniform=False):
     settings.validate()
     source = Path(path).expanduser().resolve()
     if source.suffix.lower() != ".pdf":
@@ -52,8 +52,9 @@ def inspect_source(path, settings, *, is_cancelled=None, progress=None):
             if next(page.widgets(), None) is not None:
                 raise CompositionError(f"Source page {index+1}: interactive forms are not supported by PDF Overlay.")
             current = geometry(page)
-            role = index % settings.pages_per_envelope
-            if index < settings.pages_per_envelope:
+            variable = uniform or bool(settings.groups)
+            role = 0 if variable else index % settings.pages_per_envelope
+            if index == 0 or (not variable and index < settings.pages_per_envelope):
                 geometries.append(current)
             elif any(abs(a-b) > .02 for key in ("mediabox", "cropbox")
                      for a, b in zip(current[key], geometries[role][key], strict=True)) or current["rotation"] != geometries[role]["rotation"]:
@@ -64,7 +65,8 @@ def inspect_source(path, settings, *, is_cancelled=None, progress=None):
     if _stat(source) != before:
         raise CompositionError("Source PDF changed during inspection. Review and inspect it again.")
     return SourceInfo(str(source), digest, before[0], before[1], pages, geometries,
-                      ["Print overlay copies page content/annotations; document navigation and interactive links are not transferred."])
+                      ["Print overlay copies page content/annotations; document navigation and interactive links are not transferred."],
+                      "uniform" if uniform or settings.groups else "roles")
 
 
 def snapshot_source(path, target, expected_sha256, *, is_cancelled=None):

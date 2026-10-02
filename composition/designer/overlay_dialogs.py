@@ -40,6 +40,11 @@ class GroupingDialog(QDialog):
         self.pages.setRange(1, 100)
         self.pages.setValue(self.settings.pages_per_envelope)
         form.addRow("Source pages per envelope", self.pages)
+        self.pages.setEnabled(not bool(self.settings.groups))
+        self.detect = QCheckBox("Auto-detect variable page counts after opening PDF")
+        self.detect.setVisible(not source_pages and not self.settings.groups)
+        form.addRow(self.detect)
+        self.detect.toggled.connect(lambda on: self.pages.setEnabled(not on))
         self.printing = QComboBox()
         self.printing.addItems(["Simplex: one page per sheet", "Duplex: pad odd groups with a blank back"])
         self.printing.setCurrentIndex(int(self.settings.duplex))
@@ -68,7 +73,9 @@ class GroupingDialog(QDialog):
         values = {key: control.text() for key, control in self.values.items()}
         for key in ("start", "increment", "digits"):
             values[key] = int(values[key])
-        result = EnvelopeSettings(pages_per_envelope=self.pages.value(), duplex=bool(self.printing.currentIndex()), **values)
+        result = EnvelopeSettings(pages_per_envelope=1 if self.detect.isChecked() else self.pages.value(),
+                                  duplex=bool(self.printing.currentIndex()), groups=self.settings.groups,
+                                  excluded_pages=self.settings.excluded_pages, **values)
         result.validate()
         if self.source_pages:
             EnvelopePlan(self.source_pages, result)

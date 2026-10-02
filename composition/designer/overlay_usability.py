@@ -62,7 +62,7 @@ class OverlayUsability:
             return
         plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
         current = self.print_page.value()
-        candidates = [current, *[page for page in range(1, self.spec.settings.output_pages_per_envelope + 1) if page != current]]
+        candidates = [current, *[page for page in range(1, plan.settings_for(self.envelope.value()).output_pages_per_envelope + 1) if page != current]]
         for page in candidates:
             fields = plan.page(self.envelope.value(), page).fields("preview")
             if all(applies(obj.scope, fields, obj.letter_page) for obj in chosen):

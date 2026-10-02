@@ -135,6 +135,6 @@ def render_preview(spec, envelope, print_page, *, auto_repair=True):
     ) as renderer:
         if source.page_count != spec.source.pages:
             raise CompositionError("Source page count changed since inspection.")
-        renderer.paint(output,layers,source,plan,fields,spec.source.geometries[plan.role], enforce_control=False)
+        renderer.paint(output,layers,source,plan,fields,spec.source.page_geometry(plan), enforce_control=False)
         # Fonts belong to the separate layer; never subset the copied source document.
         return output.tobytes(deflate=True,garbage=1),fields
