@@ -56,7 +56,8 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         for item in raw["objects"]:
             if item["element"]["id"] in elements:
                 item["element"] = elements[item["element"]["id"]]
-        self.commit(raw, "Move / resize overlay")
+        if not self.commit(raw, "Move / resize overlay"):
+            self.refresh_canvas()
 
     def property_edit(self, values):
         if not self.spec:
@@ -96,7 +97,8 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         raw = self.spec.to_dict()
         item = next(item for item in raw["objects"] if item["element"]["id"] == self.canvas.selected_ids()[0])
         item.update(scope=self.scope.currentData(), letter_page=self.letter_page.value(), control=self.control.isChecked())
-        self.commit(raw, "Change overlay page scope")
+        if not self.commit(raw, "Change overlay page scope"):
+            self.selection_changed()
 
     def required_scope_edited(self, *args):
         if self.spec:

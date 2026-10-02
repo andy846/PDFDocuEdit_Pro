@@ -57,6 +57,7 @@ class ElementItem(QGraphicsRectItem):
         self.resizing = (event.pos() - self.rect().bottomRight()).manhattanLength() < 5
         self.anchor = event.scenePos()
         self.original = QRectF(self.rect())
+        self.resize_top_left = self.mapToScene(self.rect().topLeft())
         if self.resizing:
             self.setSelected(True)
             event.accept()
@@ -76,6 +77,7 @@ class ElementItem(QGraphicsRectItem):
                 width, height = max(.1, round(width/5)*5), max(.1, round(height/5)*5)
             self.setRect(0, 0, width, height)
             self.setTransformOriginPoint(self.rect().center())
+            self.setPos(self.pos()+self.resize_top_left-self.mapToScene(self.rect().topLeft()))
         else:
             super().mouseMoveEvent(event)
             self.canvas.snap_drag(self, event.modifiers())
@@ -305,11 +307,13 @@ class Canvas(QGraphicsView):
             item.moveBy(dx, dy)
 
     def fit_resized_item(self, item):
+        top_left = item.mapToScene(item.rect().topLeft())
         bounds = item.mapRectToScene(item.rect())
         scale = min(1, self.page_width/bounds.width(), self.page_height/bounds.height())
         width, height = item.rect().width()*scale, item.rect().height()*scale
         item.setRect(0, 0, width, height)
         item.setTransformOriginPoint(item.rect().center())
+        item.setPos(item.pos()+top_left-item.mapToScene(item.rect().topLeft()))
 
     def snap_drag(self, dragged, modifiers=Qt.KeyboardModifier.NoModifier):
         items = [item for item in self.element_items if item.isSelected()]

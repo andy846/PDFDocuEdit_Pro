@@ -12,6 +12,7 @@ from composition.pdf_source.source import _stat
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
 
+from .geometry import check_object_bounds
 from .model import barcode_field, render_template
 
 
@@ -66,10 +67,7 @@ class OverlayRenderer:
             selected = self.renderer.plans[element.id].resolve(fields)
             if not selected.visible:
                 continue
-            x0, y0, x1, y1 = element_bounds(element)
-            if (x0*MM_TO_PT < -.03 or y0*MM_TO_PT < -.03 or
-                x1*MM_TO_PT > geometry["width_pt"]+.03 or y1*MM_TO_PT > geometry["height_pt"]+.03):
-                raise CompositionError(f"Object {element.id} extends outside the visible source page.")
+            check_object_bounds(element, geometry)
             visible.append((element,obj,selected))
             if obj.control:
                 controls.append(element)

@@ -46,10 +46,12 @@ class OverlayFiles:
 
     def inspect_source(self, path, settings=None, *, preserve=False, detect=False):
         settings = settings or EnvelopeSettings()
+        previous_review = self.spec.detection_review if preserve and self.spec else {}
+        pending_detection = bool(previous_review.get("required") and not previous_review.get("accepted"))
         def ready(info):
             if self.close_pending:
                 return
-            requires_scan = detect
+            requires_scan = detect or pending_detection
             spec = EnvelopeSpec(SourceInfo(**info), settings)
             self.active_worker = None
             if preserve and self.spec:
@@ -78,17 +80,21 @@ class OverlayFiles:
                 QTimer.singleShot(0, self.detect_mailpieces)
         inspection_settings = replace(settings, pages_per_envelope=1, groups=[], excluded_pages=[]) if settings.groups else settings
         self.worker({"task": "overlay_inspect", "source": str(path), "settings": asdict(inspection_settings),
-                     "uniform": detect or bool(settings.groups)}, ready, active=True)
+                     "uniform": detect or pending_detection or bool(settings.groups)}, ready, active=True)
 
     def detect_mailpieces(self, checked=False):
         if not self.spec or self.active_worker or self.font_token or self.draft_error:
             return
         dialog = getattr(self, "detection_dialog", None)
-        if dialog and dialog.context_sha256 == self.spec.source.sha256:
+        if (dialog and dialog.context_sha256 == self.spec.source.sha256
+                and dialog.context_settings == asdict(self.spec.settings)
+                and dialog.context_review == self.spec.detection_review):
             dialog.show()
             dialog.raise_()
             dialog.activateWindow()
             return
+        if dialog:
+            dialog.reject()
         from .mailpiece_dialog import MailpieceDialog
         self.detection_dialog = MailpieceDialog(self)
         self.detection_dialog.show()

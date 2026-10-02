@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from composition.overlay.geometry import validate_changed_geometry
 from composition.overlay.model import EnvelopeSpec
 from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
 from composition.template.model import MM_TO_PT, Template
@@ -433,7 +434,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         if self.active_worker or self.font_token:
             return False
         try:
-            EnvelopeSpec.from_dict(after)
+            candidate = EnvelopeSpec.from_dict(after)
+            validate_changed_geometry(self.spec, candidate)
         except ValueError as exc:
             self.error(str(exc))
             return False

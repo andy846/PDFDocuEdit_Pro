@@ -30,7 +30,7 @@ Arrow movement retains the existing 0.5 mm step, or 5 mm with Shift. Rotated bou
 
 - Rotation geometry lives in `composition/template/geometry.py`; models and PDF renderers do not depend on Qt.
 - Both designer workspaces share the canvas, rulers and layout command adapter.
-- Template schema is now **7**; schemas 1–6 still load, with missing rotation set to zero. PDF envelope projects use schema **2**, migrating schema 1 with zero rotation.
+- Template schema is now **7**; schemas 1–6 still load, with missing rotation set to zero. PDF envelope projects now use schema **3** (dynamic mailpiece groups); schemas 1–2 remain supported, with missing rotation set to zero.
 - New files saved by this build require a compatible reader. Earlier application builds reject newer schemas; do not downgrade a rotated project by manually changing its version number.
 - Explicit nonzero rotation in a legacy schema is rejected, avoiding silently unrotated output.
 - Overlay barcode verification crops the rotated bounding rectangle and reports the configured angle. The earlier optional-barcode behaviour is retained.

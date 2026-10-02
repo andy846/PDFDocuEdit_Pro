@@ -348,7 +348,26 @@ class Properties(QWidget):
                 if not face["usable"]:
                     self.font_style.model().item(index).setEnabled(False)
 
+    def restore_geometry(self, selected):
+        if not selected:
+            return
+        loading = self.loading
+        self.loading = True
+        mixed = []
+        for key in ("x_mm", "y_mm", "width_mm", "height_mm", "rotation_deg"):
+            self.numbers[key].setValue(getattr(selected[0], key))
+            self.displayed_numbers[key] = self.numbers[key].value()
+            if key in self.geometry_checks:
+                self.geometry_checks[key].setChecked(False)
+                if any(getattr(element, key) != getattr(selected[0], key) for element in selected[1:]):
+                    mixed.append(key)
+        self.geometry.setTitle("Geometry · mixed" if mixed else "Geometry")
+        self.geometry.setToolTip("Values shown are from the first selected object. Mixed: " + ", ".join(mixed)
+                                 if mixed else "Position, size and clockwise angle.")
+        self.loading = loading
+
     def show_element(self, element):
+        self.geometry.setTitle("Geometry")
         self.bulk_dirty.clear()
         self.bulk_ids = []
         self.multi_selection = False
@@ -434,6 +453,7 @@ class Properties(QWidget):
         self.show_element(text[0] if text else selected[0])
         self.multi_selection = True
         self.geometry_ids = [e.id for e in selected]
+        self.restore_geometry(selected)
         self.bulk_ids = [e.id for e in text]
         self.font_family.lineEdit().setModified(False)
         self.title.setText(f"{len(selected)} objects selected")

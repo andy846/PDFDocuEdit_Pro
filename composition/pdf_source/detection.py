@@ -39,6 +39,10 @@ class DetectionConfig:
                 raise CompositionError("Unsupported detection rule.")
             kind = rule["kind"]
             kinds.append(kind)
+            allowed = {"kind", "pattern"} if kind == "page_number" else ({"kind", "pattern", "allow_missing_continuation"}
+                       if kind == "document_id" else {"kind", "terms"} if kind in ("first_text", "separator") else {"kind"})
+            if set(rule)-allowed:
+                raise CompositionError("Unexpected options in detection rule.")
             if kind in ("page_number", "document_id"):
                 _pattern(rule.get("pattern", ""), kind)
                 if kind == "document_id" and type(rule.get("allow_missing_continuation", False)) is not bool:
@@ -71,7 +75,7 @@ def _pattern(value, kind):
         raise CompositionError("Document ID pattern needs a literal label, e.g. Account No: {ID}.")
     escaped = re.escape(value.strip()).replace(r"\ ", r"\s+")
     for token in required:
-        group = r"([^\n]{1,256})" if token == "{ID}" else r"([0-9]{1,6})"
+        group = (r"([^\n]{1,256}?)" if value.split("{ID}", 1)[1].strip() else r"([^\n]{1,256})") if token == "{ID}" else r"(?<![0-9])([0-9]{1,6})(?![0-9])"
         escaped = escaped.replace(re.escape(token), group)
     return re.compile(escaped, re.IGNORECASE)
 
@@ -81,9 +85,10 @@ def page_text(page, region_mm):
         return page.get_text(sort=True)
     x, y, w, h = region_mm
     rect = fitz.Rect(x*MM_TO_PT, y*MM_TO_PT, (x+w)*MM_TO_PT, (y+h)*MM_TO_PT)
-    if not page.rect.contains(rect):
+    # Numeric controls round mm to two decimals; tolerate that rounding only.
+    if not (page.rect + (-.03, -.03, .03, .03)).contains(rect):
         raise CompositionError(f"Source page {page.number+1}: search region extends beyond the visible page.")
-    return page.get_text(clip=rect*page.derotation_matrix, sort=True)
+    return page.get_text(clip=(rect & page.rect)*page.derotation_matrix, sort=True)
 
 
 def detect_texts(texts, config, *, is_cancelled=None, progress=None):

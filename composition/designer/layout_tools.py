@@ -43,8 +43,10 @@ def edit_geometry(window, values, *, relative_rotation=False):
             Template.from_dict(after)
             window._commit(before, after, "Set selected object geometry", list(ids))
         else:
-            window.commit(after, "Set selected object geometry", list(ids))
+            if not window.commit(after, "Set selected object geometry", list(ids)):
+                window.properties.restore_geometry([item.element for item in canvas.element_items if item.element.id in ids])
     except ValueError as exc:
+        window.properties.restore_geometry([item.element for item in canvas.element_items if item.element.id in ids])
         (window._error if hasattr(window, "template") else window.error)(str(exc))
 
 
