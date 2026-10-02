@@ -10,6 +10,7 @@ from styles.tokens import S
 
 class TaskBar(QFrame):
     cancelRequested = pyqtSignal()
+    activityChanged = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +44,7 @@ class TaskBar(QFrame):
         self._cancel.setVisible(cancellable)
         self._cancel.setEnabled(cancellable)
         self.show()
+        self.activityChanged.emit(True)
 
     def update_progress(self, current: int, total: int, detail: str) -> None:
         self._detail.setText(detail)
@@ -58,6 +60,7 @@ class TaskBar(QFrame):
         self._cancel.setEnabled(False)
 
     def clear(self) -> None:
+        self.activityChanged.emit(False)
         self.hide()
         self._detail.clear()
         self._cancel.setEnabled(True)

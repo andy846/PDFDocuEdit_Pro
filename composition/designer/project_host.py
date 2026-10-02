@@ -1,0 +1,215 @@
+"""Persistent Designer project tabs; close confirmation is separate from shutdown."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from PyQt6 import sip
+from PyQt6.QtCore import QEventLoop, pyqtSignal
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QStackedWidget,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+class DesignerProjectHost(QWidget):
+    activeProjectChanged = pyqtSignal()
+    activityChanged = pyqtSignal()
+    projectAdded = pyqtSignal(object)
+    projectRemoved = pyqtSignal(object)
+
+    def __init__(self, parent=None, *, open_pdf=None):
+        super().__init__(parent)
+        self.open_pdf = open_pdf or (lambda path: None)
+        self.shutting_down = False
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.tabCloseRequested.connect(lambda index: self.close_project(self.tabs.widget(index)))
+        self.tabs.currentChanged.connect(lambda *args: self.activeProjectChanged.emit())
+        self.start = QWidget()
+        welcome = QVBoxLayout(self.start)
+        title = QLabel("Document Designer")
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        welcome.addStretch()
+        welcome.addWidget(title)
+        for text, handler in (("Create template", self.new_template), ("Open project…", self.open_project),
+                              ("PDF envelope overlay…", self.new_overlay)):
+            button = QPushButton(text)
+            button.clicked.connect(lambda checked=False, callback=handler: callback())
+            welcome.addWidget(button)
+        welcome.addStretch()
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.start)
+        self.stack.addWidget(self.tabs)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.stack)
+
+    @property
+    def projects(self):
+        return [self.tabs.widget(index) for index in range(self.tabs.count())]
+
+    @property
+    def current_project(self):
+        return self.tabs.currentWidget()
+
+    @staticmethod
+    def identity(path):
+        return os.path.normcase(str(Path(path).expanduser().resolve().with_suffix(".pdcx")))
+
+    def _append(self, project):
+        project.menuBar().hide()
+        index = self.tabs.addTab(project, "Untitled")
+        project.windowTitleChanged.connect(lambda *args, p=project: self.update_project(p))
+        project.activityChanged.connect(lambda p=project: self.update_project(p))
+        project.undo.indexChanged.connect(lambda *args, p=project: self.update_project(p))
+        project.properties.edited.connect(lambda *args, p=project: self.update_project(p))
+        project.projectClosed.connect(lambda p=project: self.remove_project(p))
+        self.projectAdded.emit(project)
+        self.tabs.setCurrentIndex(index)
+        self.stack.setCurrentWidget(self.tabs)
+        self.update_project(project)
+        self.activeProjectChanged.emit()
+        return project
+
+    def new_template(self):
+        if self.shutting_down:
+            return None
+        from .workspace import CompositionWindow
+        return self._append(CompositionWindow(self.tabs, embedded=True, project_host=self))
+
+    def new_overlay(self):
+        if self.shutting_down:
+            return None
+        from .overlay_workspace import OverlayWindow
+        return self._append(OverlayWindow(self.tabs, embedded=True, project_host=self))
+
+    def open_project(self, path=None):
+        if self.shutting_down:
+            return None
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Document Designer projects (*.pdcx)")
+        if not path:
+            return None
+        key = self.identity(path)
+        for project in self.projects:
+            if project.project_path and self.identity(project.project_path) == key:
+                self.tabs.setCurrentWidget(project)
+                return project
+        try:
+            file = Path(path)
+            if file.stat().st_size > 10 * 1024 * 1024:
+                raise ValueError("Designer project exceeds 10 MB.")
+            raw = json.loads(file.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("Invalid Designer project structure.")
+            if raw.get("project_kind") == "pdf_overlay":
+                from composition.overlay.serializer import load_project
+                load_project(path)
+                project = self.new_overlay()
+                project.load_path(path)
+            else:
+                from composition.template.serializer import load_project
+                load_project(path)
+                project = self.new_template()
+                project.project_host = None
+                try:
+                    project.open_project(path=path)
+                finally:
+                    project.project_host = self
+            self.update_project(project)
+            return project
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            QMessageBox.warning(self, "Cannot open project", str(exc))
+            return None
+
+    def allow_save_path(self, project, path):
+        key = self.identity(path)
+        if any(p is not project and p.project_path and self.identity(p.project_path) == key for p in self.projects):
+            QMessageBox.warning(self, "Project already open", "This file is open in another Designer tab. Switch to that tab or choose another filename.")
+            return False
+        return True
+
+    @staticmethod
+    def is_busy(project):
+        return bool(getattr(project, "production_worker", None) or getattr(project, "import_worker", None)
+                    or getattr(project, "active_worker", None) or getattr(project, "font_requests", None)
+                    or getattr(project, "font_token", None))
+
+    def update_project(self, project):
+        if sip.isdeleted(self) or sip.isdeleted(project) or sip.isdeleted(self.tabs):
+            return
+        index = self.tabs.indexOf(project)
+        if index < 0:
+            return
+        kind = "Template" if hasattr(project, "template") else "Overlay"
+        name = project.project_path.name if project.project_path else "Untitled"
+        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
+        self.tabs.setTabText(index, f"{kind} · {name}" + (" *" if dirty else "") + (" ●" if self.is_busy(project) else ""))
+        self.tabs.setTabToolTip(index, project.windowTitle())
+        self.activityChanged.emit()
+
+    def confirm_project_close(self, project):
+        # Never discard a draft during preflight: a later project may cancel application exit.
+        if not self.is_busy(project):
+            project.properties.apply()
+        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
+        if not dirty:
+            return True
+        answer = QMessageBox.question(self, "Unsaved Designer project", "Save changes to " + (project.project_path.name if project.project_path else "this project") + "?",
+                    QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Save)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False
+        if answer == QMessageBox.StandardButton.Discard:
+            return True
+        if hasattr(project, "template"):
+            return bool(project.save_project())
+        if self.is_busy(project) or project.draft_error:
+            project.error("Finish or revert the unfinished edit and wait for the active task before saving.")
+            return False
+        completed = []
+        loop = QEventLoop(self)
+        project.save_project(after=lambda: (completed.append(True), loop.quit()))
+        worker = project.active_worker
+        if worker is None:
+            return False
+        worker.failed.connect(lambda *args: loop.quit())
+        loop.exec()
+        return bool(completed)
+
+    def confirm_all(self):
+        return all(self.confirm_project_close(project) for project in self.projects)
+
+    def close_project(self, project, *, approved=False):
+        if project not in self.projects:
+            return True
+        if not approved and not project.close_pending and not self.confirm_project_close(project):
+            return False
+        project._close_approved = True
+        project.close()
+        return project not in self.projects
+
+    def remove_project(self, project):
+        index = self.tabs.indexOf(project)
+        if index >= 0:
+            self.tabs.removeTab(index)
+        self.projectRemoved.emit(project)
+        if not self.tabs.count():
+            self.stack.setCurrentWidget(self.start)
+        self.activeProjectChanged.emit()
+        self.activityChanged.emit()
+
+    def shutdown(self):
+        self.shutting_down = True
+        for project in self.projects:
+            self.close_project(project, approved=True)
+        return not self.projects

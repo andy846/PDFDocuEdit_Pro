@@ -9,7 +9,7 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
-from PyQt6.QtCore import QEventLoop, QSettings, Qt, QTimer
+from PyQt6.QtCore import QEventLoop, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -81,11 +81,16 @@ class TemplateEdit(QUndoCommand):
 
 
 class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
-    def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.Window)
+    activityChanged = pyqtSignal()
+    projectClosed = pyqtSignal()
+
+    def __init__(self, parent=None, *, embedded=False, project_host=None):
+        super().__init__(parent, Qt.WindowType.Widget if embedded else Qt.WindowType.Window)
+        self.embedded, self.project_host = embedded, project_host
+        self._close_approved = False
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(1240, 820)
-        self.setMinimumSize(760, 580)
+        self.setMinimumSize(0 if embedded else 760, 0 if embedded else 580)
         self.template = Template()
         self.active_page_id = self.template.pages[0].id
         self.project_path = None
@@ -114,6 +119,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.preview_timer.setInterval(250)
         self.preview_timer.timeout.connect(self._render_preview)
         self._build_ui()
+        if embedded:
+            self.menuBar().hide()
         self._apply_template(self.template.to_dict())
         self.undo.setClean()
         QTimer.singleShot(0, self.canvas.fit_page)
@@ -476,6 +483,10 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.progress.setVisible(busy)
         self.cancel_button.setVisible(busy)
         self.cancel_button.setEnabled(busy)
+        if self.embedded:
+            for key in ("new", "open", "pdf_overlay"):
+                self.actions[key].setEnabled(not self.close_pending)
+        self.activityChanged.emit()
 
     def _mode_changed(self, index):
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
@@ -673,6 +684,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         return False
 
     def new_project(self):
+        if self.project_host:
+            return self.project_host.new_template()
         if self.import_worker or self.production_worker:
             self._error("Finish or cancel the active job before replacing the project.")
             return
@@ -689,6 +702,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.undo.setClean()
 
     def open_pdf_overlay(self, checked=False, path=None):
+        if self.project_host:
+            return self.project_host.open_project(path) if path else self.project_host.new_overlay()
         from .overlay_workspace import OverlayWindow
         if not hasattr(self, "overlay_windows"):
             self.overlay_windows = []
@@ -698,6 +713,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         return window
 
     def open_project(self, checked=False, path=None):
+        if self.project_host:
+            return self.project_host.open_project(path)
         if self.import_worker or self.production_worker:
             self._error("Finish or cancel the active job before replacing the project.")
             return
@@ -751,6 +768,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if not path:
             path, _ = QFileDialog.getSaveFileName(self, "Save Document Designer project", "", "Document Designer projects (*.pdcx)")
         if not path:
+            return False
+        if self.project_host and not self.project_host.allow_save_path(self, path):
             return False
         loop = QEventLoop(self)
         dialog = QProgressDialog("Saving template and static assets...", "", 0, 0, self)
@@ -972,6 +991,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
     def _open_output(self):
         if self.last_output:
+            if self.project_host:
+                self.project_host.open_pdf(self.last_output)
+                return
             from PyQt6.QtCore import QUrl
             from PyQt6.QtGui import QDesktopServices
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_output))
@@ -984,14 +1006,19 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.cancel_button.setEnabled(False)
 
     def closeEvent(self, event):
+        if self.embedded and not self._close_approved and not self.close_pending:
+            event.ignore()
+            QTimer.singleShot(0, lambda: self.project_host.close_project(self))
+            return
         if self.close_pending:
             if self.workers:
                 event.ignore()
                 return
-        elif not self._discard_check():
+        elif not self._close_approved and not self._discard_check():
             event.ignore()
             return
-        self.preferences.setValue("geometry", self.saveGeometry())
+        if not self.embedded:
+            self.preferences.setValue("geometry", self.saveGeometry())
         self.preferences.setValue("splitter", self.splitter.saveState())
         self.close_pending = True
         self.preview_timer.stop()
@@ -1006,3 +1033,4 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         self.temp.cleanup()
         event.accept()
+        self.projectClosed.emit()

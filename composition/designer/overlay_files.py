@@ -17,6 +17,11 @@ from .overlay_dialogs import GroupingDialog
 
 class OverlayFiles:
     def choose_source(self, checked=False, *, replace=False):
+        if self.project_host and self.spec and not replace:
+            project = self.project_host.new_overlay()
+            if project:
+                project.choose_source()
+            return
         if self.active_worker or self.font_token:
             return
         if self.spec and not replace:
@@ -59,6 +64,8 @@ class OverlayFiles:
         self.worker({"task": "overlay_inspect", "source": str(path), "settings": asdict(settings)}, ready, active=True)
 
     def open_project(self, checked=False, *, path=None):
+        if self.project_host:
+            return self.project_host.open_project(path)
         if self.active_worker or self.font_token:
             return
         if not path:
@@ -87,6 +94,8 @@ class OverlayFiles:
         if not path:
             path, _ = QFileDialog.getSaveFileName(self, "Save overlay project", "", "Document Designer project (*.pdcx)")
         if not path:
+            return
+        if self.project_host and not self.project_host.allow_save_path(self, path):
             return
         def saved(result):
             self.project_path = Path(result["project"])
@@ -136,6 +145,9 @@ class OverlayFiles:
 
     def open_result(self, key):
         if self.last_result and self.last_result[key]:
+            if key == "output_pdf" and self.project_host:
+                self.project_host.open_pdf(self.last_result[key])
+                return
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_result[key]))
 
     def cancel_job(self):
@@ -156,8 +168,12 @@ class OverlayFiles:
             callback()
 
     def closeEvent(self, event):
+        if self.embedded and not self._close_approved and not self.close_pending:
+            event.ignore()
+            QTimer.singleShot(0, lambda: self.project_host.close_project(self))
+            return
         if not self.close_pending:
-            if not self.undo.isClean() or self.draft_error:
+            if not self._close_approved and (not self.undo.isClean() or self.draft_error):
                 self.confirm_discard(self.begin_close)
             else:
                 self.begin_close()
@@ -166,6 +182,7 @@ class OverlayFiles:
             return
         self.temp.cleanup()
         event.accept()
+        self.projectClosed.emit()
 
     def begin_close(self):
         self.close_pending = True
@@ -176,5 +193,5 @@ class OverlayFiles:
                 worker.cancel()
             else:
                 worker.stop_preview()
-        if not self.workers:
+        if not self.workers and not self.embedded:
             QTimer.singleShot(0, self.close)

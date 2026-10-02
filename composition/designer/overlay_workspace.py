@@ -5,7 +5,7 @@ import copy
 import tempfile
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -55,10 +55,17 @@ class OverlayEdit(QUndoCommand):
 
 
 class OverlayWindow(OverlayActions, QMainWindow):
-    def __init__(self, parent=None, project_path=None):
-        super().__init__(parent)
+    activityChanged = pyqtSignal()
+    projectClosed = pyqtSignal()
+
+    def __init__(self, parent=None, project_path=None, *, embedded=False, project_host=None):
+        super().__init__(parent, Qt.WindowType.Widget if embedded else Qt.WindowType.Window)
+        self.embedded, self.project_host = embedded, project_host
+        self._close_approved = False
+        if embedded:
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(1280, 820)
-        self.setMinimumSize(760, 540)
+        self.setMinimumSize(0 if embedded else 760, 0 if embedded else 540)
         self.spec = self.project_path = self.last_result = None
         self.temp = tempfile.TemporaryDirectory(prefix="document-designer-overlay-")
         self.directory = Path(self.temp.name)
@@ -82,11 +89,21 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.layout_timer.setInterval(60)
         self.layout_timer.timeout.connect(lambda: self.fit_canvas() if self.auto_fit else None)
         self.build_ui()
+        if embedded:
+            self.menuBar().hide()
         self.busy()
         self.title()
         QTimer.singleShot(0, self.load_fonts)
         if project_path:
             self.load_path(project_path)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
+            for action in getattr(self, "actions", {}).values():
+                symbol = action.property("designer_icon")
+                if symbol:
+                    action.setIcon(icon(symbol))
 
     def build_ui(self):
         self.actions = {}
@@ -99,6 +116,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.addToolBar(toolbar)
         def action(key, text, callback, menu, shortcut=None, symbol="file-text", bar=False):
             item = QAction(icon(symbol), text, self)
+            item.setProperty("designer_icon", symbol)
             item.triggered.connect(callback)
             if shortcut:
                 item.setShortcut(shortcut)
@@ -118,6 +136,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
             item = self.undo.createUndoAction(self, "Undo") if name == "undo" else self.undo.createRedoAction(self, "Redo")
             item.setShortcut(QKeySequence.StandardKey.Undo if name == "undo" else QKeySequence.StandardKey.Redo)
             item.setIcon(icon(name))
+            item.setProperty("designer_icon", name)
             menus["&Edit"].addAction(item)
             toolbar.addAction(item)
         for name, shortcut in [("copy", "Ctrl+C"), ("paste", "Ctrl+V"), ("duplicate", "Ctrl+D"), ("delete", "Delete"), ("select_all", "Ctrl+A")]:
@@ -351,6 +370,11 @@ class OverlayWindow(OverlayActions, QMainWindow):
                 control.setEnabled(False)
         elif not self.draft_error:
             self.selection_changed()
+        if self.embedded:
+            self.actions["open"].setEnabled(not self.close_pending)
+            if self.spec:
+                self.actions["source"].setEnabled(not self.close_pending)
+        self.activityChanged.emit()
 
     def title(self):
         self.setWindowTitle("Document Designer · PDF Envelope Overlay · " +

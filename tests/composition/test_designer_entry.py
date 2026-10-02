@@ -26,8 +26,8 @@ def test_main_entry_feature_flag_and_shared_action(app, monkeypatch, enabled):
         button = window.command_bar._designer
         assert button.isHidden() is not enabled
         if enabled:
-            assert button.property("primary") is True
-            assert button.accessibleName() == "Open Document Designer"
+            assert window.command_bar.mode_switcher.buttons["pdf"].isChecked()
+            assert button.accessibleName() == "Document Designer mode"
             for integrated in (False, True):
                 window.command_bar.set_integrated_chrome(integrated)
                 for width in (640, 960, 1280):

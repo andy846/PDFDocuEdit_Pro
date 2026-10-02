@@ -210,7 +210,7 @@ class DesignerChrome:
         configure_compact_chrome(self)
         geometry = self.preferences.value("geometry")
         splitter = self.preferences.value("splitter")
-        if geometry:
+        if geometry and not self.embedded:
             self.restoreGeometry(geometry)
         if splitter:
             self.splitter.restoreState(splitter)
