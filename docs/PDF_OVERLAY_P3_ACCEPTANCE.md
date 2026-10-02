@@ -4,6 +4,8 @@ Date: 2026-10-02. Development build; public application version and standard tem
 
 ## Entry and test steps
 
+Use the dedicated `dist-pdf-overlay` development build. Save and close any other running PDFDocuEdit instance first: existing single-instance routing sends later launches to the currently active process.
+
 1. Open Document Designer and choose **File → PDF envelope overlay…**.
 2. Select the existing PDF. Set source pages per envelope, simplex/duplex, sequence start, increment and padding.
 3. Inspect the source summary. Incomplete groups and sequence overflow are blocked rather than discarded.
@@ -40,13 +42,20 @@ Date: 2026-10-02. Development build; public application version and standard tem
 - 286 Composition tests at 200% display scaling: passed, 95.90 s.
 - Targeted final UI/standard Designer save/open regression after the navigation width fix: 6 passed, 33.14 s (while full regression/build ran). Earlier run also passed in 9.87 s.
 - Entry-point/socket lifetime and overlay UI regression after the minimal router fix: 11 passed, 17.80 s.
-- Full project regression at the established standard scale: pending.
+- Full project regression at the established standard scale: **1,120 passed**, eight independent module-preserving Qt processes, two at a time. Each collected case is assigned exactly once; all eight processes exited 0 and each passed count matched its collected count. No test assertions, cases or expectations were changed.
+- The single-process standard-scale run was stopped after more than 83% passed because accumulated windows made repeated application-theme/stylesheet installation extremely slow. Live stack samples showed continued progress in existing Viewer/theme code. The isolated batches run every collected case from the beginning and require each batch to exit 0 with its exact expected passed count.
 - Extra full-suite attempt at 200% offscreen scale exposed fixed-width Viewer/navigation assertions (e.g. a 268 px panel against the existing 300 px assertion) and aborted during failed-window teardown. No assertions or tests were changed. The standard-scale Viewer/entry-point check passed: 15 tests, 31.44 s. New Composition tests and frozen UI acceptance are independently exercised at 200%.
 - Windows final frozen acceptance: passed (exit 0), 200% display scaling, after router and navigation-width fixes. Build-carried feature flag worked without an environment override. Existing Designer/editor checks, actual navigation text fit at 960/760 px and both overlay cases passed; 1224 overlay event-loop ticks. Simplex 60 pages / 20 envelopes and duplex 80 pages / 40 sheets / 20 blanks; 120 expected Code128/QR marks decoded in each output.
 - Ruff across repository: passed.
 - Native 200% GUI acceptance: original-page copy, Code128/QR, save/restore, 60 source pages → 20 envelopes; simplex60 pages and duplex80 pages/40 sheets; 120 decoded marks each. GUI processed 473 timer ticks.
 - Earlier frozen acceptance after the deferred-close fix also passed (315 overlay event-loop ticks); the final rebuilt executable was separately validated after the router fix.
 - Headless 3,000-page simplex/duplex production and exact final barcode decoding: see PDF_OVERLAY_P2_VALIDATION.md.
+
+## Full regression audit
+
+Passed counts by batch: 286 / 137 / 50 / 209 / 138 / 125 / 101 / 74 = 1,120. Raw logs and the collected file assignment are retained under ignored `build/overlay-regression-group-*`, `build/overlay-regression-groups.json` and `build/overlay-regression-groups-result.json`.
+
+The runner recorded an anomalous 35,705.20 seconds wall time for the final 101-case UI/tool batch and 36,134.11 seconds overall. The cause of that elapsed-time outlier is not established. These numbers are retained for audit and are not PDF composition throughput, a repeatable performance baseline or evidence that existing UI performance gates have been met. The separately recorded P2 generation/QC benchmarks remain synthetic single-run samples. All functional assertions and normal process exits were verified; physical production validation remains separate.
 
 ## Remaining production gate
 
