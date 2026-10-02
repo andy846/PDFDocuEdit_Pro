@@ -33,6 +33,7 @@ from .rule_controls import rules_summary
 
 class Properties(QWidget):
     edited = pyqtSignal(dict)
+    geometryEdited = pyqtSignal(dict)
     fontRequested = pyqtSignal(dict)
     insertFieldRequested = pyqtSignal()
     glyphRepairRequested = pyqtSignal()
@@ -45,6 +46,8 @@ class Properties(QWidget):
         self.loading = False
         self.element = None
         self.bulk_ids = []
+        self.geometry_ids = []
+        self.multi_selection = False
         self.bulk_dirty = set()
         self.displayed_numbers = {}
         self.catalogue = {}
@@ -66,27 +69,42 @@ class Properties(QWidget):
         groups.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
         groups.setContentsMargins(0, 0, 0, 0)
         self.numbers = {}
-        self.geometry = QGroupBox("Position & size (mm)")
+        self.geometry = QGroupBox("Geometry")
+        self.geometry_cells, self.geometry_checks, self.geometry_labels = {}, {}, {}
         grid = QGridLayout(self.geometry)
         for index, (key, label, high) in enumerate([
-            ("x_mm", "X", 2000), ("y_mm", "Y", 2000),
-            ("width_mm", "W", 2000), ("height_mm", "H", 2000),
+            ("x_mm", "X (mm)", 2000), ("y_mm", "Y (mm)", 2000),
+            ("width_mm", "W (mm)", 2000), ("height_mm", "H (mm)", 2000),
+            ("rotation_deg", "Angle (°)", 360),
         ]):
             control = QDoubleSpinBox()
-            control.setRange(0 if index < 2 else .1, high)
+            control.setRange(-360 if key == "rotation_deg" else 0 if index < 2 else .1, high)
             control.setDecimals(2)
             control.setSingleStep(.5)
             control.setMinimumWidth(56)
             control.setMaximumWidth(96)
-            control.setAccessibleName(label + " millimetres")
+            control.setAccessibleName("Rotation degrees" if key == "rotation_deg" else label + " millimetres")
+            control.setToolTip("Clockwise rotation around the box centre." if key == "rotation_deg" else
+                               "Unrotated box dimension in millimetres." if key in {"width_mm", "height_mm"} else
+                               "Position in millimetres from the page top-left.")
             self.numbers[key] = control
             cell = QWidget()
             row = QHBoxLayout(cell)
             row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label))
+            label_widget = QCheckBox(label) if key in {"width_mm", "height_mm", "rotation_deg"} else QLabel(label)
+            if isinstance(label_widget, QCheckBox):
+                self.geometry_checks[key] = label_widget
+                self.geometry_labels[key] = QLabel(label)
+                row.addWidget(self.geometry_labels[key])
+            self.geometry_cells[key] = cell
+            row.addWidget(label_widget)
             row.addWidget(control)
-            grid.addWidget(cell, index // 2, index % 2)
+            grid.addWidget(cell, index, 0)
             control.editingFinished.connect(lambda name=key: self.apply_field(name))
+        self.geometry_apply = QPushButton("Apply to selected")
+        self.geometry_apply.setToolTip("Only checked width, height and angle settings change. Text, fonts and other settings are retained.")
+        self.geometry_apply.clicked.connect(self.apply_geometry)
+        grid.addWidget(self.geometry_apply, 5, 0)
         groups.addWidget(self.geometry)
         self.content_group = QGroupBox("Content")
         content_layout = QVBoxLayout(self.content_group)
@@ -333,6 +351,15 @@ class Properties(QWidget):
     def show_element(self, element):
         self.bulk_dirty.clear()
         self.bulk_ids = []
+        self.multi_selection = False
+        self.geometry_ids = [element.id] if element else []
+        self.geometry_apply.hide()
+        for cell in self.geometry_cells.values():
+            cell.show()
+        for key, check in self.geometry_checks.items():
+            check.setChecked(False)
+            check.hide()
+            self.geometry_labels[key].show()
         self.empty.setText("Select an object on the page or in Layers to edit its properties.")
         self.repair_button.setEnabled(True)
         self.repair_button.show()
@@ -404,13 +431,27 @@ class Properties(QWidget):
             self.show_element(selected[0] if selected else None)
             return
         text = [e for e in selected if e.type == "text" or (e.type in {"code128", "i25"} and e.show_barcode_text)]
-        self.show_element(text[0] if text else None)
-        if not text:
-            self.empty.setText(f"{len(selected)} objects selected. Select text objects to format together.")
-            return
+        self.show_element(text[0] if text else selected[0])
+        self.multi_selection = True
+        self.geometry_ids = [e.id for e in selected]
         self.bulk_ids = [e.id for e in text]
         self.font_family.lineEdit().setModified(False)
-        self.title.setText(f"{len(text)} text objects / {len(selected)} selected")
+        self.title.setText(f"{len(selected)} objects selected")
+        for key in ("x_mm", "y_mm"):
+            self.geometry_cells[key].hide()
+        for key, check in self.geometry_checks.items():
+            check.setEnabled(True)
+            check.show()
+            self.geometry_labels[key].hide()
+        self.geometry_apply.show()
+        if not text:
+            for group in (self.rules_group, self.content_group, self.font_group, self.text_layout_group,
+                          self.appearance_group, self.image_group, self.barcode_group):
+                group.hide()
+            self.geometry.show()
+            self.empty.setText("Edit width, height or angle, then apply the checked settings to all selected objects.")
+            self.empty.show()
+            return
         differing = []
         for name, getter in [("fonts", lambda e: (e.font.family, e.font.file, e.font.bold, e.font.italic)),
                              ("sizes", lambda e: e.font.size_pt),
@@ -419,13 +460,15 @@ class Properties(QWidget):
             if any(getter(e) != getter(text[0]) for e in text[1:]):
                 differing.append(name)
         note = ("Mixed " + ", ".join(differing) + ". " if differing else "")
-        note += f"Shown values are from first text. Edited settings apply to {len(text)} text objects."
+        note += f"Font values are from first text; formatting applies to {len(text)} text objects. "
+        note += "Checked width, height and angle apply to all selected objects; unchecked geometry is retained."
         if len(selected) != len(text):
             note += f" {len(selected)-len(text)} other objects excluded."
         self.empty.setText(note)
         self.empty.show()
-        for group in (self.geometry, self.rules_group, self.content_group, self.image_group, self.barcode_group):
+        for group in (self.rules_group, self.content_group, self.image_group, self.barcode_group):
             group.hide()
+        self.geometry.show()
         self.font_group.show()
         self.text_layout_group.show()
         self.appearance_group.show()
@@ -437,12 +480,29 @@ class Properties(QWidget):
         self.font_status.setText("Exact face changes apply to selected text.")
         self.font_style.setToolTip("Styles refer to the first selected text; choosing one applies it to all.")
 
+    def apply_geometry(self):
+        if self.loading or not self.geometry_ids:
+            return
+        values = {key: self.numbers[key].value() for key, check in self.geometry_checks.items()
+                  if check.isChecked()}
+        if values:
+            self.geometryEdited.emit(values)
+
     def _mark_bulk_dirty(self, name):
+        if self.multi_selection and not self.loading and name in self.geometry_checks:
+            self.geometry_checks[name].setChecked(True)
         if self.bulk_ids and not self.loading:
             self.bulk_dirty.add(name)
 
     def apply_field(self, name):
         if self.loading or not self.element:
+            return
+        if name in self.geometry_checks:
+            if self.multi_selection:
+                return
+            control = self.numbers[name]
+            value = getattr(self.element, name) if control.value() == self.displayed_numbers.get(name) else control.value()
+            self.geometryEdited.emit({name: value})
             return
         if not self.bulk_ids:
             self.apply()
@@ -475,7 +535,10 @@ class Properties(QWidget):
             self.apply()
 
     def apply(self, *args):
-        if self.loading or self.element is None or self.bulk_ids:
+        if self.loading or self.element is None:
+            return
+        if self.multi_selection:
+            self.apply_geometry()
             return
         values = {key: control.value() for key, control in self.numbers.items() if key != "font_size"}
         for key in values:

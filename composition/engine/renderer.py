@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from contextlib import ExitStack
 from pathlib import Path
@@ -228,6 +229,31 @@ class Renderer:
         selected = self.plans[element.id].resolve(record, design=self.design)
         if not selected.visible:
             return
+        if element.rotation_deg % 360:
+            page.wrap_contents()
+            previous = page.get_contents()
+            self._paint_element(page, element, selected)
+            contents = page.get_contents()
+            appended = [xref for xref in contents if xref not in previous]
+            if appended:
+                angle = math.radians(element.rotation_deg)
+                c, s = math.cos(angle), math.sin(angle)
+                cx = (element.x_mm+element.width_mm/2)*MM_TO_PT
+                cy = page.rect.height-(element.y_mm+element.height_mm/2)*MM_TO_PT
+                # PDF Y points up; a positive designer angle turns clockwise.
+                e, f = cx-c*cx-s*cy, cy+s*cx-c*cy
+                document = page.parent
+                begin, end = document.get_new_xref(), document.get_new_xref()
+                for xref, stream in ((begin, f"q {c:.12f} {-s:.12f} {s:.12f} {c:.12f} {e:.12f} {f:.12f} cm\n".encode()),
+                                     (end, b"Q\n")):
+                    document.update_object(xref, "<<>>")
+                    document.update_stream(xref, stream)
+                order = previous + [begin] + appended + [end]
+                document.xref_set_key(page.xref, "Contents", "["+" ".join(f"{xref} 0 R" for xref in order)+"]")
+            return
+        self._paint_element(page, element, selected)
+
+    def _paint_element(self, page, element, selected):
         rect = fitz.Rect(
             element.x_mm * MM_TO_PT, element.y_mm * MM_TO_PT,
             (element.x_mm + element.width_mm) * MM_TO_PT,

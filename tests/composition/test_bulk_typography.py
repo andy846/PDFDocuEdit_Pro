@@ -61,7 +61,7 @@ def test_mixed_size_changes_only_size_and_one_undo(window):
     assert len(window.properties.bulk_ids) == 2
     assert "Mixed fonts, sizes" in window.properties.empty.text()
     assert not window.properties.content_group.isVisible()
-    assert not window.properties.geometry.isVisible()
+    assert window.properties.geometry.isVisible()
     control = window.properties.numbers["font_size"]
     control.setValue(14)
     control.editingFinished.emit()
@@ -153,7 +153,10 @@ def test_non_text_selection_has_no_typography_controls(window):
     ids = [e.id for e in window.page.elements]
     window.canvas.select_ids([ids[3], ids[5]])
     before = snapshots(window)
-    assert window.properties.element is None and not window.font_size_tool.isEnabled()
+    assert window.properties.element is not None and not window.font_size_tool.isEnabled()
+    assert not window.properties.bulk_ids
+    assert window.properties.font_group.isHidden()
+    assert window.properties.text_layout_group.isHidden()
     window.properties.apply_field("font_size")
     assert snapshots(window) == before
 

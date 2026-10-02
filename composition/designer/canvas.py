@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import copy
+import math
 
-from PyQt6.QtCore import QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QLineF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QKeySequence, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -31,9 +32,10 @@ class FieldList(QListWidget):
 class ElementItem(QGraphicsRectItem):
     def __init__(self, element, canvas):
         super().__init__(0, 0, element.width_mm, element.height_mm)
-        self.element = element
-        self.canvas = canvas
+        self.element, self.canvas = element, canvas
         self.setPos(element.x_mm, element.y_mm)
+        self.setTransformOriginPoint(self.rect().center())
+        self.setRotation(element.rotation_deg)
         self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
                       QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setZValue(2)
@@ -46,8 +48,7 @@ class ElementItem(QGraphicsRectItem):
     def paint(self, painter, option, widget=None):
         super().paint(painter, option, widget)
         if self.isSelected():
-            painter.fillRect(QRectF(self.rect().width()-2, self.rect().height()-2, 2, 2),
-                             QColor("#2266aa"))
+            painter.fillRect(QRectF(self.rect().width()-2, self.rect().height()-2, 2, 2), QColor("#2266aa"))
 
     def mousePressEvent(self, event):
         if not self.canvas.editable:
@@ -63,46 +64,41 @@ class ElementItem(QGraphicsRectItem):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if not self.canvas.editable:
+            return super().mouseMoveEvent(event)
         if self.resizing:
             delta = event.scenePos() - self.anchor
-            width = min(self.canvas.page_width-self.pos().x(), max(0.1, self.original.width()+delta.x()))
-            height = min(self.canvas.page_height-self.pos().y(), max(0.1, self.original.height()+delta.y()))
+            angle = math.radians(self.rotation())
+            dx = delta.x()*math.cos(angle)+delta.y()*math.sin(angle)
+            dy = -delta.x()*math.sin(angle)+delta.y()*math.cos(angle)
+            width, height = max(.1, self.original.width()+dx), max(.1, self.original.height()+dy)
+            if self.canvas.snap_enabled and not event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                width, height = max(.1, round(width/5)*5), max(.1, round(height/5)*5)
             self.setRect(0, 0, width, height)
+            self.setTransformOriginPoint(self.rect().center())
         else:
             super().mouseMoveEvent(event)
+            self.canvas.snap_drag(self, event.modifiers())
 
     def mouseReleaseEvent(self, event):
         if not self.canvas.editable:
             return super().mouseReleaseEvent(event)
         if not self.resizing:
             super().mouseReleaseEvent(event)
-        if self.canvas.snap_enabled:
-            originals = {element["id"]: element for element in self.canvas.before["pages"][self.canvas.page_index]["elements"]}
-            if self.resizing:
-                width = max(.1, min(self.canvas.page_width-self.pos().x(),
-                                   round(self.rect().width()/5)*5))
-                height = max(.1, min(self.canvas.page_height-self.pos().y(),
-                                    round(self.rect().height()/5)*5))
-                self.setRect(0, 0, width, height)
-            else:
-                origin = originals[self.element.id]
-                dx = round(self.pos().x()/5)*5-origin["x_mm"]
-                dy = round(self.pos().y()/5)*5-origin["y_mm"]
-                for selected in self.canvas.element_items:
-                    if selected.isSelected():
-                        original = originals[selected.element.id]
-                        selected.setPos(original["x_mm"]+dx, original["y_mm"]+dy)
-        for item in self.canvas.element_items:
-            x = max(0, min(self.canvas.page_width-item.rect().width(), item.pos().x()))
-            y = max(0, min(self.canvas.page_height-item.rect().height(), item.pos().y()))
-            x, y = round(x, 2), round(y, 2)
-            width, height = round(item.rect().width(), 2), round(item.rect().height(), 2)
-            item.setRect(0, 0, width, height)
-            item.setPos(x, y)
-            item.element.x_mm, item.element.y_mm = x, y
-            item.element.width_mm, item.element.height_mm = width, height
-        self.canvas.editCommitted.emit(self.canvas.before, self.canvas.snapshot())
+        else:
+            self.canvas.fit_resized_item(self)
+        self.canvas.keep_group_on_page()
+        targets = [self] if self.resizing else [item for item in self.canvas.element_items if item.isSelected()]
+        for item in targets:
+            item.element.x_mm, item.element.y_mm = round(item.pos().x(), 2), round(item.pos().y(), 2)
+            item.element.width_mm, item.element.height_mm = round(item.rect().width(), 2), round(item.rect().height(), 2)
+            item.setPos(item.element.x_mm, item.element.y_mm)
+            item.setRect(0, 0, item.element.width_mm, item.element.height_mm)
+            item.setTransformOriginPoint(item.rect().center())
         self.resizing = False
+        self.canvas.guides = []
+        self.canvas.viewport().update()
+        self.canvas.editCommitted.emit(self.canvas.before, self.canvas.snapshot())
 
 
 class Canvas(QGraphicsView):
@@ -113,6 +109,7 @@ class Canvas(QGraphicsView):
     zoomChanged = pyqtSignal(float)
     objectActivated = pyqtSignal()
     pointerMoved = pyqtSignal(float, float)
+    measurementChanged = pyqtSignal(float, float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -134,6 +131,16 @@ class Canvas(QGraphicsView):
         self.mode_preview = False
         self.editable = True
         self.design_selection = []
+        self.snap_guides_enabled = True
+        self.guides = []
+        self.measure_enabled = False
+        self.measure_start = self.measure_end = None
+        self.measuring = False
+        from .rulers import Ruler
+        self.horizontal_ruler, self.vertical_ruler = Ruler(self, True), Ruler(self, False)
+        self.rulers_visible = True
+        self.set_rulers(True)
+        self.zoomChanged.connect(lambda *args: self.update_rulers())
 
     def snapshot(self):
         return copy.deepcopy(self.template.to_dict())
@@ -158,6 +165,9 @@ class Canvas(QGraphicsView):
             item.setSelected(item.element.id in selected_ids)
         self.setSceneRect(-15, -15, spec.width_mm+30, spec.height_mm+30)
         self.scene_model.blockSignals(False)
+        self.guides = []
+        self.measure_start = self.measure_end = None
+        self.update_rulers()
 
     def set_preview(self, image):
         if self.preview_item:
@@ -217,6 +227,121 @@ class Canvas(QGraphicsView):
     def set_snap(self, enabled):
         self.snap_enabled = bool(enabled)
 
+    def set_snap_guides(self, enabled):
+        self.snap_guides_enabled = bool(enabled)
+        self.guides = []
+        self.viewport().update()
+
+    def set_rulers(self, enabled):
+        self.rulers_visible = bool(enabled)
+        size = 24 if enabled else 0
+        self.setViewportMargins(size, size, 0, 0)
+        self.horizontal_ruler.setVisible(enabled)
+        self.vertical_ruler.setVisible(enabled)
+        self.update_rulers()
+
+    def update_rulers(self):
+        if not hasattr(self, "horizontal_ruler"):
+            return
+        viewport = self.viewport().geometry()
+        self.horizontal_ruler.setGeometry(viewport.left(), 0, viewport.width(), 24)
+        self.vertical_ruler.setGeometry(0, viewport.top(), 24, viewport.height())
+        self.horizontal_ruler.update()
+        self.vertical_ruler.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_rulers()
+
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        self.update_rulers()
+
+    def set_measure(self, enabled):
+        self.measure_enabled = bool(enabled)
+        self.measure_start = self.measure_end = None
+        self.measuring = False
+        self.viewport().setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
+        self.viewport().update()
+
+    def mousePressEvent(self, event):
+        if self.measure_enabled and event.button() == Qt.MouseButton.LeftButton:
+            self.measure_start = self.measure_end = self.mapToScene(event.position().toPoint())
+            self.measuring = True
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.measuring:
+            self.measuring = False
+            self.measure_end = self.mapToScene(event.position().toPoint())
+            self.report_measurement()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def report_measurement(self):
+        delta = self.measure_end-self.measure_start
+        self.measurementChanged.emit(math.hypot(delta.x(), delta.y()), abs(delta.x()), abs(delta.y()))
+        self.viewport().update()
+
+    def group_bounds(self, items):
+        rect = QRectF()
+        for item in items:
+            bounds = item.mapRectToScene(item.rect())
+            rect = bounds if rect.isNull() else rect.united(bounds)
+        return rect
+
+    def keep_group_on_page(self):
+        items = [item for item in self.element_items if item.isSelected()]
+        if not items:
+            return
+        rect = self.group_bounds(items)
+        dx = -rect.left() if rect.left() < 0 else min(0, self.page_width-rect.right())
+        dy = -rect.top() if rect.top() < 0 else min(0, self.page_height-rect.bottom())
+        dx, dy = max(dx, -min(item.pos().x() for item in items)), max(dy, -min(item.pos().y() for item in items))
+        for item in items:
+            item.moveBy(dx, dy)
+
+    def fit_resized_item(self, item):
+        bounds = item.mapRectToScene(item.rect())
+        scale = min(1, self.page_width/bounds.width(), self.page_height/bounds.height())
+        width, height = item.rect().width()*scale, item.rect().height()*scale
+        item.setRect(0, 0, width, height)
+        item.setTransformOriginPoint(item.rect().center())
+
+    def snap_drag(self, dragged, modifiers=Qt.KeyboardModifier.NoModifier):
+        items = [item for item in self.element_items if item.isSelected()]
+        self.guides = []
+        if not items:
+            return
+        rect = self.group_bounds(items)
+        threshold = 6/max(.01, self.transform().m11())
+        targets_x, targets_y = [0, self.page_width/2, self.page_width], [0, self.page_height/2, self.page_height]
+        for other in self.element_items:
+            if other in items:
+                continue
+            bounds = other.mapRectToScene(other.rect())
+            targets_x.extend((bounds.left(), bounds.center().x(), bounds.right()))
+            targets_y.extend((bounds.top(), bounds.center().y(), bounds.bottom()))
+        def nearest(anchors, targets):
+            best = min(((target-anchor, target) for anchor in anchors for target in targets), key=lambda pair: abs(pair[0]))
+            return best if abs(best[0]) <= threshold else None
+        enabled = not modifiers & Qt.KeyboardModifier.AltModifier
+        sx = nearest((rect.left(), rect.center().x(), rect.right()), targets_x) if self.snap_guides_enabled and enabled else None
+        sy = nearest((rect.top(), rect.center().y(), rect.bottom()), targets_y) if self.snap_guides_enabled and enabled else None
+        dx = sx[0] if sx else round(dragged.pos().x()/5)*5-dragged.pos().x() if self.snap_enabled and enabled else 0
+        dy = sy[0] if sy else round(dragged.pos().y()/5)*5-dragged.pos().y() if self.snap_enabled and enabled else 0
+        for item in items:
+            item.moveBy(dx, dy)
+        if sx:
+            self.guides.append(("x", sx[1]))
+        if sy:
+            self.guides.append(("y", sy[1]))
+        self.keep_group_on_page()
+        self.viewport().update()
+
     def select_ids(self, ids):
         selected = set(ids)
         self.scene_model.blockSignals(True)
@@ -226,6 +351,11 @@ class Canvas(QGraphicsView):
         self._selected()
 
     def mouseMoveEvent(self, event):
+        if self.measuring:
+            self.measure_end = self.mapToScene(event.position().toPoint())
+            self.report_measurement()
+            event.accept()
+            return
         super().mouseMoveEvent(event)
         point = self.mapToScene(event.position().toPoint())
         if 0 <= point.x() <= self.page_width and 0 <= point.y() <= self.page_height:
@@ -233,18 +363,23 @@ class Canvas(QGraphicsView):
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
-        if not self.grid_visible or self.mode_preview:
-            return
         painter.save()
         painter.setClipRect(QRectF(0, 0, self.page_width, self.page_height))
-        pen = QPen(QColor(80, 115, 145, 65), 1)
+        if self.grid_visible and not self.mode_preview:
+            pen = QPen(QColor(80, 115, 145, 65), 1)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            for x in range(0, int(self.page_width)+1, 5):
+                painter.drawLine(QLineF(x, 0, x, self.page_height))
+            for y in range(0, int(self.page_height)+1, 5):
+                painter.drawLine(QLineF(0, y, self.page_width, y))
+        pen = QPen(QColor("#d42b91"), 1, Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         painter.setPen(pen)
-        from PyQt6.QtCore import QLineF
-        for x in range(0, int(self.page_width)+1, 5):
-            painter.drawLine(QLineF(x, 0, x, self.page_height))
-        for y in range(0, int(self.page_height)+1, 5):
-            painter.drawLine(QLineF(0, y, self.page_width, y))
+        for axis, value in ([] if self.mode_preview else self.guides):
+            painter.drawLine(QLineF(value, 0, value, self.page_height) if axis == "x" else QLineF(0, value, self.page_width, value))
+        if self.measure_start is not None and self.measure_end is not None:
+            painter.drawLine(QLineF(self.measure_start, self.measure_end))
         painter.restore()
 
     def selected_ids(self):
@@ -287,13 +422,12 @@ class Canvas(QGraphicsView):
             before = self.snapshot()
             dx, dy = moves[key]
             step = 5 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 0.5
-            for item in self.element_items:
-                if item.isSelected():
-                    item.element.x_mm = min(self.page_width-item.element.width_mm,
-                                            max(0, item.element.x_mm+dx*step))
-                    item.element.y_mm = min(self.page_height-item.element.height_mm,
-                                            max(0, item.element.y_mm+dy*step))
-                    item.setPos(item.element.x_mm, item.element.y_mm)
+            selected = [item for item in self.element_items if item.isSelected()]
+            for item in selected:
+                item.moveBy(dx*step, dy*step)
+            self.keep_group_on_page()
+            for item in selected:
+                item.element.x_mm, item.element.y_mm = item.pos().x(), item.pos().y()
             self.editCommitted.emit(before, self.snapshot())
             return
         super().keyPressEvent(event)

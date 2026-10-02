@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 6
+TEMPLATE_VERSION = 7
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
@@ -84,6 +84,7 @@ class Element:
     y_mm: float = 20.0
     width_mm: float = 70.0
     height_mm: float = 12.0
+    rotation_deg: float = 0.0
     value: str = "Text"
     font: FontSpec = field(default_factory=FontSpec)
     align: str = "left"
@@ -204,7 +205,7 @@ class Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
         version = value.get("template_version")
-        if type(version) is not int or version not in (1, 2, 3, 4, 5, TEMPLATE_VERSION):
+        if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, TEMPLATE_VERSION):
             raise CompositionError(
                 f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
@@ -234,6 +235,8 @@ class Template:
                 elements = page.get("elements", [])
                 if not isinstance(elements, list) or len(elements) > 5000:
                     raise CompositionError("A template can contain at most 5,000 elements.")
+                if version < 7 and any(e.get("rotation_deg", 0) != 0 for e in elements):
+                    raise CompositionError("Object rotation requires template version 7.")
                 if version < 4 and any(e.get("rules", {}).get("visible_when") is not None or
                                        e.get("rules", {}).get("alternative") is not None for e in elements):
                     raise CompositionError("Conditional rules require template version 4.")
@@ -372,10 +375,13 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             _number(getattr(element, prop), f"{element.id}: {prop}", 0, 2000)
         for prop in ("width_mm", "height_mm"):
             _number(getattr(element, prop), f"{element.id}: {prop}", 0.1, 2000)
-        if element.x_mm + element.width_mm > page.width_mm + 0.01:
-            raise CompositionError(f"{element.id}: object extends beyond the page width.")
-        if element.y_mm + element.height_mm > page.height_mm + 0.01:
-            raise CompositionError(f"{element.id}: object extends beyond the page height.")
+        _number(element.rotation_deg, "Rotation angle", -360, 360)
+        from composition.template.geometry import element_bounds
+        x0, y0, x1, y1 = element_bounds(element)
+        if x0 < -.01 or x1 > page.width_mm + .01:
+            raise CompositionError(f"{element.id}: rotated object extends beyond the page width.")
+        if y0 < -.01 or y1 > page.height_mm + .01:
+            raise CompositionError(f"{element.id}: rotated object extends beyond the page height.")
         if not isinstance(element.align, str) or element.align not in {"left", "center", "right"}:
             raise CompositionError("Text alignment must be left, center or right.")
         if not isinstance(element.vertical_align, str) or element.vertical_align not in {"top", "center", "bottom"}:

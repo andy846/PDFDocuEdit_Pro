@@ -139,9 +139,12 @@ class DesignerChrome:
                "printer")
         action("cancel", "Cancel job", self.cancel_job, "&Production", symbol="x")
         action("help", "Designer shortcuts", self.show_shortcuts, "&Help", "F1", "keyboard")
+        self.layout_menu = menus["&View"]
         self._refresh_recent()
 
     def _finish_designer_ui(self):
+        from .layout_tools import install_layout_tools
+        install_layout_tools(self, self.layout_menu)
         for key in ("undo", "redo"):
             button = self.project_toolbar.widgetForAction(self.actions[key])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
@@ -241,7 +244,10 @@ class DesignerChrome:
                     "rename", "import", "page_size", "select_all"):
             self.actions[key].setEnabled(not busy)
         for key, value in self.actions.items():
-            if key.startswith("arrange_"):
+            if key.startswith("rotate_"):
+                value.setEnabled(bool(selected) and not busy and not self.canvas.mode_preview
+                                 and not self.font_requests and not self.content_invalid)
+            elif key.startswith("arrange_"):
                 value.setEnabled(bool(selected) and not busy)
             elif key.startswith("insert_") or key == "variable":
                 value.setEnabled(not busy)
@@ -437,6 +443,8 @@ class DesignerChrome:
                 symbol = value.property("designer_icon")
                 if symbol:
                     value.setIcon(icon(symbol))
+            if hasattr(self, "layout_tools_button"):
+                self.layout_tools_button.setIcon(icon("line-tool"))
             if hasattr(self, "barcode_button"):
                 self.barcode_button.setIcon(icon("scan"))
             if hasattr(self, "page_menu"):
@@ -451,7 +459,7 @@ class DesignerChrome:
         menu.addSeparator()
         arrange = menu.addMenu("Arrange")
         for key, value in self.actions.items():
-            if key.startswith("arrange_"):
+            if key.startswith(("rotate_", "arrange_")):
                 arrange.addAction(value)
         if self.properties.element:
             menu.addAction("Edit properties", self.focus_properties)

@@ -414,6 +414,10 @@ def test_overlay_toolbar_icons_follow_shared_theme(window):
     window._apply_theme("light")
     overlay = controller.host.new_overlay()
     before = overlay.actions["save"].icon().cacheKey()
+    before_layout = overlay.layout_tools_button.icon().cacheKey()
+    before_template_layout = project.layout_tools_button.icon().cacheKey()
     window._apply_theme("dark")
     assert overlay.actions["save"].icon().cacheKey() != before
+    assert overlay.layout_tools_button.icon().cacheKey() != before_layout
+    assert project.layout_tools_button.icon().cacheKey() != before_template_layout
     assert controller.host.current_project is overlay

@@ -80,7 +80,7 @@ class EnvelopeSpec:
     objects: list[OverlayObject] = field(default_factory=list)
     required_scope: str = "all_source"
     name: str = "Envelope overlay"
-    overlay_version: int = 1
+    overlay_version: int = 2
     project_kind: str = "pdf_overlay"
 
     @property
@@ -89,7 +89,7 @@ class EnvelopeSpec:
         return any(obj.control for obj in self.objects)
 
     def validate(self):
-        if type(self.overlay_version) is not int or self.overlay_version != 1 or self.project_kind != "pdf_overlay":
+        if type(self.overlay_version) is not int or self.overlay_version != 2 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if not isinstance(self.name, str) or len(self.name) > 200:
             raise CompositionError("Invalid envelope project name.")
@@ -134,6 +134,12 @@ class EnvelopeSpec:
     def from_dict(cls, raw):
         try:
             data = dict(raw)
+            version = data.get("overlay_version", 1)
+            if type(version) is not int or version not in (1, 2):
+                raise CompositionError("Unsupported envelope project version.")
+            if version == 1 and any(obj.get("element", {}).get("rotation_deg", 0) != 0 for obj in data.get("objects", [])):
+                raise CompositionError("Object rotation requires envelope project version 2.")
+            data["overlay_version"] = 2
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()

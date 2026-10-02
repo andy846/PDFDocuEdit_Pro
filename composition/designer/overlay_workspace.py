@@ -91,6 +91,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.build_ui()
         if embedded:
             self.menuBar().hide()
+        from .layout_tools import install_layout_tools
+        install_layout_tools(self, self.layout_menu)
         self.busy()
         self.title()
         QTimer.singleShot(0, self.load_fonts)
@@ -104,11 +106,15 @@ class OverlayWindow(OverlayActions, QMainWindow):
                 symbol = action.property("designer_icon")
                 if symbol:
                     action.setIcon(icon(symbol))
+            if hasattr(self, "layout_tools_button"):
+                self.layout_tools_button.setIcon(icon("line-tool"))
 
     def build_ui(self):
         self.actions = {}
         menus = {name: self.menuBar().addMenu(name) for name in ("&File", "&Edit", "&Insert", "&View", "&Production")}
+        self.layout_menu = menus["&View"]
         toolbar = QToolBar("PDF Overlay", self)
+        self.layout_toolbar = toolbar
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setStyleSheet("QToolBar { padding: 2px; spacing: 2px; } QToolButton { padding: 3px; min-height: 0px; min-width: 0px; }")
@@ -147,6 +153,10 @@ class OverlayWindow(OverlayActions, QMainWindow):
         action("fit", "Fit page", self.fit_canvas, "&View", "Ctrl+0", "monitor", True)
         action("zoom_in", "Zoom in", lambda: self.canvas.zoom_by(1.2), "&View", "Ctrl++")
         action("zoom_out", "Zoom out", lambda: self.canvas.zoom_by(1/1.2), "&View", "Ctrl+-")
+        for key, label, setter in (("grid", "Show 5 mm grid", lambda on: self.canvas.set_grid(on)),
+                                   ("snap", "Snap to 5 mm grid", lambda on: self.canvas.set_snap(on))):
+            item = action(key, label, setter, "&View", symbol="settings")
+            item.setCheckable(True)
         action("generate", "Generate overlay PDF…", self.generate_pdf, "&Production", "Ctrl+Shift+G", "printer", True)
         action("cancel", "Cancel current job", self.cancel_job, "&Production", symbol="x", bar=True)
         self.actions["generate"].setIconText("Generate PDF")
@@ -379,6 +389,10 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.actions["open"].setEnabled(not self.close_pending)
             if self.spec:
                 self.actions["source"].setEnabled(not self.close_pending)
+        for key in ("rotate_cw", "rotate_ccw", "rotate_reset"):
+            if key in self.actions:
+                self.actions[key].setEnabled(valid and not locked and not self.preview_only.isChecked()
+                                             and bool(self.canvas.selected_ids()))
         self.activityChanged.emit()
 
     def title(self):

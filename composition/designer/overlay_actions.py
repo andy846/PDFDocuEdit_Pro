@@ -36,6 +36,9 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             self.letter_page.setValue(obj.letter_page)
             self.control.setChecked(obj.control)
         editable = not (self.active_worker or self.font_token or self.preview_only.isChecked())
+        for key in ("rotate_cw", "rotate_ccw", "rotate_reset"):
+            if key in self.actions:
+                self.actions[key].setEnabled(bool(selected) and editable)
         self.scope.setEnabled(obj is not None and editable)
         self.letter_page.setEnabled(bool(obj and obj.scope == "letter_page" and editable))
         self.control.setEnabled(bool(obj and obj.profile and editable))

@@ -9,6 +9,7 @@ from composition.engine.renderer import Renderer
 from composition.engine.rules import ElementPlan, Selection
 from composition.pdf_source.planner import EnvelopePlan, applies
 from composition.pdf_source.source import _stat
+from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
 
 from .model import barcode_field, render_template
@@ -65,8 +66,9 @@ class OverlayRenderer:
             selected = self.renderer.plans[element.id].resolve(fields)
             if not selected.visible:
                 continue
-            if ((element.x_mm+element.width_mm)*MM_TO_PT > geometry["width_pt"]+.03 or
-                (element.y_mm+element.height_mm)*MM_TO_PT > geometry["height_pt"]+.03):
+            x0, y0, x1, y1 = element_bounds(element)
+            if (x0*MM_TO_PT < -.03 or y0*MM_TO_PT < -.03 or
+                x1*MM_TO_PT > geometry["width_pt"]+.03 or y1*MM_TO_PT > geometry["height_pt"]+.03):
                 raise CompositionError(f"Object {element.id} extends outside the visible source page.")
             visible.append((element,obj,selected))
             if obj.control:
@@ -90,9 +92,8 @@ class OverlayRenderer:
                 marks.append({"output_page": page_plan.output_page, "source_page": page_plan.source_page,
                               "envelope": page_plan.envelope, "object": element.id, "symbology": element.type,
                               "profile": obj.profile.name, "payload": value.value,
-                              "rect": [element.x_mm*MM_TO_PT, element.y_mm*MM_TO_PT,
-                                       (element.x_mm+element.width_mm)*MM_TO_PT,
-                                       (element.y_mm+element.height_mm)*MM_TO_PT]})
+                              "rotation_deg": element.rotation_deg,
+                              "rect": [value*MM_TO_PT for value in element_bounds(element)]})
         return layer.number, marks
 
     @staticmethod
