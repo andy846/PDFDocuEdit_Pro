@@ -22,7 +22,7 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--compositio
     from importlib import import_module
     raise SystemExit(import_module("scripts.composition_smoke").main(sys.argv[2:]))
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QSplashScreen
@@ -125,13 +125,21 @@ class SingleInstanceRouter(QObject):
             if socket is None:
                 continue
             self._buffers[socket] = bytearray()
-            socket.readyRead.connect(
-                lambda current=socket: self._read_socket(current)
-            )
-            socket.disconnected.connect(
-                lambda current=socket: self._drop_socket(current)
-            )
+            socket.readyRead.connect(self._socket_ready)
+            socket.disconnected.connect(self._socket_disconnected)
             self._read_socket(socket)
+
+    @pyqtSlot()
+    def _socket_ready(self) -> None:
+        socket = self.sender()
+        if isinstance(socket, QLocalSocket):
+            self._read_socket(socket)
+
+    @pyqtSlot()
+    def _socket_disconnected(self) -> None:
+        socket = self.sender()
+        if isinstance(socket, QLocalSocket):
+            self._drop_socket(socket)
 
     def _read_socket(self, socket: QLocalSocket) -> None:
         if socket not in self._buffers:
