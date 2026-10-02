@@ -227,6 +227,13 @@ class Properties(QWidget):
         groups.addWidget(self.image_group)
         self.barcode_group = QGroupBox("Barcode")
         form = QFormLayout(self.barcode_group)
+        self.barcode_format = QComboBox()
+        for label, kind in (("Code 128", "code128"), ("I25 (Interleaved 2 of 5)", "i25"), ("QR code", "qr")):
+            self.barcode_format.addItem(label, kind)
+        self.barcode_format.setAccessibleName("Barcode format")
+        self.barcode_format.setToolTip("Change format while retaining the object's content, position and size.")
+        self.barcode_format.currentIndexChanged.connect(self.apply)
+        form.addRow("Format", self.barcode_format)
         self.ecc = QComboBox()
         self.ecc.addItems(["L", "M", "Q", "H"])
         self.human = QCheckBox("Show barcode text")
@@ -375,6 +382,7 @@ class Properties(QWidget):
             self.colour.setText(element.colour)
             self.fill.setText(element.fill)
             self.image_path.setText(element.image)
+            self.barcode_format.setCurrentIndex(self.barcode_format.findData(element.type))
             self.ecc.setCurrentText(element.qr_error)
             self.human.setChecked(element.show_barcode_text)
             self.content_group.setVisible(element.type in {"text", "qr", "code128", "i25"})
@@ -482,6 +490,13 @@ class Properties(QWidget):
                       vertical_align=self.vertical.currentText(), colour=self.colour.text().strip(),
                       fill=self.fill.text().strip(), image=self.image_path.text(),
                       qr_error=self.ecc.currentText(), show_barcode_text=self.human.isChecked(), font=font)
+        if self.element.type in {"code128", "i25", "qr"}:
+            kind = self.barcode_format.currentData()
+            values["type"] = kind
+            if kind == "qr":
+                values["show_barcode_text"] = False
+                if kind != self.element.type:
+                    values["glyph_repairs"] = {}
         self.edited.emit(values)
 
     def _typed_family(self):

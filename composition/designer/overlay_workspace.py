@@ -8,12 +8,15 @@ from pathlib import Path
 from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDockWidget,
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
@@ -167,7 +170,34 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.fields.addItems(sorted(SYSTEM_FIELDS))
         self.fields.setDragEnabled(True)
         self.fields.itemDoubleClicked.connect(lambda item: self.add_object("text", item.text()))
-        panel.addWidget(self.fields, 1)
+        self.source_panels = QTabWidget()
+        field_page = QWidget()
+        field_layout = QVBoxLayout(field_page)
+        field_layout.setContentsMargins(0, 4, 0, 0)
+        self.field_filter = QLineEdit()
+        self.field_filter.setPlaceholderText("Find system field…")
+        self.field_filter.setClearButtonEnabled(True)
+        self.field_filter.textChanged.connect(self.filter_system_fields)
+        field_layout.addWidget(self.field_filter)
+        field_layout.addWidget(self.fields)
+        self.source_panels.addTab(field_page, "Fields")
+        object_page = QWidget()
+        object_layout = QVBoxLayout(object_page)
+        object_layout.setContentsMargins(0, 4, 0, 0)
+        self.object_filter = QLineEdit()
+        self.object_filter.setPlaceholderText("Find object or barcode…")
+        self.object_filter.setClearButtonEnabled(True)
+        self.object_filter.textChanged.connect(self.filter_layers)
+        self.layers = QListWidget()
+        self.layers.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.layers.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.layers.setAccessibleName("Overlay objects on all pages")
+        self.layers.itemSelectionChanged.connect(self.select_layer_objects)
+        self.layers.itemDoubleClicked.connect(lambda *args: self.focus_overlay_properties())
+        object_layout.addWidget(self.object_filter)
+        object_layout.addWidget(self.layers)
+        self.source_panels.addTab(object_page, "Objects")
+        panel.addWidget(self.source_panels, 1)
         note = QLabel("Drag fields onto the page.\nGeneric barcode profiles need actual inserter testing.")
         note.setWordWrap(True)
         panel.addWidget(note)
@@ -180,7 +210,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.canvas.fieldDropped.connect(lambda name, x, y: self.add_object("text", name, x, y))
         self.canvas.command.connect(self.object_command)
         self.canvas.zoomChanged.connect(self.zoom_changed)
-        self.canvas.objectActivated.connect(lambda: self.inspector.show())
+        self.canvas.objectActivated.connect(self.focus_overlay_properties)
         for name in ("copy", "paste", "duplicate", "delete", "select_all"):
             self.canvas.addAction(self.actions[name])
         self.splitter.addWidget(left)
@@ -208,6 +238,11 @@ class OverlayWindow(OverlayActions, QMainWindow):
         layout.addWidget(self.progress)
         self.setCentralWidget(central)
         self.statusBar().setStyleSheet("QStatusBar { padding: 0px; min-height: 0px; } QStatusBar::item { border: none; }")
+        self.preview_status = QLabel("Preview: select a PDF")
+        self.preview_status.setAccessibleName("Overlay preview status")
+        self.preview_status.linkActivated.connect(self.review_preview_error)
+        self.preview_error_object = None
+        self.statusBar().addPermanentWidget(self.preview_status)
         self.inspector = QDockWidget("Object properties", self)
         content = QWidget()
         inspector_layout = QVBoxLayout(content)
@@ -232,6 +267,12 @@ class OverlayWindow(OverlayActions, QMainWindow):
         scope_form.addRow("Letter page", self.letter_page)
         scope_form.addRow(self.control)
         scope_form.addRow(self.profile_button)
+        self.payload_summary = QLabel()
+        self.payload_summary.setWordWrap(True)
+        self.payload_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.payload_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.payload_summary.hide()
+        scope_form.addRow(self.payload_summary)
         scope_form.addRow("Required read positions", self.required_scope)
         inspector_layout.addLayout(scope_form)
         self.properties = Properties()
@@ -247,6 +288,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
+        self.inspector_scroll = scroll
         self.inspector.setWidget(scroll)
         self.inspector.setMinimumWidth(260)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.inspector)
@@ -298,6 +340,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.canvas.set_editable(valid and not locked)
         self.properties.setEnabled(not locked and not self.preview_only.isChecked())
         self.fields.setEnabled(valid and not locked)
+        self.layers.setEnabled(valid and not locked)
         self.progress.setVisible(bool(self.active_worker))
         self.auto_repair.setEnabled(not locked)
         self.required_scope.setEnabled(valid and not locked)
@@ -365,6 +408,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def schedule_preview(self, *args):
         self.preview_generation += 1
         self.canvas.set_preview(None)
+        self.preview_error_object = None
+        self.preview_status.setText("Updating preview…" if self.spec else "Preview: select a PDF")
+        self.preview_status.setToolTip("")
         self.timer.start()
 
     def render_preview(self):
@@ -377,11 +423,13 @@ class OverlayWindow(OverlayActions, QMainWindow):
             "envelope": self.envelope.value(), "print_page": self.print_page.value(),
             "auto_repair": self.auto_repair.isChecked(), "target": str(self.directory/f"preview-{generation}.pdf")},
             lambda result: self.preview_ready(result, generation),
-            lambda error: self.error(error) if generation == self.preview_generation else None)
+            lambda error: self.preview_failed(error, generation))
 
     def preview_ready(self, result, generation):
-        if generation == self.preview_generation and not self.close_pending:
+        if generation == self.preview_generation and not self.close_pending and not self.draft_error:
             self.canvas.set_preview(result["image"])
+            self.preview_status.setText("Preview ready")
+            self.preview_status.setToolTip("Current envelope and page; this does not generate the whole production job.")
         for key in ("pdf", "image"):
             Path(result[key]).unlink(missing_ok=True)
 

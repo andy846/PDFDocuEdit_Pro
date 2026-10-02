@@ -53,6 +53,12 @@ class DesignerUsability:
                 self.left_panel.setTabVisible(index, visible)
         self.properties_scroll.setVisible(visible)
 
+    def _filter_layers(self, *args):
+        query = self.layer_filter.text().casefold()
+        for index in range(self.layers.count()):
+            item = self.layers.item(index)
+            item.setHidden(query not in (item.text() + item.toolTip()).casefold())
+
     def focus_properties(self):
         self.actions["properties"].setChecked(True)
         self.actions["data_panel"].setChecked(True)
@@ -146,6 +152,7 @@ class DesignerUsability:
                 badge = "[Rule] " if element.rules.visible_when or element.rules.alternative else ""
                 item.setText(f"{badge}{element.type.title()} · {value}")
                 item.setToolTip(value + "\n" + element.id)
+        self._filter_layers()
         self._title()
         self._schedule_preview()
 

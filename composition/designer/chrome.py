@@ -274,6 +274,7 @@ class DesignerChrome:
             item.setToolTip(value + "\n" + element.id)
             self.layers.addItem(item)
         self._layers_updating = False
+        self._filter_layers()
         self._sync_layers()
 
     def _sync_layers(self):

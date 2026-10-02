@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from composition.engine.barcodes import validate_payload
 from composition.overlay.model import BarcodeProfile, BarcodeToken
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan
@@ -97,11 +98,14 @@ class GroupingDialog(QDialog):
 
 
 class BarcodeProfileDialog(QDialog):
-    def __init__(self, profile, fields, parent=None):
+    def __init__(self, profile, fields, parent=None, *, symbology=None, samples=None):
         super().__init__(parent)
         self.setWindowTitle("Barcode payload profile")
         self.resize(600, 500)
         self.fields = fields
+        self.symbology = symbology
+        self.samples = samples or []
+        self.rebuilding = False
         self.profile = profile
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -128,6 +132,13 @@ class BarcodeProfileDialog(QDialog):
         remove.clicked.connect(self.remove_token)
         buttons.addWidget(add)
         buttons.addWidget(remove)
+        self.token_up = QPushButton("Move up")
+        self.token_down = QPushButton("Move down")
+        self.token_up.clicked.connect(lambda: self.move_token(-1))
+        self.token_down.clicked.connect(lambda: self.move_token(1))
+        buttons.addWidget(self.token_up)
+        buttons.addWidget(self.token_down)
+        self.table.currentCellChanged.connect(self.update_token_buttons)
         layout.addLayout(buttons)
         self.sample = QLabel()
         self.sample.setTextFormat(Qt.TextFormat.PlainText)
@@ -138,10 +149,10 @@ class BarcodeProfileDialog(QDialog):
         for control in (self.name, self.machine):
             control.textChanged.connect(self.refresh)
         self.verified.toggled.connect(self.refresh)
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.accept)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        self.footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.footer.accepted.connect(self.accept)
+        self.footer.rejected.connect(self.reject)
+        layout.addWidget(self.footer)
         self.refresh()
 
     def add_token(self, token):
@@ -161,9 +172,42 @@ class BarcodeProfileDialog(QDialog):
         width.setValue(token.width)
         for col, control in enumerate((kind, value, width)):
             self.table.setCellWidget(row, col, control)
-        kind.currentTextChanged.connect(self.refresh)
-        value.currentTextChanged.connect(self.refresh)
-        width.valueChanged.connect(self.refresh)
+        width.setEnabled(token.kind == "field")
+        kind.currentTextChanged.connect(lambda text: width.setEnabled(text == "field"))
+        for col, control in enumerate((kind, value, width)):
+            signal = control.valueChanged if col == 2 else control.currentTextChanged
+            signal.connect(lambda *args, r=row, c=col: self.token_changed(r, c))
+        self.table.setCurrentCell(row, 0)
+        self.refresh()
+
+    def token_changed(self, row, column):
+        self.table.setCurrentCell(row, column)
+        self.refresh()
+
+    def update_token_buttons(self, *args):
+        row = self.table.currentRow()
+        self.token_up.setEnabled(row > 0)
+        self.token_down.setEnabled(0 <= row < self.table.rowCount() - 1)
+
+    def tokens(self):
+        return [BarcodeToken(self.table.cellWidget(row, 0).currentText(),
+                             self.table.cellWidget(row, 1).currentText(),
+                             self.table.cellWidget(row, 2).value() if self.table.cellWidget(row, 0).currentText() == "field" else 0)
+                for row in range(self.table.rowCount())]
+
+    def move_token(self, direction):
+        row = self.table.currentRow()
+        target = row + direction
+        if not 0 <= row < self.table.rowCount() or not 0 <= target < self.table.rowCount():
+            return
+        tokens = self.tokens()
+        tokens[row], tokens[target] = tokens[target], tokens[row]
+        self.rebuilding = True
+        self.table.setRowCount(0)
+        for token in tokens:
+            self.add_token(token)
+        self.table.setCurrentCell(target, 0)
+        self.rebuilding = False
         self.refresh()
 
     def remove_token(self):
@@ -174,25 +218,37 @@ class BarcodeProfileDialog(QDialog):
 
     def candidate(self):
         profile = BarcodeProfile(name=self.name.text(), machine=self.machine.text(),
-                  validation="user_verified" if self.verified.isChecked() else "pending", tokens=[
-                    BarcodeToken(self.table.cellWidget(row, 0).currentText(),
-                                 self.table.cellWidget(row, 1).currentText(),
-                                 self.table.cellWidget(row, 2).value()) for row in range(self.table.rowCount())])
+                  validation="user_verified" if self.verified.isChecked() else "pending", tokens=self.tokens())
         profile.validate()
         return profile
 
     def refresh(self):
-        if not hasattr(self, "sample"):
+        if not hasattr(self, "sample") or self.rebuilding:
             return
+        self.update_token_buttons()
+        error = ""
         try:
-            self.sample.setText("Current-page payload: " + self.candidate().payload(self.fields))
+            profile = self.candidate()
+            lines = []
+            for label, fields in [("Current page", self.fields), *self.samples]:
+                payload = profile.payload(fields)
+                if self.symbology:
+                    validate_payload(self.symbology, payload)
+                lines.append(f"{label}: {payload} ({len(payload)} characters)")
+            self.sample.setText("\n".join(lines))
         except ValueError as exc:
-            self.sample.setText(str(exc))
+            error = str(exc)
+            self.sample.setText(error)
+        if hasattr(self, "footer"):
+            self.footer.button(QDialogButtonBox.StandardButton.Ok).setEnabled(not error)
 
     def accept(self):
         try:
             self.profile = self.candidate()
-            self.profile.payload(self.fields)
+            for _, fields in [("Current", self.fields), *self.samples]:
+                payload = self.profile.payload(fields)
+                if self.symbology:
+                    validate_payload(self.symbology, payload)
         except ValueError as exc:
             QMessageBox.warning(self, "Check barcode profile", str(exc))
             return

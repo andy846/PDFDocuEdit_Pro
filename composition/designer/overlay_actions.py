@@ -8,14 +8,15 @@ from dataclasses import asdict
 from PyQt6.QtWidgets import QDialog, QInputDialog
 
 from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayObject
-from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan
+from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
 from composition.template.model import Element
 
 from .overlay_dialogs import BarcodeProfileDialog
 from .overlay_files import OverlayFiles
+from .overlay_usability import OverlayUsability
 
 
-class OverlayActions(OverlayFiles):
+class OverlayActions(OverlayUsability, OverlayFiles):
     def selection_changed(self, *args):
         ids = self.canvas.selected_ids()
         if self.draft_error:
@@ -43,6 +44,8 @@ class OverlayActions(OverlayFiles):
             self.properties.content_group.hide()
         for control in (self.scope, self.control, self.letter_page):
             control.blockSignals(False)
+        self.sync_layers()
+        self.update_payload_summary(obj)
 
     def canvas_edit(self, before, after):
         raw = self.spec.to_dict()
@@ -70,6 +73,10 @@ class OverlayActions(OverlayFiles):
         else:
             self.draft_ids = list(ids)
             self.draft_error = "Finish or revert the unfinished edit before saving or generating."
+            self.preview_generation += 1
+            self.timer.stop()
+            self.canvas.set_preview(None)
+            self.preview_status.setText("Fix unfinished edit")
             self.properties.revert_content.show()
         self.busy()
 
@@ -78,6 +85,7 @@ class OverlayActions(OverlayFiles):
         self.selection_changed()
         self.properties.revert_content.hide()
         self.busy()
+        self.schedule_preview()
 
     def scope_edited(self, *args):
         if not self.spec or len(self.canvas.selected_ids()) != 1:
@@ -117,8 +125,13 @@ class OverlayActions(OverlayFiles):
         if len(self.canvas.selected_ids()) != 1:
             return
         obj = next(obj for obj in self.spec.objects if obj.element.id == self.canvas.selected_ids()[0])
-        fields = EnvelopePlan(self.spec.source.pages, self.spec.settings).page(self.envelope.value(), self.print_page.value()).fields("preview")
-        dialog = BarcodeProfileDialog(obj.profile, fields, self)
+        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        fields = plan.page(self.envelope.value(), self.print_page.value()).fields("preview")
+        positions = [page for page in range(1, self.spec.settings.output_pages_per_envelope + 1)
+                     if applies(obj.scope, plan.page(1, page).fields("preview"), obj.letter_page)]
+        samples = [("First applicable mark", plan.page(1, positions[0]).fields("preview")),
+                   ("Last applicable mark", plan.page(plan.envelopes, positions[-1]).fields("preview"))]
+        dialog = BarcodeProfileDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             raw = self.spec.to_dict()
             next(item for item in raw["objects"] if item["element"]["id"] == obj.element.id)["profile"] = asdict(dialog.profile)

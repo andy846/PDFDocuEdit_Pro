@@ -11,6 +11,7 @@ import segno
 from barcode import ITF, Code128
 from PIL import Image
 
+from composition.engine.barcodes import validate_payload
 from composition.template.model import (
     MM_TO_PT,
     CompositionError,
@@ -306,25 +307,18 @@ class Renderer:
         return fontname
 
     def _barcode(self, page, rect, element, value):
-        if not value:
-            raise CompositionError("Barcode content is empty.")
+        validate_payload(element.type, value)
         rectangles = []
         # A white quiet-zone backing prevents PDF background art from obscuring codes.
         page.draw_rect(rect, color=None, fill=(1, 1, 1))
         module_min = element.barcode_module_mm * MM_TO_PT
         if element.type in {"code128", "i25"}:
             if element.type == "i25":
-                if not value.isascii() or not value.isdigit():
-                    raise CompositionError("I25 accepts digits 0-9 only; remove letters, spaces or separators from the payload.")
-                if len(value) % 2:
-                    raise CompositionError("I25 requires an even number of digits; adjust the field or profile width. No zero is added automatically.")
                 # One bit is one narrow module; use a fixed 3:1 wide/narrow ratio.
                 # Validate first: python-barcode otherwise silently pads odd payloads.
                 pattern = ITF(value, narrow=1, wide=3).build()[0]
                 label = "I25"
             else:
-                if any(not 32 <= ord(c) <= 126 for c in value):
-                    raise CompositionError("Code 128 currently accepts printable ASCII; use QR for Unicode.")
                 pattern = Code128(value).build()[0]
                 label = "Code 128"
             count = len(pattern) + 20
