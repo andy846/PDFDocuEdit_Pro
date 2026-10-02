@@ -86,10 +86,12 @@ def test_preview_error_does_not_display_stale_success(app, tmp_path):
     window.add_element("text", "Valid text")
     wait_until(lambda: window.canvas.preview_item is not None)
     selected = window.template.elements[0].id
+    previous = window.canvas.preview_item
     before, after = window.template.to_dict(), window.template.to_dict()
     after["pages"][0]["elements"][0]["value"] = "\u9999\u6e2f"
     window._commit(before, after, "unsupported glyph", selected)
-    assert window.canvas.preview_item is None
+    assert window.canvas.preview_item is previous
+    assert window.preview_state.text() == "Updating preview…"
     wait_until(lambda: "cannot render" in window.message.text())
     assert window.canvas.preview_item is None
     window.preferences.setValue("auto_glyph_repair", original_policy)

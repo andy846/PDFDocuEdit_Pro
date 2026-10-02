@@ -7,6 +7,8 @@ from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QWidget
 
+from styles.theme import get_colors
+
 
 class Ruler(QWidget):
     def __init__(self, canvas, horizontal):
@@ -16,8 +18,9 @@ class Ruler(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#edf0f3"))
-        painter.setPen(QColor("#38414b"))
+        colors = get_colors()
+        painter.fillRect(self.rect(), QColor(colors["bg_sidebar"]))
+        painter.setPen(QColor(colors["text_secondary"]))
         font = painter.font()
         font.setPixelSize(10)
         painter.setFont(font)

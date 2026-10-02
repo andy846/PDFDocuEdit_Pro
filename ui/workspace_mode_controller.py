@@ -71,6 +71,7 @@ class WorkspaceModeController(QObject):
         if mode == WorkspaceMode.DESIGNER and self.host is None:
             from composition.designer.project_host import DesignerProjectHost
             self.host = DesignerProjectHost(self.modes, open_pdf=lambda path: self.window.queue_open_files([str(path)]))
+            self.host.set_animations_enabled(bool(self.window.settings.get("animations_enabled", True)))
             self.host.projectAdded.connect(self.project_added)
             self.host.projectRemoved.connect(self.project_removed)
             self.host.activeProjectChanged.connect(self.project_changed)
@@ -167,6 +168,8 @@ class WorkspaceModeController(QObject):
 
     def set_animations_enabled(self, enabled):
         self.modes.set_animations_enabled(enabled)
+        if self.host:
+            self.host.set_animations_enabled(enabled)
 
     def prepare_exit(self):
         if self.exit_approved:

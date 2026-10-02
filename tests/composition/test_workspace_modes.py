@@ -219,6 +219,35 @@ def test_pdf_open_and_output_routing_keep_designer(window, tmp_path, monkeypatch
     window._queued_open_paths.clear()
 
 
+def test_shared_close_button_tracks_project_after_tab_reorder(window, monkeypatch):
+    from ui.workspace import TabCloseButton
+
+    controller, first = designer(window)
+    first.add_element("text", "Keep")
+    second = controller.host.new_template()
+    host = controller.host
+    button = host.close_buttons[first]
+    assert isinstance(button, TabCloseButton)
+    assert button.objectName() == "tabCloseButton"
+    icon_key = button.icon().cacheKey()
+    window._apply_theme("dark")
+    assert button.icon().cacheKey() != icon_key
+    window._apply_theme("light")
+    controller.set_animations_enabled(False)
+    assert not button._animations_enabled
+    assert not host.close_buttons[second]._animations_enabled
+    host.tabs.tabBar().moveTab(0, 1)
+    assert host.tabs.widget(1) is first
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    button.click()
+    assert first in host.projects and len(first.template.elements) == 1
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Discard)
+    button.click()
+    wait_until(lambda: first not in host.projects)
+    assert host.projects == [second]
+    assert first not in host.close_buttons
+
+
 def test_close_tab_cancel_invalid_draft_and_empty_designer(window, monkeypatch):
     controller, project = designer(window)
     project.add_element("text", "Keep")

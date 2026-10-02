@@ -39,6 +39,7 @@ UI_TESTS = (
     "tests/test_overlay_ui.py",
     "tests/composition/test_auto_fallback.py",
     "tests/composition/test_bulk_typography.py",
+    "tests/composition/test_canvas_continuity.py",
     "tests/composition/test_compact_layout.py",
     "tests/composition/test_designer_consolidation.py",
     "tests/composition/test_designer_controls.py",

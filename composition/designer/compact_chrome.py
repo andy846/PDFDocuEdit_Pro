@@ -67,13 +67,6 @@ def configure_compact_chrome(window):
     toolbar.setObjectName("designerMainToolbar")
     toolbar.setIconSize(QSize(18, 18))
     toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-    toolbar.setStyleSheet("""
-        QToolBar#designerMainToolbar { padding: 2px 4px; spacing: 2px; }
-        QToolBar#designerMainToolbar QToolButton { padding: 3px; min-height: 0px; min-width: 0px; }
-        QToolBar#designerMainToolbar QPushButton { padding: 3px 10px; min-height: 0px; }
-        QToolBar#designerMainToolbar QComboBox,
-        QToolBar#designerMainToolbar QDoubleSpinBox { padding: 2px 5px; min-height: 0px; }
-    """)
     window.barcode_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     window.barcode_button.setToolTip("Insert Code 128, I25 or QR code")
     window.barcode_button.setAccessibleName("Insert barcode")
@@ -81,7 +74,6 @@ def configure_compact_chrome(window):
     import_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     window.actions["import"].setIconText("Data")
     window.tabs.setObjectName("designerModeTabs")
-    window.tabs.setStyleSheet("QTabBar#designerModeTabs::tab { padding: 5px 12px; min-height: 0px; }")
     controls = window.document_controls
     controls.setObjectName("designerDocumentControls")
     from PyQt6.QtWidgets import QSizePolicy

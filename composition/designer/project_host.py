@@ -6,13 +6,14 @@ import os
 from pathlib import Path
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEventLoop, pyqtSignal
+from PyQt6.QtCore import QEvent, QEventLoop, pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -29,8 +30,13 @@ class DesignerProjectHost(QWidget):
         super().__init__(parent)
         self.open_pdf = open_pdf or (lambda path: None)
         self.shutting_down = False
+        self.close_buttons = {}
+        self.animations_enabled = True
         self.tabs = QTabWidget()
-        self.tabs.setTabsClosable(True)
+        self.tabs.setObjectName("designerProjectTabs")
+        self.tabs.tabBar().setObjectName("designerProjectTabBar")
+        self.tabs.setDocumentMode(True)
+        self.tabs.setTabsClosable(False)
         self.tabs.setMovable(True)
         self.tabs.tabCloseRequested.connect(lambda index: self.close_project(self.tabs.widget(index)))
         self.tabs.currentChanged.connect(lambda *args: self.activeProjectChanged.emit())
@@ -66,8 +72,17 @@ class DesignerProjectHost(QWidget):
         return os.path.normcase(str(Path(path).expanduser().resolve().with_suffix(".pdcx")))
 
     def _append(self, project):
+        from ui.workspace import TabCloseButton
+
         project.menuBar().hide()
         index = self.tabs.addTab(project, "Untitled")
+        close_button = TabCloseButton()
+        close_button.setToolTip("Close Designer project")
+        close_button.setAccessibleName("Close Designer project")
+        close_button.set_animations_enabled(self.animations_enabled)
+        close_button.clicked.connect(lambda checked=False, p=project: self.close_project(p))
+        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
+        self.close_buttons[project] = close_button
         project.windowTitleChanged.connect(lambda *args, p=project: self.update_project(p))
         project.activityChanged.connect(lambda p=project: self.update_project(p))
         project.undo.indexChanged.connect(lambda *args, p=project: self.update_project(p))
@@ -79,6 +94,17 @@ class DesignerProjectHost(QWidget):
         self.update_project(project)
         self.activeProjectChanged.emit()
         return project
+
+    def set_animations_enabled(self, enabled):
+        self.animations_enabled = bool(enabled)
+        for button in self.close_buttons.values():
+            button.set_animations_enabled(self.animations_enabled)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
+            for button in getattr(self, "close_buttons", {}).values():
+                button.refresh_icon()
 
     def new_template(self):
         if self.shutting_down:
@@ -201,6 +227,10 @@ class DesignerProjectHost(QWidget):
     def remove_project(self, project):
         index = self.tabs.indexOf(project)
         if index >= 0:
+            button = self.close_buttons.pop(project, None)
+            if button:
+                self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
+                button.deleteLater()
             self.tabs.removeTab(index)
         self.projectRemoved.emit(project)
         if not self.tabs.count():

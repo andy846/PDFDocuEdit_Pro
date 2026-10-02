@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import math
 
-from PyQt6.QtCore import QLineF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QLineF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QKeySequence, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -13,7 +13,11 @@ from PyQt6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QListWidget,
+    QStyle,
+    QStyleOptionGraphicsItem,
 )
+
+from styles.theme import get_colors
 
 
 class FieldList(QListWidget):
@@ -39,16 +43,25 @@ class ElementItem(QGraphicsRectItem):
         self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
                       QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setZValue(2)
-        pen = QPen(QColor("#4b91d8"), 1, Qt.PenStyle.DashLine)
+        pen = QPen(QColor(get_colors()["primary"]), 1, Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         self.setPen(pen)
         self.setToolTip(element.type + ": " + element.value)
         self.resizing = False
 
     def paint(self, painter, option, widget=None):
-        super().paint(painter, option, widget)
+        plain = QStyleOptionGraphicsItem(option)
+        plain.state &= ~QStyle.StateFlag.State_Selected
+        super().paint(painter, plain, widget)
         if self.isSelected():
-            painter.fillRect(QRectF(self.rect().width()-2, self.rect().height()-2, 2, 2), QColor("#2266aa"))
+            painter.save()
+            pen = QPen(QColor(get_colors()["primary"]), 1.5)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.rect())
+            painter.fillRect(QRectF(self.rect().width()-2, self.rect().height()-2, 2, 2), QColor(get_colors()["primary"]))
+            painter.restore()
 
     def mousePressEvent(self, event):
         if not self.canvas.editable:
@@ -117,7 +130,8 @@ class Canvas(QGraphicsView):
         super().__init__(parent)
         self.scene_model = QGraphicsScene(self)
         self.setScene(self.scene_model)
-        self.setBackgroundBrush(QColor("#59616b"))
+        self.setBackgroundBrush(QColor(get_colors()["canvas"]))
+        self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -125,6 +139,8 @@ class Canvas(QGraphicsView):
         self.element_items = []
         self.template = None
         self.preview_item = None
+        self.page_item = None
+        self.page_context = None
         self.page_width, self.page_height = 210, 297
         self.grid_visible = False
         self.snap_enabled = False
@@ -147,44 +163,86 @@ class Canvas(QGraphicsView):
     def snapshot(self):
         return copy.deepcopy(self.template.to_dict())
 
-    def set_template(self, template, selected=None, *, page_index=0):
+    def set_template(self, template, selected=None, *, page_index=0, context=None):
+        """Synchronize objects in place; ordinary edits never clear the scene."""
         self.template = template
         self.page_index = page_index
         spec = template.pages[page_index]
         self.page_width, self.page_height = spec.width_mm, spec.height_mm
+        page_context = (context if context is not None else spec.id,
+                        spec.background, spec.width_mm, spec.height_mm)
+        if page_context != self.page_context:
+            self.set_preview(None)
+            self.measure_start = self.measure_end = None
+        self.page_context = page_context
+        existing = {item.element.id: item for item in self.element_items}
+        selected_ids = set(selected if isinstance(selected, list) else
+                           self.selected_ids() if selected is None else [selected])
+        blocked = self.scene_model.signalsBlocked()
         self.scene_model.blockSignals(True)
-        self.scene_model.clear()
-        self.preview_item = None
-        page = self.scene_model.addRect(0, 0, spec.width_mm, spec.height_mm,
-                                       QPen(Qt.PenStyle.NoPen), QColor("white"))
-        page.setZValue(-2)
-        self.element_items = [ElementItem(element, self) for element in spec.elements]
-        selected_ids = set(selected if isinstance(selected, list) else [selected])
-        for item in self.element_items:
-            self.scene_model.addItem(item)
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, self.editable and not self.mode_preview)
-            item.setVisible(not self.mode_preview)
-            item.setSelected(item.element.id in selected_ids)
-        self.setSceneRect(-15, -15, spec.width_mm+30, spec.height_mm+30)
-        self.scene_model.blockSignals(False)
+        try:
+            if self.page_item is None:
+                self.page_item = self.scene_model.addRect(
+                    0, 0, spec.width_mm, spec.height_mm,
+                    QPen(Qt.PenStyle.NoPen), QColor("white"))
+                self.page_item.setZValue(-2)
+            else:
+                self.page_item.setRect(0, 0, spec.width_mm, spec.height_mm)
+            items = []
+            for index, element in enumerate(spec.elements):
+                item = existing.pop(element.id, None)
+                if item is None:
+                    item = ElementItem(element, self)
+                    self.scene_model.addItem(item)
+                else:
+                    item.element = element
+                    item.setRect(0, 0, element.width_mm, element.height_mm)
+                    item.setTransformOriginPoint(item.rect().center())
+                    item.setRotation(element.rotation_deg)
+                    item.setPos(element.x_mm, element.y_mm)
+                    item.setToolTip(element.type + ": " + element.value)
+                item.setZValue(2 + index / max(1, len(spec.elements)))
+                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, self.editable and not self.mode_preview)
+                item.setVisible(not self.mode_preview)
+                item.setSelected(element.id in selected_ids)
+                items.append(item)
+            for item in existing.values():
+                self.scene_model.removeItem(item)
+            self.element_items = items
+            bounds = QRectF(-15, -15, spec.width_mm+30, spec.height_mm+30)
+            if self.sceneRect() != bounds:
+                self.setSceneRect(bounds)
+        finally:
+            self.scene_model.blockSignals(blocked)
         self.guides = []
-        self.measure_start = self.measure_end = None
         self.update_rulers()
 
     def set_preview(self, image):
-        if self.preview_item:
-            self.scene_model.removeItem(self.preview_item)
-            self.preview_item = None
         if not image:
+            if self.preview_item is not None:
+                self.scene_model.removeItem(self.preview_item)
+                self.preview_item = None
             return
         pixmap = QPixmap(image)
         if pixmap.isNull():
             return
-        item = QGraphicsPixmapItem(pixmap)
-        item.setScale(self.page_width / pixmap.width())
-        item.setZValue(-1)
-        self.scene_model.addItem(item)
-        self.preview_item = item
+        if self.preview_item is None:
+            self.preview_item = QGraphicsPixmapItem()
+            self.preview_item.setZValue(-1)
+            self.preview_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.scene_model.addItem(self.preview_item)
+        self.preview_item.setPixmap(pixmap)
+        self.preview_item.setScale(self.page_width / pixmap.width())
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
+            self.setBackgroundBrush(QColor(get_colors()["canvas"]))
+            for item in getattr(self, "element_items", ()):
+                pen = item.pen()
+                pen.setColor(QColor(get_colors()["primary"]))
+                item.setPen(pen)
+            self.update_rulers()
 
     def set_editable(self, enabled):
         self.editable = bool(enabled)
@@ -370,14 +428,16 @@ class Canvas(QGraphicsView):
         painter.save()
         painter.setClipRect(QRectF(0, 0, self.page_width, self.page_height))
         if self.grid_visible and not self.mode_preview:
-            pen = QPen(QColor(80, 115, 145, 65), 1)
+            grid_color = QColor(get_colors()["primary"])
+            grid_color.setAlpha(55)
+            pen = QPen(grid_color, 1)
             pen.setCosmetic(True)
             painter.setPen(pen)
             for x in range(0, int(self.page_width)+1, 5):
                 painter.drawLine(QLineF(x, 0, x, self.page_height))
             for y in range(0, int(self.page_height)+1, 5):
                 painter.drawLine(QLineF(0, y, self.page_width, y))
-        pen = QPen(QColor("#d42b91"), 1, Qt.PenStyle.DashLine)
+        pen = QPen(QColor(get_colors()["primary"]), 1, Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         painter.setPen(pen)
         for axis, value in ([] if self.mode_preview else self.guides):

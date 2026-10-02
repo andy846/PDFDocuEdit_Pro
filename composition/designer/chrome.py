@@ -27,6 +27,7 @@ class DesignerChrome:
         menus = {name: self.menuBar().addMenu(name) for name in
                  ("&File", "&Edit", "&Insert", "&Page", "&Arrange", "&View", "&Data", "&Rules", "&Production", "&Help")}
         self.project_toolbar = QToolBar("Project", self)
+        self.project_toolbar.setObjectName("designerMainToolbar")
         self.project_toolbar.setMovable(False)
         self.project_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(self.project_toolbar)

@@ -99,6 +99,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.workers = []
         self.preview_worker = self.production_worker = self.import_worker = None
         self.preview_generation = 0
+        self.preview_pending = False
+        self.preview_context = None
         self.stores = {}
         self._data_ui_key = None
         self.record_count = 0
@@ -136,6 +138,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.description = QLabel("Design reusable documents with static content, variable data and production PDF output.", outer)
         self.description.hide()
         self.tabs = QTabBar()
+        self.tabs.setObjectName("designerModeTabs")
         self.tabs.setExpanding(False)
         for name in ("Data", "Design", "Preview", "Production"):
             self.tabs.addTab(name)
@@ -149,6 +152,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._build_page_navigation(design_layout)
         self.splitter = QSplitter()
         self.data_panel = QWidget()
+        self.data_panel.setObjectName("designerSidePanel")
         data_layout = QVBoxLayout(self.data_panel)
         data_layout.addWidget(QLabel("DATA"))
         self.import_button = QPushButton("Import CSV / TXT / Excel…")
@@ -176,6 +180,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         data_layout.addWidget(help_label)
         self.data_panel.setMinimumWidth(150)
         self.left_panel = QTabWidget()
+        self.left_panel.setObjectName("designerPanelTabs")
         self.left_panel.addTab(self.data_panel, "Data fields")
         self.layers = QListWidget()
         self.layers.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -199,6 +204,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.canvas.fieldDropped.connect(self.add_field)
         self.canvas.command.connect(self.object_command)
         self.properties = Properties()
+        self.properties.setObjectName("designerProperties")
         self.properties.edited.connect(self._property_edit)
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
@@ -207,6 +213,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.properties.rulesClearRequested.connect(self.clear_object_rules)
         self.properties.revertRequested.connect(self.revert_content_draft)
         self.properties_scroll = QScrollArea()
+        self.properties_scroll.setObjectName("designerInspector")
         self.properties_scroll.setWidgetResizable(True)
         self.properties_scroll.setWidget(self.properties)
         self.properties_scroll.setMinimumWidth(260)
@@ -338,6 +345,14 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.import_button.setEnabled(True)
         if self.production_worker is worker:
             self.production_worker = None
+        if self.preview_worker is worker:
+            self.preview_worker = None
+            target = getattr(worker, "preview_target", None)
+            if target:
+                target.unlink(missing_ok=True)
+                target.with_suffix(".png").unlink(missing_ok=True)
+            if self.preview_pending and not self.close_pending:
+                self.preview_timer.start(0)
         self._busy()
         if self.close_pending and not self.workers:
             self.close()
@@ -372,7 +387,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.active_page_id = target if any(p.id == target for p in template.pages) else template.pages[0].id
         if selected is None and self.active_page_id in self.page_views:
             selected = self.page_views[self.active_page_id][2]
-        self.canvas.set_template(self.template, selected, page_index=self.page_index)
+        self.canvas.set_template(self.template, selected, page_index=self.page_index,
+                                 context=(self.font_epoch, self.active_page_id))
         self._restore_canvas_view()
         selected_ids = selected if isinstance(selected, list) else [selected]
         self._selection(selected_ids[0] if len(selected_ids) == 1 else "")
@@ -499,14 +515,25 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
     def _schedule_preview(self, *args):
         self.preview_generation += 1
         self.preview_state.setText("Updating preview…" if self.tabs.currentIndex() in (1, 2) else "")
-        self.canvas.set_preview(None)
+        context = (self.font_epoch, self.active_page_id, self.page.background,
+                   self.page.width_mm, self.page.height_mm,
+                   self.tabs.currentIndex() == 2,
+                   self.record.value() if self.tabs.currentIndex() == 2 else None,
+                   self._config_key() if self.tabs.currentIndex() == 2 else None,
+                   id(self._store()) if self.tabs.currentIndex() == 2 else None)
+        if context != self.preview_context:
+            self.canvas.set_preview(None)
+        self.preview_context = context
         self.preview_timer.start()
 
     def _render_preview(self):
         if self.close_pending or self.content_invalid or self.tabs.currentIndex() not in (1, 2):
             return
         if self.preview_worker and self.preview_worker in self.workers:
+            self.preview_pending = True
             self.preview_worker.stop_preview()
+            return
+        self.preview_pending = False
         generation = self.preview_generation
         info = self._store() if self.tabs.currentIndex() == 2 else None
         if self.tabs.currentIndex() == 2 and not info:
@@ -520,9 +547,11 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.preview_worker = self._worker(request,
             lambda result: self._preview_ready(result, generation),
             lambda error: self._preview_error(error, generation))
+        if self.preview_worker is not None:
+            self.preview_worker.preview_target = Path(request["target"])
 
     def _preview_ready(self, result, generation):
-        if generation == self.preview_generation:
+        if generation == self.preview_generation and not self.close_pending and not self.content_invalid:
             self.preview_review.hide()
             self.canvas.set_preview(result["image"])
             self.preview_state.setText(
@@ -541,6 +570,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
     def _preview_error(self, error, generation):
         if generation == self.preview_generation:
+            self.canvas.set_preview(None)
             self.preview_state.setText("Preview failed — review the object or its content.")
             self._record_font_error(error)
             self.preview_review.setVisible(bool(self.failed_object))

@@ -73,6 +73,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.workers = []
         self.active_worker = self.preview_worker = None
         self.preview_generation = 0
+        self.preview_pending = False
         self.close_pending = False
         self.font_token = None
         self.draft_error = ""
@@ -115,10 +116,10 @@ class OverlayWindow(OverlayActions, QMainWindow):
         menus = {name: self.menuBar().addMenu(name) for name in ("&File", "&Edit", "&Insert", "&View", "&Production")}
         self.layout_menu = menus["&View"]
         toolbar = QToolBar("PDF Overlay", self)
+        toolbar.setObjectName("designerMainToolbar")
         self.layout_toolbar = toolbar
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(18, 18))
-        toolbar.setStyleSheet("QToolBar { padding: 2px; spacing: 2px; } QToolButton { padding: 3px; min-height: 0px; min-width: 0px; }")
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.addToolBar(toolbar)
         def action(key, text, callback, menu, shortcut=None, symbol="file-text", bar=False):
@@ -165,6 +166,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         action("cancel", "Cancel current job", self.cancel_job, "&Production", symbol="x", bar=True)
         self.actions["generate"].setIconText("Generate PDF")
         toolbar.widgetForAction(self.actions["generate"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toolbar.widgetForAction(self.actions["generate"]).setProperty("primary", True)
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -188,8 +190,10 @@ class OverlayWindow(OverlayActions, QMainWindow):
         navigation.addWidget(self.preview_only)
         layout.addLayout(navigation)
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("designerPanelTabs")
         self.splitter = QSplitter()
         left = QWidget()
+        left.setObjectName("designerSidePanel")
         panel = QVBoxLayout(left)
         self.source_summary = QLabel("Fixed groups of existing PDF pages. Source stays unchanged.")
         self.source_summary.setWordWrap(True)
@@ -204,6 +208,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.fields.setDragEnabled(True)
         self.fields.itemDoubleClicked.connect(lambda item: self.add_object("text", item.text()))
         self.source_panels = QTabWidget()
+        self.source_panels.setObjectName("designerPanelTabs")
         field_page = QWidget()
         field_layout = QVBoxLayout(field_page)
         field_layout.setContentsMargins(0, 4, 0, 0)
@@ -271,13 +276,16 @@ class OverlayWindow(OverlayActions, QMainWindow):
         layout.addWidget(self.progress)
         self.setCentralWidget(central)
         self.statusBar().setStyleSheet("QStatusBar { padding: 0px; min-height: 0px; } QStatusBar::item { border: none; }")
+        self.statusBar().setObjectName("designerStatusBar")
         self.preview_status = QLabel("Preview: select a PDF")
         self.preview_status.setAccessibleName("Overlay preview status")
         self.preview_status.linkActivated.connect(self.review_preview_error)
         self.preview_error_object = None
         self.statusBar().addPermanentWidget(self.preview_status)
         self.inspector = QDockWidget("Object properties", self)
+        self.inspector.setObjectName("designerDock")
         content = QWidget()
+        content.setObjectName("designerProperties")
         inspector_layout = QVBoxLayout(content)
         scope_form = QFormLayout()
         scope_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -323,10 +331,17 @@ class OverlayWindow(OverlayActions, QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
         self.inspector_scroll = scroll
+        scroll.setObjectName("designerInspector")
         self.inspector.setWidget(scroll)
         self.inspector.setMinimumWidth(260)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.inspector)
-        menus["&View"].addAction(self.inspector.toggleViewAction())
+        properties_action = self.inspector.toggleViewAction()
+        properties_action.setIcon(icon("panel-right"))
+        properties_action.setProperty("designer_icon", "panel-right")
+        properties_action.setToolTip("Show or hide object properties")
+        self.actions["properties"] = properties_action
+        menus["&View"].addAction(properties_action)
+        toolbar.insertAction(self.actions["fit"], properties_action)
         QTimer.singleShot(0, self.fit_canvas)
 
     def load_fonts(self):
@@ -355,6 +370,12 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.active_worker = None
         if worker is self.preview_worker:
             self.preview_worker = None
+            target = getattr(worker, "preview_target", None)
+            if target:
+                target.unlink(missing_ok=True)
+                target.with_suffix(".png").unlink(missing_ok=True)
+            if self.preview_pending and not self.close_pending:
+                self.timer.start(0)
         self.busy()
         if self.close_pending and not self.workers:
             self.close()
@@ -456,14 +477,16 @@ class OverlayWindow(OverlayActions, QMainWindow):
         geom = self.spec.source.page_geometry(page)
         chosen = self.canvas.selected_ids() if selected is None else selected
         elements = [copy.deepcopy(obj.element) for obj in self.spec.objects if applies(obj.scope, fields, obj.letter_page)]
-        self.canvas.set_template(Template(width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT, elements=elements), chosen)
+        self.canvas.set_template(
+            Template(width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT, elements=elements), chosen,
+            context=(self.spec.source.path, self.spec.source.sha256,
+                     page.source_page, page.output_page))
         self.position.setText(f"Seq {fields['EnvelopeSeq']} · Source {page.source_page or 'blank'} · Output {page.output_page} · Sheet {fields['SheetNo']} {fields['Side']}")
         self.selection_changed()
         self.schedule_preview()
 
     def schedule_preview(self, *args):
         self.preview_generation += 1
-        self.canvas.set_preview(None)
         self.preview_error_object = None
         self.preview_status.setText("Updating preview…" if self.spec else "Preview: select a PDF")
         self.preview_status.setToolTip("")
@@ -473,13 +496,18 @@ class OverlayWindow(OverlayActions, QMainWindow):
         if not self.spec or self.close_pending or self.draft_error:
             return
         if self.preview_worker:
+            self.preview_pending = True
             self.preview_worker.stop_preview()
+            return
+        self.preview_pending = False
         generation = self.preview_generation
         self.preview_worker = self.worker({"task": "overlay_preview", "project": self.spec.to_dict(),
             "envelope": self.envelope.value(), "print_page": self.print_page.value(),
             "auto_repair": self.auto_repair.isChecked(), "target": str(self.directory/f"preview-{generation}.pdf")},
             lambda result: self.preview_ready(result, generation),
             lambda error: self.preview_failed(error, generation))
+        if self.preview_worker is not None:
+            self.preview_worker.preview_target = self.directory/f"preview-{generation}.pdf"
 
     def preview_ready(self, result, generation):
         if generation == self.preview_generation and not self.close_pending and not self.draft_error:
@@ -505,7 +533,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "inspector") and self.width() < 1050 and self.inspector.isVisible():
+        compact = self.width() < 1050
+        if hasattr(self, "inspector") and compact and not getattr(self, "compact_width", False):
             self.inspector.hide()
+        self.compact_width = compact
         if hasattr(self, "layout_timer"):
             self.layout_timer.start()

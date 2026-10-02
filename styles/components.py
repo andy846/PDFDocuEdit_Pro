@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from core.resources import resource_path
 
+from .designer import designer_style
 from .theme import get_colors, is_dark
 from .tokens import D, F, R, S
 
@@ -1015,7 +1016,7 @@ def global_style() -> str:
         QSplitter::handle:horizontal {{ width: 1px; }}
         QSplitter::handle:vertical {{ height: 1px; }}
         QSplitter::handle:hover {{ background: {c['border_strong']}; }}
-    """
+    """ + designer_style(c)
 
 
 # Compatibility aliases retained while old imports are removed.
