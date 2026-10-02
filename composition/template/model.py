@@ -12,7 +12,7 @@ from typing import Any
 TEMPLATE_VERSION = 6
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
-ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "qr"})
+ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
 VARIABLE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 
 
@@ -306,7 +306,7 @@ def required_fields(template: Template) -> set[str]:
     from composition.engine.rules import rule_fields
     fields = {
         text for element in template.all_elements()
-        if element.type in {"text", "code128", "qr"}
+        if element.type in {"text", "code128", "i25", "qr"}
         for kind, text in parse_value(element.value) if kind == "field"
     }
     for element in template.all_elements():
@@ -395,7 +395,7 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
                 raise CompositionError("Glyph repair keys must use U+XXXX.")
             if canonical_codepoint(key) != key:
                 raise CompositionError("Invalid glyph repair code point.")
-            if element.type != "text" and not (element.type == "code128" and element.show_barcode_text):
+            if element.type != "text" and not (element.type in {"code128", "i25"} and element.show_barcode_text):
                 raise CompositionError("Glyph repairs require a text object.")
             if not isinstance(spec, FontSpec) or not isinstance(spec.family, str) or not isinstance(spec.file, str):
                 raise CompositionError("Invalid glyph repair font.")
@@ -411,7 +411,7 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
                 raise CompositionError("Colours must use #RRGGBB.")
         if not element.colour:
             raise CompositionError("Object colour is required.")
-        if element.type in {"text", "code128", "qr"}:
+        if element.type in {"text", "code128", "i25", "qr"}:
             parse_value(element.value)
         if element.type == "image" and check_assets and not Path(element.image).is_file():
             raise CompositionError(f"Image not found: {element.image}")

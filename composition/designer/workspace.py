@@ -541,8 +541,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             element.height_mm = .1
         elif kind == "rectangle":
             element.height_mm = 30
-        elif kind == "code128":
-            element.value, element.width_mm, element.height_mm = value or "000123456", 100, 20
+        elif kind in {"code128", "i25"}:
+            element.value, element.width_mm, element.height_mm = value or ("0001234560" if kind == "i25" else "000123456"), 100, 20
         elif kind == "qr":
             element.value, element.width_mm, element.height_mm = value or "https://example.com", 40, 40
         element.width_mm = min(element.width_mm, self.page.width_mm)

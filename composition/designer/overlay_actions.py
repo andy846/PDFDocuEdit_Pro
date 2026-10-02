@@ -97,8 +97,8 @@ class OverlayActions(OverlayFiles):
         if not self.spec or self.active_worker or self.font_token or self.draft_error:
             return
         element = Element(type=kind, value="{{"+field+"}}", x_mm=x, y_mm=y,
-            width_mm=90 if kind == "code128" else 35 if kind == "qr" else 70,
-            height_mm=14 if kind == "code128" else 35 if kind == "qr" else 12)
+            width_mm=90 if kind in {"code128", "i25"} else 35 if kind == "qr" else 70,
+            height_mm=14 if kind in {"code128", "i25"} else 35 if kind == "qr" else 12)
         obj = OverlayObject(element, scope=self.spec.required_scope,
             control=kind != "text" and not any(obj.control for obj in self.spec.objects),
             profile=BarcodeProfile() if kind != "text" else None)

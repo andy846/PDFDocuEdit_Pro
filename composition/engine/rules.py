@@ -88,7 +88,7 @@ def validate_rules(element, check_assets=False):
         if not isinstance(alternative, AlternativeContent):
             raise CompositionError("Invalid alternative content.")
         validate_group(alternative.when)
-        if element.type not in ("text", "qr", "code128", "image"):
+        if element.type not in ("text", "qr", "code128", "i25", "image"):
             raise CompositionError("Alternative content requires text, barcode or image.")
         if not isinstance(alternative.image, str) or not isinstance(alternative.value, str):
             raise CompositionError("Alternative content must use static text/image references.")
@@ -169,7 +169,7 @@ class ElementPlan:
     def __init__(self, element):
         validate_rules(element)
         self.element = element
-        self.tokens = parse_value(element.value) if element.type in ("text", "qr", "code128") else ()
+        self.tokens = parse_value(element.value) if element.type in ("text", "qr", "code128", "i25") else ()
         self.alternative_tokens = (
             parse_value(element.rules.alternative.value)
             if element.rules.alternative and element.type != "image"

@@ -85,7 +85,7 @@ class OverlayRenderer:
                                      page_plan.envelope,
                                      context=f"source page {page_plan.source_page}, output page {page_plan.output_page}")
         for element, obj, value in selected:
-            if element.type in ("qr", "code128"):
+            if element.type in ("qr", "code128", "i25"):
                 marks.append({"output_page": page_plan.output_page, "source_page": page_plan.source_page,
                               "envelope": page_plan.envelope, "object": element.id, "symbology": element.type,
                               "profile": obj.profile.name, "payload": value.value,

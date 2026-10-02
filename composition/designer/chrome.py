@@ -81,15 +81,16 @@ class DesignerChrome:
         action("select_all", "Select all objects", self.select_all_objects, "&Edit", "Ctrl+A", "layers")
         for text, kind, symbol in [("Text", "text", "text-cursor-input"), ("Image", "image", "image"),
                                    ("Line", "line", "line-tool"), ("Box", "rectangle", "square"),
-                                   ("Code 128", "code128", "scan"), ("QR code", "qr", "scan")]:
+                                   ("Code 128", "code128", "scan"), ("I25 (Interleaved 2 of 5)", "i25", "scan"), ("QR code", "qr", "scan")]:
             action("insert_"+kind, text, lambda checked=False, value=kind: self.add_element(value),
-                   "&Insert", symbol=symbol, toolbar=self.insert_toolbar if kind not in {"code128", "qr"} else None)
+                   "&Insert", symbol=symbol, toolbar=self.insert_toolbar if kind not in {"code128", "i25", "qr"} else None)
         barcode = self.barcode_button = QToolButton()
         barcode.setText("Barcode")
         barcode.setIcon(icon("scan"))
         barcode.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         barcode_menu = QMenu(barcode)
         barcode_menu.addAction(self.actions["insert_code128"])
+        barcode_menu.addAction(self.actions["insert_i25"])
         barcode_menu.addAction(self.actions["insert_qr"])
         barcode.setMenu(barcode_menu)
         barcode.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)

@@ -61,7 +61,7 @@ class DesignerUsability:
         if self.compact_inspector:
             self.left_panel.setCurrentWidget(self.properties_scroll)
         self.properties_scroll.ensureWidgetVisible(self.properties.content)
-        if self.properties.element and self.properties.element.type in {"text", "qr", "code128"}:
+        if self.properties.element and self.properties.element.type in {"text", "qr", "code128", "i25"}:
             self.properties.content.setFocus()
         else:
             self.properties.numbers["x_mm"].setFocus()

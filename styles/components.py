@@ -787,6 +787,11 @@ def global_style() -> str:
             border-radius: {R.MD}px;
             font-weight: {F.SEMIBOLD};
         }}
+        QPushButton#documentDesignerButton {{
+            min-height: 32px;
+            max-height: 32px;
+            padding: 0 10px;
+        }}
         QPushButton[primary="true"]:hover {{
             color: {c['on_primary']};
             background: {c['primary_hover']};

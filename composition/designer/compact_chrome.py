@@ -75,7 +75,7 @@ def configure_compact_chrome(window):
         QToolBar#designerMainToolbar QDoubleSpinBox { padding: 2px 5px; min-height: 0px; }
     """)
     window.barcode_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-    window.barcode_button.setToolTip("Insert Code 128 or QR code")
+    window.barcode_button.setToolTip("Insert Code 128, I25 or QR code")
     window.barcode_button.setAccessibleName("Insert barcode")
     import_button = toolbar.widgetForAction(window.actions["import"])
     import_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)

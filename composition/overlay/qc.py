@@ -12,7 +12,11 @@ def check_mark(page, mark):
     rect=fitz.Rect(mark["rect"])
     pix=page.get_pixmap(matrix=fitz.Matrix(300/72,300/72),clip=rect,alpha=False)
     image=Image.frombytes("RGB",(pix.width,pix.height),pix.samples)
-    symbol=ZBarSymbol.CODE128 if mark["symbology"]=="code128" else ZBarSymbol.QRCODE
+    symbols = {"code128": ZBarSymbol.CODE128, "i25": ZBarSymbol.I25, "qr": ZBarSymbol.QRCODE}
+    try:
+        symbol = symbols[mark["symbology"]]
+    except KeyError as exc:
+        raise CompositionError("Unsupported barcode symbology in QC.") from exc
     values=[result.data.decode("utf-8") for result in decode(image,symbols=[symbol])]
     if values != [mark["payload"]]:
         raise CompositionError(f"Barcode QC failed: expected exactly one {mark['symbology']} payload "

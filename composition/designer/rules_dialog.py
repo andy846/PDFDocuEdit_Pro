@@ -194,14 +194,14 @@ class RulesDialog(QDialog):
         self.variant = ConditionEditor(
             "Use alternative content when", self.fields, alternative.when if alternative else None
         )
-        supported = element.type in {"text", "image", "qr", "code128"}
+        supported = element.type in {"text", "image", "qr", "code128", "i25"}
         self.variant.setVisible(supported)
         content.addWidget(self.variant)
         self.alt_text = QPlainTextEdit(alternative.value if alternative else "")
         self.alt_text.setPlaceholderText("Alternative text, including {{Field_Name}}")
         self.alt_text.setMaximumHeight(90)
         self.alt_text.setAccessibleName("Alternative content")
-        self.alt_text.setVisible(element.type in {"text", "qr", "code128"})
+        self.alt_text.setVisible(element.type in {"text", "qr", "code128", "i25"})
         self.alt_text.setEnabled(bool(alternative))
         content.addWidget(self.alt_text)
         image_row = self.image_row = QWidget()
@@ -256,7 +256,7 @@ class RulesDialog(QDialog):
 
     def build_rules(self):
         alternative = None
-        when = self.variant.read_group() if self.element.type in {"text", "image", "qr", "code128"} else None
+        when = self.variant.read_group() if self.element.type in {"text", "image", "qr", "code128", "i25"} else None
         if when:
             alternative = AlternativeContent(
                 when,

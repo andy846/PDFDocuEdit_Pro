@@ -28,7 +28,7 @@ class SequenceDialog(QDialog):
         self.setWindowTitle("Running sequences")
         self.resize(850, 510)
         layout = QVBoxLayout(self)
-        intro = QLabel("Create reusable fields such as {{Seq}} for text, Code 128 or QR code.\n"
+        intro = QLabel("Create reusable fields such as {{Seq}} for text, Code 128, I25 or QR code.\n"
                        "Values follow record/page order. Preview and reruns keep the same numbers.")
         intro.setWordWrap(True)
         layout.addWidget(intro)

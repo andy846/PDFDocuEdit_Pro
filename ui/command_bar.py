@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMenu,
     QMenuBar,
+    QPushButton,
     QToolButton,
     QWidget,
 )
@@ -72,6 +73,18 @@ class CommandBar(QWidget):
             "panel-left", "Toggle tools panel (Ctrl+\\)", self.panelToggled
         )
         layout.addWidget(self._panel)
+
+        self._designer_action: QAction | None = None
+        self._designer = QPushButton("Document Designer")
+        self._designer.setObjectName("documentDesignerButton")
+        self._designer.setProperty("primary", True)
+        self._designer.setAccessibleName("Open Document Designer")
+        self._designer.setToolTip("Document Designer: variable-data documents and PDF envelope overlays")
+        self._designer.clicked.connect(
+            lambda: self._designer_action.trigger() if self._designer_action is not None else None
+        )
+        self._designer.hide()
+        layout.addWidget(self._designer)
 
         divider = QFrame()
         divider.setObjectName("commandDivider")
@@ -283,6 +296,14 @@ class CommandBar(QWidget):
 
         self.set_document_available(False)
 
+    def set_designer_action(self, action: QAction) -> None:
+        """Expose the feature-gated editor action without coupling this bar to Composition."""
+        self._designer_action = action
+        self._designer.setEnabled(action.isEnabled())
+        action.changed.connect(lambda: self._designer.setEnabled(action.isEnabled()))
+        self._designer.show()
+        self._update_compact_state()
+
     def set_application_menu(self, menu_bar: QMenuBar) -> None:
         """Expose the complete QMainWindow menu through a compact title button."""
 
@@ -352,6 +373,12 @@ class CommandBar(QWidget):
 
     def _update_compact_state(self) -> None:
         width = self.width()
+        if self._designer_action is not None:
+            self._search.setVisible(width >= 760)
+            self._redo.setVisible(width >= 760)
+            self._designer.setText("Document Designer" if width >= 760 else "Designer")
+            # Reserve the launch button first; keep optional controls within the same bar.
+            width -= self._designer.sizeHint().width() + S.XS
         for button in self._canvas_buttons.values():
             button.setVisible(width >= 900)
         self._title.setVisible(width >= 1080)

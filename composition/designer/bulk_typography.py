@@ -11,7 +11,7 @@ class BulkTypography:
     def _selected_text(self):
         ids = set(self.canvas.selected_ids())
         return [e for e in self.page.elements if e.id in ids and
-                (e.type == "text" or (e.type == "code128" and e.show_barcode_text))]
+                (e.type == "text" or (e.type in {"code128", "i25"} and e.show_barcode_text))]
 
     def _bulk_editable(self):
         return not (self.content_invalid or self.import_worker or self.production_worker

@@ -113,9 +113,9 @@ class EnvelopeSpec:
         for obj in self.objects:
             if obj.scope not in SCOPES or type(obj.letter_page) is not int or not 1 <= obj.letter_page <= self.settings.pages_per_envelope:
                 raise CompositionError("Invalid overlay object page scope.")
-            if type(obj.control) is not bool or (obj.control and obj.element.type not in ("code128", "qr")):
+            if type(obj.control) is not bool or (obj.control and obj.element.type not in ("code128", "i25", "qr")):
                 raise CompositionError("A machine control object must be a barcode.")
-            if obj.element.type in ("code128", "qr"):
+            if obj.element.type in ("code128", "i25", "qr"):
                 if obj.profile is None:
                     raise CompositionError("Barcode objects need a declarative profile.")
                 obj.profile.validate()

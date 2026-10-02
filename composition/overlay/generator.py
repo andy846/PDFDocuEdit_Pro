@@ -105,7 +105,7 @@ def generate(job, *, progress=None, is_cancelled=None):
                 current=page
                 fields=page_values(spec,page,job.job_id)
                 selected=renderer.selections(fields,verified.geometries[page.role])
-                result.expected_barcodes+=sum(element.type in ("qr","code128") for element,_obj,_value in selected)
+                result.expected_barcodes+=sum(element.type in ("qr","code128","i25") for element,_obj,_value in selected)
             current=None
             pages_file=resources.enter_context((staging/"pages.csv").open("w",encoding="utf-8-sig",newline=""))
             envelopes_file=resources.enter_context((staging/"envelopes.csv").open("w",encoding="utf-8-sig",newline=""))

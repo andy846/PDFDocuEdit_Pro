@@ -501,8 +501,10 @@ class PDFViewer(QMainWindow):
         tools_menu = menu.addMenu("&Tools")
         from composition.enabled import is_enabled
         if is_enabled():
-            tools_menu.addAction(self._action(
-                "Document Designer…", None, self._open_composition, command_id="document_designer"))
+            designer_action = self._action(
+                "Document Designer…", None, self._open_composition, command_id="document_designer")
+            tools_menu.addAction(designer_action)
+            self.command_bar.set_designer_action(designer_action)
             tools_menu.addSeparator()
 
         for label, key in (

@@ -120,7 +120,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         for name, shortcut in [("copy", "Ctrl+C"), ("paste", "Ctrl+V"), ("duplicate", "Ctrl+D"), ("delete", "Delete"), ("select_all", "Ctrl+A")]:
             item = action(name, name.replace("_", " ").title(), lambda checked=False, command=name: self.object_command(command), "&Edit", shortcut)
             item.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        for kind, text in [("text", "Sequence / text"), ("code128", "Code 128"), ("qr", "QR code")]:
+        for kind, text in [("text", "Sequence / text"), ("code128", "Code 128"), ("i25", "I25 (Interleaved 2 of 5)"), ("qr", "QR code")]:
             action("insert_"+kind, text, lambda checked=False, value=kind: self.add_object(value), "&Insert", symbol="scan" if kind != "text" else "file-text", bar=True)
         action("fit", "Fit page", self.fit_canvas, "&View", "Ctrl+0", "monitor", True)
         action("zoom_in", "Zoom in", lambda: self.canvas.zoom_by(1.2), "&View", "Ctrl++")
@@ -291,7 +291,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def busy(self):
         locked = bool(self.active_worker or self.font_token)
         valid = self.spec is not None and not self.draft_error
-        for name in ("source", "open", "save", "save_as", "grouping", "reinspect", "insert_text", "insert_code128", "insert_qr", "generate"):
+        for name in ("source", "open", "save", "save_as", "grouping", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate"):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
         self.actions["cancel"].setEnabled(bool(self.active_worker))
         self.actions["cancel"].setVisible(bool(self.active_worker))

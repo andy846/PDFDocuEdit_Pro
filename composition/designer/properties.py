@@ -229,7 +229,9 @@ class Properties(QWidget):
         form = QFormLayout(self.barcode_group)
         self.ecc = QComboBox()
         self.ecc.addItems(["L", "M", "Q", "H"])
-        self.human = QCheckBox("Show Code 128 text")
+        self.human = QCheckBox("Show barcode text")
+        self.barcode_hint = QLabel()
+        self.barcode_hint.setWordWrap(True)
         control = QDoubleSpinBox()
         control.setRange(.1, 5)
         control.setDecimals(2)
@@ -239,6 +241,7 @@ class Properties(QWidget):
         form.addRow("Min module (mm)", control)
         form.addRow("QR correction", self.ecc)
         form.addRow(self.human)
+        form.addRow(self.barcode_hint)
         groups.addWidget(self.barcode_group)
         for group in (self.geometry, self.rules_group, self.font_group, self.content_group,
                       self.text_layout_group, self.appearance_group, self.image_group, self.barcode_group):
@@ -374,23 +377,25 @@ class Properties(QWidget):
             self.image_path.setText(element.image)
             self.ecc.setCurrentText(element.qr_error)
             self.human.setChecked(element.show_barcode_text)
-            self.content_group.setVisible(element.type in {"text", "qr", "code128"})
+            self.content_group.setVisible(element.type in {"text", "qr", "code128", "i25"})
             self.font_group.setVisible(element.type == "text" or element.show_barcode_text)
             self.text_layout_group.setVisible(element.type == "text" or element.show_barcode_text)
             self.appearance_group.setVisible(element.type in {"text", "line", "rectangle"})
             self.appearance_form.setRowVisible(self.stroke_row, element.type in {"line", "rectangle"})
             self.appearance_form.setRowVisible(self.fill_row, element.type == "rectangle")
             self.image_group.setVisible(element.type == "image")
-            self.barcode_group.setVisible(element.type in {"qr", "code128"})
+            self.barcode_group.setVisible(element.type in {"qr", "code128", "i25"})
             self.ecc.setEnabled(element.type == "qr")
-            self.human.setEnabled(element.type == "code128")
+            self.barcode_hint.setText("I25: digits 0-9 only; an even number of digits. Leading zeros are preserved; no checksum is added." if element.type == "i25" else "")
+            self.barcode_hint.setVisible(element.type == "i25")
+            self.human.setEnabled(element.type in {"code128", "i25"})
         self.loading = False
 
     def show_selection(self, selected):
         if len(selected) <= 1:
             self.show_element(selected[0] if selected else None)
             return
-        text = [e for e in selected if e.type == "text" or (e.type == "code128" and e.show_barcode_text)]
+        text = [e for e in selected if e.type == "text" or (e.type in {"code128", "i25"} and e.show_barcode_text)]
         self.show_element(text[0] if text else None)
         if not text:
             self.empty.setText(f"{len(selected)} objects selected. Select text objects to format together.")

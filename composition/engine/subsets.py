@@ -30,7 +30,7 @@ def prepare_subsets(template, tokens, fonts, records, directory, progress=None, 
     rule_summary.update(configured_objects=sum(plan.has_rules for plan in plans.values()), records_checked=0,
                         hidden_occurrences=0, alternate_occurrences=0, complete=False)
     elements = [element for element in all_elements
-                if element.type == "text" or (element.type == "code128" and element.show_barcode_text)]
+                if element.type == "text" or (element.type in {"code128", "i25"} and element.show_barcode_text)]
     page_numbers = {e.id: index+1 for index, page in enumerate(template.pages) for e in page.elements}
     pairs = list(fonts.values()) + [pair for mapping in repair_fonts.values() for pair in mapping.values()]
     original_paths = {str(path) for _font, path in pairs}
