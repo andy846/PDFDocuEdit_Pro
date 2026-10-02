@@ -58,7 +58,6 @@ class OverlayFiles:
                 self.undo.clear()
                 self.apply_spec(spec.to_dict())
                 self.add_object("text")
-                self.add_object("code128", y=35)
             self.fit_canvas()
             self.tabs.setCurrentIndex(0)
         self.worker({"task": "overlay_inspect", "source": str(path), "settings": asdict(settings)}, ready, active=True)

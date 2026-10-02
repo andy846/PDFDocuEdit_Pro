@@ -188,8 +188,10 @@ def generate(job, *, progress=None, is_cancelled=None):
                                 mark["symbology"],mark["profile"],mark["payload"],"Decoded: exact match"])
                     if progress and result.decoded_barcodes%100==0:
                         progress(result.decoded_barcodes,result.expected_barcodes,f"Barcode QC {result.decoded_barcodes:,}/{result.expected_barcodes:,}")
-                if qc_envelope is not None:
-                    result.successful_envelopes+=1
+                # The assembled PDF has passed output validation and all existing marks
+                # have decoded. Envelopes without marks are valid too; barcode presence
+                # is required only for projects declaring a machine control object.
+                result.successful_envelopes=plan.envelopes
         current=None
         if any(file_hash(Path(path))!=digest for path,digest in asset_hashes.items()):
             raise CompositionError("An overlay image or font changed during production. Review and run again.")

@@ -33,6 +33,8 @@ def test_source_preview_bulk_typography_save_and_production(app, tmp_path):
         source = make_source(tmp_path/"input.pdf", 60)
         window.inspect_source(source)
         wait_until(lambda: window.spec is not None and not window.active_worker)
+        assert len(window.spec.objects) == 1
+        window.add_object("code128", y=35)
         assert len(window.spec.objects) == 2
         assert window.spec.objects[1].control
         window.envelope.setValue(20)

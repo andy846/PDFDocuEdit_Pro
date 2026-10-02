@@ -71,7 +71,8 @@ class OverlayRenderer:
             visible.append((element,obj,selected))
             if obj.control:
                 controls.append(element)
-        if enforce_control and applies(self.spec.required_scope,fields) and len(controls) != 1:
+        if (enforce_control and self.spec.requires_control_barcode
+                and applies(self.spec.required_scope,fields) and len(controls) != 1):
             raise CompositionError(f"Required barcode read position needs exactly one visible control barcode; found {len(controls)}.")
         return visible
 

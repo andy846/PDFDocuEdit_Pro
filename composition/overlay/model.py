@@ -83,6 +83,11 @@ class EnvelopeSpec:
     overlay_version: int = 1
     project_kind: str = "pdf_overlay"
 
+    @property
+    def requires_control_barcode(self) -> bool:
+        """A declared machine-control object opts the project into read-position checks."""
+        return any(obj.control for obj in self.objects)
+
     def validate(self):
         if type(self.overlay_version) is not int or self.overlay_version != 1 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")

@@ -279,6 +279,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.letter_page.setRange(1, 100)
         self.letter_page.valueChanged.connect(self.scope_edited)
         self.control = QCheckBox("Machine control barcode")
+        self.control.setToolTip("Enable required read-position checks for this barcode. Text-only overlays do not require a barcode.")
         self.control.toggled.connect(self.scope_edited)
         self.profile_button = QPushButton("Edit barcode payload…")
         self.profile_button.clicked.connect(self.edit_profile)
@@ -362,7 +363,11 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.layers.setEnabled(valid and not locked)
         self.progress.setVisible(bool(self.active_worker))
         self.auto_repair.setEnabled(not locked)
-        self.required_scope.setEnabled(valid and not locked)
+        control_required = bool(self.spec and self.spec.requires_control_barcode)
+        self.required_scope.setEnabled(valid and not locked and control_required)
+        self.required_scope.setToolTip(
+            "Each required position must contain exactly one visible machine control barcode."
+            if control_required else "Not required: no object is marked as a machine control barcode.")
         self.envelope.setEnabled(not self.draft_error)
         self.print_page.setEnabled(not self.draft_error)
         if locked:
