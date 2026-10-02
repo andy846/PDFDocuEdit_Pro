@@ -678,17 +678,35 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.canvas.fit_page()
             self.undo.setClean()
 
+    def open_pdf_overlay(self, checked=False, path=None):
+        from .overlay_workspace import OverlayWindow
+        if not hasattr(self, "overlay_windows"):
+            self.overlay_windows = []
+        window = OverlayWindow(project_path=path)
+        self.overlay_windows.append(window)
+        window.show()
+        return window
+
     def open_project(self, checked=False, path=None):
         if self.import_worker or self.production_worker:
             self._error("Finish or cancel the active job before replacing the project.")
-            return
-        if not self._discard_check():
             return
         if not path:
             path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Document Designer projects (*.pdcx)")
         if not path:
             return
         try:
+            project_file = Path(path)
+            if project_file.stat().st_size > 10*1024*1024:
+                raise CompositionError("Designer project exceeds 10 MB.")
+            project_value = json.loads(project_file.read_text(encoding="utf-8"))
+            if not isinstance(project_value, dict):
+                raise CompositionError("Invalid Designer project structure.")
+            if project_value.get("project_kind") == "pdf_overlay":
+                self.open_pdf_overlay(path=path)
+                return
+            if not self._discard_check():
+                return
             template = load_project(path)
         except (OSError, CompositionError, ValueError) as exc:
             self._error(str(exc))

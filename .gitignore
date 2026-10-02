@@ -81,3 +81,5 @@ build_assets/composition/*
 /dist-auto-font/
 
 /dist-compact-designer/
+
+/dist-pdf-overlay/

@@ -9,7 +9,7 @@ Date: 2026-10-02. Development milestone, not a production release or inserter ce
 - Simplex and duplex grouping. Odd duplex groups receive an explicit blank back.
 - Separate vector layer added to copied source pages. Original embedded font programs, text and annotations are preserved; copied source fonts are never subset.
 - Bounded layer batches are completed before grafting. Growing a source layer document after the first graft caused MuPDF object-range errors, so the implementation freezes each batch first.
-- CropBox placement uses an temporarily unrotated target and restores its original rotation. Verified at 0/90/180/270 degrees.
+- CropBox placement uses a temporarily unrotated target and restores its original rotation. Verified at 0/90/180/270 degrees.
 - Final assembled PDF is reopened and each barcode crop is decoded against its exact expected payload. Missing, duplicate, hidden or incorrectly decoded control marks prevent publication.
 - CSV envelope/page/barcode/control reports, exact-payload JSONL audit and machine-readable job log.
 - Cancellation, source changes, missing glyphs, invalid scope coverage and failed reconciliation cannot publish a partial PDF. Diagnostic reports distinguish composed envelopes from envelopes verified by final QC.

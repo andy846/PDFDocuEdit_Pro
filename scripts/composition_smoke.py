@@ -448,7 +448,9 @@ def run(output: Path):
     excel_window.undo.setClean()
     excel_window.close()
     wait(lambda: not excel_window.workers)
-    summary = {"passed":True,"frozen":bool(getattr(sys,"frozen",False)),
+    from scripts.pdf_overlay_smoke import run_overlay
+    overlay_summary = run_overlay(output/"pdf-overlay")
+    summary = {"pdf_overlay": overlay_summary, "passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
                "pdf":window.last_output, "event_loop_ticks":len(ticks), "layout":layout_metrics,
                "checks":["compact toolbar/canvas", "narrow preview navigation", "single-line full status message", "Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",

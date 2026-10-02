@@ -288,3 +288,11 @@ preview、保存重開、背景輸出、全部預期Barcode QC、來源／封／
 待用戶確認：入信機品牌／型號、可用Barcode格式樣本／文件、單／雙面及3頁的實際意義、
 讀碼面／送紙方向、是否有payload check digit、條碼位置限制與預設起始序號。
 這些決定機器profile與紙本驗收；通用分封／頁面來源／套印架構可先定稿。
+
+
+## Implementation progress — 2026-10-02
+
+- P0/P1: implemented; architecture note and tagged headless grouping/source/project models.
+- P2: implemented; bounded vector overlays, exact barcode QC and reconciled reports. See [P2 validation](PDF_OVERLAY_P2_VALIDATION.md).
+- P3: test workspace implemented; see [Designer test-build acceptance](PDF_OVERLAY_P3_ACCEPTANCE.md).
+- Physical machine-profile acceptance remains pending hardware specifications and samples. This progress entry does not declare production readiness.

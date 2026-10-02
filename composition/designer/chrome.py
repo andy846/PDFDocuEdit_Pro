@@ -55,6 +55,7 @@ class DesignerChrome:
                "Ctrl+Shift+S", "save-as")
         self.recent_menu = menus["&File"].addMenu("Recent projects")
         menus["&File"].addSeparator()
+        action("pdf_overlay", "PDF envelope overlay…", self.open_pdf_overlay, "&File", symbol="printer")
         action("background", "Use PDF background…", self.add_background, "&File", symbol="image")
         action("remove_background", "Remove PDF background", self.remove_background, "&File")
         action("rename", "Rename project…", self.rename_template, "&File")

@@ -1,0 +1,407 @@
+"""Dedicated existing-PDF envelope workspace with asynchronous headless workers."""
+from __future__ import annotations
+
+import copy
+import tempfile
+from pathlib import Path
+
+from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDockWidget,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
+
+from composition.overlay.model import EnvelopeSpec
+from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
+from composition.template.model import MM_TO_PT, Template
+from ui.icons import icon
+
+from .canvas import Canvas, FieldList
+from .overlay_actions import OverlayActions
+from .overlay_dialogs import SCOPE_LABELS
+from .process import Worker
+from .properties import Properties
+
+
+class OverlayEdit(QUndoCommand):
+    def __init__(self, window, before, after, label, selected):
+        super().__init__(label)
+        self.window, self.before, self.after, self.selected = window, before, after, selected
+
+    def undo(self):
+        self.window.apply_spec(self.before, self.selected)
+
+    def redo(self):
+        self.window.apply_spec(self.after, self.selected)
+
+
+class OverlayWindow(OverlayActions, QMainWindow):
+    def __init__(self, parent=None, project_path=None):
+        super().__init__(parent)
+        self.resize(1280, 820)
+        self.setMinimumSize(760, 540)
+        self.spec = self.project_path = self.last_result = None
+        self.temp = tempfile.TemporaryDirectory(prefix="document-designer-overlay-")
+        self.directory = Path(self.temp.name)
+        self.workers = []
+        self.active_worker = self.preview_worker = None
+        self.preview_generation = 0
+        self.close_pending = False
+        self.font_token = None
+        self.draft_error = ""
+        self.clipboard = []
+        self.auto_fit = True
+        self.fitting = False
+        self.undo = QUndoStack(self)
+        self.undo.cleanChanged.connect(self.title)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(250)
+        self.timer.timeout.connect(self.render_preview)
+        self.layout_timer = QTimer(self)
+        self.layout_timer.setSingleShot(True)
+        self.layout_timer.setInterval(60)
+        self.layout_timer.timeout.connect(lambda: self.fit_canvas() if self.auto_fit else None)
+        self.build_ui()
+        self.busy()
+        self.title()
+        QTimer.singleShot(0, self.load_fonts)
+        if project_path:
+            self.load_path(project_path)
+
+    def build_ui(self):
+        self.actions = {}
+        menus = {name: self.menuBar().addMenu(name) for name in ("&File", "&Edit", "&Insert", "&View", "&Production")}
+        toolbar = QToolBar("PDF Overlay", self)
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setStyleSheet("QToolBar { padding: 2px; spacing: 2px; } QToolButton { padding: 3px; min-height: 0px; min-width: 0px; }")
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.addToolBar(toolbar)
+        def action(key, text, callback, menu, shortcut=None, symbol="file-text", bar=False):
+            item = QAction(icon(symbol), text, self)
+            item.triggered.connect(callback)
+            if shortcut:
+                item.setShortcut(shortcut)
+            menus[menu].addAction(item)
+            if bar:
+                toolbar.addAction(item)
+            self.actions[key] = item
+            return item
+        action("source", "New PDF envelope overlay…", self.choose_source, "&File", "Ctrl+N", "folder-open", True)
+        action("open", "Open overlay project…", self.open_project, "&File", "Ctrl+O", "folder-open", True)
+        action("save", "Save", self.save_project, "&File", "Ctrl+S", "save", True)
+        action("save_as", "Save as…", lambda: self.save_project(save_as=True), "&File", "Ctrl+Shift+S")
+        action("grouping", "Grouping & running sequence…", self.edit_grouping, "&File", symbol="settings", bar=True)
+        action("reinspect", "Reinspect / locate source PDF…", lambda: self.choose_source(replace=True), "&File")
+        action("close", "Close overlay designer", self.close, "&File", "Ctrl+W", "x")
+        for name in ("undo", "redo"):
+            item = self.undo.createUndoAction(self, "Undo") if name == "undo" else self.undo.createRedoAction(self, "Redo")
+            item.setShortcut(QKeySequence.StandardKey.Undo if name == "undo" else QKeySequence.StandardKey.Redo)
+            item.setIcon(icon(name))
+            menus["&Edit"].addAction(item)
+            toolbar.addAction(item)
+        for name, shortcut in [("copy", "Ctrl+C"), ("paste", "Ctrl+V"), ("duplicate", "Ctrl+D"), ("delete", "Delete"), ("select_all", "Ctrl+A")]:
+            item = action(name, name.replace("_", " ").title(), lambda checked=False, command=name: self.object_command(command), "&Edit", shortcut)
+            item.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        for kind, text in [("text", "Sequence / text"), ("code128", "Code 128"), ("qr", "QR code")]:
+            action("insert_"+kind, text, lambda checked=False, value=kind: self.add_object(value), "&Insert", symbol="scan" if kind != "text" else "file-text", bar=True)
+        action("fit", "Fit page", self.fit_canvas, "&View", "Ctrl+0", "monitor", True)
+        action("zoom_in", "Zoom in", lambda: self.canvas.zoom_by(1.2), "&View", "Ctrl++")
+        action("zoom_out", "Zoom out", lambda: self.canvas.zoom_by(1/1.2), "&View", "Ctrl+-")
+        action("generate", "Generate overlay PDF…", self.generate_pdf, "&Production", "Ctrl+Shift+G", "printer", True)
+        action("cancel", "Cancel current job", self.cancel_job, "&Production", symbol="x", bar=True)
+        self.actions["generate"].setIconText("Generate PDF")
+        toolbar.widgetForAction(self.actions["generate"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        navigation = QHBoxLayout()
+        self.envelope, self.print_page = QSpinBox(), QSpinBox()
+        for control, prefix, width in [(self.envelope, "Envelope ", 170), (self.print_page, "Page ", 120)]:
+            control.setPrefix(prefix)
+            control.setRange(1, 1)
+            control.setFixedWidth(width)
+            control.setAccessibleName(prefix+"preview index")
+            control.valueChanged.connect(self.refresh_canvas)
+            navigation.addWidget(control)
+        self.position = QLabel("Select an existing PDF to begin")
+        self.position.setTextFormat(Qt.TextFormat.PlainText)
+        self.position.setWordWrap(True)
+        navigation.addWidget(self.position, 1)
+        self.preview_only = QCheckBox("Preview")
+        self.preview_only.toggled.connect(lambda checked: self.canvas.set_preview_mode(checked))
+        self.preview_only.toggled.connect(self.busy)
+        navigation.addWidget(self.preview_only)
+        layout.addLayout(navigation)
+        self.tabs = QTabWidget()
+        self.splitter = QSplitter()
+        left = QWidget()
+        panel = QVBoxLayout(left)
+        self.source_summary = QLabel("Fixed groups of existing PDF pages. Source stays unchanged.")
+        self.source_summary.setWordWrap(True)
+        self.source_summary.setTextFormat(Qt.TextFormat.PlainText)
+        panel.addWidget(self.source_summary)
+        select = QPushButton("Select PDF…")
+        select.clicked.connect(self.choose_source)
+        panel.addWidget(select)
+        panel.addWidget(QLabel("SYSTEM FIELDS"))
+        self.fields = FieldList()
+        self.fields.addItems(sorted(SYSTEM_FIELDS))
+        self.fields.setDragEnabled(True)
+        self.fields.itemDoubleClicked.connect(lambda item: self.add_object("text", item.text()))
+        panel.addWidget(self.fields, 1)
+        note = QLabel("Drag fields onto the page.\nGeneric barcode profiles need actual inserter testing.")
+        note.setWordWrap(True)
+        panel.addWidget(note)
+        left.setMinimumWidth(150)
+        left.setMaximumWidth(260)
+        self.canvas = Canvas()
+        self.canvas.set_template(Template())
+        self.canvas.editCommitted.connect(self.canvas_edit)
+        self.canvas.selectionChanged.connect(self.selection_changed)
+        self.canvas.fieldDropped.connect(lambda name, x, y: self.add_object("text", name, x, y))
+        self.canvas.command.connect(self.object_command)
+        self.canvas.zoomChanged.connect(self.zoom_changed)
+        self.canvas.objectActivated.connect(lambda: self.inspector.show())
+        for name in ("copy", "paste", "duplicate", "delete", "select_all"):
+            self.canvas.addAction(self.actions[name])
+        self.splitter.addWidget(left)
+        self.splitter.addWidget(self.canvas)
+        self.splitter.setSizes([200, 750])
+        self.tabs.addTab(self.splitter, "Design & preview")
+        production = QWidget()
+        prod_layout = QVBoxLayout(production)
+        self.production_text = QPlainTextEdit()
+        self.production_text.setReadOnly(True)
+        prod_layout.addWidget(self.production_text)
+        buttons = QHBoxLayout()
+        self.pdf_button, self.report_button = QPushButton("Open output PDF"), QPushButton("Open reports")
+        self.pdf_button.setEnabled(False)
+        self.report_button.setEnabled(False)
+        self.pdf_button.clicked.connect(lambda: self.open_result("output_pdf"))
+        self.report_button.clicked.connect(lambda: self.open_result("report_dir"))
+        buttons.addWidget(self.pdf_button)
+        buttons.addWidget(self.report_button)
+        prod_layout.addLayout(buttons)
+        self.tabs.addTab(production, "Production results")
+        layout.addWidget(self.tabs, 1)
+        self.progress = QProgressBar()
+        self.progress.setMaximumHeight(18)
+        layout.addWidget(self.progress)
+        self.setCentralWidget(central)
+        self.statusBar().setStyleSheet("QStatusBar { padding: 0px; min-height: 0px; } QStatusBar::item { border: none; }")
+        self.inspector = QDockWidget("Object properties", self)
+        content = QWidget()
+        inspector_layout = QVBoxLayout(content)
+        scope_form = QFormLayout()
+        scope_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.scope, self.required_scope = QComboBox(), QComboBox()
+        for control, labels in ((self.scope, SCOPE_LABELS), (self.required_scope, SCOPE_LABELS[:-1])):
+            for label, value in labels:
+                control.addItem(label, value)
+            control.setMinimumContentsLength(12)
+            control.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.scope.currentIndexChanged.connect(self.scope_edited)
+        self.required_scope.currentIndexChanged.connect(self.required_scope_edited)
+        self.letter_page = QSpinBox()
+        self.letter_page.setRange(1, 100)
+        self.letter_page.valueChanged.connect(self.scope_edited)
+        self.control = QCheckBox("Machine control barcode")
+        self.control.toggled.connect(self.scope_edited)
+        self.profile_button = QPushButton("Edit barcode payload…")
+        self.profile_button.clicked.connect(self.edit_profile)
+        scope_form.addRow("Apply to", self.scope)
+        scope_form.addRow("Letter page", self.letter_page)
+        scope_form.addRow(self.control)
+        scope_form.addRow(self.profile_button)
+        scope_form.addRow("Required read positions", self.required_scope)
+        inspector_layout.addLayout(scope_form)
+        self.properties = Properties()
+        self.properties.edited.connect(self.property_edit)
+        self.properties.fontRequested.connect(self.request_font)
+        self.properties.revertRequested.connect(self.revert_draft)
+        self.properties.insertFieldRequested.connect(self.insert_field)
+        inspector_layout.addWidget(self.properties)
+        self.auto_repair = QCheckBox("Repair missing glyphs and report substitutions")
+        self.auto_repair.setChecked(True)
+        self.auto_repair.toggled.connect(self.schedule_preview)
+        inspector_layout.addWidget(self.auto_repair)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        self.inspector.setWidget(scroll)
+        self.inspector.setMinimumWidth(260)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.inspector)
+        menus["&View"].addAction(self.inspector.toggleViewAction())
+        QTimer.singleShot(0, self.fit_canvas)
+
+    def load_fonts(self):
+        if not self.close_pending:
+            self.worker({"task": "fonts"}, self.properties.set_catalogue,
+                        lambda message: self.properties.font_status.setText(message))
+
+    def worker(self, request, ready, failed=None, *, active=False):
+        if self.close_pending:
+            return None
+        worker = Worker(self.directory, request, self)
+        self.workers.append(worker)
+        if active:
+            self.active_worker = worker
+            self.busy()
+        worker.resultReady.connect(ready)
+        worker.failed.connect(failed or self.error)
+        worker.progress.connect(lambda done, total, message: self.show_progress(done, total, message) if worker is self.active_worker else None)
+        worker.ended.connect(lambda: self.worker_ended(worker))
+        return worker
+
+    def worker_ended(self, worker):
+        if worker in self.workers:
+            self.workers.remove(worker)
+        if worker is self.active_worker:
+            self.active_worker = None
+        if worker is self.preview_worker:
+            self.preview_worker = None
+        self.busy()
+        if self.close_pending and not self.workers:
+            self.close()
+
+    def show_progress(self, done, total, message):
+        self.progress.setRange(0, max(1, total))
+        self.progress.setValue(done)
+        self.error(message)
+
+    def busy(self):
+        locked = bool(self.active_worker or self.font_token)
+        valid = self.spec is not None and not self.draft_error
+        for name in ("source", "open", "save", "save_as", "grouping", "reinspect", "insert_text", "insert_code128", "insert_qr", "generate"):
+            self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
+        self.actions["cancel"].setEnabled(bool(self.active_worker))
+        self.actions["cancel"].setVisible(bool(self.active_worker))
+        self.canvas.set_editable(valid and not locked)
+        self.properties.setEnabled(not locked and not self.preview_only.isChecked())
+        self.fields.setEnabled(valid and not locked)
+        self.progress.setVisible(bool(self.active_worker))
+        self.auto_repair.setEnabled(not locked)
+        self.required_scope.setEnabled(valid and not locked)
+        self.envelope.setEnabled(not self.draft_error)
+        self.print_page.setEnabled(not self.draft_error)
+        if locked:
+            for control in (self.scope, self.control, self.letter_page, self.profile_button):
+                control.setEnabled(False)
+        elif not self.draft_error:
+            self.selection_changed()
+
+    def title(self):
+        self.setWindowTitle("Document Designer · PDF Envelope Overlay · " +
+            (self.project_path.name if self.project_path else "Untitled") + (" *" if not self.undo.isClean() else ""))
+
+    def error(self, message):
+        self.statusBar().showMessage(message)
+        self.statusBar().setToolTip(message)
+
+    def apply_spec(self, value, selected=None):
+        self.spec = EnvelopeSpec.from_dict(value)
+        self.draft_error = ""
+        self.properties.revert_content.hide()
+        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        for control, maximum in ((self.envelope, plan.envelopes), (self.print_page, self.spec.settings.output_pages_per_envelope)):
+            control.blockSignals(True)
+            control.setRange(1, maximum)
+            control.blockSignals(False)
+        self.required_scope.blockSignals(True)
+        self.required_scope.setCurrentIndex(self.required_scope.findData(self.spec.required_scope))
+        self.required_scope.blockSignals(False)
+        self.source_summary.setText(f"{Path(self.spec.source.path).name}\n{plan.source_pages:,} source pages\n"
+            f"{plan.envelopes:,} envelopes\n{plan.output_pages:,} output pages\n{plan.sheets:,} sheets · {plan.inserted_blanks:,} blank backs")
+        self.source_summary.setToolTip(self.spec.source.path)
+        self.refresh_canvas(selected=selected)
+        self.busy()
+        self.title()
+
+    def commit(self, after, label, selected=None):
+        if self.active_worker or self.font_token:
+            return False
+        try:
+            EnvelopeSpec.from_dict(after)
+        except ValueError as exc:
+            self.error(str(exc))
+            return False
+        before = self.spec.to_dict()
+        if before != after:
+            self.undo.push(OverlayEdit(self, before, after, label, selected or self.canvas.selected_ids()))
+        return True
+
+    def refresh_canvas(self, *args, selected=None):
+        if not self.spec:
+            return
+        page = EnvelopePlan(self.spec.source.pages, self.spec.settings).page(self.envelope.value(), self.print_page.value())
+        fields = page.fields("preview")
+        geom = self.spec.source.geometries[page.role]
+        chosen = self.canvas.selected_ids() if selected is None else selected
+        elements = [copy.deepcopy(obj.element) for obj in self.spec.objects if applies(obj.scope, fields, obj.letter_page)]
+        self.canvas.set_template(Template(width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT, elements=elements), chosen)
+        self.position.setText(f"Seq {fields['EnvelopeSeq']} · Source {page.source_page or 'blank'} · Output {page.output_page} · Sheet {fields['SheetNo']} {fields['Side']}")
+        self.selection_changed()
+        self.schedule_preview()
+
+    def schedule_preview(self, *args):
+        self.preview_generation += 1
+        self.canvas.set_preview(None)
+        self.timer.start()
+
+    def render_preview(self):
+        if not self.spec or self.close_pending or self.draft_error:
+            return
+        if self.preview_worker:
+            self.preview_worker.stop_preview()
+        generation = self.preview_generation
+        self.preview_worker = self.worker({"task": "overlay_preview", "project": self.spec.to_dict(),
+            "envelope": self.envelope.value(), "print_page": self.print_page.value(),
+            "auto_repair": self.auto_repair.isChecked(), "target": str(self.directory/f"preview-{generation}.pdf")},
+            lambda result: self.preview_ready(result, generation),
+            lambda error: self.error(error) if generation == self.preview_generation else None)
+
+    def preview_ready(self, result, generation):
+        if generation == self.preview_generation and not self.close_pending:
+            self.canvas.set_preview(result["image"])
+        for key in ("pdf", "image"):
+            Path(result[key]).unlink(missing_ok=True)
+
+    def fit_canvas(self):
+        if self.close_pending:
+            return
+        self.fitting = True
+        try:
+            self.canvas.fit_page()
+        finally:
+            self.fitting = False
+        self.auto_fit = True
+
+    def zoom_changed(self, value):
+        if not self.fitting:
+            self.auto_fit = False
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "inspector") and self.width() < 1050 and self.inspector.isVisible():
+            self.inspector.hide()
+        if hasattr(self, "layout_timer"):
+            self.layout_timer.start()
