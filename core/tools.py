@@ -17,6 +17,8 @@ import fitz
 from core.diagnostics import log_failure
 
 from .capabilities import CapabilityId, detect_capabilities
+from .measurement import copy_page_scales
+from .overlay import OverlayFileResult, OverlayOptions, apply_overlay_page
 from .pdf_io import set_safe_pdf_metadata, set_safe_pdf_toc, validate_pdf_file
 from .performance import PerformanceTrace
 from .platform_service import PlatformService
@@ -116,7 +118,10 @@ def merge_pdfs(
                             first_metadata = source.metadata or {}
                         expected_pages += source.page_count
                         with trace.span("insert"):
+                            start = output.page_count
                             output.insert_pdf(source)
+                            copy_page_scales(source, output,
+                                             list(range(source.page_count)), start)
                         trace.values["insert_total"] += trace.values.pop("insert")
                 except Exception as exc:
                     raise ToolError(f"Cannot read {source_path.name}: {exc}") from exc
@@ -149,38 +154,49 @@ def overlay_pdf(
     template_path: str | os.PathLike[str],
     target_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
+    *,
+    options: OverlayOptions | None = None,
+    progress: ProgressCallback | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    _template: fitz.Document | None = None,
 ) -> Path:
+    from contextlib import nullcontext
+
+    options = options or OverlayOptions()
     target_output = Path(output_path).expanduser().resolve()
+    if target_output == Path(template_path).expanduser().resolve():
+        raise ToolError("Overlay output cannot replace its template PDF.")
     temporary = _temporary_pdf_path(target_output)
     expected_pages = 0
     try:
         try:
-            template = fitz.open(template_path)
+            template_context = nullcontext(_template) if _template is not None else fitz.open(template_path)
         except Exception as exc:
             raise ToolError(f"Cannot read the overlay PDF: {exc}") from exc
-        with template:
+        with template_context as template:
             try:
                 target = fitz.open(target_path)
             except Exception as exc:
                 raise ToolError(f"Cannot read the target PDF: {exc}") from exc
             with target:
-                if template.page_count == 0:
-                    raise ToolError("The overlay template has no pages.")
-                if target.page_count == 0:
-                    raise ToolError("The target PDF has no pages.")
+                if template.needs_pass or template.page_count == 0:
+                    raise ToolError("The overlay template is encrypted or has no pages.")
+                if target.needs_pass or target.page_count == 0:
+                    raise ToolError("The target PDF is encrypted or has no pages.")
                 expected_pages = target.page_count
                 for page_number in range(target.page_count):
+                    if is_cancelled and is_cancelled():
+                        raise ToolError("The overlay was cancelled.")
                     page = target.load_page(page_number)
-                    template_page = min(page_number, template.page_count - 1)
-                    page.show_pdf_page(
-                        page.rect,
-                        template,
-                        template_page,
-                        overlay=True,
-                        keep_proportion=True,
-                    )
+                    apply_overlay_page(page, template, page_number, options)
+                    _progress(progress, page_number + 1, expected_pages,
+                              f"Page {page_number + 1}/{expected_pages}")
+                if is_cancelled and is_cancelled():
+                    raise ToolError("The overlay was cancelled.")
                 target.save(temporary, garbage=4, deflate=True)
         validate_pdf_file(temporary, expected_page_count=expected_pages)
+        if is_cancelled and is_cancelled():
+            raise ToolError("The overlay was cancelled.")
         os.replace(temporary, target_output)
     finally:
         temporary.unlink(missing_ok=True)
@@ -288,10 +304,21 @@ def overlay_pdfs(
     overwrite: bool = False,
     progress: ProgressCallback | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    *,
+    options: OverlayOptions | None = None,
+    on_item: Callable[[OverlayFileResult], None] | None = None,
+    continue_on_error: bool = False,
+    source_overrides: dict[Path, Path] | None = None,
 ) -> list[Path]:
     template = Path(template_path).expanduser().resolve()
     folder = Path(output_folder).expanduser().resolve()
     sources = [Path(value).expanduser().resolve() for value in targets]
+    overrides = {
+        Path(source).expanduser().resolve(): Path(replacement).expanduser().resolve()
+        for source, replacement in (source_overrides or {}).items()
+    }
+    if not sources:
+        raise ToolError("Select at least one target PDF.")
     folder.mkdir(parents=True, exist_ok=True)
     jobs = [
         (
@@ -301,6 +328,8 @@ def overlay_pdfs(
         for source in sources
     ]
     _check_distinct_targets(jobs)
+    if any(source == template or target == template for source, target in jobs):
+        raise ToolError("The overlay template cannot be a target or output PDF.")
     if not overwrite:
         _check_no_inplace(jobs)
     existing = next(
@@ -311,13 +340,40 @@ def overlay_pdfs(
         raise ToolError(f"Output already exists: {existing.name}")
 
     outputs: list[Path] = []
-    for index, (source, target) in enumerate(jobs, 1):
-        if is_cancelled and is_cancelled():
-            break
-        _progress(progress, index - 1, len(sources), source.name)
-        overlay_pdf(template, source, target)
-        outputs.append(target)
-        _progress(progress, index, len(sources), source.name)
+    try:
+        template_document = fitz.open(template)
+    except Exception as exc:
+        raise ToolError(f"Cannot read the overlay PDF: {exc}") from exc
+    with template_document:
+        if template_document.needs_pass or not template_document.page_count:
+            raise ToolError("The overlay template is encrypted or has no pages.")
+        for index, (source, target) in enumerate(jobs, 1):
+            if is_cancelled and is_cancelled():
+                break
+            _progress(progress, int((index - 1) * 1000 / len(sources)), 1000, source.name)
+
+            def file_progress(done: int, total: int, _message: str,
+                              _index: int = index, _source: Path = source) -> None:
+                fraction = (_index - 1 + done / max(total, 1)) / max(len(sources), 1)
+                _progress(progress, int(fraction * 1000), 1000,
+                          f"{_source.name} • page {done}/{total}")
+
+            try:
+                overlay_pdf(template, overrides.get(source, source), target, options=options,
+                            progress=file_progress, is_cancelled=is_cancelled,
+                            _template=template_document)
+            except Exception as exc:
+                if is_cancelled and is_cancelled():
+                    break
+                if on_item:
+                    on_item(OverlayFileResult(source, target, "failed", str(exc)))
+                if not continue_on_error:
+                    raise
+                continue
+            outputs.append(target)
+            if on_item:
+                on_item(OverlayFileResult(source, target, "completed"))
+            _progress(progress, int(index * 1000 / len(sources)), 1000, source.name)
     return outputs
 
 
@@ -562,6 +618,7 @@ def decrypt_pdf_file(
                         output.insert_pdf(
                             doc, from_page=0, to_page=doc.page_count - 1
                         )
+                        copy_page_scales(doc, output, list(range(doc.page_count)), 0)
                     set_safe_pdf_metadata(output, doc.metadata)
                     set_safe_pdf_toc(output, doc.get_toc())
                     output.save(

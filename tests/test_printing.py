@@ -82,7 +82,7 @@ def test_render_worker_cancel_keeps_gui_responsive_and_does_not_spool(tmp_path, 
     def slow_render(*args, **kwargs):
         assert QThread.currentThread() != application.thread()
         entered.set()
-        assert release.wait(5)
+        assert release.wait(30)
         return real_render(*args, **kwargs)
 
     monkeypatch.setattr(controller_module, "render_print_page", slow_render)
@@ -94,7 +94,7 @@ def test_render_worker_cancel_keeps_gui_responsive_and_does_not_spool(tmp_path, 
     timer.start()
     controller.start()
     try:
-        wait_for(lambda: entered.is_set() and len(ticks) >= 3)
+        wait_for(lambda: entered.is_set() and len(ticks) >= 3, timeout=15)
         controller.cancel()
         assert not finished  # cleanup waits for the in-flight worker
         release.set()

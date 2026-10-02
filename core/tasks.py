@@ -15,6 +15,7 @@ class TaskSignals(QObject):
     interrupted = pyqtSignal(str)
     started = pyqtSignal()
     progress = pyqtSignal(int, int, str)
+    batch = pyqtSignal(object)
     result = pyqtSignal(object)
     cancelled = pyqtSignal()
     error = pyqtSignal(str)
@@ -32,6 +33,7 @@ class FunctionTask(QRunnable):
         *args,
         progress_argument: str | None = None,
         cancel_argument: str | None = None,
+        batch_argument: str | None = None,
         discard_result: Callable[[Any], None] | None = None,
         **kwargs,
     ):
@@ -41,6 +43,7 @@ class FunctionTask(QRunnable):
         self.kwargs = kwargs
         self.progress_argument = progress_argument
         self.cancel_argument = cancel_argument
+        self.batch_argument = batch_argument
         self.discard_result = discard_result
         self.signals = TaskSignals()
         connect_interrupts(self.signals)
@@ -61,6 +64,8 @@ class FunctionTask(QRunnable):
                 self.kwargs[self.progress_argument] = self._report_progress
             if self.cancel_argument:
                 self.kwargs[self.cancel_argument] = self.is_cancelled
+            if self.batch_argument:
+                self.kwargs[self.batch_argument] = self._report_batch
             if self.is_cancelled():
                 raise TaskCancelled
             value = self.function(*self.args, **self.kwargs)
@@ -89,3 +94,8 @@ class FunctionTask(QRunnable):
         if self.is_cancelled():
             raise TaskCancelled
         self.signals.progress.emit(current, total, message)
+
+    def _report_batch(self, value: Any) -> None:
+        # A completed batch item must still be reported when cancellation
+        # arrives just after its output has been committed to disk.
+        self.signals.batch.emit(value)

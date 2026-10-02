@@ -154,11 +154,13 @@ def main() -> int:
     parser.add_argument("command", choices=("keygen", "build"))
     parser.add_argument("--key", type=Path, default=ROOT / ".update-keys" / "signing.pem")
     parser.add_argument("--skip-build", action="store_true", help="Reuse a matching, already built application; rebuild launcher")
-    parser.add_argument("--skip-tests", action="store_true", help="Use only after the full suite passed on this source tree")
+    parser.add_argument("--run-tests", action="store_true", help="Explicitly repeat the full suite locally")
     args = parser.parse_args()
     if args.command == "keygen":
         keygen(args.key)
         return 0
+    if args.skip_build and args.run_tests:
+        parser.error("--run-tests requires a new build")
     from core.resources import APP_VERSION
     from updates.trust import PUBLIC_KEY_HEX
 
@@ -173,8 +175,8 @@ def main() -> int:
     if not args.skip_build:
         atomic_json(ROOT / "build_assets" / "update_build.json", build_info)
         command = [sys.executable, "scripts/build.py", "--portable-only"]
-        if args.skip_tests:
-            command.append("--skip-tests")
+        if args.run_tests:
+            command.append("--run-tests")
         subprocess.run(command, cwd=ROOT, check=True)
     info_path = dist / "_internal" / "update_build.json"
     if not info_path.is_file() or json.loads(info_path.read_text(encoding="utf-8")) != build_info:

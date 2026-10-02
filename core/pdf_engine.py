@@ -18,6 +18,7 @@ from pathlib import Path
 import fitz
 
 from core.diagnostics import log_failure
+from core.measurement import copy_page_scale, copy_page_scales
 from core.performance import PerformanceTrace
 
 from .io_atomic import atomic_output
@@ -236,6 +237,8 @@ class PdfEngine:
                         working.insert_pdf(
                             source_doc, from_page=0, to_page=source_doc.page_count - 1
                         )
+                        copy_page_scales(source_doc, working,
+                                         list(range(source_doc.page_count)), 0)
                     set_safe_pdf_metadata(working, source_doc.metadata)
                     set_safe_pdf_toc(working, source_doc.get_toc())
                     working.save(
@@ -501,6 +504,7 @@ class PdfEngine:
                         to_page=page_num,
                         start_at=insert_at + offset,
                     )
+                    copy_page_scale(source[page_num], doc[insert_at + offset])
             except Exception as exc:
                 log_failure('pdf_engine.insert_pages: fallback after failure', 10)
                 if self._transaction_depth:
@@ -551,6 +555,7 @@ class PdfEngine:
                         to_page=page_num,
                         start_at=position + offset,
                     )
+                    copy_page_scale(source[page_num], doc[position + offset])
                 inserted += len(valid)
         if not inserted:
             raise PdfEngineError(
@@ -591,6 +596,7 @@ class PdfEngine:
             with fitz.open() as output:
                 for page in valid:
                     output.insert_pdf(doc, from_page=page, to_page=page)
+                    copy_page_scale(doc[page], output[-1])
                 set_safe_pdf_metadata(output, doc.metadata)
                 set_safe_pdf_toc(output, doc.get_toc())
                 output.save(temp_name, garbage=4, deflate=True)
@@ -747,6 +753,7 @@ class PdfEngine:
             try:
                 with fitz.open() as split:
                     split.insert_pdf(doc, from_page=first, to_page=last)
+                    copy_page_scales(doc, split, list(range(first, last + 1)), 0)
                     set_safe_pdf_metadata(split, doc.metadata)
                     split.save(temp_name, garbage=4, deflate=True)
                 validate_pdf_file(
@@ -843,6 +850,7 @@ class PdfEngine:
                 with fitz.open() as output:
                     if doc.page_count:
                         output.insert_pdf(doc, from_page=0, to_page=doc.page_count - 1)
+                        copy_page_scales(doc, output, list(range(doc.page_count)), 0)
                     set_safe_pdf_metadata(output, doc.metadata)
                     set_safe_pdf_toc(output, doc.get_toc())
                     output.save(

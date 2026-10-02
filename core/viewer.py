@@ -82,10 +82,12 @@ from core.annotations import (
     apply_annotation,
     apply_redaction_marks,
     list_document_annotations,
+    recalibrate_measurements,
     remove_annotation,
     update_annotation,
     update_annotation_geometry,
     update_annotation_text,
+    update_saved_measurement,
     validate_annotation_op,
 )
 from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
@@ -98,8 +100,15 @@ from core.file_association import (
     register_default_app,
 )
 from core.font_inspector import inspect_font_at
-from core.measurement import distance_mm, format_distance
+from core.measurement import (
+    calibrated_factor,
+    distance_mm,
+    format_distance,
+    saved_measurements,
+    valid_factor,
+)
 from core.ocr import OCRMode, OCRResult, run_ocr
+from core.overlay import OverlayFileResult
 from core.pdf_engine import (
     DOCUMENT_LOCK,
     PdfEngine,
@@ -146,6 +155,7 @@ from dialogs.conversion_dialogs import (
 from dialogs.data_dialogs import PageCountReportDialog, SpreadsheetMergeDialog
 from dialogs.document_dialogs import PrintOptionsDialog, VisualOrganizerDialog
 from dialogs.ocr_dialog import OCRDialog, OCRTextResultDialog
+from dialogs.overlay_tool import OverlayResultsDialog
 from dialogs.page_operations import InsertPagesDialog, PageSelectionDialog, SplitDialog
 from dialogs.readme_dialog import ReadmeDialog
 from dialogs.search_open_dialog import SearchOpenDialog
@@ -903,6 +913,23 @@ class PDFViewer(QMainWindow):
             lambda page, index, pos, s=session, c=canvas:
                 self._show_measurement_menu(pos, s, c, page, index)
         )
+        canvas.savedMeasurementContextRequested.connect(
+            lambda page, identifier, pos, s=session, c=canvas:
+                self._show_saved_measurement_menu(pos, s, c, page, identifier)
+        )
+        canvas.savedMeasurementMoved.connect(
+            lambda page, identifier, points, s=session, c=canvas:
+                self._update_saved_measurement(s, c, page, identifier, points)
+        )
+        canvas.calibrationReferenceDrawn.connect(
+            lambda page, points, s=session, c=canvas:
+                self._calibrate_from_reference(s, c, page, points)
+        )
+        canvas.legacyMeasurementSelected.connect(
+            lambda _page, _xref: self.info_bar.show_message(
+                "Legacy measurement: endpoint editing is unavailable.", "info"
+            )
+        )
         canvas.noteRequested.connect(
             lambda page, point, s=session, c=canvas: self._handle_note_from(
                 s, c, page, point
@@ -1118,6 +1145,8 @@ class PDFViewer(QMainWindow):
         session.nav_panel.thumbnails.set_current_page(page)
         session.nav_panel.bookmarks.set_current_page(page)
         self._refresh_annotate_list()
+        if str(session.canvas.tool_mode) == "measure":
+            self._show_measure_status(session, session.canvas)
 
     def _session_nav_tab_changed(self, session: DocumentSession, key: str) -> None:
         if key == "outline" and not getattr(session, "_outline_loaded", False) and session.engine.is_loaded():
@@ -1262,19 +1291,26 @@ class PDFViewer(QMainWindow):
     def open_in_new_tab(self, path: str, *, on_open=None) -> DocumentSession | None:
         if self._printing:
             return None
+        controller = getattr(self, "_mode_controller", None)
+        if controller:
+            controller.request_mode("pdf")
         session = self._create_session()
         session._after_open = on_open
         self._queued_open_paths.append((path, None, session, perf_counter()))
         self._schedule_queued_open()
         return session
 
-    def load_file(self, path: str) -> None:
+    def load_file(self, path: str, *, on_open=None) -> None:
         if self._printing:
             return
         if self._session is not None and self._session.engine.is_loaded():
             if not self._confirm_discard_changes():
                 return
+        controller = getattr(self, "_mode_controller", None)
+        if controller:
+            controller.request_mode("pdf")
         session = self._session or self._create_session()
+        session._after_open = on_open
         self._queued_open_paths.append((path, None, session, perf_counter()))
         self._schedule_queued_open()
 
@@ -1827,16 +1863,20 @@ class PDFViewer(QMainWindow):
             action.setChecked(action.data() == mode)
         self.command_bar.set_canvas_tool(mode)
         self.bottom_bar.set_status(f"Tool: {mode.replace('_', ' ').title()}")
+        if mode == "measure" and session is not None:
+            self._show_measure_status(session, session.canvas)
 
     def _escape_to_browse(self) -> None:
         canvas = self.workspace.canvas
         if canvas is None or str(canvas.tool_mode) == "browse":
             return
         if str(canvas.tool_mode) == "measure":
+            if canvas._calibration_pending_page is not None:
+                canvas.cancel_calibration()
             pending = False
             for view in canvas._page_views.values():
                 overlay = view.overlay
-                if overlay._measure_origin is not None:
+                if overlay._measure_origin is not None or overlay._measure_drag is not None:
                     overlay.cancel_measurement()
                     pending = True
             if pending:
@@ -2016,6 +2056,20 @@ class PDFViewer(QMainWindow):
         measure_menu.addAction(
             "Start measuring", activate_then(lambda: self._set_canvas_tool("measure"))
         )
+        measure_menu.addAction(
+            "Calibrate this page using known length…",
+            activate_then(lambda: self._begin_page_calibration(session, canvas)),
+        )
+        measure_menu.addAction(
+            "Set this page's scale (1:N)…",
+            activate_then(lambda: self._prompt_page_scale(session, canvas)),
+        )
+        reset_scale = measure_menu.addAction(
+            "Reset this page to paper size",
+            activate_then(lambda: self._apply_page_scale(session, canvas,
+                                                         canvas.current_page, None)),
+        )
+        reset_scale.setEnabled(canvas.page_measure_scale(canvas.current_page).state != "paper")
         unit_menu = measure_menu.addMenu("Unit")
         for unit in ("mm", "cm"):
             action = unit_menu.addAction(
@@ -2070,6 +2124,17 @@ class PDFViewer(QMainWindow):
             "Next Page", lambda: canvas.set_page(canvas.current_page + 1)
         )
         next_page.setEnabled(canvas.current_page + 1 < source.engine.page_count)
+        menu.addSeparator()
+        measure_menu = menu.addMenu("Measure Distance (read-only)")
+        measure_menu.addAction("Inspect saved measurements",
+                               lambda: canvas.set_tool_mode("measure"))
+        unit_menu = measure_menu.addMenu("Display unit")
+        for unit in ("mm", "cm"):
+            action = unit_menu.addAction(
+                unit, lambda checked=False, value=unit: canvas.set_measure_unit(value)
+            )
+            action.setCheckable(True)
+            action.setChecked(canvas.measure_unit == unit)
         menu.addSeparator()
         menu.addAction("Zoom In", canvas.zoom_in)
         menu.addAction("Zoom Out", canvas.zoom_out)
@@ -2134,12 +2199,50 @@ class PDFViewer(QMainWindow):
             action.setChecked(canvas.measure_unit == unit)
         menu.exec(global_pos)
 
+    def _show_saved_measurement_menu(
+        self, global_pos, session: DocumentSession, canvas, page: int,
+        identifier: str,
+    ) -> None:
+        self.workspace.set_current_session(session)
+        self._session = session
+        record = canvas.selected_saved_measurement()
+        if record is None or record.identifier != identifier:
+            return
+        menu = QMenu(self)
+        readonly = self._external_split_source(session, canvas) is not None
+        readout = format_distance(
+            distance_mm(*record.points)
+            * canvas.page_measure_scale(page).real_per_paper,
+            canvas.measure_unit,
+        )
+        info = menu.addAction(f"Current length: {readout}")
+        info.setEnabled(False)
+        if readonly:
+            for unit in ("mm", "cm"):
+                menu.addAction(
+                    f"View in {unit}",
+                    lambda checked=False, value=unit: canvas.set_measure_unit(value),
+                )
+            menu.exec(global_pos)
+            return
+        unit_menu = menu.addMenu("Saved measurement unit")
+        for unit in ("mm", "cm"):
+            action = unit_menu.addAction(
+                unit, lambda checked=False, value=unit:
+                    self._update_saved_measurement(session, canvas, page,
+                                                   identifier, record.points, value)
+            )
+            action.setCheckable(True)
+            action.setChecked(record.unit == unit)
+        menu.exec(global_pos)
+
     def _store_selected_measurement(self, session: DocumentSession, canvas) -> None:
         selected = canvas.selected_measurement()
         if selected is None:
             return
         page, index, (start, end) = selected
-        label = format_distance(distance_mm(start, end), canvas.measure_unit)
+        factor = canvas.page_measure_scale(page).real_per_paper
+        label = format_distance(distance_mm(start, end) * factor, canvas.measure_unit)
         op = AnnotationOp(
             kind="measurement", page=page, points=(start, end), text=label
         )
@@ -2149,6 +2252,108 @@ class PDFViewer(QMainWindow):
                 "Measurement added as a PDF annotation. Save the document to keep it.",
                 "success",
             )
+
+    def _show_measure_status(self, session: DocumentSession, canvas) -> None:
+        if not session.engine.is_loaded():
+            return
+        page = canvas.current_page
+        scale = canvas.page_measure_scale(page)
+        if scale.state == "calibrated":
+            status = f"Measure: actual size (1:{scale.real_per_paper:g})"
+        elif scale.state == "invalid":
+            status = "Measure: paper size — calibration data invalid"
+        else:
+            status = "Measure: paper size (uncalibrated)"
+        if scale.state != "calibrated":
+            with DOCUMENT_LOCK:
+                records = saved_measurements(session.engine.document[page])
+            if any(record.saved_scale != 1 for record in records):
+                status += " — previous calibration missing"
+        self.bottom_bar.set_status(status)
+
+    def _begin_page_calibration(self, session: DocumentSession, canvas) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        self._set_canvas_tool("measure")
+        canvas.begin_calibration(canvas.current_page)
+        self.info_bar.show_message(
+            "Click two points of a known length on this page.", "info"
+        )
+
+    def _calibrate_from_reference(self, session: DocumentSession, canvas,
+                                  page: int, points) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            return
+        length, accepted = QInputDialog.getDouble(
+            self, "Calibrate page", "Known actual length (mm):", 100.0,
+            0.000001, 1e12, 6,
+        )
+        if not accepted:
+            return
+        try:
+            factor = calibrated_factor(*points, length)
+        except ValueError as exc:
+            self.info_bar.show_message(str(exc), "warning")
+            return
+        self._apply_page_scale(session, canvas, page, factor)
+
+    def _prompt_page_scale(self, session: DocumentSession, canvas) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        current = canvas.page_measure_scale(canvas.current_page).real_per_paper
+        factor, accepted = QInputDialog.getDouble(
+            self, "Set page scale", "Drawing 1 : actual N", current,
+            0.000001, 1e12, 6,
+        )
+        if accepted:
+            self._apply_page_scale(session, canvas, canvas.current_page, factor)
+
+    def _apply_page_scale(self, session: DocumentSession, canvas,
+                          page: int, factor: float | None) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        try:
+            if factor is not None:
+                valid_factor(factor)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                with self._mutation_transaction("Calibrate Measurement Page") as allowed:
+                    if not allowed:
+                        return
+                    recalibrate_measurements(session.engine.document, page, factor)
+                    session.engine.mark_modified()
+            finally:
+                QApplication.restoreOverrideCursor()
+        except Exception as exc:
+            self.info_bar.show_message(f"Calibration failed: {exc}", "error", 0)
+            return
+        self._refresh_session_canvases(session, {page})
+        self._sync_modified_state()
+        self._show_measure_status(session, canvas)
+
+    def _update_saved_measurement(
+        self, session: DocumentSession, canvas, page: int, identifier: str,
+        points, unit: str | None = None,
+    ) -> None:
+        if self._external_split_source(session, canvas) is not None:
+            self._comparison_read_only()
+            return
+        try:
+            with self._mutation_transaction("Edit Measurement") as allowed:
+                if not allowed:
+                    return
+                if not update_saved_measurement(session.engine.document, page,
+                                                identifier, points, unit):
+                    raise ValueError("The saved measurement is missing or incomplete")
+                session.engine.mark_modified()
+        except Exception as exc:
+            self.info_bar.show_message(f"Measurement edit failed: {exc}", "error", 0)
+            return
+        self._refresh_session_canvases(session, {page})
+        self._sync_modified_state()
 
     def _focus_annotation_properties(self, page: int, xref: int) -> None:
         self._select_annotation(page, xref)
@@ -5985,44 +6190,78 @@ class PDFViewer(QMainWindow):
             )
 
     def _overlay_pdf(self) -> None:
-        dialog = OverlayDialog(self.engine.original_path, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
-            return
-        details = dialog.details
-        session = self._session
-        targets = [Path(value).resolve() for value in details["targets"]]
         current = self.engine.original_path
         snapshot = None
-        if current and self.engine.is_modified and current in targets:
-            if not details["suffix"] and details["overwrite"]:
-                self.info_bar.show_message(
-                    "Save the current PDF before applying an in-place overlay.",
-                    "warning",
-                    0,
-                )
-                return
+        working = None
+        if current and self.engine.is_modified:
             try:
                 snapshot, working = self._working_snapshot(current)
             except Exception as exc:
-                log_failure('viewer._overlay_pdf: fallback after failure', 10)
-                self._error("PDF overlay failed", str(exc))
+                log_failure("viewer._overlay_pdf: cannot make preview snapshot", 10)
+                self._error("PDF overlay preview failed", str(exc))
                 return
-            targets = [working if value == current else value for value in targets]
-        self._run_task(
+        dialog = OverlayDialog(
+            current, self, current_preview_path=working,
+            current_modified=bool(snapshot),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
+            if snapshot:
+                self._safe_cleanup(snapshot)()
+            return
+        details = dialog.details
+        session = self._session
+        original_targets = [Path(value).resolve() for value in details["targets"]]
+        overrides = {current: working} if current and working else None
+        records: list[OverlayFileResult] = []
+        started = False
+        result_seen = False
+
+        def received(item: OverlayFileResult) -> None:
+            records.append(item)
+
+        def finished() -> None:
+            if snapshot:
+                self._safe_cleanup(snapshot)()
+            if not started or self._closing:
+                return
+            if not result_seen:
+                committed = [item.output for item in records if item.status == "completed"]
+                self._reload_session_if_replaced(session, committed)
+            reported = {item.source for item in records}
+            output_folder = Path(str(details["output_folder"]))
+            suffix = str(details["suffix"])
+            overwrite = bool(details["overwrite"])
+            for source in original_targets:
+                if source not in reported:
+                    output = source if overwrite and not suffix else output_folder / f"{source.stem}{suffix}.pdf"
+                    records.append(OverlayFileResult(source, output, "skipped", "Not processed"))
+            OverlayResultsDialog(records, output_folder, self).exec()
+
+        def completed(values: list[Path]) -> None:
+            nonlocal result_seen
+            result_seen = True
+            if values:
+                self._batch_completed(session, values, "Overlay completed for {count} PDF file(s).")
+
+        task = self._run_task(
             "Applying PDF overlay",
             overlay_pdfs,
             details["template"],
-            targets,
+            original_targets,
             details["output_folder"],
             details["suffix"],
             details["overwrite"],
+            options=details["options"],
+            source_overrides=overrides,
+            continue_on_error=True,
             progress_argument="progress",
             cancel_argument="is_cancelled",
-            on_result=lambda values: self._batch_completed(
-                session, values, "Overlay completed for {count} PDF file(s)."
-            ),
-            on_finished=self._safe_cleanup(snapshot) if snapshot else None,
+            batch_argument="on_item",
+            on_batch=received,
+            on_result=completed,
+            on_finished=finished,
         )
+        started = task is not None
 
     def _compress_pdf(self) -> None:
         dialog = CompressionDialog(self.engine.original_path, self)
@@ -6084,6 +6323,7 @@ class PDFViewer(QMainWindow):
             return
         dialog = DeepSearchDialog(self.settings.get_last_directory(), self)
         dialog.openRequested.connect(self._open_deep_search_result)
+        dialog.hitOpenRequested.connect(self._open_deep_search_hit)
         dialog.destroyed.connect(lambda: setattr(self, "_deep_search_dialog", None))
         self._deep_search_dialog = dialog
         dialog.show()
@@ -6097,6 +6337,14 @@ class PDFViewer(QMainWindow):
             from core.platform_service import PlatformService
 
             PlatformService.open_path(path)
+
+    def _open_deep_search_hit(self, path: str, method: str, page: int) -> None:
+        if method == OPEN_NEW_TAB:
+            self.open_in_new_tab(path, on_open=lambda session: self._session_goto(session, page - 1))
+        elif method == OPEN_CURRENT:
+            self.load_file(path, on_open=lambda session: self._session_goto(session, page - 1))
+        else:
+            self._open_deep_search_result(path, method)
 
     def _merge_sheets(self) -> None:
         dialog = SpreadsheetMergeDialog(self)
@@ -6232,6 +6480,8 @@ class PDFViewer(QMainWindow):
         on_result: Callable | None = None,
         progress_argument: str | None = None,
         cancel_argument: str | None = None,
+        batch_argument: str | None = None,
+        on_batch: Callable | None = None,
         on_finished: Callable[[], None] | None = None,
         on_discard: Callable | None = None,
         **kwargs,
@@ -6254,6 +6504,7 @@ class PDFViewer(QMainWindow):
             *args,
             progress_argument=progress_argument,
             cancel_argument=cancel_argument,
+            batch_argument=batch_argument,
             discard_result=on_discard,
             **kwargs,
         )
@@ -6301,6 +6552,8 @@ class PDFViewer(QMainWindow):
                     self.bottom_bar.set_status("Ready")
 
         task.signals.progress.connect(progress)
+        if on_batch:
+            task.signals.batch.connect(lambda item: None if self._closing else on_batch(item))
         task.signals.result.connect(result)
         task.signals.cancelled.connect(
             lambda: (

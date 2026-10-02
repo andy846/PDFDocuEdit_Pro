@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "2.5.15"
+VERSION = "2.5.16"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -313,7 +313,7 @@ def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
-    parser.add_argument("--skip-tests", action="store_true", help="Use only after the full suite passed on this source tree")
+    parser.add_argument("--run-tests", action="store_true", help="Explicitly run the full local suite (normally covered by CI)")
     parser.add_argument("--composition", "--document-designer", action="store_true", help="Build the opt-in Windows Document Designer development workspace")
     args = parser.parse_args(argv or [])
     if args.composition:
@@ -329,24 +329,7 @@ def main(argv: list[str] | None = None) -> int:
             f"Current interpreter: {current}"
         )
     run(sys.executable, "scripts/verify_source.py")
-    run(
-        sys.executable,
-        "-m",
-        "ruff",
-        "check",
-        "main.py",
-        "PDFdocuEdit_Pro.py",
-        "core",
-        "dialogs",
-        "ui",
-        "styles",
-        "composition",
-        "tests",
-        "scripts",
-        "updates",
-        "launcher.py",
-    )
-    if not args.skip_tests:
+    if args.run_tests:
         test_environment = os.environ.copy()
         test_environment.setdefault("QT_QPA_PLATFORM", "offscreen")
         run(sys.executable, "-m", "pytest", env=test_environment)

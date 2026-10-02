@@ -421,3 +421,50 @@ def test_overlay_toolbar_icons_follow_shared_theme(window):
     assert overlay.layout_tools_button.icon().cacheKey() != before_layout
     assert project.layout_tools_button.icon().cacheKey() != before_template_layout
     assert controller.host.current_project is overlay
+
+
+def test_calibrated_pdf_ruler_survives_designer_switch(window, tmp_path):
+    from core.measurement import page_scale, saved_measurements
+
+    pdf = tmp_path / "measured.pdf"
+    with fitz.open() as doc:
+        doc.new_page(width=300, height=300)
+        doc.save(pdf)
+    session = window._open_in_new_tab_sync(str(pdf))
+    canvas = session.canvas
+    window._set_canvas_tool("measure")
+    canvas._on_measurement_drawn(0, ((30, 30), (102, 30)))
+    window._store_selected_measurement(session, canvas)
+    window._apply_page_scale(session, canvas, 0, 100)
+    identifier = saved_measurements(session.engine.document[0])[0].identifier
+    controller, project = designer(window)
+    project.add_element("text", "Retain Designer edits")
+    assert window.command_bar._canvas_buttons["measure"].isHidden()
+    assert "deep_search" not in {c.id for c in window._commands_for_mode()}
+    controller.request_mode("pdf")
+    assert window.workspace.current_session() is session
+    assert canvas.tool_mode == "measure"
+    assert page_scale(session.engine.document[0]).real_per_paper == 100
+    assert saved_measurements(session.engine.document[0])[0].identifier == identifier
+    window._undo()
+    assert page_scale(session.engine.document[0]).state == "paper"
+    assert len(project.template.elements) == 1
+
+
+@pytest.mark.parametrize("method", ["new_tab", "current"])
+def test_deep_search_hit_returns_to_pdf_and_opens_hit_page(window, tmp_path, method):
+    from ui.deep_search_dialog import OPEN_CURRENT, OPEN_NEW_TAB
+
+    pdf = tmp_path / "search-hit.pdf"
+    with fitz.open() as doc:
+        doc.new_page()
+        doc.new_page()
+        doc.save(pdf)
+    controller, project = designer(window)
+    project.add_element("text", "Keep this template")
+    window._open_deep_search_hit(str(pdf),
+                               OPEN_NEW_TAB if method == "new_tab" else OPEN_CURRENT, 2)
+    assert controller.modes.mode == WorkspaceMode.PDF
+    wait_until(lambda: window._session.engine.is_loaded()
+               and window._session.canvas.current_page == 1)
+    assert len(project.template.elements) == 1

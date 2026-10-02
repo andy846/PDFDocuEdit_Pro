@@ -61,13 +61,13 @@ def test_deep_search_dialog_legacy_layout(tmp_path: Path) -> None:
     assert dialog.isModal() is False
 
     tab_titles = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]
-    assert tab_titles == ["Search Result", "Preview", "Error Message"]
+    assert tab_titles == ["Search Result", "Matches", "Preview", "Error Message"]
 
     headers = [
         dialog.table.horizontalHeaderItem(column).text()
         for column in range(dialog.table.columnCount())
     ]
-    assert headers == ["File Name", "Page number", "Match Count", "Contextual Summary"]
+    assert headers == ["File Name", "Matching Pages", "Occurrences", "Summary"]
 
     error_headers = [
         dialog.error_table.horizontalHeaderItem(column).text()
@@ -183,14 +183,14 @@ def test_deep_search_enter_triggers_search(tmp_path: Path, monkeypatch) -> None:
 def test_deep_search_exports_html_and_text(tmp_path: Path) -> None:
     dialog, _app = _dialog(tmp_path)
     dialog.query.setText("apple")
-    dialog._results = [
+    dialog._show_results([
         {
             "path": str(tmp_path / "one.pdf"),
             "filename": "one.pdf",
             "pages": [1],
             "snippets": ["An apple a day"],
         }
-    ]
+    ])
     html_path = tmp_path / "results.html"
     text_path = tmp_path / "results.txt"
     dialog._export_html(str(html_path))
