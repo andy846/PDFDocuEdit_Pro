@@ -207,6 +207,65 @@ def test_real_canvas_drag_and_ports_keep_a_valid_graph(standalone):
     assert [node.kind for node in w.spec.chain()][:3]==["input","merge","extract"]
 
 
+def test_double_click_connection_removes_it_and_undo_restores_it(standalone):
+    w = standalone
+    w.canvas.fit()
+    edge = w.canvas.edges[0]
+    connection = [edge.a, edge.b]
+    # Pick the middle of the curve, away from the node and its ports.
+    point = w.canvas.mapFromScene(edge.path().pointAtPercent(.5))
+    QTest.mouseDClick(w.canvas.viewport(), Qt.MouseButton.LeftButton, pos=point)
+    QApplication.processEvents()
+    assert connection not in w.spec.edges
+    w.undo.undo()
+    QApplication.processEvents()
+    assert connection in w.spec.edges
+
+
+def test_dragging_another_node_applies_pending_inspector_settings(standalone, tmp_path):
+    from PyQt6.QtWidgets import QLineEdit
+
+    w = standalone
+    w.select_node(w.spec.node("output").id)
+    folder = w.inspector.findChild(QLineEdit)
+    folder.setText(str(tmp_path / "new-output"))
+    assert w.draft_error
+    w.canvas.fit()
+    node = w.spec.node("group")
+    item = w.canvas.nodes[node.id]
+    start = w.canvas.mapFromScene(item.pos() + QPointF(70, 20))
+    QTest.mousePress(w.canvas.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    QTest.mouseMove(w.canvas.viewport(), start + QPoint(35, 25), delay=20)
+    QTest.mouseRelease(w.canvas.viewport(), Qt.MouseButton.LeftButton, pos=start + QPoint(35, 25))
+    QApplication.processEvents()
+    assert w.spec.node("output").params["directory"] == str(tmp_path / "new-output")
+    assert w.spec.node("group").x != node.x
+    assert w.selected == node.id
+    assert w.canvas.nodes[node.id].isSelected()
+
+
+def test_click_fourth_node_after_editing_grouping(standalone):
+    from PyQt6.QtWidgets import QSpinBox
+
+    w = standalone
+    w.canvas.fit()
+    fourth = w.spec.nodes[3].id
+    for count in range(2, 17):
+        group = w.canvas.nodes[w.spec.node("group").id]
+        point = w.canvas.mapFromScene(group.pos() + QPointF(70, 20))
+        QTest.mouseClick(w.canvas.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        w.inspector.findChild(QSpinBox).setValue(count)
+        item = w.canvas.nodes[fourth]
+        point = w.canvas.mapFromScene(item.pos() + QPointF(70, 20))
+        QTest.mouseClick(w.canvas.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        QApplication.processEvents()
+        assert w.spec.node("group").params["pages"] == count
+        assert w.selected == fourth
+        assert w.canvas.nodes[fourth].isSelected()
+    w.undo.undo()
+    assert w.spec.node("group").params["pages"] == 15
+
+
 def test_designer_overlay_preview_and_unsaved_generation_guard(integrated,tmp_path,monkeypatch):
     root,host=integrated
     w=host.new_workflow()

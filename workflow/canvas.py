@@ -1,7 +1,8 @@
 """Native Qt node canvas with typed ports, drag/drop, pan and zoom."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6 import sip
+from PyQt6.QtCore import QMimeData, QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -101,8 +102,8 @@ class EdgeItem(QGraphicsPathItem):
         self.setToolTip("Double-click to remove this connection")
 
     def mouseDoubleClickEvent(self,event):
-        self.view.disconnectRequested.emit(self.a,self.b)
         event.accept()
+        self.view.disconnectRequested.emit(self.a,self.b)
 
 
 class WorkflowCanvas(QGraphicsView):
@@ -170,19 +171,54 @@ class WorkflowCanvas(QGraphicsView):
         center=self.mapToScene(self.viewport().rect().center())
         if self.pending and not any(n.id==self.pending for n in spec.nodes):
             self.pending=None
-        self.scene().blockSignals(True)
-        self.scene().clear()
-        self.nodes={n.id:NodeItem(n,self,statuses.get(n.id,"")) for n in spec.nodes}
-        for item in self.nodes.values():
-            self.scene().addItem(item)
-            item.setSelected(item.node.id==selected)
-        self.edges=[EdgeItem(a,b,self) for a,b in spec.edges]
-        for edge in self.edges:
-            self.scene().addItem(edge)
-        self.redraw_edges()
-        self.scene().setSceneRect(self.scene().itemsBoundingRect().adjusted(-150,-150,150,150))
-        self.scene().blockSignals(False)
+        scene=self.scene()
+        blocked=scene.blockSignals(True)
+        try:
+            # Model commits can run inside selectionChanged/mouseReleaseEvent.
+            # Keep the live Qt items: clearing the scene here deletes the mouse
+            # grabber while QGraphicsScene is still dispatching its event.
+            identities={n.id for n in spec.nodes}
+            for identity in list(self.nodes):
+                if identity not in identities:
+                    self.retire_item(self.nodes.pop(identity))
+            for node in spec.nodes:
+                item=self.nodes.get(node.id)
+                if item is None:
+                    item=NodeItem(node,self,statuses.get(node.id,""))
+                    self.nodes[node.id]=item
+                    scene.addItem(item)
+                else:
+                    item.node=node
+                    item.status=statuses.get(node.id,"")
+                    item.setPos(node.x,node.y)
+                    item.update()
+                item.setSelected(node.id==selected)
+            existing={(edge.a,edge.b):edge for edge in self.edges}
+            connections={tuple(pair) for pair in spec.edges}
+            for pair,edge in existing.items():
+                if pair not in connections:
+                    self.retire_item(edge)
+            self.edges=[]
+            for a,b in spec.edges:
+                edge=existing.get((a,b))
+                if edge is None:
+                    edge=EdgeItem(a,b,self)
+                    scene.addItem(edge)
+                self.edges.append(edge)
+            self.redraw_edges()
+            scene.setSceneRect(scene.itemsBoundingRect().adjusted(-150,-150,150,150))
+        finally:
+            scene.blockSignals(blocked)
         self.centerOn(center)
+
+    def retire_item(self,item):
+        self.scene().removeItem(item)
+        # Removed edges may still be inside mouseDoubleClickEvent. Keep them
+        # alive until dispatch has returned, including when closing the view.
+        def dispose():
+            if not sip.isdeleted(item):
+                sip.delete(item)
+        QTimer.singleShot(0,dispose)
 
     def redraw_edges(self):
         for edge in self.edges:
