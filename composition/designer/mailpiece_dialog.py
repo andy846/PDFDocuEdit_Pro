@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -46,14 +47,19 @@ class BoundaryTable(QAbstractTableModel):
         super().__init__(parent)
         self.groups, self.warnings = [], []
         self.rows, self.report = [], {}
+        self.evidence = {}
 
     def replace(self, report, exceptions_only=False):
         self.beginResetModel()
         self.groups = report["groups"]
         self.report = report
+        self.evidence = {e["page"]: e for e in report.get("evidence", [])}
         self.warnings = sorted({f["page"] for f in report["findings"]})
-        self.rows = [i for i, (start, end) in enumerate(self.groups) if not exceptions_only or not self.warnings
-                     or any(start <= p <= end for p in self.warnings)]
+        self.rows = []
+        for i, (start, end) in enumerate(self.groups):
+            warning = bisect_left(self.warnings, start)
+            if not exceptions_only or not self.warnings or (warning < len(self.warnings) and self.warnings[warning] <= end):
+                self.rows.append(i)
         self.endResetModel()
 
     def rowCount(self, parent=None):
@@ -74,7 +80,7 @@ class BoundaryTable(QAbstractTableModel):
         start, end = self.groups[number]
         warning_index = bisect_left(self.warnings, start)
         needs_review = warning_index < len(self.warnings) and self.warnings[warning_index] <= end
-        evidence = next((e for e in self.report.get("evidence", []) if e["page"] == start), {})
+        evidence = self.evidence.get(start, {})
         reason = " + ".join(SIGNAL_LABELS.get(m, m) for m in evidence.get("matched", [])) or "Operator boundary"
         if evidence.get("end_basis") in ("next_start_inferred", "pdf_end_inferred"):
             reason += "; end inferred"
@@ -166,6 +172,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setResizeContentsPrecision(100)
+        for column in range(4):
+            self.table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.table.selectionModel().currentRowChanged.connect(self.selected)
         self.review_splitter = QSplitter(Qt.Orientation.Vertical)
         self.table.setMinimumHeight(70)

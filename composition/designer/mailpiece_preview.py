@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtGui import QPixmap, QTransform
+from PyQt6.QtGui import QColor, QPixmap, QTransform
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsView, QLabel, QVBoxLayout, QWidget
 
 
@@ -70,6 +70,7 @@ class ReadOnlySourceView(QGraphicsView):
     def __init__(self, parent):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
+        self.setBackgroundBrush(QColor("#59616b"))
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setMinimumHeight(140)
         self.setMinimumWidth(120)

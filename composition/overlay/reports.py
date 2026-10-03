@@ -36,10 +36,13 @@ def write_summary(directory,result,spec):
     if spec.detection_review:
         with (directory/"detection.csv").open("w",encoding="utf-8-sig",newline="") as stream:
             writer=csv.writer(stream)
-            row(writer,["Envelope","Source start","Source end","Pages","Review","Warnings"])
+            row(writer,["Envelope","Source start","Source end","Pages","Review","Warnings","Boundary evidence","End basis"])
             findings=sorted(spec.detection_review.get("findings", []), key=lambda finding: finding["page"])
             finding_pages=[finding["page"] for finding in findings]
+            evidence = {e["page"]: e for e in spec.detection_review.get("evidence", [])}
             for index,(start,end) in enumerate(spec.settings.groups,1):
                 messages=[f"Page {f['page']}: {f['message']}" for f in
                           findings[bisect_left(finding_pages,start):bisect_right(finding_pages,end)]]
-                row(writer,[index,start,end,end-start+1,"Operator accepted","; ".join(messages)])
+                boundary = evidence.get(start, {})
+                row(writer,[index,start,end,end-start+1,"Operator accepted","; ".join(messages),
+                            "; ".join(boundary.get("matched", [])), boundary.get("end_basis", "operator_edited")])

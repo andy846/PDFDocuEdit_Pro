@@ -249,11 +249,13 @@ def analyze_index(index, *, is_cancelled=None):
     labels = [label for label in first_labels if ids[label] > 1]
     accounts = [label for label in labels if "account" in label_key(label) or any(t in label for t in ("帳戶", "账户", "戶口"))]
     id_rule = {"kind": "document_id", "fields": [{"label": label} for label in (accounts or labels)[:8]]}
+    counter_rule = None
     if counter_starts and counter_starts[0] == 1 and counter_pages >= count*.8:
         region = _box_region(counter_boxes)
+        counter_rule = {"kind": "page_number", "auto": True, "region_mm": region}
         suggestions.append({"title": "Printed page sequence", "reason": f"Counters on {counter_pages:,} pages; sequence restarts on {len(counter_starts):,} pages.",
                             "examples": counter_starts[:4], "config": asdict(DetectionConfig(
-                                rules=[{"kind": "page_number", "auto": True, "region_mm": region}], version=2))})
+                                rules=[counter_rule] + ([id_rule] if id_rule["fields"] else []), version=2))})
     proposed_regions = set()
     for key, _ in anchors.most_common():
         # Address blocks can shift a salutation by a few lines. Include the
@@ -280,9 +282,16 @@ def analyze_index(index, *, is_cancelled=None):
             continue
         if id_rule["fields"]:
             rules.append(id_rule)
-        suggestions.append({"title": f"First-page marker: {key[0]}",
+        if counter_rule:
+            rules.append(counter_rule)
+        suggestion = {"title": f"First-page marker: {key[0]}",
                             "reason": f"Fixed-position marker on {len(matching_pages):,} pages; {len(id_rule['fields'])} identity field(s) available for cross-checking. Ends are inferred from the next start.",
-                            "examples": matching_pages[:4], "config": asdict(DetectionConfig(rules=rules, version=2))})
+                            "examples": matching_pages[:4], "config": asdict(DetectionConfig(rules=rules, version=2))}
+        if counter_rule:
+            suggestion["reason"] += " Printed counters are also checked against these boundaries."
+            suggestions.insert(0, suggestion)
+        else:
+            suggestions.append(suggestion)
         if len(suggestions) >= 8:
             break
     if not suggestions and id_rule["fields"]:
@@ -328,6 +337,8 @@ def detect_index(index, config, *, is_cancelled=None, progress=None):
                 warn(number, "unmarked_start", "First source page has no confirmed start evidence.")
         if new:
             starts.append(number)
+            if counter and counter[0] != 1:
+                warn(number, "start_counter_conflict", "A new-letter feature/identity occurs without a printed page sequence restarting at 1.")
             corroborated = len(hits) >= 2 or (hits == ["page_number"] and "first_text" not in rules and "document_id" not in rules)
             if not corroborated:
                 warn(number, "single_signal", "Boundary supported by one signal only. Review neighbouring pages.")

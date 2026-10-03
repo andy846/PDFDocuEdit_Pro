@@ -183,8 +183,6 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                                       required_scope=project.required_scope if project else "all_source",
                                       name=spec.name,external_fields=external_fields(spec))
                 composed.detection_review=detection_audit(composed)
-                composed.validate()
-                job=OverlayJob(composed.to_dict(),target)
                 with ExtractionStore(run.database) as store:
                     if store.metadata()["sha256"]!=source.sha256:
                         raise CompositionError("Extraction source differs from the production PDF; scan and review again.")
@@ -193,6 +191,10 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                     reviewed_groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
                     if reviewed_groups!=run.groups:
                         raise CompositionError("Envelope boundaries differ from the accepted review; review again.")
+                    prior_review = store.metadata().get("mailpiece_review")
+                    composed.detection_review = detection_audit(composed, json.loads(prior_review) if prior_review else None)
+                    composed.validate()
+                    job=OverlayJob(composed.to_dict(),target)
                     def reports(report,result,source=source,settings=settings):
                         store.export(report/"extracted-data.csv")
                         import csv
@@ -281,15 +283,37 @@ def group(spec,run,*,progress=None,is_cancelled=None):
             if result["findings"]:
                 raise CompositionError("Page-pattern detection has findings; resolve the PDF/page sequence before grouping.")
             groups=result["groups"]
+        elif method=="reviewed_detection":
+            report = cfg.get("detection_review", {})
+            if not isinstance(report, dict) or report.get("accepted") is not True or not report.get("groups"):
+                raise CompositionError("Analyze and accept mailpiece boundaries before using automatic detection.")
+            DetectionConfig(**report.get("config", {})).validate()
+            if report.get("source_sha256") != store.metadata()["sha256"] or report.get("pages") != pages:
+                raise CompositionError("Detection source changed. Analyze and accept the current PDF again.")
+            if report.get("excluded_pages"):
+                raise CompositionError("Workflow automatic detection must retain all source pages.")
+            groups = report["groups"]
         else:
             raise CompositionError("Unsupported grouping method.")
         EnvelopePlan(pages,EnvelopeSettings(groups=groups,pages_per_envelope=1))
         store.grouped(groups,ExtractionSpec.from_dict(spec.node("extract").params),progress=progress,is_cancelled=is_cancelled)
+        with store.db:
+            store.db.execute("DELETE FROM meta WHERE key='mailpiece_review'")
+            if method == "reviewed_detection":
+                store.db.execute("INSERT INTO meta VALUES (?,?)", ("mailpiece_review", json.dumps(report)))
         run.groups=groups
         run.accepted=False
 
 
-def detection_audit(spec):
+def detection_audit(spec, review=None):
+    if review:
+        import copy
+        result = copy.deepcopy(review)
+        if result.get("groups") != spec.settings.groups:
+            result.setdefault("edits", []).append({"method": "workflow_review", "groups": spec.settings.groups})
+        result.update(accepted=True, source_sha256=spec.source.sha256, groups=spec.settings.groups,
+                      pages=spec.source.pages, excluded_pages=[])
+        return result
     return {"accepted":True,"source_sha256":spec.source.sha256,"groups":spec.settings.groups,
             "excluded_pages":[],"config":{"rules":[{"kind":"page_number","pattern":"Page {CURRENT} of {TOTAL}"}],
             "combine":"any","region_mm":None,"remove_separators":True,"version":1},

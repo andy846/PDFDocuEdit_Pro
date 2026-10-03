@@ -173,3 +173,38 @@ def test_auto_marker_region_covers_observed_address_block_shifts(tmp_path):
     result = scan_pdf(path, config, cache_path=cache)["detection"]
     assert result["groups"] == [[1, 2], [3, 5], [6, 6]]
     assert not result["findings"]
+
+
+def test_chinese_printed_counters_from_pdf_text_layer(tmp_path):
+    path = tmp_path/"chinese.pdf"
+    with fitz.open() as pdf:
+        for current, total in [(1, 2), (2, 2), (1, 1)]:
+            page = pdf.new_page()
+            page.insert_text((30, 700), f"第 {current} 頁，共 {total} 頁", fontname="china-s")
+        pdf.save(path)
+    result = scan_pdf(path, DetectionConfig(version=2, rules=[{"kind": "page_number", "auto": True}]))
+    assert result["detection"]["groups"] == [[1, 2], [3, 3]]
+    assert not result["detection"]["findings"]
+
+
+def test_auto_combines_markers_identity_and_independent_counter_region(tmp_path):
+    path = fixture_pdf(tmp_path/"source.pdf")
+    with fitz.open(path) as pdf:
+        for page, (current, total) in zip(pdf, [(1, 2), (2, 2), (1, 3), (2, 3), (3, 3), (1, 1)], strict=True):
+            page.insert_text((30, 700), f"Page {current} of {total}")
+        pdf.saveIncr()
+    cache = tmp_path/"pages.sqlite"
+    analyzed = analyze_pdf(path, cache)
+    config = DetectionConfig(**analyzed["suggestions"][0]["config"])
+    assert {r["kind"] for r in config.rules} == {"first_text", "document_id", "page_number"}
+    assert config.rules[0]["region_mm"] != config.rules[2]["region_mm"]
+    result = scan_pdf(path, config, cache_path=cache)["detection"]
+    assert result["groups"] == [[1, 2], [3, 5], [6, 6]] and not result["findings"]
+
+
+def test_marker_identity_restart_conflicting_with_printed_counter_is_flagged():
+    config = cfg()
+    config.rules.append({"kind": "page_number", "auto": True})
+    result = detect_index(Index([letter(True)+[(200, "Page 1 of 2")],
+                                 letter(True, "002")+[(200, "Page 2 of 2")]]), config)
+    assert "start_counter_conflict" in {f["code"] for f in result["findings"]}

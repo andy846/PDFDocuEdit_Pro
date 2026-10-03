@@ -5,6 +5,7 @@ import copy
 from dataclasses import asdict
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -191,7 +192,12 @@ class SmartDetectionControls:
         self.pair_mode.setCurrentIndex(self.pair_mode.findData("teaching"))
         self.update_method()
         self.refresh_pair()
-        QTimer.singleShot(0, lambda: self.controls_scroll.ensureWidgetVisible(self.first_sample))
+        self.summary.setText("Teaching: draw a static first-page feature, capture its region, then try the rule.")
+        QTimer.singleShot(0, self.scroll_to_lesson)
+
+    def scroll_to_lesson(self):
+        if not sip.isdeleted(self) and self.teaching and self.isVisible():
+            self.controls_scroll.verticalScrollBar().setValue(max(0, self.first_sample.y()-24))
 
     def lesson_changed(self, *_):
         if self.teaching:

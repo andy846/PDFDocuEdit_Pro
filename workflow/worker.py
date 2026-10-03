@@ -116,7 +116,10 @@ def dispatch(request, progress, cancelled):
                           name=project.name if project else workflow.name,external_fields=external_fields(workflow))
         if project and project.source.sha256==source.sha256:
             spec.source_link=project.source_link
-        spec.detection_review=detection_audit(spec)
+        report = workflow.node("group").params.get("detection_review")
+        if report and report.get("source_sha256") != source.sha256:
+            raise CompositionError("Detection source changed. Analyze and review again before opening Designer.")
+        spec.detection_review=detection_audit(spec, report)
         spec.validate()
         if operation=="bind_overlay":
             return {"spec":spec.to_dict()}

@@ -341,7 +341,7 @@ class WorkflowWindow(QMainWindow):
         previous=self.spec if hasattr(self,"spec") else None
         self.spec=WorkflowSpec.from_dict(raw)
         if previous and previous.fingerprint()!=self.spec.fingerprint():
-            upstream=("input","merge","extract","group")
+            upstream=("input","merge","extract")
             changed=any((previous.node(k).params if previous.node(k) else None)!=(self.spec.node(k).params if self.spec.node(k) else None) for k in upstream)
             if changed:
                 self.review_generation+=1
@@ -349,6 +349,18 @@ class WorkflowWindow(QMainWindow):
                 self.results.setRowCount(0)
                 self.groups_model.update([])
             else:
+                grouping_changed = ((previous.node("group").params if previous.node("group") else None)
+                                    != (self.spec.node("group").params if self.spec.node("group") else None))
+                if grouping_changed:
+                    self.review_generation += 1
+                    self.run.groups = []
+                    self.run.accepted = False
+                    self.groups_model.update([])
+                    for kind in ("group", "review"):
+                        node = self.spec.node(kind)
+                        if node:
+                            self.run.statuses.pop(node.id, None)
+                            self.run.signatures.pop(node.id, None)
                 for n in self.spec.nodes:
                     if n.kind in ("overlay","output"):
                         self.run.statuses.pop(n.id,None)
@@ -435,8 +447,9 @@ class WorkflowWindow(QMainWindow):
             layout.addWidget(info)
             button("Edit visual extraction regions…",self.edit_regions)
         elif node.kind=="group":
+            button("Auto Detect Mailpieces…", self.auto_detect_mailpieces)
             method=QComboBox()
-            for label,key in (("Fixed pages per envelope","fixed"),("Extracted field changes","field"),("Printed page-number pattern","pattern")):
+            for label,key in (("Fixed pages per envelope","fixed"),("Extracted field changes","field"),("Printed page-number pattern","pattern"), ("Accepted automatic detection", "reviewed_detection")):
                 method.addItem(label,key)
             method.setCurrentIndex(method.findData(node.params.get("method","fixed")))
             pages=QSpinBox()
@@ -461,7 +474,8 @@ class WorkflowWindow(QMainWindow):
             method.currentIndexChanged.connect(availability)
             availability()
             self.watch_settings(node,lambda:{"method":method.currentData(),"pages":pages.value(),
-                                            "field":field.currentData(),"pattern":pattern.text()},[method,pages,field,pattern])
+                                            "field":field.currentData(),"pattern":pattern.text(),
+                                            **({"detection_review": node.params["detection_review"]} if method.currentData()=="reviewed_detection" and "detection_review" in node.params else {})},[method,pages,field,pattern])
             button("Apply grouping",self.flush_settings)
         elif node.kind=="review":
             info=QLabel("Review extracted values and envelope boundaries. Production waits for explicit acceptance and zero unresolved findings.")
@@ -501,6 +515,36 @@ class WorkflowWindow(QMainWindow):
                 after["edges"].remove(edge)
                 after["edges"].extend([[node.id,merge.id],[merge.id,edge[1]]])
         return self.commit(after,"Configure "+LABELS[node.kind])
+
+    def auto_detect_mailpieces(self):
+        previous = getattr(self, "detection_dialog", None)
+        if previous and not sip.isdeleted(previous) and previous.isVisible():
+            previous.raise_()
+            previous.activateWindow()
+            return
+        if self.active_worker or self.capture_active or not self.flush_settings():
+            return
+        extraction = self.spec.node("extract")
+        if not extraction or not extraction.params.get("regions"):
+            self.message("Add a named extraction region first. For grouping without data extraction, use Auto Detect Mailpieces in PDF Overlay.")
+            if extraction:
+                self.select_node(extraction.id)
+            return
+        if not self.run.source or not self.run.database:
+            self.pending_mailpiece_detection = True
+            self.execute("extract")
+            return
+        def ready(source):
+            from composition.designer.mailpiece_dialog import MailpieceDialog
+            from composition.designer.mailpiece_workflow import WorkflowDetectionHost
+            previous_host = getattr(self, "detection_host", None)
+            if previous_host and not sip.isdeleted(previous_host):
+                previous_host.deleteLater()
+            self.detection_host = WorkflowDetectionHost(self, source)
+            self.detection_dialog = MailpieceDialog(self.detection_host)
+            self.detection_dialog.show()
+        self.request({"task": "overlay_inspect", "source": self.run.source,
+                      "settings": {"pages_per_envelope": 1}, "uniform": True}, ready)
 
     def add_optional(self,kind):
         if not self.flush_settings() or self.spec.node(kind):
@@ -698,6 +742,10 @@ class WorkflowWindow(QMainWindow):
             self.production_summary.setPlainText("Production is running. The result will appear when the job finishes.")
         def ready(result):
             self.run=WorkflowRun(**result)
+            if getattr(self, "pending_mailpiece_detection", False):
+                self.pending_mailpiece_detection = False
+                if not self.run.error and self.run.source and self.run.database:
+                    QTimer.singleShot(0, self.auto_detect_mailpieces)
             self.canvas.display(self.spec,self.run.statuses,self.selected)
             self.message(self.run.error or ("Review and accept the results before production." if not self.run.accepted else "Workflow step completed."))
             self.groups_model.update(self.run.groups)
