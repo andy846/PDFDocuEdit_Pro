@@ -128,10 +128,15 @@ class DesignerChrome:
         for key, label, slot in [("grid", "Show 5 mm grid", lambda on: self.canvas.set_grid(on)),
                                  ("snap", "Snap to 5 mm grid", lambda on: self.canvas.set_snap(on)),
                                  ("data_panel", "Data / Layers panel", lambda on: self.left_panel.setVisible(on)),
-                                 ("properties", "Properties panel", lambda on: self._show_properties(on))]:
+                                 ("properties", "Edit properties", self.toggle_properties_panel)]:
             value = action(key, label, slot, "&View", symbol="settings")
             value.setCheckable(True)
             value.setChecked(key in {"data_panel", "properties"})
+        self.actions["properties"].setIcon(icon("panel-right"))
+        self.actions["properties"].setIconText("Properties")
+        self.actions["properties"].setProperty("designer_icon", "panel-right")
+        self.actions["properties"].setToolTip("Show or hide object properties (double-click an object to edit)")
+        self.project_toolbar.addAction(self.actions["properties"])
         self.project_toolbar.addSeparator()
         action("import", "Import data…", self.import_data, "&Data", "Ctrl+I", "table", self.project_toolbar)
         action("sequences", "Running sequences…", self.edit_sequences, "&Data", symbol="table")
@@ -212,6 +217,7 @@ class DesignerChrome:
         self.failed_codepoint = ""
         from .compact_chrome import configure_compact_chrome
         configure_compact_chrome(self)
+        self.project_toolbar.widgetForAction(self.actions["properties"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         geometry = self.preferences.value("geometry")
         splitter = self.preferences.value("splitter")
         if geometry and not self.embedded:

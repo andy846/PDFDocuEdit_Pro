@@ -49,6 +49,11 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             control.blockSignals(False)
         self.sync_layers()
         self.update_payload_summary(obj)
+        chosen = frozenset(ids)
+        if chosen != getattr(self, "inspector_selection", None):
+            self.inspector_selection = chosen
+            if selected and not self.preview_only.isChecked():
+                self.inspector.show()
 
     def canvas_edit(self, before, after):
         raw = self.spec.to_dict()

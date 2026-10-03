@@ -424,6 +424,12 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._sync_layers()
         self._update_actions()
 
+        key = (self.font_epoch, self.active_page_id, frozenset(chosen))
+        if key != self.inspector_selection:
+            self.inspector_selection = key
+            if chosen and self.tabs.currentIndex() == 1:
+                self.reveal_properties()
+
     def _property_edit(self, values):
         if self.properties.bulk_ids:
             self._edit_bulk_properties(values)

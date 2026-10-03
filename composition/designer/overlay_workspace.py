@@ -336,6 +336,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.inspector.setMinimumWidth(260)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.inspector)
         properties_action = self.inspector.toggleViewAction()
+        properties_action.setIconText("Properties")
         properties_action.setIcon(icon("panel-right"))
         properties_action.setProperty("designer_icon", "panel-right")
         properties_action.setToolTip("Show or hide object properties")

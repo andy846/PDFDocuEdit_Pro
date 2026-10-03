@@ -75,3 +75,26 @@ Workspace and Designer using a real production template.
 
 Full regression and Windows packaging remain deferred until the operator
 confirms this batch of feature changes is complete.
+
+## Follow-up — Textbox inspector discoverability
+
+The narrow layout moved the inspector into the left Properties tab, but ordinary
+selection did not activate that tab. A selected object could therefore have
+loaded properties which were not visible to the operator.
+
+- A new selection in Design now reveals the inspector automatically. Wide
+  windows use the right panel; narrow windows activate the Properties tab.
+  Multi-selection uses the same panel. Revealing it does not move keyboard focus
+  from the canvas or reset its view/preview.
+- The template toolbar includes a Properties action. It opens the inspector
+  even if the panel preference was already enabled while another left tab was
+  active. In Preview/Data/Production it returns to Design to edit. The label is
+  shown from 900 logical pixels; narrower layouts retain the icon and tooltip.
+- Inactive Properties pages follow QTabWidget visibility, preventing a hidden
+  page from being explicitly shown over Data/Layers during layout updates.
+- Selecting an overlay object likewise reopens its hidden inspector without
+  stealing canvas focus.
+- Focused validation: **51 passed** across continuity, usability, compact layout
+  and geometry; **8 passed** at 200% scale. Tests include actual mouse selection,
+  hidden-panel recovery, bulk size changes/Undo and returning from Preview.
+  Ruff and whitespace checks passed. The integrated screenshot was reviewed.

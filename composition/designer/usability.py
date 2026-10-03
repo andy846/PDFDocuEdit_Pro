@@ -1,7 +1,7 @@
 """Document Designer interaction state: compact inspector, content drafts and canvas views."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QTransform
 
 from composition.template.model import CompositionError, Template
@@ -14,6 +14,7 @@ class DesignerUsability:
         self.content_invalid = False
         self.page_views = {}
         self.compact_inspector = False
+        self.inspector_selection = None
         self.layout_timer = QTimer(self)
         self.layout_timer.setSingleShot(True)
         self.layout_timer.setInterval(70)
@@ -32,6 +33,8 @@ class DesignerUsability:
                 self.left_panel.addTab(self.properties_scroll, "Properties")
                 self.left_panel.setMinimumWidth(270)
                 self.splitter.setSizes([290, max(250, self.width()-330)])
+                if self.canvas.selected_ids() and self.actions["properties"].isChecked():
+                    self.left_panel.setCurrentWidget(self.properties_scroll)
             else:
                 index = self.left_panel.indexOf(self.properties_scroll)
                 if index >= 0:
@@ -41,6 +44,9 @@ class DesignerUsability:
                 self.splitter.setSizes([200, max(260, self.width()-500), 280])
         self.description.hide()
         self._show_properties(self.actions["properties"].isChecked())
+        button = self.project_toolbar.widgetForAction(self.actions["properties"])
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+                                  if self.width() >= 900 else Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._update_actions()
 
     def _show_properties(self, visible):
@@ -51,7 +57,28 @@ class DesignerUsability:
                 if not visible and self.left_panel.currentIndex() == index:
                     self.left_panel.setCurrentIndex(0)
                 self.left_panel.setTabVisible(index, visible)
-        self.properties_scroll.setVisible(visible)
+            # QTabWidget controls the visibility of inactive pages.
+            if visible:
+                self.properties_scroll.setVisible(self.left_panel.currentWidget() is self.properties_scroll)
+        else:
+            self.properties_scroll.setVisible(visible)
+
+    def reveal_properties(self):
+        """Expose the inspector without taking keyboard focus away from the canvas."""
+        self.actions["properties"].setChecked(True)
+        self.actions["data_panel"].setChecked(True)
+        self.left_panel.show()
+        self._show_properties(True)
+        if self.compact_inspector:
+            self.left_panel.setCurrentWidget(self.properties_scroll)
+
+    def toggle_properties_panel(self, visible):
+        if visible or not self.properties_scroll.isVisible():
+            if self.tabs.currentIndex() != 1:
+                self.tabs.setCurrentIndex(1)
+            self.reveal_properties()
+        else:
+            self._show_properties(False)
 
     def _filter_layers(self, *args):
         query = self.layer_filter.text().casefold()
@@ -60,12 +87,7 @@ class DesignerUsability:
             item.setHidden(query not in (item.text() + item.toolTip()).casefold())
 
     def focus_properties(self):
-        self.actions["properties"].setChecked(True)
-        self.actions["data_panel"].setChecked(True)
-        self.left_panel.show()
-        self._show_properties(True)
-        if self.compact_inspector:
-            self.left_panel.setCurrentWidget(self.properties_scroll)
+        self.reveal_properties()
         self.properties_scroll.ensureWidgetVisible(self.properties.content)
         if self.properties.element and self.properties.element.type in {"text", "qr", "code128", "i25"}:
             self.properties.content.setFocus()

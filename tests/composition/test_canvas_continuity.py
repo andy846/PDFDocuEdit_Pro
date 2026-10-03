@@ -4,7 +4,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
@@ -274,6 +274,99 @@ def test_narrow_overlay_properties_remain_accessible(app):
         assert action.isChecked()
         action.trigger()
         assert not window.inspector.isVisible()
+    finally:
+        finish(window)
+
+
+@pytest.mark.parametrize("size", [(960, 640), (1240, 820)])
+def test_clicking_textbox_reveals_properties_without_stealing_canvas_focus(app, size):
+    window = CompositionWindow()
+    try:
+        window.resize(*size)
+        window.show()
+        window.add_element("text", "First textbox")
+        first = window.page.elements[0].id
+        window.add_element("text", "Second textbox", x=100, y=70)
+        second = window.page.elements[1].id
+        window.preview_timer.stop()
+        window._adjust_inspector()
+        window.canvas.select_ids([])
+        window.actions["properties"].setChecked(False)
+        window._show_properties(False)
+        window.left_panel.setCurrentWidget(window.data_panel)
+        window.canvas.fit_page()
+        app.processEvents()
+        item = next(item for item in window.canvas.element_items if item.element.id == first)
+        point = window.canvas.mapFromScene(item.mapToScene(QPointF(10, 4)))
+        QTest.mouseClick(window.canvas.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        app.processEvents()
+        assert window.canvas.selected_ids() == [first]
+        assert window.properties.content.toPlainText() == "First textbox"
+        assert window.properties.isVisible()
+        assert window.actions["properties"].isChecked()
+        assert window.canvas.hasFocus()
+        if window.compact_inspector:
+            assert window.left_panel.currentWidget() is window.properties_scroll
+        window.canvas.select_ids([first, second])
+        assert window.properties.isVisible()
+        assert set(window.properties.bulk_ids) == {first, second}
+        window.properties.numbers["width_mm"].setValue(85)
+        window.properties.apply_geometry()
+        window.preview_timer.stop()
+        assert all(element.width_mm == 85 for element in window.page.elements)
+        window.undo.undo()
+        window.preview_timer.stop()
+        assert window.properties.isVisible()
+    finally:
+        cleanup(window)
+
+
+def test_properties_toolbar_opens_hidden_compact_tab_and_returns_to_design(app):
+    window = CompositionWindow()
+    try:
+        window.resize(960, 640)
+        window.show()
+        window.add_element("text", "Textbox")
+        window.preview_timer.stop()
+        window._adjust_inspector()
+        window.left_panel.setCurrentWidget(window.data_panel)
+        window._adjust_inspector()
+        assert window.data_panel.isVisible()
+        assert not window.properties_scroll.isVisible()
+        button = window.project_toolbar.widgetForAction(window.actions["properties"])
+        assert button.isVisible()
+        button.click()
+        assert window.properties.isVisible()
+        assert window.left_panel.currentWidget() is window.properties_scroll
+        button.click()
+        assert not window.properties.isVisible()
+        button.click()
+        assert window.properties.isVisible()
+        window.tabs.setCurrentIndex(2)
+        window.preview_timer.stop()
+        assert not window.properties.isVisible()
+        button.click()
+        window.preview_timer.stop()
+        assert window.tabs.currentIndex() == 1 and window.properties.isVisible()
+    finally:
+        cleanup(window)
+
+
+def test_selecting_overlay_text_reopens_hidden_inspector_without_focus_change(app, tmp_path):
+    window = OverlayWindow()
+    try:
+        window.resize(960, 640)
+        window.show()
+        window.apply_spec(sample_spec(tmp_path).to_dict())
+        window.timer.stop()
+        app.processEvents()
+        window.inspector.hide()
+        window.canvas.select_ids([])
+        window.canvas.setFocus()
+        window.canvas.select_ids([window.spec.objects[0].element.id])
+        assert window.inspector.isVisible()
+        assert window.properties.element.id == window.spec.objects[0].element.id
+        assert window.canvas.hasFocus()
     finally:
         finish(window)
 
