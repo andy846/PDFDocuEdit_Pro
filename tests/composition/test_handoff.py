@@ -73,7 +73,7 @@ def test_managed_overlay_saved_source_durable_and_headless_review_gate(engine, t
     saved = save_project(spec, tmp_path / "job.pdcx")
     shutil.rmtree(tmp_path / "handoff")
     reopened = load_project(saved)
-    assert reopened.overlay_version == 4
+    assert reopened.overlay_version == 5
     assert reopened.source.path.startswith(str(tmp_path / "job.assets"))
     result = generate(OverlayJob(reopened.to_dict(), str(tmp_path / "outputs")))
     assert result.status == "completed", result.error
@@ -100,7 +100,7 @@ def test_legacy_formats_migrate_and_invalid_metadata_rejected(engine, tmp_path):
     raw = EnvelopeSpec(source, EnvelopeSettings(pages_per_envelope=1)).to_dict()
     raw["overlay_version"] = 3
     raw.pop("source_link")
-    assert EnvelopeSpec.from_dict(raw).overlay_version == 4
+    assert EnvelopeSpec.from_dict(raw).overlay_version == 5
     value = Template().to_dict()
     value["template_version"] = 7
     value.pop("source_link")

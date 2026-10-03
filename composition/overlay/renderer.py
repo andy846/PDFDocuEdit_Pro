@@ -27,8 +27,13 @@ class ScopedPlan(ElementPlan):
         return super().resolve(record, design=design)
 
 
-def page_values(spec, plan, job_id):
+def page_values(spec, plan, job_id, external_values=None):
     fields = plan.fields(job_id)
+    if spec.external_fields:
+        values=external_values(plan) if external_values else dict.fromkeys(spec.external_fields, "")
+        if set(values)!=set(spec.external_fields) or any(not isinstance(v,str) for v in values.values()):
+            raise CompositionError("Workflow values do not match the declared extraction fields.")
+        fields.update(values)
     for obj in spec.objects:
         if obj.profile:
             fields[barcode_field(obj)] = (obj.profile.payload(fields)
@@ -36,12 +41,12 @@ def page_values(spec, plan, job_id):
     return fields
 
 
-def page_records(spec, plan, job_id, is_cancelled=None):
+def page_records(spec, plan, job_id, is_cancelled=None, external_values=None):
     from composition.production.generator import check_cancel
     for page in plan.pages():
         check_cancel(is_cancelled)
         try:
-            yield page.output_page, page_values(spec, page, job_id)
+            yield page.output_page, page_values(spec, page, job_id, external_values)
         except ValueError as exc:
             raise CompositionError(f"Output page {page.output_page}, envelope {page.envelope}: {exc}") from exc
 
@@ -121,13 +126,13 @@ class OverlayRenderer:
         return marks
 
 
-def render_preview(spec, envelope, print_page, *, auto_repair=True):
+def render_preview(spec, envelope, print_page, *, auto_repair=True, external_values=None):
     spec.validate()
     source_path=Path(spec.source.path)
     if _stat(source_path) != (spec.source.size,spec.source.mtime_ns):
         raise CompositionError("Source PDF changed since inspection. Reinspect before previewing.")
     plan=EnvelopePlan(spec.source.pages,spec.settings).page(envelope,print_page)
-    fields=page_values(spec,plan,"preview")
+    fields=page_values(spec,plan,"preview",external_values)
     with fitz.open(source_path) as source, fitz.open() as output, fitz.open() as layers, OverlayRenderer(
         spec,auto_repair=auto_repair,
     ) as renderer:

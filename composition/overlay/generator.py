@@ -47,8 +47,10 @@ def _error_page(result, page):
     result.error_output_page=page.output_page
 
 
-def generate(job, *, progress=None, is_cancelled=None):
+def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None):
     spec=EnvelopeSpec.from_dict(job.project)
+    if spec.external_fields and external_values is None:
+        raise CompositionError("This overlay requires reviewed Workflow extraction data. Generate it from Workflow.")
     if spec.needs_source_review:
         raise CompositionError("Confirm grouping and review the updated PDF source before generating.")
     if spec.needs_detection_review:
@@ -100,7 +102,7 @@ def generate(job, *, progress=None, is_cancelled=None):
             renderer=resources.enter_context(OverlayRenderer(spec,auto_repair=job.auto_repair,
                        fallback_directory=staging/"fallback",is_cancelled=is_cancelled))
             try:
-                renderer.renderer.prepare_fonts(page_records(spec,plan,job.job_id,is_cancelled),staging/"fonts",
+                renderer.renderer.prepare_fonts(page_records(spec,plan,job.job_id,is_cancelled,external_values),staging/"fonts",
                             progress,is_cancelled,audit_path=staging/"glyph-repairs.csv")
             finally:
                 result.font_scan=dict(renderer.renderer.repair_summary)
@@ -109,7 +111,7 @@ def generate(job, *, progress=None, is_cancelled=None):
             for page in plan.pages():
                 check_cancel(is_cancelled)
                 current=page
-                fields=page_values(spec,page,job.job_id)
+                fields=page_values(spec,page,job.job_id,external_values)
                 selected=renderer.selections(fields,verified.page_geometry(page))
                 result.expected_barcodes+=sum(element.type in ("qr","code128","i25") for element,_obj,_value in selected)
             current=None
@@ -128,7 +130,7 @@ def generate(job, *, progress=None, is_cancelled=None):
                 for page in batch:
                     check_cancel(is_cancelled)
                     current = page
-                    fields = page_values(spec, page, job.job_id)
+                    fields = page_values(spec, page, job.job_id,external_values)
                     geom = verified.page_geometry(page)
                     layer_index, marks = renderer.build_layer(layers, page, fields, geom)
                     prepared.append((page, fields, geom, layer_index, marks))
@@ -214,6 +216,8 @@ def generate(job, *, progress=None, is_cancelled=None):
                 row(writer, plan.envelope_row(envelope, "Completed"))
         result.status="completed"
         result.finished_at=now()
+        if additional_reports:
+            additional_reports(staging,result)
         write_summary(staging,result,spec)
         for path in (staging/"source-snapshot.pdf",staging/"marks.jsonl"):
             path.unlink()
