@@ -424,6 +424,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.undo.push(TemplateEdit(self, before, after, label, selected, page_id, content_only))
 
     def _selection(self, selected):
+        if hasattr(self, "batch_editor") and not self.batch_editor.selection(self.canvas.selected_ids()):
+            self._sync_layers()
+            return
         if self.content_invalid and self.properties.element:
             object_id = self.properties.element.id
             if selected != object_id:
@@ -524,6 +527,12 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.activityChanged.emit()
 
     def _mode_changed(self, index):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            self.tabs.blockSignals(True)
+            self.tabs.setCurrentIndex(getattr(self, "_designer_last_tab", 1))
+            self.tabs.blockSignals(False)
+            return
+        self._designer_last_tab = index
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
         self.canvas.set_preview_mode(index == 2)
         self.record_navigation.setVisible(index == 2)
@@ -674,7 +683,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self._commit(before, after, "Remove missing-glyph repair", self.canvas.selected_ids())
 
     def use_cjk_font(self):
-        self.properties.apply()
+        if self.properties.apply() is False:
+            return False
         if self.content_invalid or self.import_worker or self.production_worker:
             return
         selected = self.canvas.selected_ids()
@@ -692,6 +702,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
 
     def object_command(self, command):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
         if command != "copy" and (self.import_worker or self.production_worker or self.content_invalid or self.canvas.mode_preview):
             return
         selected = set(self.canvas.selected_ids())
@@ -720,7 +732,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._commit(before, after, command.title())
 
     def _discard_check(self):
-        self.properties.apply()
+        if self.properties.apply() is False:
+            return False
         if self.undo.isClean() and not self.content_invalid:
             return True
         answer = QMessageBox.question(self, "Unsaved document design", "Save changes to this project?",
@@ -807,7 +820,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                 self.import_data()
 
     def save_project(self, checked=False, save_as=False):
-        self.properties.apply()
+        if self.properties.apply() is False:
+            return False
         if self.content_invalid:
             self._error("Finish or revert the unfinished content before saving.")
             return False
@@ -959,7 +973,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._schedule_preview()
 
     def generate_pdf(self):
-        self.properties.apply()
+        if self.properties.apply() is False:
+            return False
         if self.content_invalid:
             self._error("Finish or revert the unfinished edit before generation.")
             return

@@ -310,6 +310,8 @@ class DesignerChrome:
         self.canvas.select_ids([element.id for element in self.page.elements])
 
     def arrange_objects(self, mode):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
         if self.content_invalid or self.import_worker or self.production_worker:
             return
         selected = set(self.canvas.selected_ids())
@@ -439,6 +441,8 @@ class DesignerChrome:
         for key in ("cut", "copy", "paste", "duplicate", "delete"):
             menu.addAction(self.actions[key])
         menu.addSeparator()
+        menu.addAction(self.actions["copy_format"])
+        menu.addAction(self.actions["paste_format"])
         arrange = menu.addMenu("Arrange")
         for key, value in self.actions.items():
             if key.startswith(("rotate_", "arrange_")):

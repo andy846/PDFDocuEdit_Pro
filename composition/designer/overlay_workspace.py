@@ -395,7 +395,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.error(message)
 
     def busy(self):
-        locked = bool(self.active_worker or self.font_token or getattr(self,"workflow_binding",False))
+        locked = bool(self.active_worker or self.font_token or getattr(self,"batch_pending",False) or getattr(self,"workflow_binding",False))
         valid = self.spec is not None and not self.draft_error
         for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate"):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
@@ -421,8 +421,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.required_scope.setToolTip(
             "Each required position must contain exactly one visible machine control barcode."
             if control_required else "Not required: no object is marked as a machine control barcode.")
-        self.envelope.setEnabled(not self.draft_error)
-        self.print_page.setEnabled(not self.draft_error)
+        self.envelope.setEnabled(not self.draft_error and not locked)
+        self.print_page.setEnabled(not self.draft_error and not locked)
         if locked:
             for control in (self.scope, self.control, self.letter_page, self.profile_button):
                 control.setEnabled(False)
@@ -436,6 +436,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
             if key in self.actions:
                 self.actions[key].setEnabled(valid and not locked and not self.preview_only.isChecked()
                                              and bool(self.canvas.selected_ids()))
+        if hasattr(self,"batch_editor"):
+            self.batch_editor.update_actions()
         self.activityChanged.emit()
 
     def title(self):
@@ -488,6 +490,18 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def refresh_canvas(self, *args, selected=None):
         if not self.spec:
             return
+        editor = getattr(self, "batch_editor", None)
+        current_page = (self.envelope.value(), self.print_page.value())
+        if editor and editor.last_page != current_page and not editor.committing:
+            if not editor.resolve():
+                if editor.last_page:
+                    for control, value in zip((self.envelope, self.print_page), editor.last_page, strict=True):
+                        control.blockSignals(True)
+                        control.setValue(value)
+                        control.blockSignals(False)
+                return
+        if editor:
+            editor.last_page = current_page
         plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
         self.print_page.blockSignals(True)
         self.print_page.setMaximum(plan.settings_for(self.envelope.value()).output_pages_per_envelope)

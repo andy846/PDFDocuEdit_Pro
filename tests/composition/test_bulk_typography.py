@@ -49,6 +49,7 @@ def window(app):
     w.production_worker = w.import_worker = None
     w.font_requests.clear()
     w.content_invalid = False
+    w.batch_editor.revert()
     cleanup(w)
 
 
@@ -65,6 +66,8 @@ def test_mixed_size_changes_only_size_and_one_undo(window):
     control = window.properties.numbers["font_size"]
     control.setValue(14)
     control.editingFinished.emit()
+    assert snapshots(window) == before
+    assert window.batch_editor.apply()
     after = snapshots(window)
     expected = copy.deepcopy(before)
     for e in expected[:2]:
@@ -92,6 +95,7 @@ def test_bulk_layout_colour_preserves_other_properties(window, key, value):
     else:
         p.colour.setText(value)
         p.colour.editingFinished.emit()
+    assert window.batch_editor.apply()
     expected = copy.deepcopy(before)
     for e in expected[:2]:
         e[key] = value
@@ -103,10 +107,13 @@ def test_bulk_layout_colour_preserves_other_properties(window, key, value):
 def test_toolbar_size_formats_text_and_human_barcode_only(window):
     ids = [e.id for e in window.page.elements]
     window.canvas.select_ids([ids[0], ids[3], ids[4], ids[5]])
+    assert len(window.properties.bulk_ids) == 1
+    window.properties.include_barcode.setChecked(True)
     assert len(window.properties.bulk_ids) == 2
     before = snapshots(window)
     window.font_size_tool.setValue(15)
     window.font_size_tool.editingFinished.emit()
+    assert window.batch_editor.apply()
     expected = copy.deepcopy(before)
     for index in [0, 4]:
         expected[index]["font"]["size_pt"] = 15
@@ -117,7 +124,9 @@ def test_toolbar_size_formats_text_and_human_barcode_only(window):
 def test_same_family_explicit_selection_applies_to_mixed_fonts_only(window):
     before = snapshots(window)
     p = window.properties
+    p.font_family.setCurrentText("Noto Sans")
     p.font_family.activated.emit(p.font_family.currentIndex())
+    assert window.batch_editor.apply()
     expected = copy.deepcopy(before)
     for e in expected[:2]:
         e["font"].update(family="Noto Sans", file="", bold=False, italic=False)
@@ -130,8 +139,11 @@ def test_same_family_explicit_selection_applies_to_mixed_fonts_only(window):
 def test_bundled_bold_style_applies_without_changing_individual_sizes(window):
     before = snapshots(window)
     p = window.properties
+    p.font_family.setCurrentText("Noto Sans")
+    p._set_styles("Noto Sans")
     p.font_style.setCurrentIndex(p.font_style.findText("Bold"))
     p.font_style.activated.emit(p.font_style.currentIndex())
+    assert window.batch_editor.apply()
     expected = copy.deepcopy(before)
     for e in expected[:2]:
         e["font"].update(family="Noto Sans", file="", bold=True, italic=False)
@@ -198,7 +210,8 @@ def test_windows_exact_face_prepared_once_and_applied_atomically(window):
     p.font_style.setCurrentIndex(p.font_style.findText("Bold"))
     p.loading = False
     p.font_style.activated.emit(p.font_style.currentIndex())
-    wait(lambda: not window.font_requests)
+    assert not calls
+    assert window.batch_editor.apply(wait=True)
     assert calls.count("font_export") == 1
     assert window.undo.count() == 1
     after = snapshots(window)
@@ -267,6 +280,7 @@ def test_typing_first_size_explicitly_can_unify_mixed_sizes(window):
     control.lineEdit().selectAll()
     QTest.keyClicks(control.lineEdit(), "9")
     control.editingFinished.emit()
+    assert window.batch_editor.apply()
     assert [e.font.size_pt for e in window.page.elements[:2]] == [9, 9]
     assert window.undo.count() == 1
 
@@ -283,6 +297,7 @@ def test_toolbar_draft_survives_real_background_preview_refresh(window):
     wait(lambda: window.canvas.preview_item is not None)
     assert window.font_size_tool.value() == 12 and window.toolbar_size_dirty
     window.font_size_tool.editingFinished.emit()
+    assert window.batch_editor.apply()
     assert [e.font.size_pt for e in window.page.elements[:2]] == [12, 12]
 
 

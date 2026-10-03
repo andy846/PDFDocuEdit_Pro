@@ -53,6 +53,9 @@ class OverlayUsability:
             self.layers.blockSignals(False)
 
     def select_layer_objects(self, ids=None):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            self.sync_layers()
+            return
         if not self.spec or self.active_worker or self.font_token or self.draft_error:
             return
         ids = ids if ids is not None else [item.data(Qt.ItemDataRole.UserRole) for item in self.layers.selectedItems()]

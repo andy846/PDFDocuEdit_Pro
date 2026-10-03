@@ -186,7 +186,7 @@ class DesignerProjectHost(QWidget):
     def is_busy(project):
         return bool(getattr(project, "production_worker", None) or getattr(project, "import_worker", None)
                     or getattr(project, "active_worker", None) or getattr(project, "font_requests", None)
-                    or getattr(project, "font_token", None) or getattr(project,"capture_active",False) or getattr(project,"workflow_binding",False))
+                    or getattr(project, "batch_pending", False) or getattr(project, "font_token", None) or getattr(project,"capture_active",False) or getattr(project,"workflow_binding",False))
 
     def update_project(self, project):
         if sip.isdeleted(self) or sip.isdeleted(project) or sip.isdeleted(self.tabs):
@@ -197,7 +197,7 @@ class DesignerProjectHost(QWidget):
         kind = "Workflow" if getattr(project,"is_workflow",False) else "Template" if hasattr(project, "template") else "Overlay"
         model = project.template if hasattr(project, "template") else project.spec
         name = project.project_path.name if project.project_path else model.name if model and (getattr(model,"source_link",None) or getattr(project,"is_workflow",False)) else "Untitled"
-        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
+        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))
         self.tabs.setTabText(index, f"{kind} · {name}" + (" *" if dirty else "") + (" ●" if self.is_busy(project) else ""))
         self.tabs.setTabToolTip(index, project.windowTitle())
         self.activityChanged.emit()
@@ -205,8 +205,12 @@ class DesignerProjectHost(QWidget):
     def confirm_project_close(self, project):
         # Never discard a draft during preflight: a later project may cancel application exit.
         if not self.is_busy(project):
-            project.properties.apply()
-        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
+            if project.properties.apply() is False:
+                return False
+        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))
+        editor = getattr(project, "batch_editor", None)
+        if editor and editor.deferred_discard:
+            dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
         if not dirty:
             return True
         answer = QMessageBox.question(self, "Unsaved Designer project", "Save changes to " + (project.project_path.name if project.project_path else "this project") + "?",
@@ -232,7 +236,14 @@ class DesignerProjectHost(QWidget):
         return bool(completed)
 
     def confirm_all(self):
-        return all(self.confirm_project_close(project) for project in self.projects)
+        editors = [p.batch_editor for p in self.projects if hasattr(p, "batch_editor")]
+        for editor in editors:
+            editor.defer_discard = True
+        try:
+            return all(self.confirm_project_close(project) for project in self.projects)
+        finally:
+            for editor in editors:
+                editor.defer_discard = editor.deferred_discard = False
 
     def close_project(self, project, *, approved=False):
         if project not in self.projects:

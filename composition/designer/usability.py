@@ -157,7 +157,7 @@ class DesignerUsability:
         self._schedule_preview()
 
     def _restrict_editing(self):
-        busy = bool(self.import_worker or self.production_worker)
+        busy = bool(self.import_worker or self.production_worker or getattr(self,"batch_pending",False))
         pending = bool(self.font_requests or any(getattr(worker, "task", "") == "background"
                                                for worker in self.workers))
         editable = not (busy or self.content_invalid)
@@ -193,6 +193,8 @@ class DesignerUsability:
             button.setEnabled(self.actions[key].isEnabled())
         for index in (0, 2, 3):
             self.tabs.setTabEnabled(index, not self.content_invalid)
+        if hasattr(self,"batch_editor"):
+            self.batch_editor.update_actions()
         self._update_navigation()
         self.record.setEnabled(not self.content_invalid and self.record_count > 0)
         if self.content_invalid:

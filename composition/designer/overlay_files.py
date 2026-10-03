@@ -126,6 +126,8 @@ class OverlayFiles:
         self.fit_canvas()
 
     def save_project(self, checked=False, *, save_as=False, path=None, after=None):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
         if not self.spec or self.active_worker or self.font_token or self.draft_error:
             self.error("Finish or revert the unfinished edit and wait for the active task before saving.")
             return
@@ -147,6 +149,8 @@ class OverlayFiles:
         self.worker({"task": "overlay_save", "project": self.spec.to_dict(), "target": str(path)}, saved, active=True)
 
     def generate_pdf(self, checked=False, *, output_dir=None):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
         if self.spec and self.spec.needs_source_review:
             self.error("Confirm grouping / review the updated PDF source before generating.")
             return
@@ -204,6 +208,8 @@ class OverlayFiles:
             self.error("Cancelling at the next safe checkpoint…")
 
     def confirm_discard(self, callback):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
         if self.undo.isClean() and not self.draft_error:
             callback()
             return
@@ -216,6 +222,9 @@ class OverlayFiles:
             callback()
 
     def closeEvent(self, event):
+        if not self.embedded and not self._close_approved and hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            event.ignore()
+            return
         if self.embedded and not self._close_approved and not self.close_pending:
             event.ignore()
             QTimer.singleShot(0, lambda: self.project_host.close_project(self))

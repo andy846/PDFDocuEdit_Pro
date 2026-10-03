@@ -67,6 +67,9 @@ class ElementItem(QGraphicsRectItem):
     def mousePressEvent(self, event):
         if not self.canvas.editable:
             return super().mousePressEvent(event)
+        if hasattr(self.canvas, "before_edit") and not self.canvas.before_edit():
+            event.ignore()
+            return
         self.canvas.before = self.canvas.snapshot()
         self.resizing = (event.pos() - self.rect().bottomRight()).manhattanLength() < 5
         self.anchor = event.scenePos()
@@ -508,6 +511,8 @@ class Canvas(QGraphicsView):
         moves = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
                  Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
         if key in moves and not self.mode_preview and self.editable:
+            if hasattr(self, "before_edit") and not self.before_edit():
+                return
             before = self.snapshot()
             dx, dy = moves[key]
             step = 5 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 0.5

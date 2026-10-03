@@ -20,6 +20,9 @@ from .overlay_usability import OverlayUsability
 class OverlayActions(OverlayUsability, OverlayFiles):
     def selection_changed(self, *args):
         ids = self.canvas.selected_ids()
+        if hasattr(self, "batch_editor") and not self.batch_editor.selection(ids):
+            self.sync_layers()
+            return
         if self.draft_error:
             previous = getattr(self, "draft_ids", [])
             if set(ids) != set(previous):
@@ -36,7 +39,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             self.scope.setCurrentIndex(self.scope.findData(obj.scope))
             self.letter_page.setValue(obj.letter_page)
             self.control.setChecked(obj.control)
-        editable = not (self.active_worker or self.font_token or self.preview_only.isChecked())
+        editable = not (self.active_worker or self.font_token or getattr(self,"batch_pending",False) or self.preview_only.isChecked())
         for key in ("rotate_cw", "rotate_ccw", "rotate_reset"):
             if key in self.actions:
                 self.actions[key].setEnabled(bool(selected) and editable)
@@ -171,6 +174,8 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             self.commit(raw, "Edit barcode payload profile")
 
     def object_command(self, command):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
         if not self.spec:
             return
         ids = self.canvas.selected_ids()

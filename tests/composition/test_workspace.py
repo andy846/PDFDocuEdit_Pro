@@ -33,6 +33,8 @@ def wait_until(predicate, timeout=20):
 
 
 def close_window(window):
+    if hasattr(window, "batch_editor"):
+        window.batch_editor.revert()
     window.undo.setClean()
     window.close()
     wait_until(lambda: not window.workers)

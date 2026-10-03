@@ -126,7 +126,11 @@ def dispatch(request: dict) -> dict:
                                "style": "Saved exact face", "note": ""})
     if task == "font_export":
         from composition.engine.system_fonts import export_face
-        return checked_repair(export_face(request["face"], request["directory"]))
+        result = checked_repair(export_face(request["face"], request["directory"]))
+        if request.get("validate_pdf"):
+            from composition.engine.fonts import load_font
+            load_font(FontSpec(family=result["family"], file=result["file"]))
+        return result
     if task == "font_info":
         from composition.engine.system_fonts import inspect_font_file
         return {"faces": inspect_font_file(request["file"])}

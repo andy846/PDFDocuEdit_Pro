@@ -111,7 +111,9 @@ class PageOperations:
             self._refresh_pages()
             return
         target = self.template.pages[index].id
-        self.properties.apply()
+        if self.properties.apply() is False:
+            self._refresh_pages()
+            return False
         if self.content_invalid:
             self._refresh_pages()
             return
@@ -121,7 +123,9 @@ class PageOperations:
         if self.import_worker or self.production_worker or self.font_requests or self.content_invalid:
             self._error("Finish the active font or job operation before editing template pages.")
             return False
-        self.properties.apply()
+        if self.properties.apply() is False:
+            self._refresh_pages()
+            return False
         return not self.content_invalid
 
     def add_template_page(self, duplicate=False):

@@ -43,6 +43,8 @@ def commit_elements(window, changed, label):
 
 
 def arrange(window, operation, *, reference="selection", reference_id=None, gap=5):
+    if hasattr(window, "batch_editor") and not window.batch_editor.resolve():
+        return False
     if not window.canvas.editable or window.canvas.mode_preview or getattr(window, "font_requests", None) or getattr(window, "font_token", None):
         return False
     from dataclasses import asdict

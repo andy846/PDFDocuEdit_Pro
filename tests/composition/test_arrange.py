@@ -4,15 +4,21 @@ import copy
 from dataclasses import asdict
 
 import pytest
+from PyQt6.QtWidgets import QApplication
 
 from composition.designer.arrange import arrange
 from composition.template.geometry import element_bounds
 from composition.template.layout import arrange_elements
 from composition.template.model import CompositionError, Element, Template
-from tests.composition.test_layout_geometry import app, bounded_ui  # noqa: F401, F811
+from tests.composition.test_layout_geometry import bounded_ui  # noqa: F401
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import close_window
+
+
+@pytest.fixture(scope="session")
+def app():
+    return QApplication.instance() or QApplication([])
 
 
 def objects():

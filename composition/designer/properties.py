@@ -32,6 +32,9 @@ from .rule_controls import rules_summary
 
 
 class Properties(QWidget):
+    batchApplyRequested = pyqtSignal()
+    batchRevertRequested = pyqtSignal()
+    bulkChanged = pyqtSignal()
     edited = pyqtSignal(dict)
     geometryEdited = pyqtSignal(dict)
     fontRequested = pyqtSignal(dict)
@@ -49,6 +52,9 @@ class Properties(QWidget):
         self.geometry_ids = []
         self.multi_selection = False
         self.bulk_dirty = set()
+        self.bulk_font_request = None
+        self.batch_resolver = lambda: True
+        self.selection_elements = []
         self.displayed_numbers = {}
         self.catalogue = {}
         self.file_faces = {}
@@ -62,6 +68,23 @@ class Properties(QWidget):
         self.title.setWordWrap(True)
         self.title.setStyleSheet("font-weight: 600;")
         layout.addWidget(self.title)
+        self.include_barcode = QCheckBox("Include barcode text")
+        self.include_barcode.setToolTip("Code 128 / I25 text only; barcode payloads and profiles stay unchanged.")
+        self.include_barcode.setAccessibleName("Include barcode human-readable text")
+        self.include_barcode.hide()
+        self.include_barcode.toggled.connect(self._include_barcode_changed)
+        layout.addWidget(self.include_barcode)
+        self.batch_status = QLabel()
+        self.batch_status.setWordWrap(True)
+        self.batch_status.hide()
+        layout.addWidget(self.batch_status)
+        self.batch_revert = QPushButton("Revert changes")
+        self.batch_revert.setToolTip("Revert unapplied settings; committed objects are retained.")
+        self.batch_revert.setAccessibleName("Revert unapplied settings")
+        self.batch_revert.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.batch_revert.clicked.connect(self.batchRevertRequested)
+        self.batch_revert.hide()
+        layout.addWidget(self.batch_revert)
         self.empty = QLabel("Select an object on the page or in Layers to edit its properties.")
         self.empty.setWordWrap(True)
         layout.addWidget(self.empty)
@@ -102,7 +125,10 @@ class Properties(QWidget):
             row.addWidget(control)
             grid.addWidget(cell, index, 0)
             control.editingFinished.connect(lambda name=key: self.apply_field(name))
+        for check in self.geometry_checks.values():
+            check.toggled.connect(lambda: self.bulkChanged.emit() if self.multi_selection and not self.loading else None)
         self.geometry_apply = QPushButton("Apply to selected")
+        self.geometry_apply.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.geometry_apply.setToolTip("Only checked width, height and angle settings change. Text, fonts and other settings are retained.")
         self.geometry_apply.clicked.connect(self.apply_geometry)
         grid.addWidget(self.geometry_apply, 5, 0)
@@ -373,6 +399,12 @@ class Properties(QWidget):
     def show_element(self, element):
         self.geometry.setTitle("Geometry")
         self.bulk_dirty.clear()
+        self.bulk_font_request = None
+        self.batch_status.hide()
+        self.batch_revert.hide()
+        self.include_barcode.hide()
+        for control in self.numbers.values():
+            control.lineEdit().setPlaceholderText("")
         self.bulk_ids = []
         self.multi_selection = False
         self.geometry_ids = [element.id] if element else []
@@ -383,6 +415,9 @@ class Properties(QWidget):
             check.setChecked(False)
             check.hide()
             self.geometry_labels[key].show()
+        self.font_family.lineEdit().setPlaceholderText("")
+        self.font_style.setPlaceholderText("")
+        self.colour.setPlaceholderText("")
         self.empty.setText("Select an object on the page or in Layers to edit its properties.")
         self.repair_button.setEnabled(True)
         self.repair_button.show()
@@ -453,21 +488,35 @@ class Properties(QWidget):
         if len(selected) <= 1:
             self.show_element(selected[0] if selected else None)
             return
-        text = [e for e in selected if e.type == "text" or (e.type in {"code128", "i25"} and e.show_barcode_text)]
+        self.selection_elements = list(selected)
+        text = [e for e in selected if e.type == "text" or (self.include_barcode.isChecked() and e.type in {"code128", "i25"} and e.show_barcode_text)]
         self.show_element(text[0] if text else selected[0])
         self.multi_selection = True
+        self.include_barcode.setVisible(any(e.type in {"code128", "i25"} and e.show_barcode_text for e in selected))
         self.geometry_ids = [e.id for e in selected]
         self.restore_geometry(selected)
         self.bulk_ids = [e.id for e in text]
         self.font_family.lineEdit().setModified(False)
-        self.title.setText(f"{len(selected)} objects selected")
+        self.title.setText(f"{len(selected)} selected · {len(text)} formatting targets")
         for key in ("x_mm", "y_mm"):
             self.geometry_cells[key].hide()
         for key, check in self.geometry_checks.items():
             check.setEnabled(True)
             check.show()
             self.geometry_labels[key].hide()
+        self.geometry_apply.setText("Apply changes")
+        self.geometry_apply.setAccessibleName("Apply changed settings")
+        self.geometry_apply.setToolTip("Commit checked geometry and changed text settings together, with one Undo.")
         self.geometry_apply.show()
+        self.batch_revert.show()
+        self.batch_status.setText("Change settings, then Apply. Unchanged or mixed settings are retained.")
+        self.batch_status.show()
+        self.loading = True
+        for key in self.geometry_checks:
+            if any(getattr(e, key) != getattr(selected[0], key) for e in selected[1:]):
+                self.numbers[key].lineEdit().clear()
+                self.numbers[key].lineEdit().setPlaceholderText("Mixed")
+        self.loading = False
         if not text:
             for group in (self.rules_group, self.content_group, self.font_group, self.text_layout_group,
                           self.appearance_group, self.image_group, self.barcode_group):
@@ -475,6 +524,7 @@ class Properties(QWidget):
             self.geometry.show()
             self.empty.setText("Edit width, height or angle, then apply the checked settings to all selected objects.")
             self.empty.show()
+            self._refresh_layout()
             return
         differing = []
         for name, getter in [("fonts", lambda e: (e.font.family, e.font.file, e.font.bold, e.font.italic)),
@@ -484,7 +534,7 @@ class Properties(QWidget):
             if any(getter(e) != getter(text[0]) for e in text[1:]):
                 differing.append(name)
         note = ("Mixed " + ", ".join(differing) + ". " if differing else "")
-        note += f"Font values are from first text; formatting applies to {len(text)} text objects. "
+        note += f"Formatting targets: {len(text)}. Mixed values stay unchanged until edited. "
         note += "Checked width, height and angle apply to all selected objects; unchecked geometry is retained."
         if len(selected) != len(text):
             note += f" {len(selected)-len(text)} other objects excluded."
@@ -502,56 +552,116 @@ class Properties(QWidget):
         self.repair_status.setText("Existing glyph repairs are retained.")
         self.repair_status.setVisible(any(e.glyph_repairs for e in text))
         self.font_status.setText("Exact face changes apply to selected text.")
-        self.font_style.setToolTip("Styles refer to the first selected text; choosing one applies it to all.")
+        self.font_style.setToolTip("Choose an exact style to apply to the formatting targets.")
+        self.loading = True
+        for key, getter in (("font_size", lambda e: e.font.size_pt), ("line_spacing", lambda e: e.line_spacing)):
+            if any(getter(e) != getter(text[0]) for e in text[1:]):
+                self.numbers[key].lineEdit().clear()
+                self.numbers[key].lineEdit().setPlaceholderText("Mixed")
+        for control, getter in ((self.alignment, lambda e: e.align), (self.vertical, lambda e: e.vertical_align)):
+            control.setPlaceholderText("Mixed")
+            if any(getter(e) != getter(text[0]) for e in text[1:]):
+                control.setCurrentIndex(-1)
+        if "fonts" in differing:
+            self.font_family.setCurrentIndex(-1)
+            self.font_family.lineEdit().setPlaceholderText("Mixed fonts")
+            self.font_style.setCurrentIndex(-1)
+            self.font_style.setPlaceholderText("Mixed styles")
+        if "colours" in differing:
+            self.colour.clear()
+            self.colour.setPlaceholderText("Mixed")
+        self.loading = False
+        self._refresh_layout()
+        self.bulkChanged.emit()
+
+    def _refresh_layout(self):
+        # Apply hidden-group size constraints now, before the inspector computes scrollbars.
+        for widget in reversed(self.findChildren(QWidget)):
+            if widget.layout():
+                widget.layout().invalidate()
+                widget.layout().activate()
+        self.form_widget.layout().activate()
+        self.layout().invalidate()
+        self.layout().activate()
+        self.setMinimumWidth(self.minimumSizeHint().width())
+        if self.parentWidget():
+            self.resize(max(self.minimumWidth(), self.parentWidget().width()), self.height())
+        self.updateGeometry()
+
+    def has_batch_draft(self):
+        return bool(self.multi_selection and (self.bulk_dirty or self.bulk_font_request or
+                    any(check.isChecked() for check in self.geometry_checks.values())))
+
+    def batch_values(self):
+        geometry = {key: self.numbers[key].value() for key, check in self.geometry_checks.items() if check.isChecked()}
+        values = {}
+        font = {}
+        if "font" in self.bulk_dirty and not self.bulk_font_request:
+            font.update({k: self.font_choice[k] for k in ("family", "file", "bold", "italic")})
+        if "font_size" in self.bulk_dirty:
+            font["size_pt"] = self.numbers["font_size"].value()
+        if font:
+            values["font"] = font
+        for key, value in (("line_spacing", self.numbers["line_spacing"].value()),
+                           ("colour", self.colour.text().strip()), ("align", self.alignment.currentText()),
+                           ("vertical_align", self.vertical.currentText())):
+            if key in self.bulk_dirty:
+                values[key] = value
+        return values if self.bulk_ids else {}, geometry
+
+    def _include_barcode_changed(self, checked):
+        if self.loading or not self.multi_selection:
+            return
+        if self.has_batch_draft() and not self.batch_resolver():
+            self.include_barcode.blockSignals(True)
+            self.include_barcode.setChecked(not checked)
+            self.include_barcode.blockSignals(False)
+            return
+        self.show_selection(self.selection_elements)
 
     def apply_geometry(self):
         if self.loading or not self.geometry_ids:
             return
-        values = {key: self.numbers[key].value() for key, check in self.geometry_checks.items()
-                  if check.isChecked()}
-        if values:
-            self.geometryEdited.emit(values)
+        if self.multi_selection:
+            self.batchApplyRequested.emit()
+        else:
+            values = {key: self.numbers[key].value() for key, check in self.geometry_checks.items() if check.isChecked()}
+            if values:
+                self.geometryEdited.emit(values)
 
     def _mark_bulk_dirty(self, name):
-        if self.multi_selection and not self.loading and name in self.geometry_checks:
+        if not self.multi_selection or self.loading:
+            return
+        if name in self.geometry_checks:
             self.geometry_checks[name].setChecked(True)
-        if self.bulk_ids and not self.loading:
+        elif self.bulk_ids:
             self.bulk_dirty.add(name)
+        self.batch_status.setText("Unapplied settings · Apply or Revert before changing selection / page / saving.")
+        self.bulkChanged.emit()
 
     def apply_field(self, name):
         if self.loading or not self.element:
             return
+        if self.multi_selection:
+            if name in {"align", "vertical_align"}:
+                self._mark_bulk_dirty(name)
+            return
         if name in self.geometry_checks:
-            if self.multi_selection:
-                return
             control = self.numbers[name]
             value = getattr(self.element, name) if control.value() == self.displayed_numbers.get(name) else control.value()
             self.geometryEdited.emit({name: value})
             return
-        if not self.bulk_ids:
-            self.apply()
-            return
-        if name in {"font_size", "line_spacing", "colour"}:
-            if name not in self.bulk_dirty:
-                return
-            self.bulk_dirty.discard(name)
-        if name == "font_size":
-            values = {"font": {"size_pt": self.numbers[name].value()}}
-        elif name in ("line_spacing",):
-            values = {name: self.numbers[name].value()}
-        elif name == "align":
-            values = {name: self.alignment.currentText()}
-        elif name == "vertical_align":
-            values = {name: self.vertical.currentText()}
-        elif name == "colour":
-            values = {name: self.colour.text().strip()}
-        else:
-            return
-        self.edited.emit(values)
+        self.apply()
 
     def _emit_font_request(self, request):
-        if self.bulk_ids:
-            request["element_ids"] = list(self.bulk_ids)
+        if self.multi_selection:
+            if request.get("cancel"):
+                self.bulk_font_request = None
+            elif self.bulk_ids:
+                self.bulk_font_request = dict(request)
+                self._mark_bulk_dirty("font")
+                self.font_status.setText("Exact font pending · Apply changed settings to prepare and commit.")
+            return
         self.fontRequested.emit(request)
 
     def _content_changed(self):
@@ -562,8 +672,7 @@ class Properties(QWidget):
         if self.loading or self.element is None:
             return
         if self.multi_selection:
-            self.apply_geometry()
-            return
+            return self.batch_resolver()
         values = {key: control.value() for key, control in self.numbers.items() if key != "font_size"}
         for key in values:
             if values[key] == self.displayed_numbers.get(key):
@@ -637,7 +746,7 @@ class Properties(QWidget):
             self.italic.setChecked("Italic" in style)
             self.loading = False
             if self.bulk_ids:
-                self.edited.emit({"font": {key: self.font_choice[key] for key in ("family", "file", "bold", "italic")}})
+                self._mark_bulk_dirty("font")
             else:
                 self.apply()
         else:
@@ -647,7 +756,11 @@ class Properties(QWidget):
 
     def _bundled_style(self, *args):
         if not self.loading and self.element and not self.font_choice.get("file"):
-            self.apply()
+            if self.multi_selection:
+                self.font_choice.update(bold=self.bold.isChecked(), italic=self.italic.isChecked())
+                self._mark_bulk_dirty("font")
+            else:
+                self.apply()
 
     def _font_file(self):
         path, _ = QFileDialog.getOpenFileName(
