@@ -283,6 +283,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.progress.setMaximumHeight(18)
         layout.addWidget(self.progress)
         self.setCentralWidget(central)
+        from .compact_chrome import DesignerStatusBar
+        self.setStatusBar(DesignerStatusBar(self))
+        self.statusBar().setSizeGripEnabled(False)
         self.statusBar().setStyleSheet("QStatusBar { padding: 0px; min-height: 0px; } QStatusBar::item { border: none; }")
         self.statusBar().setObjectName("designerStatusBar")
         self.preview_status = QLabel("Preview: select a PDF")

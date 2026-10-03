@@ -45,7 +45,11 @@ def test_canvas_and_preview_controls_fit_small_windows(styled_app, theme, size):
         template = window.template.to_dict()
         styled_app.processEvents()
         assert window.width() == size[0], "Controls forced the window wider"
-        assert window.canvas.viewport().height() >= size[1]-170
+        # Keep the existing toolbar/control budget. The readable status row is
+        # reserved separately; the old total budget relied on a collapsed footer.
+        status = window.statusBar()
+        assert status.height() >= status.fontMetrics().height() + 6
+        assert window.canvas.viewport().height() >= size[1]-170-status.height()
         assert window.project_toolbar.height() <= 42
         assert not window.record_navigation.isVisible()
         for mode in (2, 0, 3, 1, 2):

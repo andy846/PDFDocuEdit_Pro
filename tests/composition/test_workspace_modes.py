@@ -304,6 +304,39 @@ def test_narrow_window_theme_and_main_controls(window, app, theme):
             assert not window.command_bar._open.isHidden()
 
 
+@pytest.mark.parametrize("kind", ["template", "overlay"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("size", [(760, 580), (960, 640)])
+def test_embedded_designer_footer_text_stays_inside_status_row(window, app, kind, theme, size):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QLabel
+
+    controller, project = designer(window)
+    if kind == "overlay":
+        project = controller.host.new_overlay()
+        project.preview_status.setText("Preview ready")
+    else:
+        project.add_element("text", "Customer {{Name}}")
+        project.message.setText("Ready to preview records")
+    window._apply_theme(theme)
+    window.resize(*size)
+    QTest.qWait(100)
+    for mode in ("pdf", "designer", "pdf", "designer"):
+        controller.request_mode(mode)
+    QTest.qWait(250)
+    status = project.statusBar()
+    assert status.height() >= status.fontMetrics().height() + 6
+    bounds = QRect(status.mapTo(window, status.rect().topLeft()), status.size())
+    assert window.rect().contains(bounds)
+    assert bounds.top() > project.canvas.mapTo(window, project.canvas.rect().bottomLeft()).y()
+    for label in status.findChildren(QLabel):
+        if label.isVisible():
+            label_bounds = QRect(label.mapTo(status, label.rect().topLeft()), label.size())
+            assert status.rect().contains(label_bounds), label.text()
+            assert label.contentsRect().height() >= label.fontMetrics().height(), label.text()
+    assert project.canvas.viewport().height() > 200
+
+
 @pytest.mark.parametrize("size", [(760, 580), (960, 640)])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_integrated_designer_keeps_inspector_on_right_and_controls_reachable(window, app, size, theme):

@@ -333,6 +333,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.cancel_button.hide()
         self.cancel_button.clicked.connect(self.cancel_job)
         self.setCentralWidget(outer)
+        from .compact_chrome import DesignerStatusBar
+        self.setStatusBar(DesignerStatusBar(self))
         self._finish_designer_ui()
 
 
