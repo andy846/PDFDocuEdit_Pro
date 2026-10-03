@@ -80,9 +80,10 @@ class EnvelopeSpec:
     objects: list[OverlayObject] = field(default_factory=list)
     required_scope: str = "all_source"
     name: str = "Envelope overlay"
-    overlay_version: int = 3
+    overlay_version: int = 4
     project_kind: str = "pdf_overlay"
     detection_review: dict = field(default_factory=dict)
+    source_link: dict = field(default_factory=dict)
 
     @property
     def requires_control_barcode(self) -> bool:
@@ -93,8 +94,16 @@ class EnvelopeSpec:
     def needs_detection_review(self):
         return self.detection_review.get("required") is True and self.detection_review.get("accepted") is not True
 
+    @property
+    def needs_source_review(self):
+        return self.source_link.get("review_required", False)
+
     def validate(self):
-        if type(self.overlay_version) is not int or self.overlay_version != 3 or self.project_kind != "pdf_overlay":
+        from composition.handoff import validate_link
+        validate_link(self.source_link)
+        if self.source_link and (len(self.source_link["page_map"]) != self.source.pages or self.source_link["sha256"] != self.source.sha256):
+            raise CompositionError("PDF source provenance does not match the source snapshot.")
+        if type(self.overlay_version) is not int or self.overlay_version != 4 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if not isinstance(self.name, str) or len(self.name) > 200:
             raise CompositionError("Invalid envelope project name.")
@@ -158,6 +167,8 @@ class EnvelopeSpec:
             raise CompositionError("Unknown overlay fields: " + ", ".join(sorted(unknown)))
         for obj in self.objects:
             page_limit = self.source.pages if self.needs_detection_review else plan.max_source_pages
+            if self.needs_source_review:
+                page_limit = max(100, self.source.pages)
             if obj.scope != "letter_page":
                 page_limit = max(100, page_limit)
             if obj.scope not in SCOPES or type(obj.letter_page) is not int or not 1 <= obj.letter_page <= page_limit:
@@ -179,14 +190,16 @@ class EnvelopeSpec:
         try:
             data = dict(raw)
             version = data.get("overlay_version", 1)
-            if type(version) is not int or version not in (1, 2, 3):
+            if type(version) is not int or version not in (1, 2, 3, 4):
                 raise CompositionError("Unsupported envelope project version.")
+            if version < 4 and data.get("source_link"):
+                raise CompositionError("PDF source links require envelope project version 4.")
             if version == 1 and any(obj.get("element", {}).get("rotation_deg", 0) != 0 for obj in data.get("objects", [])):
                 raise CompositionError("Object rotation requires envelope project version 2.")
             if version < 3 and (data.get("settings", {}).get("groups") or
                     data.get("settings", {}).get("excluded_pages") or data.get("source", {}).get("geometry_mode", "roles") != "roles"):
                 raise CompositionError("Dynamic detection requires envelope project version 3.")
-            data["overlay_version"] = 3
+            data["overlay_version"] = 4
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()

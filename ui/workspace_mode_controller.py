@@ -63,32 +63,43 @@ class WorkspaceModeController(QObject):
         window.task_bar.activityChanged.connect(lambda busy: window.command_bar.mode_switcher.set_busy("pdf", busy))
         self.set_animations_enabled(bool(window.settings.get("animations_enabled", True)))
         self.sync_mode("pdf")
+        from .workspace_handoff import WorkspaceHandoffService
+        self.handoff = WorkspaceHandoffService(self)
 
     def request_mode(self, mode):
         mode = WorkspaceMode(mode)
         if self.exit_approved:
             return
-        if mode == WorkspaceMode.DESIGNER and self.host is None:
+        if mode == WorkspaceMode.DESIGNER:
+            self.ensure_host()
+        self.modes.request_mode(mode)
+
+    def ensure_host(self, *, create_default=True):
+        if self.host is None:
             from composition.designer.project_host import DesignerProjectHost
             self.host = DesignerProjectHost(self.modes, open_pdf=lambda path: self.window.queue_open_files([str(path)]))
+            self.host.handoff = self.handoff
             self.host.set_animations_enabled(bool(self.window.settings.get("animations_enabled", True)))
             self.host.projectAdded.connect(self.project_added)
             self.host.projectRemoved.connect(self.project_removed)
             self.host.activeProjectChanged.connect(self.project_changed)
             self.host.activityChanged.connect(self.activity_changed)
-            self.modes.add_mode(mode, self.host)
-            self.host.new_template()
-        self.modes.request_mode(mode)
+            self.modes.add_mode(WorkspaceMode.DESIGNER, self.host)
+            if create_default:
+                self.host.new_template()
+        return self.host
 
     def capture_pdf_bindings(self):
         self.pdf_bindings = {action: list(action.shortcuts()) for action in self.window._registered_shortcut_actions}
 
     def project_added(self, project):
+        self.handoff.attach_project(project)
         self.project_bindings[project] = {action: list(action.shortcuts()) for action in project.findChildren(QAction) if action.shortcuts()}
         self.sync_bindings()
 
     def project_removed(self, project):
         self.project_bindings.pop(project, None)
+        self.handoff.remove_project(project)
 
     def activity_changed(self):
         busy = self.host and any(self.host.is_busy(p) for p in self.host.projects)
@@ -150,7 +161,8 @@ class WorkspaceModeController(QObject):
 
     def commands(self):
         if self.modes.mode == WorkspaceMode.PDF:
-            return self.window._commands
+            return [*self.window._commands, Command("send_to_designer", "Send current PDF to Designer", "",
+                    "Workspace handoff", lambda: self.handoff.send_pdf(self.window._session), self.handoff.send_button.isEnabled)]
         commands = [c for c in self.window._commands if c.id in self.GLOBAL]
         for key, action in self.designer_actions.items():
             commands.append(Command("designer.host." + key, action.text().replace("&", ""),
@@ -172,6 +184,9 @@ class WorkspaceModeController(QObject):
             self.host.set_animations_enabled(enabled)
 
     def prepare_exit(self):
+        if self.handoff.capture_active:
+            self.window.info_bar.show_message("Cancel or finish the PDF handoff before exiting.", "warning")
+            return False
         if self.exit_approved:
             return True
         if self.exit_preparing:

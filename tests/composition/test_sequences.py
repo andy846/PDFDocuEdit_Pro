@@ -69,7 +69,7 @@ def test_schema_versions_and_declarative_save_restore(tmp_path):
     target = save_project(template, tmp_path/"tickets.pdcx")
     loaded = load_project(target)
     assert loaded.to_dict() == template.to_dict()
-    assert json.loads(target.read_text(encoding="utf-8"))["template_version"] == 7
+    assert json.loads(target.read_text(encoding="utf-8"))["template_version"] == 8
     legacy = Template(elements=[Element(value="Client unchanged")]).to_dict()
     legacy["template_version"] = 4
     for key in ("sheet", "excel_formulas", "preserve_zeros"):

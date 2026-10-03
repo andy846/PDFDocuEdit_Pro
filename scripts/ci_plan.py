@@ -59,6 +59,7 @@ UI_TESTS = (
     "tests/composition/test_sequences.py",
     "tests/composition/test_workspace.py",
     "tests/composition/test_workspace_modes.py",
+    "tests/composition/test_workspace_handoff.py",
 )
 CROSS_PLATFORM_TESTS = (
     "tests/test_annotation_transactions.py",

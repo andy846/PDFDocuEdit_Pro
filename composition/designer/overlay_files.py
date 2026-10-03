@@ -56,6 +56,10 @@ class OverlayFiles:
             self.active_worker = None
             if preserve and self.spec:
                 same_source = spec.source.sha256 == self.spec.source.sha256
+                if same_source:
+                    spec.source_link = dict(self.spec.source_link)
+                    if spec.source_link and not detect and not settings.groups:
+                        spec.source_link["review_required"] = False
                 if settings.groups and not same_source:
                     spec.settings = replace(settings, pages_per_envelope=1, groups=[], excluded_pages=[])
                     requires_scan = True
@@ -143,6 +147,9 @@ class OverlayFiles:
         self.worker({"task": "overlay_save", "project": self.spec.to_dict(), "target": str(path)}, saved, active=True)
 
     def generate_pdf(self, checked=False, *, output_dir=None):
+        if self.spec and self.spec.needs_source_review:
+            self.error("Confirm grouping / review the updated PDF source before generating.")
+            return
         if self.spec and self.spec.needs_detection_review:
             self.error("Scan, review and accept mailpiece boundaries before generating.")
             return
@@ -153,6 +160,8 @@ class OverlayFiles:
         if not output_dir:
             return
         self.last_result = None
+        import copy
+        self._output_spec = copy.deepcopy(self.spec.to_dict())
         self.pdf_button.setEnabled(False)
         self.report_button.setEnabled(False)
         self.production_text.setPlainText("Validating source, fonts, page scopes and barcode profiles…")
@@ -185,7 +194,7 @@ class OverlayFiles:
     def open_result(self, key):
         if self.last_result and self.last_result[key]:
             if key == "output_pdf" and self.project_host:
-                self.project_host.open_pdf(self.last_result[key])
+                self.project_host.open_production_output(self, self.last_result)
                 return
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_result[key]))
 

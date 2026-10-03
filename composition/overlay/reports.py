@@ -18,6 +18,7 @@ def write_summary(directory,result,spec):
     value.update(log_version=1,job_type="pdf_overlay",source={"path":spec.source.path,
                  "sha256":spec.source.sha256,"pages":spec.source.pages},settings=asdict(spec.settings),
                  detection_review=spec.detection_review,
+                 source_link=spec.source_link,
                  control_barcode_required=spec.requires_control_barcode,
                  required_barcode_scope=spec.required_scope if spec.requires_control_barcode else None,
                  barcode_profiles=[asdict(obj.profile) for obj in spec.objects if obj.profile])

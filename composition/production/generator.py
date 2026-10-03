@@ -137,6 +137,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
             "template_pages": [{"ordinal": i+1, "id": p.id, "name": p.name}
                                for i, p in enumerate(template.pages)],
         },
+        "pdf_source_link": template.source_link,
     }
     (directory / "job.json").write_text(json.dumps(log, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     columns = {

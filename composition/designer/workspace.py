@@ -128,7 +128,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.menuBar().hide()
         self._apply_template(self.template.to_dict())
         self.undo.setClean()
-        QTimer.singleShot(0, self.canvas.fit_page)
+        QTimer.singleShot(0, lambda: self.canvas.fit_page() if self.canvas.transform().isIdentity() and not self.close_pending else None)
         QTimer.singleShot(0, self._load_windows_fonts)
         QTimer.singleShot(0, self._adjust_inspector)
 
@@ -897,12 +897,14 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         self._page_dict(after, page_id).update(
             background=result["background"], width_mm=result["width_mm"], height_mm=result["height_mm"])
+        after["source_link"] = {}
         self._commit(before, after, "Use PDF background")
         self.canvas.fit_page()
 
     def remove_background(self):
         before, after = self.template.to_dict(), self.template.to_dict()
         self._page_dict(after)["background"] = ""
+        after["source_link"] = {}
         self._commit(before, after, "Remove background")
 
     def import_data(self):
@@ -980,6 +982,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         from composition.production.model import ProductionJob
         job = ProductionJob(self.template.to_dict(), info["store"], output, auto_repair=self.auto_repair.isChecked())
+        self._output_template = copy.deepcopy(self.template.to_dict())
         self.tabs.setCurrentIndex(3)
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
                                              f"Pages per record: {len(self.template.pages)}\n"
@@ -1042,7 +1045,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
     def _open_output(self):
         if self.last_output:
             if self.project_host:
-                self.project_host.open_pdf(self.last_output)
+                self.project_host.open_production_output(self, {"output_pdf": self.last_output})
                 return
             from PyQt6.QtCore import QUrl
             from PyQt6.QtGui import QDesktopServices

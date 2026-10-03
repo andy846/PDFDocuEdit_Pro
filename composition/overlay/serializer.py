@@ -44,6 +44,22 @@ def save_project(spec, path):
                 shutil.copyfile(source, temp)
         owner[key] = copied.relative_to(target.parent).as_posix()
     source = Path(value["source"]["path"]).resolve()
+    if spec.source_link.get("managed"):
+        from composition.template.model import CompositionError
+        digest = file_hash(source)
+        if digest != spec.source.sha256:
+            raise CompositionError("Managed source changed; review and update it before saving the project.")
+        assets.mkdir(parents=True, exist_ok=True)
+        copied = assets / (digest[:20] + ".pdf")
+        if copied.exists() and file_hash(copied) != digest:
+            raise CompositionError("Saved source asset changed. Choose a new project location or repair the asset.")
+        if source != copied and not copied.exists():
+            with atomic_output(copied, overwrite=False) as temp:
+                shutil.copyfile(source, temp)
+        source = copied
+        # Copying changes filesystem timestamps; keep the saved SourceInfo current.
+        value["source"]["size"] = source.stat().st_size
+        value["source"]["mtime_ns"] = source.stat().st_mtime_ns
     try:
         value["source"]["path"] = source.relative_to(target.parent).as_posix()
     except ValueError:

@@ -351,7 +351,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.actions["properties"] = properties_action
         menus["&View"].addAction(properties_action)
         toolbar.insertAction(self.actions["fit"], properties_action)
-        QTimer.singleShot(0, self.fit_canvas)
+        QTimer.singleShot(0, lambda: self.fit_canvas() if self.auto_fit and not self.close_pending else None)
 
     def load_fonts(self):
         if not self.close_pending:
@@ -401,6 +401,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
         if self.spec and self.spec.needs_detection_review:
             self.actions["generate"].setEnabled(False)
+        if self.spec and self.spec.needs_source_review:
+            self.actions["generate"].setEnabled(False)
         self.actions["cancel"].setEnabled(bool(self.active_worker))
         self.actions["cancel"].setVisible(bool(self.active_worker))
         self.canvas.set_editable(valid and not locked)
@@ -433,7 +435,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
 
     def title(self):
         self.setWindowTitle("Document Designer · PDF Envelope Overlay · " +
-            (self.project_path.name if self.project_path else "Untitled") + (" *" if not self.undo.isClean() else ""))
+            (self.project_path.name if self.project_path else self.spec.name if self.spec and self.spec.source_link else "Untitled") + (" *" if not self.undo.isClean() else ""))
 
     def error(self, message):
         self.statusBar().showMessage(message)
@@ -465,7 +467,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
             return False
         try:
             candidate = EnvelopeSpec.from_dict(after)
-            validate_changed_geometry(self.spec, candidate)
+            if not candidate.needs_source_review:
+                validate_changed_geometry(self.spec, candidate)
         except ValueError as exc:
             self.error(str(exc))
             return False

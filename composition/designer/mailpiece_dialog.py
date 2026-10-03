@@ -522,6 +522,8 @@ class MailpieceDialog(QDialog):
         raw["settings"]["excluded_pages"] = list(self.report["excluded_pages"])
         raw["detection_review"] = copy.deepcopy(self.report)
         raw["detection_review"]["accepted"] = True
+        if raw.get("source_link"):
+            raw["source_link"]["review_required"] = False
         raw["detection_review"]["accepted_at"] = now()
         if self.window.commit(raw, "Apply reviewed mailpiece detection"):
             self.accept()

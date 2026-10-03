@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 7
+TEMPLATE_VERSION = 8
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
@@ -146,10 +146,11 @@ class Template:
     sequences: list[SequenceSpec]
     record_mode: str
     generated_count: int
+    source_link: dict
 
     def __init__(self, template_version=TEMPLATE_VERSION, name="Untitled document",
                  width_mm=210.0, height_mm=297.0, background="", elements=None, data=None,
-                 *, pages=None, sequences=None, record_mode="imported", generated_count=100):
+                 *, pages=None, sequences=None, record_mode="imported", generated_count=100, source_link=None):
         self.template_version = template_version
         self.name = name
         self.pages = pages if pages is not None else [
@@ -159,6 +160,7 @@ class Template:
         self.sequences = sequences if sequences is not None else []
         self.record_mode = record_mode
         self.generated_count = generated_count
+        self.source_link = source_link if source_link is not None else {}
 
     # Existing headless callers can still construct/access a single-page template.
     # Designer code explicitly chooses a page; serialization never duplicates page data.
@@ -205,11 +207,13 @@ class Template:
         if not isinstance(value, dict):
             raise CompositionError("A template must be a JSON object.")
         version = value.get("template_version")
-        if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, TEMPLATE_VERSION):
+        if type(version) is not int or version not in range(1, TEMPLATE_VERSION + 1):
             raise CompositionError(
                 f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
             raw = dict(value)
+            if version < 8 and raw.get("source_link"):
+                raise CompositionError("PDF source links require template version 8.")
             if version < 6 and any(key in raw.get("data", {}) for key in ("sheet", "excel_formulas", "preserve_zeros")):
                 raise CompositionError("Excel source settings require template version 6.")
             if version < 5 and any(key in raw for key in ("sequences", "record_mode", "generated_count")):
@@ -320,6 +324,8 @@ def required_fields(template: Template) -> set[str]:
 
 
 def validate_template(template: Template, *, check_assets: bool = True) -> None:
+    from composition.handoff import validate_link
+    validate_link(template.source_link)
     if type(template.template_version) is not int or template.template_version != TEMPLATE_VERSION:
         raise CompositionError("Unsupported template version.")
     if not isinstance(template.name, str) or len(template.name) > 500:

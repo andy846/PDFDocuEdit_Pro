@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QListWidgetItem
+from PyQt6.QtWidgets import QListWidgetItem, QMessageBox
 
 from composition.engine.barcodes import validate_payload
 from composition.pdf_source.planner import EnvelopePlan, applies
@@ -70,6 +70,16 @@ class OverlayUsability:
                     self.preview_only.setChecked(False)
                 self.print_page.setValue(page)
                 self.canvas.select_ids([obj.element.id for obj in chosen])
+                return
+        if self.spec.needs_source_review and len(chosen) == 1:
+            answer = QMessageBox.question(self, "Review object page scope",
+                "This object's page scope is unavailable in the updated PDF.\n"
+                "Change it to all source pages so you can review and repair the object?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer == QMessageBox.StandardButton.Yes:
+                raw = self.spec.to_dict()
+                next(item for item in raw["objects"] if item["element"]["id"] == chosen[0].element.id)["scope"] = "all_source"
+                self.commit(raw, "Review unavailable object scope", [chosen[0].element.id])
                 return
         self.sync_layers()
         self.error("These objects use different pages. Select objects sharing a page to edit together.")

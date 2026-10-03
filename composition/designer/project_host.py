@@ -29,6 +29,7 @@ class DesignerProjectHost(QWidget):
     def __init__(self, parent=None, *, open_pdf=None):
         super().__init__(parent)
         self.open_pdf = open_pdf or (lambda path: None)
+        self.handoff = None
         self.shutting_down = False
         self.close_buttons = {}
         self.animations_enabled = True
@@ -62,6 +63,11 @@ class DesignerProjectHost(QWidget):
     @property
     def projects(self):
         return [self.tabs.widget(index) for index in range(self.tabs.count())]
+
+    def open_production_output(self, project, result):
+        if self.handoff:
+            return self.handoff.open_production_output(project, result)
+        return self.open_pdf(result["output_pdf"])
 
     @property
     def current_project(self):
@@ -177,7 +183,8 @@ class DesignerProjectHost(QWidget):
         if index < 0:
             return
         kind = "Template" if hasattr(project, "template") else "Overlay"
-        name = project.project_path.name if project.project_path else "Untitled"
+        model = project.template if hasattr(project, "template") else project.spec
+        name = project.project_path.name if project.project_path else model.name if model and model.source_link else "Untitled"
         dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
         self.tabs.setTabText(index, f"{kind} · {name}" + (" *" if dirty else "") + (" ●" if self.is_busy(project) else ""))
         self.tabs.setTabToolTip(index, project.windowTitle())

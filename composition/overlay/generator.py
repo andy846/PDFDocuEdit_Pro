@@ -49,6 +49,8 @@ def _error_page(result, page):
 
 def generate(job, *, progress=None, is_cancelled=None):
     spec=EnvelopeSpec.from_dict(job.project)
+    if spec.needs_source_review:
+        raise CompositionError("Confirm grouping and review the updated PDF source before generating.")
     if spec.needs_detection_review:
         raise CompositionError("Scan, review and accept mailpiece boundaries before generating this PDF.")
     if not isinstance(job.job_id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",job.job_id):
@@ -114,7 +116,7 @@ def generate(job, *, progress=None, is_cancelled=None):
             pages_file=resources.enter_context((staging/"pages.csv").open("w",encoding="utf-8-sig",newline=""))
             envelopes_file=resources.enter_context((staging/"envelopes.csv").open("w",encoding="utf-8-sig",newline=""))
             pages_writer,env_writer=csv.writer(pages_file),csv.writer(envelopes_file)
-            row(pages_writer,["Source page","Output page","Envelope sequence","Letter page","Print page","Sheet no","Side","Inserted blank"])
+            row(pages_writer,["Source page","Output page","Envelope sequence","Letter page","Print page","Sheet no","Side","Inserted blank", "Original PDF page"])
             row(env_writer,["Envelope index","Envelope sequence","Source start","Source end","Output start","Output end","Source pages","Output pages","Sheets","Status"])
             chunks=[]
             pending = iter(plan.pages())
@@ -141,7 +143,9 @@ def generate(job, *, progress=None, is_cancelled=None):
                     for mark in marks:
                         marks_file.write(json.dumps(mark, ensure_ascii=False)+"\n")
                     row(pages_writer, [page.source_page or "", page.output_page, fields["EnvelopeSeq"], fields["LetterPage"],
-                                       page.print_page, fields["SheetNo"], fields["Side"], fields["IsInsertedBlank"]])
+                                       page.print_page, fields["SheetNo"], fields["Side"], fields["IsInsertedBlank"],
+                                       spec.source_link["page_map"][page.source_page-1]+1
+                                       if page.source_page and spec.source_link else page.source_page or ""])
                     if page.print_page == page.settings.output_pages_per_envelope:
                         result.processed_envelopes += 1
                         result.composed_envelopes += 1

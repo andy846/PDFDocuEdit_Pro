@@ -4744,6 +4744,10 @@ class PDFViewer(QMainWindow):
             self._delete_pages(value, show_pages=True)
         elif action == "extract":
             self._extract_pages(value)
+        elif action == "designer":
+            controller = getattr(self, "_mode_controller", None)
+            if controller:
+                controller.handoff.send_pdf(session, pages=valid)
 
     def _goto_search_hit(
         self, page: int, rects, session: DocumentSession | None = None
