@@ -321,34 +321,9 @@ class DesignerChrome:
             others = [element for element in self._page_dict(after)["elements"] if element["id"] not in selected]
             self._page_dict(after)["elements"] = others + values if mode == "front" else values + others
         else:
-            x0, y0 = min(e["x_mm"] for e in values), min(e["y_mm"] for e in values)
-            x1 = max(e["x_mm"] + e["width_mm"] for e in values)
-            y1 = max(e["y_mm"] + e["height_mm"] for e in values)
-            if mode in {"horizontal", "vertical"}:
-                if len(values) < 3:
-                    self._error("Select at least three objects to distribute.")
-                    return
-                axis, size, low, high = ("x_mm", "width_mm", x0, x1) if mode == "horizontal" else ("y_mm", "height_mm", y0, y1)
-                values.sort(key=lambda e: e[axis])
-                gap = (high-low-sum(e[size] for e in values))/(len(values)-1)
-                position = low
-                for element in values:
-                    element[axis] = round(position, 2)
-                    position += element[size]+gap
-            else:
-                for element in values:
-                    if mode == "left":
-                        element["x_mm"] = x0
-                    elif mode == "center":
-                        element["x_mm"] = (x0+x1-element["width_mm"])/2
-                    elif mode == "right":
-                        element["x_mm"] = x1-element["width_mm"]
-                    elif mode == "top":
-                        element["y_mm"] = y0
-                    elif mode == "middle":
-                        element["y_mm"] = (y0+y1-element["height_mm"])/2
-                    elif mode == "bottom":
-                        element["y_mm"] = y1-element["height_mm"]
+            from .arrange import arrange
+            arrange(self,mode)
+            return
         self._commit(before, after, "Arrange " + mode, list(selected))
 
     def _zoom_selected(self, *args):

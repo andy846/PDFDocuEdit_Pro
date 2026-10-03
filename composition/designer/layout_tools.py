@@ -53,6 +53,22 @@ def edit_geometry(window, values, *, relative_rotation=False):
 def install_layout_tools(window, menu):
     quick_menu = QMenu(window)
     canvas = window.canvas
+    from .arrange import ArrangeDialog
+    arrange_action=QAction(icon("layers"),"Arrange selected objects…",window)
+    arrange_action.setProperty("designer_icon","layers")
+    arrange_action.triggered.connect(lambda:ArrangeDialog(window).exec())
+    window.actions["arrange_tools"]=arrange_action
+    menu.addAction(arrange_action)
+    quick_menu.addAction(arrange_action)
+    if not hasattr(window,"template"):
+        canvas.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        def context(position):
+            popup=QMenu(canvas)
+            popup.addAction(arrange_action)
+            for key in ("rotate_cw","rotate_ccw","rotate_reset"):
+                popup.addAction(window.actions[key])
+            popup.exec(canvas.viewport().mapToGlobal(position))
+        canvas.customContextMenuRequested.connect(context)
     for key, title, setter, checked in (
         ("rulers", "Millimetre rulers", canvas.set_rulers, True),
         ("snap_guides", "Snap to page and object edges / centres", canvas.set_snap_guides, True),
