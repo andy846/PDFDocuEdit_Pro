@@ -134,7 +134,6 @@ from core.tools import (
     decrypt_pdf_file,
     encrypt_pdf_file,
     extract_region_text,
-    merge_pdfs,
     merge_spreadsheets,
     overlay_pdfs,
     scan_barcodes_batch,
@@ -146,7 +145,7 @@ from dialogs.annotation_dialogs import WatermarkDialog
 from dialogs.barcode_dialogs import BarcodeResultsDialog, BarcodeScanDialog
 from dialogs.base import ask_password, remember_save_directory, start_in_save_directory
 from dialogs.batch_print_dialog import BatchPrintDialog
-from dialogs.batch_tools import CompressionDialog, MergePDFDialog, OverlayDialog
+from dialogs.batch_tools import CompressionDialog, OverlayDialog
 from dialogs.conversion_dialogs import (
     OfficeConversionDialog,
     PostScriptConversionDialog,
@@ -751,13 +750,13 @@ class PDFViewer(QMainWindow):
     def _connect_signals(self) -> None:
         command = self.command_bar
         command.panelToggled.connect(self._toggle_side_panel)
-        command.openClicked.connect(self._open_dialog)
-        command.saveClicked.connect(self.save_file)
-        command.saveAsClicked.connect(self.save_as_file)
+        command.openClicked.connect(lambda: self._workspace_command("open", self._open_dialog))
+        command.saveClicked.connect(lambda: self._workspace_command("save", self.save_file))
+        command.saveAsClicked.connect(lambda: self._workspace_command("save_as", self.save_as_file))
         command.searchClicked.connect(self.search_document)
         command.printClicked.connect(self.print_pdf)
-        command.undoClicked.connect(self._undo)
-        command.redoClicked.connect(self._redo)
+        command.undoClicked.connect(lambda: self._workspace_command("undo", self._undo))
+        command.redoClicked.connect(lambda: self._workspace_command("redo", self._redo))
         command.diagnosticsClicked.connect(lambda: self._tool_requested("diagnostics"))
         command.preferencesClicked.connect(self.show_preferences)
         command.aboutClicked.connect(self.show_about)
@@ -1634,6 +1633,9 @@ class PDFViewer(QMainWindow):
         self.info_bar.refresh_icons()
         self.context_panel.refresh_icons()
         self.workspace.refresh_icons()
+        merge = getattr(self, "_merge_workspace", None)
+        if merge:
+            merge.refresh_theme()
         self._update_title_bar()
 
     def _update_title_bar(self) -> None:
@@ -5263,6 +5265,10 @@ class PDFViewer(QMainWindow):
 
     def _commands_for_mode(self):
         controller = getattr(self, "_mode_controller", None)
+        merge = getattr(self, "_merge_controller", None)
+        tool = self.workspace.current_tool()
+        if not controller and merge and tool:
+            return [c for c in self._commands if c.id in merge.global_ids()] + merge.commands(tool)
         return controller.commands() if controller else self._commands
 
     def _show_command_palette(self) -> None:
@@ -6170,28 +6176,17 @@ class PDFViewer(QMainWindow):
         )
 
     def _merge_pdfs(self) -> None:
-        dialog = MergePDFDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.output_path:
-            current = self.engine.original_path
-            if current and Path(dialog.output_path).resolve() == current:
-                self.info_bar.show_message(
-                    "Choose an output other than the PDF currently open in this window.",
-                    "error",
-                    0,
-                )
-                return
-            self._run_task(
-                "Merging PDFs",
-                merge_pdfs,
-                dialog.file_paths,
-                dialog.output_path,
-                compact=dialog.compact.isChecked(),
-                progress_argument="progress",
-                cancel_argument="is_cancelled",
-                on_result=lambda value: self.info_bar.show_message(
-                    f"🔗 Merged PDF saved: {Path(value).name}", "success"
-                ),
-            )
+        from ui.merge_controller import MergeController
+        if not getattr(self, "_merge_controller", None):
+            self._merge_controller = MergeController(self)
+        self._merge_controller.open()
+
+    def _workspace_command(self, key, fallback):
+        controller = getattr(self, "_merge_controller", None)
+        if controller:
+            controller.route(key, fallback)
+        else:
+            fallback()
 
     def _overlay_pdf(self) -> None:
         current = self.engine.original_path
@@ -6934,6 +6929,7 @@ class PDFViewer(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         controller = getattr(self, "_mode_controller", None)
+        merge_only = getattr(self, "_merge_controller", None) if controller is None else None
         if controller:
             dialog = getattr(self, "_update_dialog", None)
             if self._printing or (dialog is not None and dialog.busy()):
@@ -6962,8 +6958,16 @@ class PDFViewer(QMainWindow):
         if self._printing:
             event.ignore()
             return
+        if merge_only:
+            if not merge_only.prepare_exit():
+                event.ignore()
+                return
+            if not merge_only.shutdown():
+                event.ignore()
+                QTimer.singleShot(150, self.close)
+                return
         self._closing = True
-        for session in ([] if controller else list(self._sessions)):
+        for session in ([] if controller or merge_only else list(self._sessions)):
             self._session = session
             if not self._confirm_discard_changes():
                 event.ignore()

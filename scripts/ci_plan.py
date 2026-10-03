@@ -12,6 +12,7 @@ TESTS = ROOT / "tests"
 
 SMOKE_TESTS = ("tests/test_commands.py", "tests/test_source_contract.py")
 UI_TESTS = (
+    "tests/test_merge_workbench_ui.py",
     "tests/test_advanced_organizer.py",
     "tests/test_detailed_dialogs.py",
     "tests/test_entrypoint.py",

@@ -141,10 +141,11 @@ class WorkspaceHandoffService(QObject):
         pdf_mode = self.controller.modes.mode.value == "pdf"
         session = self.window._session
         busy = self.pending or bool(self.window._tasks) or self.window._printing
-        self.send_button.setVisible(pdf_mode)
+        self.send_button.setVisible(pdf_mode and self.window.workspace.current_tool() is None)
         self.send_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon
                                            if self.window.command_bar.width() >= 1000 else Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.send_button.setEnabled(pdf_mode and session is not None and session.engine.is_loaded() and not busy)
+        self.send_button.setEnabled(pdf_mode and self.window.workspace.current_tool() is None
+                                    and session is not None and session.engine.is_loaded() and not busy)
         for action in self.send_actions:
             action.setEnabled(self.send_button.isEnabled())
         output = self.outputs.get(session)

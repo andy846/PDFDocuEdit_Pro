@@ -43,6 +43,7 @@ _PATHS: dict[str, str] = {
     "chevron-left": '<path d="m15 18-6-6 6-6"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+    "chevron-up": '<path d="m6 15 6-6 6 6"/>',
     "panel-left": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
     "panel-right": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
