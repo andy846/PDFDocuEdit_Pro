@@ -27,8 +27,13 @@ class DetectionConfig:
     region_mm: list[float] | None = None
     remove_separators: bool = True
     version: int = 1
+    profile_name: str = ""
 
     def validate(self):
+        if self.version == 2:
+            from .smart_detection import validate_config
+            validate_config(self)
+            return
         if type(self.version) is not int or self.version != 1 or self.combine not in ("any", "all"):
             raise CompositionError("Unsupported detection configuration.")
         if not isinstance(self.rules, list) or not 1 <= len(self.rules) <= 4:
@@ -196,6 +201,10 @@ def detect_texts(texts, config, *, is_cancelled=None, progress=None):
 
 def scan_pdf(path, config, *, expected_sha256=None, progress=None, is_cancelled=None):
     config.validate()
+    if config.version == 2:
+        from .smart_detection import scan_pdf as smart_scan
+        return smart_scan(path, config, expected_sha256=expected_sha256,
+                          progress=progress, is_cancelled=is_cancelled)
     source = inspect_source(path, EnvelopeSettings(pages_per_envelope=1), uniform=True,
                             progress=progress, is_cancelled=is_cancelled)
     if expected_sha256 and expected_sha256 != source.sha256:
