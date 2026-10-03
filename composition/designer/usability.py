@@ -63,6 +63,9 @@ class DesignerUsability:
         for index in range(self.layers.count()):
             item = self.layers.item(index)
             item.setHidden(query not in (item.text() + item.toolTip()).casefold())
+        if hasattr(self, "layer_type"):
+            from .selection_tools import filter_types
+            filter_types(self)
 
     def focus_properties(self):
         self.reveal_properties()
@@ -77,13 +80,19 @@ class DesignerUsability:
             return
         centre = self.canvas.mapToScene(self.canvas.viewport().rect().center())
         self.page_views[self.active_page_id] = (
-            QTransform(self.canvas.transform()), centre, self.canvas.selected_ids())
+            QTransform(self.canvas.transform()), centre, self.canvas.selected_ids(),
+            (self.canvas.horizontalScrollBar().value(), self.canvas.verticalScrollBar().value()),
+            self.canvas.viewport().size(), self.canvas.sceneRect())
 
     def _restore_canvas_view(self):
         view = self.page_views.get(self.active_page_id)
         if view:
             self.canvas.setTransform(view[0])
-            self.canvas.centerOn(view[1])
+            if self.canvas.viewport().size() == view[4] and self.canvas.sceneRect() == view[5]:
+                self.canvas.horizontalScrollBar().setValue(view[3][0])
+                self.canvas.verticalScrollBar().setValue(view[3][1])
+            else:
+                self.canvas.centerOn(view[1])
         else:
             self.canvas.fit_page()
         self.canvas.zoomChanged.emit(self.canvas.transform().m11()/(96/25.4))
@@ -185,18 +194,20 @@ class DesignerUsability:
         for key in ("background", "remove_background", "rename", "import", "page_size",
                     "page_add", "page_duplicate", "page_delete", "page_up", "page_down",
                     "page_rename", "page_previous", "page_next", "preview"):
-            if self.content_invalid:
+            if self.content_invalid or getattr(self,"batch_pending",False):
                 self.actions[key].setEnabled(False)
-        self.page_combo.setEnabled(not self.content_invalid)
+        self.page_combo.setEnabled(not self.content_invalid and not getattr(self,"batch_pending",False))
         self.font_size_tool.setEnabled(self.font_size_tool.isEnabled() and editable and not pending)
         for key, button in self.page_buttons.items():
             button.setEnabled(self.actions[key].isEnabled())
         for index in (0, 2, 3):
-            self.tabs.setTabEnabled(index, not self.content_invalid)
+            self.tabs.setTabEnabled(index, not self.content_invalid and not getattr(self,"batch_pending",False))
         if hasattr(self,"batch_editor"):
             self.batch_editor.update_actions()
+        from .selection_tools import update_type_action
+        update_type_action(self)
         self._update_navigation()
-        self.record.setEnabled(not self.content_invalid and self.record_count > 0)
+        self.record.setEnabled(not self.content_invalid and not getattr(self,"batch_pending",False) and self.record_count > 0)
         if self.content_invalid:
             for button in (self.first, self.previous, self.next, self.last):
                 button.setEnabled(False)

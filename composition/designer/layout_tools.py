@@ -57,6 +57,8 @@ def install_layout_tools(window, menu):
     canvas = window.canvas
     from .batch_edit import BatchEditor
     BatchEditor(window)
+    from .selection_tools import install_selection_tools
+    install_selection_tools(window, menu)
     from .arrange import ArrangeDialog
     arrange_action=QAction(icon("layers"),"Arrange selected objects…",window)
     arrange_action.setProperty("designer_icon","layers")
@@ -64,7 +66,7 @@ def install_layout_tools(window, menu):
     window.actions["arrange_tools"]=arrange_action
     menu.addAction(arrange_action)
     quick_menu.addAction(arrange_action)
-    for key in ("copy_format", "paste_format"):
+    for key in ("copy_format", "paste_format", "apply_batch", "revert_batch"):
         menu.addAction(window.actions[key])
         quick_menu.addAction(window.actions[key])
     if not hasattr(window,"template"):

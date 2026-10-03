@@ -350,7 +350,10 @@ class Properties(QWidget):
         self.font_family.setCurrentIndex(self.font_family.findText(current))
         self._configure_completion()
         if self.element:
-            self._set_styles(self.element.font.family, bool(self.element.font.file))
+            if self.has_batch_draft() and "font" in self.bulk_dirty:
+                self._set_styles(current, bool(self.font_choice.get("file")))
+            else:
+                self._set_styles(self.element.font.family, bool(self.element.font.file))
         if self.element and not self.element.font.file:
             spec = self.element.font
             style = ("Bold Italic" if spec.bold and spec.italic else
@@ -509,7 +512,7 @@ class Properties(QWidget):
         self.geometry_apply.setToolTip("Commit checked geometry and changed text settings together, with one Undo.")
         self.geometry_apply.show()
         self.batch_revert.show()
-        self.batch_status.setText("Change settings, then Apply. Unchanged or mixed settings are retained.")
+        self.batch_status.setText("Edit settings, then Apply changes.")
         self.batch_status.show()
         self.loading = True
         for key in self.geometry_checks:
@@ -534,8 +537,8 @@ class Properties(QWidget):
             if any(getter(e) != getter(text[0]) for e in text[1:]):
                 differing.append(name)
         note = ("Mixed " + ", ".join(differing) + ". " if differing else "")
-        note += f"Formatting targets: {len(text)}. Mixed values stay unchanged until edited. "
-        note += "Checked width, height and angle apply to all selected objects; unchecked geometry is retained."
+        note += "Untouched settings are retained. "
+        note += "Checked geometry applies to all selected objects."
         if len(selected) != len(text):
             note += f" {len(selected)-len(text)} other objects excluded."
         self.empty.setText(note)
@@ -584,7 +587,7 @@ class Properties(QWidget):
         self.layout().invalidate()
         self.layout().activate()
         self.setMinimumWidth(self.minimumSizeHint().width())
-        if self.parentWidget():
+        if self.parentWidget() and self.parentWidget().layout() is None:
             self.resize(max(self.minimumWidth(), self.parentWidget().width()), self.height())
         self.updateGeometry()
 

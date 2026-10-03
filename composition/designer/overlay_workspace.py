@@ -151,6 +151,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
             item.setShortcut(QKeySequence.StandardKey.Undo if name == "undo" else QKeySequence.StandardKey.Redo)
             item.setIcon(icon(name))
             item.setProperty("designer_icon", name)
+            self.actions[name] = item
             menus["&Edit"].addAction(item)
             toolbar.addAction(item)
         for name, shortcut in [("copy", "Ctrl+C"), ("paste", "Ctrl+V"), ("duplicate", "Ctrl+D"), ("delete", "Delete"), ("select_all", "Ctrl+A")]:
@@ -188,8 +189,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.position.setWordWrap(True)
         navigation.addWidget(self.position, 1)
         self.preview_only = QCheckBox("Preview")
-        self.preview_only.toggled.connect(lambda checked: self.canvas.set_preview_mode(checked))
-        self.preview_only.toggled.connect(self.busy)
+        self.preview_only.toggled.connect(self.preview_mode_changed)
         navigation.addWidget(self.preview_only)
         layout.addLayout(navigation)
         self.tabs = QTabWidget()
@@ -331,7 +331,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.properties.revertRequested.connect(self.revert_draft)
         self.properties.insertFieldRequested.connect(self.insert_field)
         inspector_layout.addWidget(self.properties)
-        self.auto_repair = QCheckBox("Repair missing glyphs and report substitutions")
+        self.auto_repair = QCheckBox("Repair missing glyphs")
+        self.auto_repair.setToolTip("Automatically repair missing glyphs and report substitutions; primary fonts are retained.")
         self.auto_repair.setChecked(True)
         self.auto_repair.toggled.connect(self.schedule_preview)
         inspector_layout.addWidget(self.auto_repair)
@@ -438,6 +439,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
                                              and bool(self.canvas.selected_ids()))
         if hasattr(self,"batch_editor"):
             self.batch_editor.update_actions()
+        from .selection_tools import update_type_action
+        update_type_action(self)
         self.activityChanged.emit()
 
     def title(self):
@@ -573,7 +576,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         compact = self.width() < 1050
-        if hasattr(self, "inspector") and compact and not getattr(self, "compact_width", False):
+        if (hasattr(self, "inspector") and compact and not getattr(self, "compact_width", False)
+                and not self.canvas.selected_ids() and not self.properties.has_batch_draft()):
             self.inspector.hide()
         self.compact_width = compact
         if hasattr(self, "layout_timer"):

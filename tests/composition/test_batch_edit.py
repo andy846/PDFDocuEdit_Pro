@@ -247,3 +247,22 @@ def test_real_font_clipboard_owns_asset_after_source_close_and_save(app, tmp_pat
         if not template.close_pending:
             cleanup(template)
         cleanup(overlay)
+
+
+def test_font_callback_during_shutdown_never_commits_or_updates_ui(app, tmp_path, monkeypatch):
+    window = setup_window(tmp_path, False)
+    callbacks = []
+    try:
+        before = raw(window)
+        window.properties._emit_font_request({"file": "pending.ttf"})
+        monkeypatch.setattr(window, "_worker", lambda request, ready, failed: callbacks.append((ready, failed)))
+        assert not window.batch_editor.apply()
+        assert window.batch_editor.pending
+        window.close_pending = True
+        monkeypatch.setattr(window, "_busy", lambda: pytest.fail("UI updated during shutdown"))
+        callbacks[0][0]({"faces": []})
+        assert not window.batch_editor.pending and raw(window) == before and not window.undo.count()
+        assert len(callbacks) == 1
+    finally:
+        window.close_pending = False
+        cleanup(window)

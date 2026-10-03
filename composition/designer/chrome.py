@@ -237,12 +237,17 @@ class DesignerChrome:
         if text_selected and (not self.toolbar_size_dirty or context != self.toolbar_size_context):
             self.font_size_tool.blockSignals(True)
             self.font_size_tool.setValue(element.font.size_pt)
+            sizes = {e.font.size_pt for e in self._selected_text()}
+            self.font_size_tool.setSuffix("" if len(sizes) > 1 else " pt")
+            self.font_size_tool.lineEdit().setPlaceholderText("Mixed" if len(sizes) > 1 else "")
+            if len(sizes) > 1:
+                self.font_size_tool.lineEdit().clear()
             self.font_size_tool.blockSignals(False)
             self.toolbar_size_dirty = False
         elif not text_selected:
             self.toolbar_size_dirty = False
         self.toolbar_size_context = context
-        busy = bool(self.import_worker or self.production_worker)
+        busy = bool(self.import_worker or self.production_worker or getattr(self, "batch_pending", False))
         for key in ("cut", "copy", "duplicate", "delete", "cjk", "repair_glyph"):
             self.actions[key].setEnabled(bool(selected) and not busy and not self.canvas.mode_preview)
         self.actions["repair_glyph"].setEnabled(len(selected) == 1 and text_selected and not busy and not self.canvas.mode_preview)
@@ -261,7 +266,8 @@ class DesignerChrome:
         self.actions["sequences"].setEnabled(not busy and not self.font_requests and not self.content_invalid)
         self.actions["generate"].setEnabled(bool(self._store()) and not busy and not self.font_requests)
         self.actions["cancel"].setEnabled(busy)
-        self.selection_status.setText(f"{len(selected)} selected" if selected else "No selection")
+        count = len(self._selected_text())
+        self.selection_status.setText(f"{len(selected)} selected · {count} text targets" if selected else "No selection")
         self._update_page_actions()
         self.actions["page_previous"].setEnabled(self.page_index > 0)
         self.actions["page_next"].setEnabled(self.page_index < len(self.template.pages)-1)
@@ -277,6 +283,7 @@ class DesignerChrome:
         self.page_status.setToolTip(f"{self.page.width_mm:.2f} × {self.page.height_mm:.2f} mm")
 
     def _refresh_layers(self):
+        scroll = self.layers.verticalScrollBar().value()
         self._layers_updating = True
         self.layers.clear()
         for element in reversed(self.page.elements):
@@ -289,6 +296,7 @@ class DesignerChrome:
         self._layers_updating = False
         self._filter_layers()
         self._sync_layers()
+        self.layers.verticalScrollBar().setValue(scroll)
 
     def _sync_layers(self):
         if not hasattr(self, "layers") or self._layers_updating:

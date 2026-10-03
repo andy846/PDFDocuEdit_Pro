@@ -7,6 +7,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEventLoop
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox
@@ -48,6 +49,8 @@ class BatchEditor:
         for key, title, callback in (
             ("copy_format", "Copy text formatting", self.copy_format),
             ("paste_format", "Paste text formatting…", self.paste_format),
+            ("apply_batch", "Apply changed settings", self.apply),
+            ("revert_batch", "Revert unapplied settings", self.revert),
         ):
             action = QAction(title, window)
             action.triggered.connect(callback)
@@ -56,20 +59,27 @@ class BatchEditor:
 
     def changed(self):
         self.update_actions()
+        if hasattr(self.window, "selection_status"):
+            ids = self.window.canvas.selected_ids()
+            self.window.selection_status.setText(f"{len(ids)} selected · {len(self.targets())} text targets" if ids else "No selection")
         host = getattr(self.window, "project_host", None)
         if host:
             host.update_project(self.window)
 
     def update_actions(self, *args):
         w = self.window
+        if w.close_pending or sip.isdeleted(w) or sip.isdeleted(w.undo):
+            return
         editable = w.canvas.editable and not w.canvas.mode_preview and not self.pending
         targets = self.targets()
         for key in ("copy_format", "paste_format"):
             w.actions[key].setEnabled(editable and bool(targets) and (key == "copy_format" or bool(self.clipboard.value)))
-        if self.properties.has_batch_draft() or self.pending:
-            for key in ("undo", "redo"):
-                if key in w.actions:
-                    w.actions[key].setEnabled(False)
+        for key in ("apply_batch", "revert_batch"):
+            w.actions[key].setEnabled(editable and self.properties.has_batch_draft())
+        draft = self.properties.has_batch_draft() or self.pending
+        for key, available in (("undo", w.undo.canUndo()), ("redo", w.undo.canRedo())):
+            if key in w.actions:
+                w.actions[key].setEnabled(bool(available and editable and not draft))
 
     def targets(self):
         ids = set(self.window.canvas.selected_ids())
@@ -155,10 +165,10 @@ class BatchEditor:
             w.batch_pending = False
             success = False
             try:
-                if error:
-                    raise ValueError(error)
                 if getattr(w, "close_pending", False):
                     return
+                if error:
+                    raise ValueError(error)
                 current = [asdict(e) for e in current_elements(w) if e.id in set(self.last_selection)]
                 if current != snapshot:
                     raise ValueError("Selected objects changed while preparing the font. Draft retained; review and apply again.")
@@ -183,8 +193,9 @@ class BatchEditor:
                 report(w, str(exc))
             finally:
                 outcome.append(success)
-                (w._busy if hasattr(w, "template") else w.busy)()
-                self.update_actions()
+                if not w.close_pending:
+                    (w._busy if hasattr(w, "template") else w.busy)()
+                    self.update_actions()
                 loop.quit()
 
         if request:
@@ -197,9 +208,15 @@ class BatchEditor:
                 done(font={"family": result["family"], "file": result["file"], "bold": False, "italic": False})
 
             def export(face):
+                if w.close_pending:
+                    done()
+                    return
                 worker({"task": "font_export", "validate_pdf": True, "face": face, "directory": str(w.directory / "font-faces")}, exported, done)
 
             def inspected(result):
+                if w.close_pending:
+                    done()
+                    return
                 faces = result["faces"]
                 if not faces:
                     done("No usable font face found. Draft retained.")
@@ -225,7 +242,7 @@ class BatchEditor:
         return bool(outcome and outcome[0])
 
     def copy_format(self, *args):
-        if not self.resolve():
+        if not self.window.canvas.editable or self.window.canvas.mode_preview or not self.resolve():
             return
         targets = self.targets()
         if not targets:
@@ -246,6 +263,8 @@ class BatchEditor:
             def finish(error=None, result=None):
                 self.pending = False
                 self.window.batch_pending = False
+                if self.window.close_pending:
+                    return
                 if error:
                     report(self.window, error)
                 else:
@@ -255,6 +274,9 @@ class BatchEditor:
                 self.refresh_clipboard_actions()
 
             def inspected(result):
+                if self.window.close_pending:
+                    finish()
+                    return
                 if len(result["faces"]) != 1:
                     finish("Copy requires a saved exact font face. Choose a face first.")
                     return
@@ -273,7 +295,7 @@ class BatchEditor:
                 editor.update_actions()
 
     def paste_format(self, *args):
-        if not self.clipboard.value or not self.resolve():
+        if not self.window.canvas.editable or self.window.canvas.mode_preview or not self.clipboard.value or not self.resolve():
             return
         targets = self.targets()
         if not targets:

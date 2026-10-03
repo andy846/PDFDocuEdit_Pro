@@ -59,6 +59,15 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             if selected and not self.preview_only.isChecked():
                 self.inspector.show()
 
+    def preview_mode_changed(self, checked):
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            self.preview_only.blockSignals(True)
+            self.preview_only.setChecked(self.canvas.mode_preview)
+            self.preview_only.blockSignals(False)
+            return
+        self.canvas.set_preview_mode(checked)
+        self.busy()
+
     def canvas_edit(self, before, after):
         raw = self.spec.to_dict()
         elements = {item["id"]: item for item in after["pages"][0]["elements"]}

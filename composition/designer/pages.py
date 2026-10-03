@@ -87,7 +87,7 @@ class PageOperations:
     def _update_page_actions(self):
         if not hasattr(self, "page_buttons"):
             return
-        editable = not (self.import_worker or self.production_worker or self.font_requests or self.content_invalid)
+        editable = not (self.import_worker or self.production_worker or self.font_requests or self.content_invalid or getattr(self,"batch_pending",False))
         count = len(self.template.pages)
         availability = {
             "page_add": editable and count < MAX_TEMPLATE_PAGES,

@@ -513,7 +513,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self._busy()
 
     def _busy(self):
-        busy = bool(self.import_worker or self.production_worker)
+        busy = bool(self.import_worker or self.production_worker or getattr(self, "batch_pending", False))
         self.sequence_button.setEnabled(not busy and not self.font_requests and not self.content_invalid)
         self.generate_button.setEnabled(bool(self._store()) and not busy and not self.font_requests)
         self.auto_repair.setEnabled(not busy)

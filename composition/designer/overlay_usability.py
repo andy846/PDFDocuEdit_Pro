@@ -24,6 +24,9 @@ class OverlayUsability:
         for row in range(self.layers.count()):
             item = self.layers.item(row)
             item.setHidden(query not in (item.text() + item.toolTip()).casefold())
+        if hasattr(self, "layer_type"):
+            from .selection_tools import filter_types
+            filter_types(self)
 
     def sync_layers(self):
         objects = self.spec.objects if self.spec else []
