@@ -5,7 +5,7 @@ import copy
 
 from PyQt6 import sip
 from PyQt6.QtCore import QRectF, Qt, QTimer
-from PyQt6.QtGui import QColor, QPen, QUndoCommand, QUndoStack
+from PyQt6.QtGui import QAction, QColor, QPen, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -107,7 +107,8 @@ class RegionEditor(QDialog):
         super().__init__(host)
         self.host,self.source=host,source
         self.setWindowTitle("Visual Extraction Regions")
-        self.resize(1180,780)
+        available=self.screen().availableGeometry()
+        self.resize(min(1180,int(available.width()*.95)),min(780,int(available.height()*.9)))
         self.regions=copy.deepcopy(spec.get("regions",[]))
         self.original_empty=not self.regions
         if not self.regions:
@@ -121,6 +122,11 @@ class RegionEditor(QDialog):
         self.token=0
         self.closed=False
         self.undo=QUndoStack(self)
+        for label,shortcut,fn in (("Undo","Ctrl+Z",self.undo.undo),("Redo","Ctrl+Shift+Z",self.undo.redo)):
+            action=QAction(label,self)
+            action.setShortcut(shortcut)
+            action.triggered.connect(fn)
+            self.addAction(action)
         outer=QVBoxLayout(self)
         top=QHBoxLayout()
         self.page=QSpinBox()
@@ -142,7 +148,7 @@ class RegionEditor(QDialog):
         inspector=QWidget()
         right=QVBoxLayout(inspector)
         self.list=QListWidget()
-        self.list.setMaximumHeight(145)
+        self.list.setFixedHeight(75)
         self.list.currentRowChanged.connect(self.select)
         right.addWidget(self.list)
         tools=QHBoxLayout()
@@ -156,6 +162,7 @@ class RegionEditor(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.name=QLineEdit()
+        self.name.setMinimumWidth(150)
         self.name.editingFinished.connect(self.save_controls)
         form.addRow("Field name",self.name)
         self.region=[]
@@ -201,21 +208,29 @@ class RegionEditor(QDialog):
             control.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Fixed)
             control.setToolTip(control.currentText())
             control.currentTextChanged.connect(control.setToolTip)
-        scroll=QScrollArea()
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(content)
-        right.addWidget(scroll,1)
+        # Scroll the entire sidebar: fixed lists/help must not squeeze the
+        # millimetre and field controls out of a short or high-DPI window.
+        right.addWidget(content)
+        size_button=QPushButton("Use this page size")
+        size_button.setToolTip("Use the displayed PDF page dimensions as the reference for all regions; positions stay in millimetres")
+        size_button.clicked.connect(self.use_page_size)
+        right.addWidget(size_button)
         self.sample=QLabel()
         self.sample.setTextFormat(Qt.TextFormat.PlainText)
         self.sample.setWordWrap(True)
-        self.sample.setMaximumHeight(110)
+        self.sample.setMaximumHeight(65)
         right.addWidget(self.sample)
-        self.hint=QLabel("Drag inside a box to move; drag its bottom-right corner to resize. Drag outside to redraw. Ctrl+wheel zooms; Space pans.")
+        self.hint=QLabel("Drag to draw / move · Corner to resize\nCtrl+wheel zoom · Space to pan")
         self.hint.setWordWrap(True)
         right.addWidget(self.hint)
-        self.inspector=inspector
-        splitter.addWidget(inspector)
+        right.addStretch()
+        scroll=QScrollArea()
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumWidth(265)
+        scroll.setWidget(inspector)
+        self.inspector=scroll
+        splitter.addWidget(scroll)
         splitter.setSizes([790,330])
         splitter.setChildrenCollapsible(False)
         outer.addWidget(splitter,1)
@@ -231,6 +246,15 @@ class RegionEditor(QDialog):
         self.apply_regions(self.regions)
         self.undo.setClean()
         self.schedule(True)
+
+    def use_page_size(self):
+        if self.last_image is None:
+            return
+        self.save_controls()
+        before=copy.deepcopy(self.regions)
+        for region in self.regions:
+            region["page_width_mm"],region["page_height_mm"]=self.geometry
+        self.push(before,"Use current PDF page size")
 
     def zoom(self,factor):
         self.view.fit_mode=False
@@ -313,6 +337,9 @@ class RegionEditor(QDialog):
             self.undo.push(RegionChange(self,before,after,label))
 
     def add(self):
+        if len(self.regions)>=200:
+            self.sample.setText("A workflow supports up to 200 extraction regions.")
+            return
         from dataclasses import asdict
         before=copy.deepcopy(self.regions)
         number=len(self.regions)+1
@@ -325,11 +352,17 @@ class RegionEditor(QDialog):
         self.push(before,"Add extraction region")
 
     def duplicate(self):
+        if len(self.regions)>=200:
+            self.sample.setText("A workflow supports up to 200 extraction regions.")
+            return
         before=copy.deepcopy(self.regions)
         r=copy.deepcopy(self.regions[self.current])
-        r["name"]+="_copy"
+        base=r["name"][:54]
+        number=1
+        r["name"]=base+"_copy"
         while r["name"] in [v["name"] for v in self.regions]:
-            r["name"]+="_copy"
+            number+=1
+            r["name"]=base+"_copy"+str(number)
         self.regions.append(r)
         self.current=len(self.regions)-1
         self.push(before,"Duplicate extraction region")
@@ -351,11 +384,6 @@ class RegionEditor(QDialog):
         token=self.token
         raster=self.raster_needed or self.last_image is None
         self.raster_needed=False
-        try:
-            ExtractionSpec.from_dict({"regions":self.regions,"version":1})
-        except ValueError as exc:
-            self.sample.setText(str(exc))
-            return
         def ready(result):
             if sip.isdeleted(self) or self.closed or token!=self.token:
                 return
@@ -367,16 +395,25 @@ class RegionEditor(QDialog):
                 self.original_empty=False
                 for r in self.regions:
                     r["page_width_mm"],r["page_height_mm"]=self.geometry
+                    # New defaults fit small/non-A4 pages; existing templates are never scaled.
+                    r["x_mm"]=min(r["x_mm"],max(0,self.geometry[0]-1))
+                    r["y_mm"]=min(r["y_mm"],max(0,self.geometry[1]-1))
+                    r["width_mm"]=min(r["width_mm"],self.geometry[0]-r["x_mm"])
+                    r["height_mm"]=min(r["height_mm"],self.geometry[1]-r["y_mm"])
+                self.apply_regions(self.regions)
             if raster:
                 self.last_image=result["image"]
                 self.view.load(result["image"],{"width_pt":self.geometry[0]*72/25.4,"height_pt":self.geometry[1]*72/25.4})
                 self.other_boxes()
-            cell=result["cells"][self.current]
-            self.sample.setText("Value: "+cell["value"]+"\n"+(cell["issue"] or "Region extracted successfully"))
+            if result.get("validation_error"):
+                self.sample.setText(result["validation_error"])
+            elif self.current<len(result["cells"]):
+                cell=result["cells"][self.current]
+                self.sample.setText("Value: "+cell["value"]+"\n"+(cell["issue"] or "Region extracted successfully"))
         self.host.request({"operation":"preview","source":self.source,"page":self.page.value(),
                            "target":str(self.host.directory/f"region-{token}.png"),"raster":raster,
                            "scale":max(2,self.view.transform().m11()*self.devicePixelRatioF()/(72/25.4)),
-                           "extraction":{"regions":self.regions,"version":1}},ready,preview=True)
+                           "allow_invalid_draft":True,"extraction":{"regions":self.regions,"version":1}},ready,preview=True)
 
     def accept(self):
         self.save_controls()

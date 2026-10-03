@@ -186,7 +186,7 @@ class DesignerProjectHost(QWidget):
     def is_busy(project):
         return bool(getattr(project, "production_worker", None) or getattr(project, "import_worker", None)
                     or getattr(project, "active_worker", None) or getattr(project, "font_requests", None)
-                    or getattr(project, "font_token", None) or getattr(project,"capture_active",False))
+                    or getattr(project, "font_token", None) or getattr(project,"capture_active",False) or getattr(project,"workflow_binding",False))
 
     def update_project(self, project):
         if sip.isdeleted(self) or sip.isdeleted(project) or sip.isdeleted(self.tabs):
@@ -196,7 +196,7 @@ class DesignerProjectHost(QWidget):
             return
         kind = "Workflow" if getattr(project,"is_workflow",False) else "Template" if hasattr(project, "template") else "Overlay"
         model = project.template if hasattr(project, "template") else project.spec
-        name = project.project_path.name if project.project_path else model.name if model and getattr(model,"source_link",None) else "Untitled"
+        name = project.project_path.name if project.project_path else model.name if model and (getattr(model,"source_link",None) or getattr(project,"is_workflow",False)) else "Untitled"
         dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
         self.tabs.setTabText(index, f"{kind} · {name}" + (" *" if dirty else "") + (" ●" if self.is_busy(project) else ""))
         self.tabs.setTabToolTip(index, project.windowTitle())

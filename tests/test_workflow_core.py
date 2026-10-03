@@ -171,7 +171,7 @@ def test_source_change_invalidates_acceptance_and_output_folder_does_not_rescan(
         doc[0].insert_text((50,200),"Changed")
         doc.saveIncr()
     result=execute(spec,result,tmp_path/"run",until="output")
-    assert not result.accepted and not result.output
+    assert not result.error and not result.accepted and not result.output
 
 
 def test_pattern_grouping_and_portable_save(tmp_path):
@@ -258,3 +258,136 @@ def test_headless_core_has_no_qt_dependency():
     import sys
     script="import sys; import workflow.engine; assert not any(n.startswith('PyQt6') for n in sys.modules)"
     subprocess.run([sys.executable,"-c",script],check=True,capture_output=True)
+
+
+def test_missing_input_is_a_logged_failure_and_clears_stale_approval(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    source.unlink()
+    run=execute(spec,WorkflowRun(accepted=True,output={"status":"completed"}),tmp_path/"run")
+    assert run.error and not run.accepted and not run.output
+    assert run.statuses[spec.node("input").id]=="Failed"
+    logged=json.loads((tmp_path/"run"/"run.json").read_text(encoding="utf-8"))
+    assert logged["error"]==run.error
+
+
+def test_missing_overlay_does_not_block_upstream_review(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    overlay=WorkflowNode("overlay",params={"path":str(tmp_path/"missing.pdcx")})
+    spec.nodes.append(overlay)
+    a,b=spec.node("review").id,spec.node("output").id
+    spec.edges.remove([a,b])
+    spec.edges.extend([[a,overlay.id],[overlay.id,b]])
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    assert not run.error and run.groups==[[1,3],[4,6]]
+    with ExtractionStore(run.database) as store:
+        store.accept()
+    run.accepted=True
+    run=execute(spec,run,tmp_path/"run",until="output")
+    assert run.error and run.statuses[overlay.id]=="Failed" and not run.output
+
+
+def test_missing_database_rebuilds_and_requires_new_review(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    with ExtractionStore(run.database) as store:
+        store.accept()
+    run.accepted=True
+    Path(run.database).unlink()
+    run=execute(spec,run,tmp_path/"run",until="output")
+    assert not run.error and Path(run.database).exists()
+    assert not run.accepted and not run.output
+
+
+def test_production_rejects_boundaries_different_from_reviewed_database(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    with ExtractionStore(run.database) as store:
+        store.accept()
+    run.accepted=True
+    run.groups=[[1,6]]
+    run=execute(spec,run,tmp_path/"run",until="output")
+    assert "boundaries differ" in run.error and not run.output
+
+
+@pytest.mark.parametrize("action",["groups","correct"])
+def test_cancelled_review_mutation_rolls_back_data_and_audit(tmp_path,action):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    with ExtractionStore(run.database) as store:
+        store.accept()
+    request={"operation":"review","database":run.database,"groups":[[1,6]],"page":1,"action":action,
+             "field":"Account_No","value":"12345","reason":"Operator correction"}
+    with pytest.raises(JobCancelled):
+        dispatch(request,None,lambda:True)
+    with ExtractionStore(run.database) as store:
+        assert store.metadata()["accepted"]=="true"
+        assert [list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]==[[1,3],[4,6]]
+        assert store.values(1)["Account_No"]=="00001"
+        assert store.db.execute("SELECT COUNT(*) FROM edits").fetchone()[0]==0
+        assert store.db.execute("SELECT COUNT(*) FROM group_edits").fetchone()[0]==0
+
+
+def test_csv_export_preserves_sources_and_includes_envelope_findings(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    digest=source.read_bytes()
+    with ExtractionStore(run.database) as store:
+        for path in (source,run.database):
+            with pytest.raises(CompositionError,match="overwrite"):
+                store.export(path)
+        store.grouped([[1,6]],ExtractionSpec.from_dict(spec.node("extract").params))
+        store.export(tmp_path/"report.csv")
+    import csv
+    with (tmp_path/"report.csv").open(encoding="utf-8-sig",newline="") as stream:
+        rows=list(csv.DictReader(stream))
+    assert any(r["Scope"]=="Envelope" and "inconsistent" in r["Issue"] for r in rows)
+    assert source.read_bytes()==digest
+
+
+def test_overlay_binding_keeps_design_and_sequence_and_preview_checks_groups(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    spec=configured(source,tmp_path/"output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    path=dispatch({"operation":"make_overlay","source":run.source,"groups":run.groups,
+                   "spec":spec.to_dict(),"path":str(tmp_path/"overlay.pdcx")},None,None)["path"]
+    project=load_project(path)
+    project.settings.start=20
+    project.objects=[OverlayObject(Element(value="{{Envelope_Account_No}}",x_mm=20,y_mm=60))]
+    old_object=project.to_dict()["objects"][0]
+    groups=[[1,2],[3,3],[4,6]]
+    result=dispatch({"operation":"bind_overlay","source":run.source,"groups":groups,"spec":spec.to_dict(),
+                     "path":path,"project":project.to_dict()},None,None)
+    bound=type(project).from_dict(result["spec"])
+    assert bound.settings.groups==groups and bound.settings.start==20
+    assert bound.to_dict()["objects"][0]==old_object
+    from composition.worker import dispatch as composition_dispatch
+    # The GUI preview must never combine new envelope geometry with old envelope values.
+    with pytest.raises(ValueError,match="boundaries changed"):
+        composition_dispatch({"task":"overlay_preview","project":bound.to_dict(),"external_database":run.database,
+                  "envelope":1,"print_page":1,"target":str(tmp_path/"preview.pdf")})
+
+
+def test_grouping_failure_can_be_corrected_then_retried_without_rescanning(tmp_path):
+    source=fixture_pdf(tmp_path/"source.pdf")
+    with fitz.open(source) as pdf:
+        page=pdf[3]
+        for rect in page.search_for("Account: 00002"):
+            page.add_redact_annot(rect)
+        page.apply_redactions()
+        pdf.saveIncr()
+    spec=configured(source,tmp_path/"output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run")
+    assert "Page 4" in run.error and run.database and not run.groups
+    result=dispatch({"operation":"review","action":"correct","database":run.database,"groups":[],
+                     "page":4,"field":"Account_No","value":"00002","reason":"Verified original account"},None,None)
+    assert result["cells"][0]["value"]=="00002" and not result["accepted"]
+    run=execute(spec,run,tmp_path/"run")
+    assert not run.error and run.groups==[[1,3],[4,6]]
+    with ExtractionStore(run.database) as store:
+        assert store.db.execute("SELECT COUNT(*) FROM edits").fetchone()[0]==1

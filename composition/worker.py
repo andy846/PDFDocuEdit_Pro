@@ -81,6 +81,9 @@ def dispatch(request: dict) -> dict:
             with ExtractionStore(database) as store:
                 if store.metadata()["sha256"]!=spec.source.sha256:
                     raise ValueError("Workflow source changed; reopen the overlay from Workflow.")
+                groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
+                if groups!=spec.settings.groups:
+                    raise ValueError("Workflow envelope boundaries changed; reopen the overlay from Workflow to synchronise the preview.")
                 raw, fields = overlay_preview(spec,request["envelope"],request["print_page"],
                     auto_repair=request.get("auto_repair", True),external_values=store.production_values)
         else:

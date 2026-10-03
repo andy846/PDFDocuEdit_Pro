@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -47,7 +49,7 @@ class ProjectProperties(QObject):
     edited=pyqtSignal()
 
     def apply(self):
-        pass
+        return self.parent().flush_settings()
 
 
 class WorkflowEdit(QUndoCommand):
@@ -83,8 +85,10 @@ class GroupsModel(QAbstractTableModel):
             return ("Envelope","Source pages","Count")[section]
 
     def update(self,groups):
+        if self.groups==groups:
+            return
         self.beginResetModel()
-        self.groups=groups
+        self.groups=copy.deepcopy(groups)
         self.endResetModel()
 
 
@@ -109,11 +113,15 @@ class WorkflowWindow(QMainWindow):
         self.close_pending=False
         self._close_approved=False
         self.draft_error=""
+        self._draft_getter=None
+        self._flushing_settings=False
         self.selected=self.spec.nodes[0].id
         self.capture_active=False
         self.review_generation=0
         self.undo=QUndoStack(self)
         self.undo.cleanChanged.connect(self.title)
+        self.undo.canUndoChanged.connect(self.lock)
+        self.undo.canRedoChanged.connect(self.lock)
         self.actions={}
         file=self.menuBar().addMenu("&Workflow")
         edit=self.menuBar().addMenu("&Edit")
@@ -151,7 +159,18 @@ class WorkflowWindow(QMainWindow):
         action("step","Run to selected step",self.run_selected,symbol="chevron-right")
         action("scan","Run to review",lambda:self.execute("review"),symbol="scan")
         action("generate","Generate production PDF",lambda:self.execute("output"),"Ctrl+Shift+G","printer")
+        self.actions["scan"].setIconText("Scan and review")
+        self.actions["generate"].setIconText("Generate PDF")
         action("cancel","Cancel task",self.cancel_job,symbol="x")
+        self.add_step=QToolButton()
+        self.add_step.setText("Add step")
+        self.add_step.setToolTip("Insert an optional step and connect it automatically")
+        self.add_step.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu=QMenu(self.add_step)
+        for kind in ("merge","overlay"):
+            menu.addAction(LABELS[kind],lambda checked=False,k=kind:self.add_optional(k))
+        self.add_step.setMenu(menu)
+        toolbar.addWidget(self.add_step)
         central=QWidget()
         root=QVBoxLayout(central)
         root.setContentsMargins(4,4,4,4)
@@ -235,7 +254,7 @@ class WorkflowWindow(QMainWindow):
         review_split.addWidget(self.results)
         review_split.setSizes([270,850])
         review_layout.addWidget(review_split,1)
-        self.tabs.addTab(self.review_page,"Review & Data")
+        self.tabs.addTab(self.review_page,"Review && Data")
         self.production_page=QWidget()
         pl=QVBoxLayout(self.production_page)
         self.production_summary=QPlainTextEdit()
@@ -261,16 +280,48 @@ class WorkflowWindow(QMainWindow):
         self.setCentralWidget(central)
         self.statusBar().hide()
         self.apply_spec(self.spec.to_dict())
+        self.lock()
         QTimer.singleShot(0,self.canvas.fit)
 
     def title(self,*_):
         name=self.project_path.name if self.project_path else self.spec.name
-        self.setWindowTitle(name+(" *" if not self.undo.isClean() else "")+" — Workflow")
+        self.setWindowTitle(name+(" *" if not self.undo.isClean() or self.draft_error else "")+" — Workflow")
 
     def message(self,text):
         self.feedback.setText(str(text))
 
     error=message
+
+    def watch_settings(self,node,getter,controls):
+        self.draft_error=""
+        self._draft_node=node.id
+        self._draft_getter=getter
+        self._draft_initial=copy.deepcopy(getter())
+        def changed(*_):
+            if self._draft_getter is getter:
+                self.draft_error="Unapplied workflow settings" if getter()!=self._draft_initial else ""
+                self.title()
+                self.properties.edited.emit()
+                self.lock()
+        for control in controls:
+            signal=control.textChanged if isinstance(control,QLineEdit) else control.currentIndexChanged if isinstance(control,QComboBox) else control.valueChanged
+            signal.connect(changed)
+
+    def flush_settings(self):
+        if self._flushing_settings or not self._draft_getter or not self.draft_error:
+            return True
+        if self.active_worker or self.capture_active:
+            self.message("Wait for the current task before applying settings.")
+            return False
+        node=next((n for n in self.spec.nodes if n.id==self._draft_node),None)
+        value=self._draft_getter()
+        if node is None:
+            return False
+        self._flushing_settings=True
+        try:
+            return self.params(node,value)
+        finally:
+            self._flushing_settings=False
 
     def commit(self,after,label):
         if self.active_worker or self.capture_active:
@@ -307,11 +358,16 @@ class WorkflowWindow(QMainWindow):
             self.message("Workflow changed. Downstream results will be rebuilt; review is required if input data changed.")
         if self.selected not in [n.id for n in self.spec.nodes]:
             self.selected=self.spec.nodes[0].id
+        self._draft_getter=None
+        self.draft_error=""
         self.canvas.display(self.spec,self.run.statuses,self.selected)
         self.select_node(self.selected)
         self.title()
 
     def select_node(self,identity):
+        if not self.flush_settings():
+            return
+        self._draft_getter=None
         self.selected=identity
         node=next((n for n in self.spec.nodes if n.id==identity),None)
         if not node:
@@ -335,6 +391,8 @@ class WorkflowWindow(QMainWindow):
             paths=node.params.get("paths",[])
             source_list=QListWidget()
             source_list.addItems(paths)
+            for i,path in enumerate(paths):
+                source_list.item(i).setToolTip(path)
             source_list.setMinimumHeight(90)
             layout.addWidget(source_list)
             button("Add PDFs…",self.add_sources)
@@ -352,11 +410,25 @@ class WorkflowWindow(QMainWindow):
             pages=QLineEdit()
             def update():
                 pages.setText(node.params.get("pages",{}).get(path.currentText(),"All"))
-            path.currentIndexChanged.connect(update)
+            def change_source(index):
+                selected_path=path.itemText(index)
+                if self.flush_settings():
+                    self.select_node(node.id)
+                    combo=self.inspector.findChild(QComboBox)
+                    if combo:
+                        combo.setCurrentText(selected_path)
+                        edit=self.inspector.findChild(QLineEdit)
+                        current=self.spec.node("merge")
+                        edit.setText(current.params.get("pages",{}).get(selected_path,"All"))
+                        self.watch_settings(current,lambda:{"pages":{**current.params.get("pages",{}),selected_path:edit.text()}},[edit])
+            # The draft getter retains the previous source while the combo changes.
+            path.activated.connect(change_source)
             update()
             form.addRow("Source",path)
             form.addRow("Pages",pages)
-            button("Apply selection",lambda:self.params(node,{"pages":{**node.params.get("pages",{}),path.currentText():pages.text()}}))
+            source_path=path.currentText()
+            self.watch_settings(node,lambda:{"pages":{**node.params.get("pages",{}),source_path:pages.text()}},[pages])
+            button("Apply selection",self.flush_settings)
         elif node.kind=="extract":
             info=QLabel(f"{len(node.params.get('regions',[]))} named region(s). Uses PDF text layers; no automatic OCR.")
             info.setWordWrap(True)
@@ -372,13 +444,25 @@ class WorkflowWindow(QMainWindow):
             pages.setValue(node.params.get("pages",1))
             field=QComboBox()
             extraction=self.spec.node("extract")
-            field.addItems([r["name"] for r in extraction.params.get("regions",[])] if extraction else [])
-            field.setCurrentText(node.params.get("field",""))
+            field.addItem("Select extraction field…","")
+            for region in extraction.params.get("regions",[]) if extraction else []:
+                field.addItem(region["name"],region["name"])
+            stored_field=node.params.get("field","")
+            if stored_field and field.findData(stored_field)<0:
+                field.addItem(stored_field+" (missing)",stored_field)
+            field.setCurrentIndex(field.findData(stored_field))
             pattern=QLineEdit(node.params.get("pattern","Page {CURRENT} of {TOTAL}"))
             for label,control in (("Method",method),("Pages",pages),("Grouping field",field),("Pattern",pattern)):
                 form.addRow(label,control)
-            button("Apply grouping",lambda:self.params(node,{"method":method.currentData(),"pages":pages.value(),
-                                                            "field":field.currentText(),"pattern":pattern.text()}))
+            def availability():
+                pages.setEnabled(method.currentData()=="fixed")
+                field.setEnabled(method.currentData()=="field")
+                pattern.setEnabled(method.currentData()=="pattern")
+            method.currentIndexChanged.connect(availability)
+            availability()
+            self.watch_settings(node,lambda:{"method":method.currentData(),"pages":pages.value(),
+                                            "field":field.currentData(),"pattern":pattern.text()},[method,pages,field,pattern])
+            button("Apply grouping",self.flush_settings)
         elif node.kind=="review":
             info=QLabel("Review extracted values and envelope boundaries. Production waits for explicit acceptance and zero unresolved findings.")
             info.setWordWrap(True)
@@ -395,7 +479,8 @@ class WorkflowWindow(QMainWindow):
             folder=QLineEdit(node.params.get("directory",""))
             form.addRow("Output folder",folder)
             button("Browse…",lambda:self.choose_output(node))
-            button("Apply folder",lambda:self.params(node,{"directory":folder.text()}))
+            self.watch_settings(node,lambda:{"directory":folder.text().strip()},[folder])
+            button("Apply folder",self.flush_settings)
             info=QLabel("A new job folder contains the validated PDF, extracted-data.csv, production reports and workflow.json.")
             info.setWordWrap(True)
             layout.addWidget(info)
@@ -408,9 +493,34 @@ class WorkflowWindow(QMainWindow):
     def params(self,node,value):
         after=self.spec.to_dict()
         next(n for n in after["nodes"] if n["id"]==node.id)["params"]=copy.deepcopy(value)
-        self.commit(after,"Configure "+LABELS[node.kind])
+        if node.kind=="input" and len(value.get("paths",[]))>1 and not self.spec.node("merge"):
+            merge=WorkflowNode("merge",x=max(n.x for n in self.spec.nodes)+215,y=0)
+            after["nodes"].append(asdict(merge))
+            edge=[node.id,self.spec.node("extract").id]
+            if edge in after["edges"]:
+                after["edges"].remove(edge)
+                after["edges"].extend([[node.id,merge.id],[merge.id,edge[1]]])
+        return self.commit(after,"Configure "+LABELS[node.kind])
+
+    def add_optional(self,kind):
+        if not self.flush_settings() or self.spec.node(kind):
+            if self.spec.node(kind):
+                self.select_node(self.spec.node(kind).id)
+            return
+        after=self.spec.to_dict()
+        node=WorkflowNode(kind,x=max(n.x for n in self.spec.nodes)+215,y=150 if kind=="overlay" else 0)
+        before,following=("input","extract") if kind=="merge" else ("review","output")
+        a,b=self.spec.node(before).id,self.spec.node(following).id
+        after["nodes"].append(asdict(node))
+        if [a,b] in after["edges"]:
+            after["edges"].remove([a,b])
+            after["edges"].extend([[a,node.id],[node.id,b]])
+        self.commit(after,"Insert "+LABELS[kind])
+        self.select_node(node.id)
 
     def add_node(self,kind,x,y):
+        if not self.flush_settings():
+            return
         if self.spec.node(kind):
             self.message("This step already exists. Select it to change its settings.")
             return
@@ -419,6 +529,8 @@ class WorkflowWindow(QMainWindow):
         self.commit(after,"Add workflow step")
 
     def remove_node(self,node):
+        if not self.flush_settings():
+            return
         after=self.spec.to_dict()
         previous=next((a for a,b in after["edges"] if b==node.id),None)
         following=next((b for a,b in after["edges"] if a==node.id),None)
@@ -429,18 +541,24 @@ class WorkflowWindow(QMainWindow):
         self.commit(after,"Remove optional step")
 
     def move_node(self,identity,x,y):
+        if not self.flush_settings():
+            return
         after=self.spec.to_dict()
         node=next(n for n in after["nodes"] if n["id"]==identity)
         node.update(x=x,y=y)
         self.commit(after,"Move workflow node")
 
     def connect_nodes(self,a,b):
+        if not self.flush_settings():
+            return
         after=self.spec.to_dict()
         after["edges"]=[e for e in after["edges"] if e[0]!=a and e[1]!=b]
         after["edges"].append([a,b])
         self.commit(after,"Connect workflow steps")
 
     def disconnect_nodes(self,a,b):
+        if not self.flush_settings():
+            return
         after=self.spec.to_dict()
         after["edges"]=[e for e in after["edges"] if e!=[a,b]]
         self.commit(after,"Disconnect workflow steps")
@@ -535,7 +653,7 @@ class WorkflowWindow(QMainWindow):
                          cancel_argument="is_cancelled",on_result=ready,on_finished=finished)
 
     def edit_regions(self):
-        if self.active_worker or self.capture_active:
+        if self.active_worker or self.capture_active or not self.flush_settings():
             return
         source=self.run.source or next(iter(self.spec.node("input").params.get("paths",[])),"")
         if not source:
@@ -554,7 +672,7 @@ class WorkflowWindow(QMainWindow):
         self.execute(node.kind)
 
     def execute(self,until):
-        if self.active_worker or self.capture_active:
+        if self.active_worker or self.capture_active or not self.flush_settings():
             return
         try:
             self.spec.chain()
@@ -574,14 +692,18 @@ class WorkflowWindow(QMainWindow):
                 if not project.undo.isClean() or getattr(project,"draft_error", ""):
                     self.message("Save or repair the open overlay project before running Workflow; production uses its saved version.")
                     return
-        if until=="output" and self.run.output:
+        if until=="output":
             self.run.statuses.pop(self.spec.node("output").id,None)
+            self.run.output={}
+            self.production_summary.setPlainText("Production is running. The result will appear when the job finishes.")
         def ready(result):
             self.run=WorkflowRun(**result)
             self.canvas.display(self.spec,self.run.statuses,self.selected)
             self.message(self.run.error or ("Review and accept the results before production." if not self.run.accepted else "Workflow step completed."))
+            self.groups_model.update(self.run.groups)
+            if not self.run.database:
+                self.results.setRowCount(0)
             if self.run.database:
-                self.groups_model.update(self.run.groups)
                 QTimer.singleShot(0,self.review)
                 if not self.run.output:
                     self.tabs.setCurrentWidget(self.review_page)
@@ -625,6 +747,15 @@ class WorkflowWindow(QMainWindow):
                 if delivered:
                     callback(delivered[0])
                 elif failures and not getattr(worker,"superseded",False):
+                    if request.get("operation")=="run":
+                        self.run.error=failures[0]
+                        self.run.output={}
+                        self.run.accepted=False
+                        for identity,status in list(self.run.statuses.items()):
+                            if status=="Running":
+                                self.run.statuses[identity]="Cancelled" if getattr(worker,"cancel_requested",False) else "Failed"
+                        self.canvas.display(self.spec,self.run.statuses,self.selected)
+                        self.production_summary.setPlainText("Workflow failed: "+failures[0])
                     self.error(failures[0])
             if preview and request.get("operation")=="preview":
                 target=Path(request["target"]).resolve()
@@ -647,19 +778,30 @@ class WorkflowWindow(QMainWindow):
                 self.run.statuses[node.id]="Running"
                 self.canvas.display(self.spec,self.run.statuses,self.selected)
 
-    def lock(self):
+    def lock(self,*_):
+        if sip.isdeleted(self):
+            return
         busy=bool(self.active_worker or self.capture_active or self.close_pending)
         for key,act in self.actions.items():
-            act.setEnabled(not busy if key!="cancel" else bool(self.active_worker))
+            enabled=not busy if key!="cancel" else bool(self.active_worker)
+            if key in ("undo","redo"):
+                enabled=enabled and not self.draft_error and (self.undo.canUndo() if key=="undo" else self.undo.canRedo())
+            act.setEnabled(enabled)
+        if hasattr(self,"add_step"):
+            self.add_step.setEnabled(not busy)
+        if not hasattr(self,"toolbox"):
+            return
         self.toolbox.setEnabled(not busy)
         self.canvas.setEnabled(not busy)
         self.inspector.setEnabled(not busy)
         self.review_page.setEnabled(not busy)
         self.progress.setVisible(busy)
+        self.actions["cancel"].setVisible(bool(self.active_worker))
         self.activityChanged.emit()
 
     def cancel_job(self):
         if self.active_worker:
+            self.active_worker.cancel_requested=True
             self.active_worker.cancel()
             self.message("Cancellation requested; waiting for a safe checkpoint.")
 
@@ -672,10 +814,16 @@ class WorkflowWindow(QMainWindow):
             if generation!=self.review_generation:
                 return
             self.run.accepted=result["accepted"]
+            self.run.groups=result["groups"]
+            self.groups_model.update(self.run.groups)
             self.page.blockSignals(True)
             self.page.setMaximum(result["pages"])
             self.page.setValue(result["page"])
             self.page.blockSignals(False)
+            if result["envelope"]:
+                self.group_table.selectRow(result["envelope"]-1)
+            selected_row=self.results.currentRow()
+            selected_field=(self.results.item(selected_row,0).text(),self.results.item(selected_row,1).text()) if selected_row>=0 else None
             self.results.setRowCount(0)
             for scope,rows in (("Page",result["cells"]),("Envelope",result["envelope_cells"])):
                 for cell in rows:
@@ -684,7 +832,10 @@ class WorkflowWindow(QMainWindow):
                     for col,text in enumerate((scope,cell["field"],cell.get("raw",""),cell["value"],cell["issue"] if cell.get("applicable",1) else "Not applicable")):
                         item=QTableWidgetItem(str(text))
                         item.setToolTip(str(text))
+                        item.setData(Qt.ItemDataRole.UserRole,result["page"])
                         self.results.setItem(row,col,item)
+                    if selected_field==(scope,cell["field"]):
+                        self.results.selectRow(row)
             self.review_summary.setText(f"{result['pages']:,} pages · {len(self.run.groups):,} envelopes · {result['issues']:,} unresolved findings · "
                                         +("Review accepted" if self.run.accepted else "Review required"))
             if self.spec.node("review"):
@@ -701,6 +852,10 @@ class WorkflowWindow(QMainWindow):
             self.message("Select a page field. Envelope values are rebuilt from source-page values.")
             return
         field=self.results.item(row,1).text()
+        source_page=self.results.item(row,1).data(Qt.ItemDataRole.UserRole)
+        if source_page!=self.page.value():
+            self.message("Wait for the selected page's fields to finish loading before correcting a value.")
+            return
         value,ok=QInputDialog.getMultiLineText(self,"Correct extracted value",field,self.results.item(row,3).text())
         if not ok:
             return
@@ -712,25 +867,32 @@ class WorkflowWindow(QMainWindow):
                 if self.spec.node(kind):
                     self.run.statuses.pop(self.spec.node(kind).id,None)
             self.production_summary.setPlainText("Data changed; review again before generating a new production PDF.")
-            self.review(action="correct",field=field,value=value,reason=reason)
+            self.review(action="correct",page=source_page,field=field,value=value,reason=reason)
 
     def accept_review(self):
+        if not self.run.groups or self.run.statuses.get(self.spec.node("group").id)!="Completed":
+            self.message("Complete grouping with Scan & review before accepting the results.")
+            return
         self.review(action="accept")
 
     def export_csv(self):
         target,_=QFileDialog.getSaveFileName(self,"Export extracted data","","CSV (*.csv)")
         if target:
-            self.review(action="export",target=target)
+            target=Path(target).with_suffix(".csv")
+            protected=[self.run.source,self.run.database,*self.spec.node("input").params.get("paths",[])]
+            if target.resolve() in [Path(p).resolve() for p in protected if p]:
+                self.message("Choose a report filename that does not replace a workflow source or database.")
+                return
+            self.review(action="export",target=str(target))
 
     def change_groups(self,groups):
         self.run.accepted=False
-        self.run.groups=groups
         self.run.output={}
         for kind in ("review","overlay","output"):
             if self.spec.node(kind):
                 self.run.statuses.pop(self.spec.node(kind).id,None)
-        self.groups_model.update(groups)
-        self.review(action="groups")
+        self.production_summary.setPlainText("Envelope boundaries changed; review again before production.")
+        self.review(action="groups",groups=groups)
 
     def merge_previous(self):
         index=self.group_table.currentIndex().row()
@@ -764,8 +926,7 @@ class WorkflowWindow(QMainWindow):
             if self.project_host:
                 project=self.project_host.open_project(node.params["path"])
                 if project and self.run.database:
-                    project.workflow_database=self.run.database
-                    project.timer.start()
+                    self.bind_overlay(project)
             return
         if not self.run.groups or not self.run.source:
             self.message("Run to review first so Designer can use the current source and grouping.")
@@ -789,6 +950,45 @@ class WorkflowWindow(QMainWindow):
             QTimer.singleShot(0,adopt)
         self.request({"operation":"make_overlay","spec":self.spec.to_dict(),"groups":self.run.groups,
                       "source":self.run.source,"path":str(target)},ready)
+
+    def bind_overlay(self,project):
+        if sip.isdeleted(self) or sip.isdeleted(project) or self.close_pending or project.close_pending:
+            return
+        if project.active_worker:
+            project.active_worker.ended.connect(lambda:QTimer.singleShot(0,lambda:self.bind_overlay(project)))
+            return
+        if not project.spec or not self.run.groups or not self.run.source:
+            self.message("Run to review before synchronising the overlay preview.")
+            return
+        project.properties.apply()
+        if project.draft_error or self.project_host.is_busy(project):
+            self.message("Finish the overlay edit or task before updating its workflow source.")
+            return
+        if self.active_worker:
+            return
+        project.workflow_binding=True
+        project.timer.stop()
+        project.preview_generation+=1
+        project.busy()
+        def ready(result):
+            if sip.isdeleted(project) or project.close_pending:
+                return
+            # The binding is an undoable project edit. Layout, fonts, sequence and
+            # barcode choices are preserved; production still requires a saved project.
+            project.workflow_database=self.run.database
+            if project.commit(result["spec"],"Synchronise workflow source and envelopes"):
+                project.schedule_preview()
+                self.message("Designer now previews the current workflow source and envelope boundaries. Save the overlay if its source changed.")
+        worker=self.request({"operation":"bind_overlay","spec":self.spec.to_dict(),"groups":self.run.groups,
+                             "source":self.run.source,"path":str(project.project_path),"project":project.spec.to_dict()},ready)
+        def release():
+            if not sip.isdeleted(project):
+                project.workflow_binding=False
+                project.busy()
+        if worker:
+            worker.ended.connect(release)
+        else:
+            release()
 
     def choose_output(self,node):
         path=QFileDialog.getExistingDirectory(self,"Output folder")
@@ -835,6 +1035,8 @@ class WorkflowWindow(QMainWindow):
         if self.active_worker or self.capture_active:
             self.error("Wait for the current task before saving.")
             return False
+        if not self.flush_settings():
+            return False
         path=path or (str(self.project_path) if self.project_path and not save_as else "")
         if not path:
             path,_=QFileDialog.getSaveFileName(self,"Save workflow","","Workflow (*.pdflow)")
@@ -860,6 +1062,9 @@ class WorkflowWindow(QMainWindow):
             QTimer.singleShot(0,lambda:self.project_host.close_project(self))
             return
         if not self.close_pending:
+            if not self.active_worker and not self._close_approved and not self.flush_settings():
+                event.ignore()
+                return
             if not self._close_approved and not self.undo.isClean():
                 answer=QMessageBox.question(self,"Unsaved workflow","Discard this workflow?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                 if answer!=QMessageBox.StandardButton.Yes:
@@ -893,4 +1098,8 @@ class WorkflowWindow(QMainWindow):
         if hasattr(self,"toolbox"):
             self.toolbox.setVisible(self.width()>=1080)
             self.inspector_scroll.setMinimumWidth(210 if self.width()<1080 else 260)
+            for key in ("scan","generate"):
+                button=self.layout_toolbar.widgetForAction(self.actions[key])
+                if isinstance(button,QToolButton):
+                    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon if self.width()>=1080 else Qt.ToolButtonStyle.ToolButtonIconOnly)
 

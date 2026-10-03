@@ -395,7 +395,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.error(message)
 
     def busy(self):
-        locked = bool(self.active_worker or self.font_token)
+        locked = bool(self.active_worker or self.font_token or getattr(self,"workflow_binding",False))
         valid = self.spec is not None and not self.draft_error
         for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate"):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))

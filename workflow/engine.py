@@ -25,13 +25,13 @@ from .extraction import ExtractionSpec, ExtractionStore, scan_pdf
 from .model import WorkflowRun
 
 
-def context_fingerprint(spec):
+def context_fingerprint(spec, *, include_overlay=True):
     """Include source/template bytes so timestamps alone cannot retain stale approval."""
     parts=[spec.fingerprint()]
     for path in spec.node("input").params.get("paths",[]):
         parts.append(file_hash(Path(path)))
     overlay=spec.node("overlay")
-    if overlay and overlay.params.get("path"):
+    if include_overlay and overlay and overlay.params.get("path"):
         project=load_overlay(overlay.params["path"])
         parts.append(json.dumps(project.to_dict(),sort_keys=True))
         for obj in project.objects:
@@ -49,27 +49,40 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
     reserved={(root/name).resolve() for name in ("source.pdf","extraction.sqlite","source-map.jsonl","run.json")}
     if any(Path(path).resolve() in reserved for path in spec.node("input").params.get("paths",[])):
         raise CompositionError("Use a separate workflow scratch directory; it must not replace an input PDF.")
-    fingerprint=context_fingerprint(spec)
     import hashlib
-    signatures={}
-    prior="|".join(file_hash(Path(p)) for p in spec.node("input").params.get("paths",[]))
-    for node in spec.chain():
-        content=json.dumps(node.params,sort_keys=True)
-        if node.kind=="overlay" and node.params.get("path"):
-            content+=context_fingerprint(spec)
-        prior=hashlib.sha256((prior+node.kind+content).encode()).hexdigest()
-        signatures[node.id]=prior
-    if run.source and not Path(run.source).is_file():
-        run=WorkflowRun()
-    run.fingerprint=fingerprint
-    if until=="output" and spec.node("output"):
-        run.statuses.pop(spec.node("output").id,None)
-    current=None
+    current=spec.node("input")
     run.error=""
+    if until=="output":
+        run.output={}
     try:
+        # Downstream overlay assets are checked when that stage is reached, so a
+        # missing template never prevents scanning and reviewing the input PDF.
+        fingerprint=context_fingerprint(spec,include_overlay=False)
+        prior="|".join(file_hash(Path(p)) for p in spec.node("input").params.get("paths",[]))
+        if run.source and not Path(run.source).is_file():
+            run=WorkflowRun()
+        if run.database:
+            try:
+                if not Path(run.database).is_file():
+                    raise CompositionError("Missing extraction database")
+                with ExtractionStore(run.database) as store:
+                    if store.metadata()["sha256"]!=file_hash(Path(run.source)):
+                        raise CompositionError("Changed workflow snapshot")
+            except Exception:
+                # Rebuild and demand review rather than reusing missing/tampered data.
+                run=WorkflowRun()
+        run.fingerprint=fingerprint
+        if until=="output" and spec.node("output"):
+            run.statuses.pop(spec.node("output").id,None)
+        signatures={}
         for node in spec.chain():
             check_cancel(is_cancelled)
             current=node
+            content=json.dumps(node.params,sort_keys=True)
+            if node.kind=="overlay" and node.params.get("path"):
+                content+=context_fingerprint(spec)
+            prior=hashlib.sha256((prior+node.kind+content).encode()).hexdigest()
+            signatures[node.id]=prior
             unchanged=run.signatures.get(node.id)==signatures[node.id]
             if node.kind=="review":
                 if not unchanged:
@@ -105,7 +118,11 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                 # All downstream work reads an immutable owned snapshot.
                 run.source=str(root/"source.pdf")
                 if len(paths)==1:
-                    snapshot_source(paths[0],run.source,file_hash(Path(paths[0])),is_cancelled=is_cancelled)
+                    # The job snapshot helper intentionally refuses overwrites.
+                    # Replace only our owned scratch PDF, after the new copy is complete.
+                    with atomic_output(run.source) as temp:
+                        temp.unlink()
+                        snapshot_source(paths[0],temp,file_hash(Path(paths[0])),is_cancelled=is_cancelled)
             elif node.kind=="merge":
                 paths=spec.node("input").params["paths"]
                 selections=node.params.get("pages",{})
@@ -145,7 +162,7 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
             elif node.kind=="output":
                 if not run.accepted:
                     raise CompositionError("Accept extraction and mailpiece review before production.")
-                if context_fingerprint(spec)!=run.fingerprint:
+                if context_fingerprint(spec,include_overlay=False)!=run.fingerprint:
                     raise CompositionError("Source or configuration changed; scan and review again.")
                 target=node.params.get("directory","")
                 if not target:
@@ -173,6 +190,9 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                         raise CompositionError("Extraction source differs from the production PDF; scan and review again.")
                     if store.metadata()["accepted"]!="true":
                         raise CompositionError("Data was modified since review.")
+                    reviewed_groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
+                    if reviewed_groups!=run.groups:
+                        raise CompositionError("Envelope boundaries differ from the accepted review; review again.")
                     def reports(report,result,source=source,settings=settings):
                         store.export(report/"extracted-data.csv")
                         import csv
@@ -202,6 +222,18 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
         return run
     except Exception as exc:
         run.error=str(exc)
+        if current and current.kind in ("input","merge","extract","group"):
+            run.accepted=False
+            run.output={}
+            if current.kind in ("input","merge","extract"):
+                run.database=""
+                run.groups=[]
+            tail=False
+            for downstream in spec.chain():
+                tail=tail or downstream.id==current.id
+                if tail:
+                    run.statuses.pop(downstream.id,None)
+                    run.signatures.pop(downstream.id,None)
         if current:
             run.statuses[current.id]="Cancelled" if is_cancelled and is_cancelled() else "Failed"
         return run

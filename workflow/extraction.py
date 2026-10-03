@@ -6,7 +6,7 @@ import json
 import math
 import re
 import sqlite3
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -206,7 +206,7 @@ class ExtractionStore:
         return self.db.execute("SELECT COUNT(*) FROM cells WHERE applicable=1 AND issue!=''").fetchone()[0] + self.db.execute(
             "SELECT COUNT(*) FROM envelope_cells WHERE issue!=''").fetchone()[0]
 
-    def grouped(self, groups, spec, *, progress=None, is_cancelled=None):
+    def grouped(self, groups, spec, *, progress=None, is_cancelled=None, commit=True):
         spec.validate()
         pages = int(self.metadata()["pages"])
         cursor = 1
@@ -216,7 +216,7 @@ class ExtractionStore:
             cursor = end+1
         if not groups or cursor != pages+1:
             raise CompositionError("Groups do not cover the source PDF.")
-        with self.db:
+        with self.db if commit else nullcontext():
             self.db.execute("DELETE FROM groups")
             self.db.execute("DELETE FROM envelope_cells")
             self.db.execute("UPDATE cells SET applicable=0")
@@ -244,18 +244,24 @@ class ExtractionStore:
                     progress(ordinal,len(groups),"Building envelope data")
             self.db.execute("UPDATE meta SET value='false' WHERE key='accepted'")
 
-    def correct(self, page, field_name, value, reason):
+    def correct(self, page, field_name, value, reason, *, commit=True):
         spec = ExtractionSpec.from_dict(json.loads(self.metadata()["spec"]))
         region = next((r for r in spec.regions if r.name == field_name), None)
         row = self.db.execute("SELECT value FROM cells WHERE page=? AND field=?", (page,field_name)).fetchone()
         if not region or not row or not isinstance(value,str) or not reason.strip() or len(reason)>1000:
             raise CompositionError("A correction needs a valid cell, value and reason.")
-        with self.db:
+        with self.db if commit else nullcontext():
             self.db.execute("INSERT INTO edits VALUES (?,?,?,?,?)", (page,field_name,row[0],value,reason))
             self.db.execute("UPDATE cells SET value=?,issue=? WHERE page=? AND field=?", (value,region.problem(value),page,field_name))
             self.db.execute("UPDATE meta SET value='false' WHERE key='accepted'")
 
     def accept(self):
+        groups=[list(row) for row in self.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
+        from composition.pdf_source.model import EnvelopeSettings
+        from composition.pdf_source.planner import EnvelopePlan
+        if not groups:
+            raise CompositionError("Complete envelope grouping before accepting review.")
+        EnvelopePlan(int(self.metadata()["pages"]),EnvelopeSettings(pages_per_envelope=1,groups=groups))
         if self.issues():
             raise CompositionError("Resolve extraction and envelope findings before accepting review.")
         with self.db:
@@ -269,10 +275,20 @@ class ExtractionStore:
         return values
 
     def export(self, target):
+        target=Path(target)
+        protected={Path(self.path).resolve(),*(Path(r[0]).resolve() for r in self.db.execute("SELECT DISTINCT source_file FROM provenance") if r[0])}
+        if target.resolve() in protected:
+            raise CompositionError("A CSV report must not overwrite an extraction database or source PDF.")
         with atomic_output(Path(target)) as temp, temp.open("w",encoding="utf-8-sig",newline="") as stream:
             writer=csv.writer(stream)
-            writer.writerow(["Workflow source page","Envelope","Field","Raw text","Value","Issue","Applicable","Original source file","Original source page"])
+            writer.writerow(["Workflow source page","Envelope","Field","Raw text","Value","Issue","Applicable","Original source file","Original source page","Scope"])
             for row in self.db.execute("SELECT cells.*,groups.envelope,provenance.source_file,provenance.source_page FROM cells LEFT JOIN groups ON page BETWEEN start AND end LEFT JOIN provenance USING(page) ORDER BY page,field"):
                 # Treat cells as spreadsheet text; prevent imported values executing formulas.
                 vals=[row[k] for k in ("page","envelope","field","raw","value","issue","applicable","source_file","source_page")]
+                vals.append("Page")
+                writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in vals])
+            for row in self.db.execute("SELECT * FROM envelope_cells ORDER BY envelope,field"):
+                original=self.db.execute("SELECT source_file,source_page FROM provenance WHERE page=?",(row["issue_page"],)).fetchone()
+                vals=[row["issue_page"],row["envelope"],row["field"],"",row["value"],row["issue"],1,
+                      original[0] if original else "",original[1] if original else "","Envelope"]
                 writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in vals])

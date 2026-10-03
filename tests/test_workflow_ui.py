@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QApplication, QComboBox, QFileDialog, QMessageBox
 
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
@@ -235,3 +235,207 @@ def test_designer_overlay_preview_and_unsaved_generation_guard(integrated,tmp_pa
     assert not w.run.output
     w.undo.setClean()
     project.undo.setClean()
+
+
+def test_inspector_settings_survive_selection_and_save(standalone,tmp_path):
+    from PyQt6.QtWidgets import QLineEdit, QSpinBox
+    w=standalone
+    source=fixture_pdf(tmp_path/"source.pdf")
+    w.apply_spec(configured(source,tmp_path/"out").to_dict())
+    w.select_node(w.spec.node("output").id)
+    folder=w.inspector.findChild(QLineEdit)
+    folder.setText(str(tmp_path/"new-output"))
+    assert w.draft_error and "*" in w.windowTitle()
+    w.select_node(w.spec.node("group").id)
+    assert w.spec.node("output").params["directory"]==str(tmp_path/"new-output")
+    method=w.inspector.findChildren(QComboBox)[0]
+    method.setCurrentIndex(method.findData("fixed"))
+    pages=w.inspector.findChild(QSpinBox)
+    pages.setValue(3)
+    target=tmp_path/"settings.pdflow"
+    w.save_project(path=str(target))
+    wait_until(lambda:not w.workers and target.exists(),timeout=30)
+    from workflow.serializer import load_workflow
+    assert load_workflow(target).node("group").params["pages"]==3
+    assert not w.draft_error and w.undo.isClean()
+
+
+def test_multiple_sources_insert_merge_and_compact_add_step(standalone,tmp_path):
+    w=standalone
+    source=fixture_pdf(tmp_path/"first.pdf")
+    second=fixture_pdf(tmp_path/"second.pdf")
+    w.remove_node(w.spec.node("overlay"))
+    w.undo.clear()
+    w.params(w.spec.node("input"),{"paths":[str(source),str(second)]})
+    assert [n.kind for n in w.spec.chain()][:3]==["input","merge","extract"]
+    w.undo.undo()
+    assert not w.spec.node("merge") and not w.spec.node("input").params["paths"]
+    w.resize(960,640)
+    QApplication.processEvents()
+    assert w.add_step.isVisible()
+    w.add_optional("overlay")
+    assert [n.kind for n in w.spec.chain()][-2:]==["overlay","output"]
+    w.canvas.pending=w.spec.node("input").id
+    QTest.keyClick(w.canvas,Qt.Key.Key_Escape)
+    assert w.canvas.pending is None
+
+
+def test_review_correction_cannot_target_old_page_fields(standalone,tmp_path,monkeypatch):
+    from PyQt6.QtWidgets import QInputDialog
+    w=standalone
+    source=fixture_pdf(tmp_path/"source.pdf")
+    w.apply_spec(configured(source,tmp_path/"out").to_dict())
+    w.execute("review")
+    wait_until(lambda:not w.workers and w.results.rowCount()>0,timeout=30)
+    w.results.selectRow(0)
+    w.page.blockSignals(True)
+    w.page.setValue(4)
+    w.page.blockSignals(False)
+    def unexpected(*args,**kwargs):
+        raise AssertionError("A correction dialog was offered for stale page data")
+    monkeypatch.setattr(QInputDialog,"getMultiLineText",unexpected)
+    w.correct()
+    assert "finish loading" in w.feedback.text()
+    w.review()
+    wait_until(lambda:not w.workers and w.results.item(0,3).text()=="00002")
+    w.results.selectRow(0)
+    monkeypatch.setattr(QInputDialog,"getMultiLineText",lambda *a,**k:("00009",True))
+    monkeypatch.setattr(QInputDialog,"getText",lambda *a,**k:("Verified page four",True))
+    w.correct()
+    wait_until(lambda:not w.workers and w.results.item(0,3).text()=="00009")
+    from workflow.extraction import ExtractionStore
+    with ExtractionStore(w.run.database) as store:
+        assert store.values(1)["Account_No"]=="00001"
+        assert store.values(4)["Account_No"]=="00009"
+
+
+def test_failed_boundary_edit_keeps_last_successful_grouping(standalone,tmp_path):
+    w=standalone
+    source=fixture_pdf(tmp_path/"source.pdf")
+    w.apply_spec(configured(source,tmp_path/"out").to_dict())
+    w.execute("review")
+    wait_until(lambda:not w.workers and bool(w.run.groups),timeout=30)
+    previous=w.run.groups.copy()
+    w.change_groups([[1,2],[4,6]])
+    assert w.run.groups==previous
+    wait_until(lambda:not w.workers)
+    assert w.run.groups==previous and w.groups_model.groups==previous
+    assert "cover" in w.feedback.text()
+
+
+def test_region_editor_small_pdf_and_invalid_draft_remain_visible(standalone,tmp_path):
+    import fitz
+
+    from composition.template.model import MM_TO_PT
+    w=standalone
+    source=tmp_path/"small.pdf"
+    with fitz.open() as pdf:
+        page=pdf.new_page(width=60*MM_TO_PT,height=40*MM_TO_PT)
+        page.insert_text((10,30),"Small PDF")
+        pdf.save(source)
+    dialog=RegionEditor(w,str(source),{})
+    dialog.show()
+    wait_until(lambda:dialog.last_image is not None and not w.workers and not dialog.timer.isActive(),timeout=30)
+    assert dialog.regions[0]["page_width_mm"]==pytest.approx(60)
+    assert dialog.regions[0]["x_mm"]+dialog.regions[0]["width_mm"]<=60.01
+    image=dialog.last_image
+    dialog.name.setText("invalid name")
+    dialog.save_controls()
+    dialog.zoom(1.2)
+    wait_until(lambda:not w.workers and not dialog.timer.isActive(),timeout=30)
+    assert dialog.last_image and dialog.last_image!=image
+    assert dialog.view.scene().items() and "name" in dialog.sample.text().lower()
+    dialog.name.setText("Repaired_Field")
+    dialog.save_controls()
+    dialog.use_page_size()
+    dialog.accept()
+    assert dialog.result()==dialog.DialogCode.Accepted
+
+
+def test_undo_buttons_do_not_enable_empty_history(standalone):
+    w=standalone
+    w.lock()
+    assert not w.actions["undo"].isEnabled() and not w.actions["redo"].isEnabled()
+    w.move_node(w.spec.node("input").id,42,43)
+    assert w.actions["undo"].isEnabled() and not w.actions["redo"].isEnabled()
+    w.undo.undo()
+    w.lock()
+    assert not w.actions["undo"].isEnabled() and w.actions["redo"].isEnabled()
+
+
+def test_merge_page_drafts_follow_the_selected_source(standalone,tmp_path):
+    from PyQt6.QtWidgets import QLineEdit
+    w=standalone
+    first=fixture_pdf(tmp_path/"first.pdf")
+    second=fixture_pdf(tmp_path/"second.pdf")
+    w.params(w.spec.node("input"),{"paths":[str(first),str(second)]})
+    w.select_node(w.spec.node("merge").id)
+    pages=w.inspector.findChild(QLineEdit)
+    pages.setText("1,3")
+    combo=w.inspector.findChild(QComboBox)
+    combo.setCurrentIndex(1)
+    combo.activated.emit(1)
+    assert w.spec.node("merge").params["pages"][str(first)]=="1,3"
+    assert w.inspector.findChild(QComboBox).currentText()==str(second)
+    w.inspector.findChild(QLineEdit).setText("Even")
+    w.select_node(w.spec.node("input").id)
+    assert w.spec.node("merge").params["pages"][str(second)]=="Even"
+
+
+def test_reopening_workflow_overlay_syncs_grouping_without_losing_design(integrated,tmp_path,monkeypatch):
+    root,host=integrated
+    w=host.new_workflow()
+    source=fixture_pdf(tmp_path/"source.pdf")
+    w.apply_spec(configured(source,tmp_path/"out").to_dict())
+    w.add_optional("overlay")
+    w.execute("review")
+    wait_until(lambda:not w.workers and bool(w.run.groups),timeout=30)
+    path=tmp_path/"overlay.pdcx"
+    monkeypatch.setattr(QFileDialog,"getSaveFileName",lambda *a,**k:(str(path),""))
+    w.edit_overlay()
+    wait_until(lambda:len(host.projects)==2 and host.current_project.spec is not None,timeout=30)
+    project=host.current_project
+    wait_until(lambda:not project.active_worker)
+    project.add_object("text",field="Envelope_Account_No",x=20,y=60)
+    original=project.spec.to_dict()["objects"]
+    # Current project content is retained even when the synchronisation changes grouping.
+    host.tabs.setCurrentWidget(w)
+    w.change_groups([[1,2],[3,3],[4,6]])
+    wait_until(lambda:not w.workers and len(w.run.groups)==3)
+    w.edit_overlay()
+    wait_until(lambda:not w.workers and project.spec.settings.groups==w.run.groups,timeout=30)
+    assert project.spec.to_dict()["objects"]==original
+    assert project.workflow_database==w.run.database and not project.undo.isClean()
+    wait_until(lambda:project.preview_status.text()=="Preview ready",timeout=30)
+    w.undo.setClean()
+    project.undo.setClean()
+
+
+def test_region_sidebar_controls_are_reachable_in_a_short_window(standalone,tmp_path):
+    w=standalone
+    source=fixture_pdf(tmp_path/"source.pdf")
+    dialog=RegionEditor(w,str(source),configured(source,tmp_path/"out").node("extract").params)
+    dialog.resize(960,640)
+    dialog.show()
+    wait_until(lambda:dialog.last_image is not None and not w.workers,timeout=30)
+    assert dialog.name.width()>=150
+    for control in (dialog.region[3],dialog.maximum,dialog.join):
+        dialog.inspector.ensureWidgetVisible(control)
+        QApplication.processEvents()
+        point=control.mapTo(dialog.inspector.viewport(),control.rect().center())
+        assert dialog.inspector.viewport().rect().contains(point)
+    dialog.reject()
+
+
+def test_review_navigation_keeps_current_envelope_selected(standalone,tmp_path):
+    w=standalone
+    source=fixture_pdf(tmp_path/"source.pdf")
+    w.apply_spec(configured(source,tmp_path/"out").to_dict())
+    w.execute("review")
+    wait_until(lambda:not w.workers and w.results.rowCount()>0,timeout=30)
+    w.page.setValue(4)
+    wait_until(lambda:not w.workers and w.results.item(0,3).text()=="00002")
+    assert w.group_table.currentIndex().row()==1
+    w.merge_previous()
+    wait_until(lambda:not w.workers and w.run.groups==[[1,6]])
+    assert w.group_table.currentIndex().row()==0

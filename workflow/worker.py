@@ -27,7 +27,14 @@ def dispatch(request, progress, cancelled):
         from .serializer import load_workflow
         return {"spec":load_workflow(request["path"]).to_dict()}
     if operation=="preview":
-        spec=ExtractionSpec.from_dict(request["extraction"]) if request["extraction"].get("regions") else None
+        validation_error=""
+        try:
+            spec=ExtractionSpec.from_dict(request["extraction"]) if request["extraction"].get("regions") else None
+        except ValueError as exc:
+            if not request.get("allow_invalid_draft",False):
+                raise
+            spec=None
+            validation_error=str(exc)
         with fitz.open(request["source"]) as pdf:
             number=request["page"]
             if type(number) is not int or not 1<=number<=pdf.page_count or pdf.needs_pass:
@@ -38,7 +45,7 @@ def dispatch(request, progress, cancelled):
             if request.get("raster",True):
                 pix=page.get_pixmap(matrix=fitz.Matrix(scale,scale),alpha=False)
                 pix.save(target)
-            return {"image":str(target),"width_mm":page.rect.width/MM_TO_PT,"height_mm":page.rect.height/MM_TO_PT,
+            return {"validation_error":validation_error,"image":str(target),"width_mm":page.rect.width/MM_TO_PT,"height_mm":page.rect.height/MM_TO_PT,
                     "pages":pdf.page_count,"cells":[{"field":r.name,"raw":raw,"value":value,"issue":issue}
                     for r in (spec.regions if spec else []) for raw,value,issue in [extract_page(page,r)]]}
     if operation=="review":
@@ -47,12 +54,14 @@ def dispatch(request, progress, cancelled):
             groups=request["groups"]
             action=request.get("action","")
             if action=="correct":
-                store.correct(request["page"],request["field"],request["value"],request["reason"])
-                store.grouped(groups,spec,is_cancelled=cancelled)
+                with store.db:
+                    store.correct(request["page"],request["field"],request["value"],request["reason"],commit=False)
+                    if groups:
+                        store.grouped(groups,spec,is_cancelled=cancelled,commit=False)
             elif action=="groups":
                 old=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
-                store.grouped(groups,spec,is_cancelled=cancelled)
                 with store.db:
+                    store.grouped(groups,spec,is_cancelled=cancelled,commit=False)
                     store.db.execute("INSERT INTO group_edits VALUES (?,?,?)",
                         (json.dumps(old),json.dumps(groups),request.get("reason","Operator boundary correction")))
             elif action=="accept":
@@ -69,10 +78,10 @@ def dispatch(request, progress, cancelled):
                 number=found[0] if found else number
             rows=store.page(number)
             envelope=store.db.execute("SELECT envelope FROM groups WHERE ? BETWEEN start AND end",(number,)).fetchone()
-            return {"cells":rows,"page":number,"issues":store.issues(),"accepted":store.metadata()["accepted"]=="true",
+            return {"groups":[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")],"cells":rows,"page":number,"issues":store.issues(),"accepted":store.metadata()["accepted"]=="true",
                     "pages":int(store.metadata()["pages"]),"envelope":envelope[0] if envelope else None,
                     "envelope_cells":[dict(r) for r in store.db.execute("SELECT * FROM envelope_cells WHERE envelope=?",(envelope[0],))] if envelope else []}
-    if operation=="make_overlay":
+    if operation in ("make_overlay","bind_overlay"):
         from composition.overlay.model import EnvelopeSpec
         from composition.overlay.serializer import save_project
         from composition.pdf_source.model import EnvelopeSettings
@@ -80,7 +89,11 @@ def dispatch(request, progress, cancelled):
 
         from .engine import detection_audit
         workflow=WorkflowSpec.from_dict(request["spec"])
+        project=EnvelopeSpec.from_dict(request["project"]) if operation=="bind_overlay" else None
         cfg=EnvelopeSettings(pages_per_envelope=1,groups=request["groups"])
+        if project:
+            for name in ("start","increment","digits","prefix","suffix","duplex"):
+                setattr(cfg,name,getattr(project.settings,name))
         import shutil
 
         from composition.template.serializer import file_hash
@@ -88,12 +101,24 @@ def dispatch(request, progress, cancelled):
         target=Path(request["path"]).resolve().with_suffix(".pdcx")
         assets=target.parent/(target.stem+".assets")
         assets.mkdir(parents=True,exist_ok=True)
-        source_copy=assets/(file_hash(Path(request["source"]))+".pdf")
+        digest=file_hash(Path(request["source"]))
+        source_copy=assets/(digest+".pdf")
+        if source_copy.exists() and file_hash(source_copy)!=digest:
+            raise CompositionError("The saved overlay source asset has changed. Choose another project filename.")
         if not source_copy.exists():
             with atomic_output(source_copy,overwrite=False) as temp:
                 shutil.copyfile(request["source"],temp)
+                if file_hash(temp)!=digest:
+                    raise CompositionError("Source changed while creating the overlay project.")
         source=inspect_source(source_copy,cfg,uniform=True,is_cancelled=cancelled)
-        spec=EnvelopeSpec(source,cfg,external_fields=external_fields(workflow))
+        spec=EnvelopeSpec(source,cfg,objects=project.objects if project else [],
+                          required_scope=project.required_scope if project else "all_source",
+                          name=project.name if project else workflow.name,external_fields=external_fields(workflow))
+        if project and project.source.sha256==source.sha256:
+            spec.source_link=project.source_link
         spec.detection_review=detection_audit(spec)
+        spec.validate()
+        if operation=="bind_overlay":
+            return {"spec":spec.to_dict()}
         return {"path":str(save_project(spec,request["path"]))}
     raise CompositionError("Unknown workflow worker operation.")

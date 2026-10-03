@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import sqlite3
 import uuid
 from dataclasses import asdict
 
@@ -9,7 +10,7 @@ from PyQt6.QtWidgets import QDialog, QInputDialog
 
 from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayObject
 from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
-from composition.template.model import Element
+from composition.template.model import CompositionError, Element
 
 from .overlay_dialogs import BarcodeProfileDialog
 from .overlay_files import OverlayFiles
@@ -152,10 +153,17 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             database=getattr(self,"workflow_database", "")
             if database:
                 from workflow.extraction import ExtractionStore
-                with ExtractionStore(database) as store:
-                    fields.update(store.production_values(plan.page(self.envelope.value(), self.print_page.value())))
-                    samples[0][1].update(store.production_values(first))
-                    samples[1][1].update(store.production_values(last))
+                try:
+                    with ExtractionStore(database) as store:
+                        groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
+                        if store.metadata()["sha256"]!=self.spec.source.sha256 or groups!=self.spec.settings.groups:
+                            raise CompositionError("Workflow data or envelope boundaries changed. Reopen this overlay from Workflow before configuring barcode samples.")
+                        fields.update(store.production_values(plan.page(self.envelope.value(), self.print_page.value())))
+                        samples[0][1].update(store.production_values(first))
+                        samples[1][1].update(store.production_values(last))
+                except (OSError,ValueError,sqlite3.DatabaseError,KeyError) as exc:
+                    self.error(str(exc))
+                    return
         dialog = BarcodeProfileDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             raw = self.spec.to_dict()

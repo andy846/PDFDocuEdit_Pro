@@ -9,7 +9,7 @@ The existing Composition development flag controls the new workspace. Public ver
 - From Document Designer: **Workspace → New visual extraction workflow**, or the Designer start page.
 - Workflows are separate Designer project tabs. PDF/template/overlay tabs remain open when switching.
 
-1. Select **PDF Input**, add PDFs or **Add current workspace PDF** to capture unsaved edits. Unapplied form drafts require Apply / Send without draft / Cancel. Multiple PDFs need a Merge node; source order is editable.
+1. Select **PDF Input**, add PDFs or **Add current workspace PDF** to capture unsaved edits. Unapplied form drafts require Apply / Send without draft / Cancel. Adding multiple PDFs inserts and connects a Merge node automatically; source order is editable.
 2. Select **Extract Regions → Edit visual extraction regions…**. Draw named boxes, change exact mm coordinates, select first/all/role scopes and configure text cleanup/required/format/length checks. Click an existing box to select; drag its body to move, or bottom-right corner to resize. Region edits have Undo/Redo.
 3. Select **Group Mailpieces**: fixed pages, extracted-field changes, or a literal printed page-number pattern such as `Page {CURRENT} of {TOTAL}`. Apply settings.
 4. **Run to review**. Results retain raw text and cleaned values. **Previous finding / Next finding** jumps to an affected page. **View PDF region** opens that page for checking. Correct a page value with a reason; envelope values are rebuilt. Merge/split adjacent boundaries if necessary.
@@ -19,7 +19,7 @@ The existing Composition development flag controls the new workspace. Public ver
 
 ## Canvas and data contracts
 
-- Native Qt canvas: draggable nodes, ports, connections, arrows, pan, Ctrl+wheel zoom, Fit flow, settings/status summaries. Drag tools from the toolbox, or double-click them. The toolbox collapses at narrow widths; settings include **Connect to next…**. Incompatible connections, branches, cycles and duplicate tool types are rejected.
+- Native Qt canvas: draggable nodes, ports, connections, arrows, pan, Ctrl+wheel zoom, Fit flow, settings/status summaries. Drag tools from the toolbox, or double-click them. The toolbox collapses at narrow widths; **Add step** remains available and inserts/connects optional Merge/Overlay steps. Settings include **Connect to next…**; Escape cancels a pending port connection. Incompatible connections, branches, cycles and duplicate tool types are rejected.
 - The chain is Input → optional Merge → Extract → Group → Review → optional Overlay → Output. Running to a selected node and running to review use the same executor. Review always stops unattended progression until accepted.
 - `workflow/model.py`: versioned `WorkflowSpec`, `WorkflowNode`, `WorkflowRun`. Canvas positions are excluded from execution fingerprints.
 - `workflow/extraction.py`: `Region`, `ExtractionSpec`, `ExtractionResult`, `ExtractionStore`. Visible-page mm coordinates are transformed for PDF rotation/CropBox. Fixed regions reject mismatched reference geometry rather than scaling silently. Text is never converted to a number, preserving zeros.
@@ -62,3 +62,31 @@ The provided `C:\Users\andy8\OneDrive\桌面\sample\merged.pdf` was inspected re
 ## First-release limits
 
 One linear workflow, one instance of each supported step; no branches, loops, scheduler, automatic resume, OCR or text anchors. General first-page markers/separator rules and arbitrary detection-rule combinations remain available in the existing overlay detection dialog; this first canvas exposes fixed/field-change/page-pattern grouping. Production retains the overlay engine's uniform page-geometry restriction. Inserter compatibility still requires the actual machine specification and testing.
+
+
+## Consolidation — 2026-10-03
+
+### Settings and navigation
+
+- Grouping, output folder and per-source Merge page settings are tracked as drafts. Switching nodes, saving, running or closing applies them first. Drafts show the unsaved marker; Undo/Redo follows the actual history rather than being enabled by background-worker cleanup.
+- Merge source selection retains the page setting for the previous source. A missing grouping-field name remains visible as missing instead of silently selecting another field. Irrelevant grouping options are disabled.
+- Multiple-source input automatically inserts a connected Merge step in the same undo operation. The compact **Add step** menu remains visible at 960-pixel widths. Wide toolbars label Scan & review / Generate PDF; idle Cancel is hidden.
+- Review rows retain their source-page identity. Corrections are blocked while displayed fields belong to a different requested page. Navigating pages keeps the corresponding envelope and selected field highlighted.
+
+### Data, retry and output consistency
+
+- Boundary edits reach the on-screen model only after successful database commit. Corrections, regrouping and audit entries share one transaction; cancellation or failure rolls the mutation back.
+- A grouping failure still permits correcting extracted page data, then retrying Group without rescanning the PDF. Acceptance requires complete grouping; production compares the run's boundaries to the accepted database boundaries.
+- Missing inputs become logged node failures. A missing downstream overlay does not prevent input extraction/review. Missing/corrupt extraction caches or changed owned snapshots rebuild and require fresh review. Owned source snapshots are replaced atomically, so retries and changed-source scans work without deleting the source PDF.
+- Starting a new production attempt clears the previous result from the active run. Worker failures no longer leave nodes labelled Running or show an older completed PDF as the new result.
+- Reopening an overlay from Workflow synchronises its PDF source, extracted fields and envelope groups as an undoable edit. Objects, fonts, barcode profiles and sequence options are retained. Save the changed project before Workflow production. Preview and barcode sample dialogs reject stale source/group bindings.
+- CSV adds a **Scope** column and envelope rows, including envelope-consistency findings. Existing column names remain available. CSV export cannot overwrite the database or original source PDFs. Hash-named overlay source assets are verified before reuse.
+
+### Region editor
+
+- PDF rendering remains available while a region draft is invalid, so the operator can see and repair its geometry/name. Production validation remains strict.
+- New default regions adopt and fit the actual first PDF page, including small/non-A4 pages. Existing region positions are retained. **Use this page size** explicitly changes reference dimensions without scaling coordinates.
+- The entire property sidebar scrolls in short/high-DPI windows. Field names have a usable minimum width, duplicated names remain bounded, and keyboard Undo/Redo is available.
+- 960×640 / 200% offscreen snapshots were inspected in light and dark modes. These checks supplement operator testing on the real desktop.
+
+Consolidation verification: **57 passed in 45.56 seconds** at 200% scaling (44 Workflow core/UI cases plus 13 directly related existing overlay, optional-barcode and mode/close cases). Ruff and whitespace checks passed. No existing test was disabled. Historical benchmark numbers above have not been rerun and are not new performance measurements. Full regression and packaging remain deferred as requested.

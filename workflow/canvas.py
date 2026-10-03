@@ -158,8 +158,18 @@ class WorkflowCanvas(QGraphicsView):
                     return
         super().mousePressEvent(event)
 
+    def keyPressEvent(self,event):
+        if event.key()==Qt.Key.Key_Escape and self.pending:
+            self.pending=None
+            self.message.emit("Connection cancelled")
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def display(self,spec,statuses,selected=None):
         center=self.mapToScene(self.viewport().rect().center())
+        if self.pending and not any(n.id==self.pending for n in spec.nodes):
+            self.pending=None
         self.scene().blockSignals(True)
         self.scene().clear()
         self.nodes={n.id:NodeItem(n,self,statuses.get(n.id,"")) for n in spec.nodes}
