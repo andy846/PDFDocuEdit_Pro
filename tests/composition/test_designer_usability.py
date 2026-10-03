@@ -123,7 +123,7 @@ def test_each_page_remembers_zoom_and_selection(app):
         close(window)
 
 
-def test_compact_inspector_survives_resize_preview_and_view_toggle(app):
+def test_right_inspector_survives_resize_preview_and_view_toggle(app):
     window = CompositionWindow()
     try:
         window.show()
@@ -131,25 +131,25 @@ def test_compact_inspector_survives_resize_preview_and_view_toggle(app):
         saved = window.template.to_dict()
         window.resize(960, 640)
         window._adjust_inspector()
-        assert window.compact_inspector
-        assert window.left_panel.indexOf(window.properties_scroll) == 2
+        assert window.splitter.indexOf(window.properties_scroll) == 2
+        assert window.left_panel.indexOf(window.properties_scroll) == -1
         window.focus_properties()
         app.processEvents()
-        assert window.left_panel.currentWidget() is window.properties_scroll
+        assert window.properties_scroll.parentWidget() is window.splitter
         assert window.properties.isVisible() and window.properties.content.width() > 30
         window.tabs.setCurrentIndex(2)
-        assert not window.left_panel.isTabVisible(2)
+        assert not window.properties_scroll.isVisible()
         window.tabs.setCurrentIndex(1)
-        assert window.left_panel.isTabVisible(2)
+        assert window.properties_scroll.isVisible()
         window.actions["properties"].setChecked(False)
         window._show_properties(False)
-        assert not window.left_panel.isTabVisible(2)
+        assert not window.properties_scroll.isVisible()
         window.focus_properties()
-        assert window.left_panel.isTabVisible(2)
+        assert window.properties_scroll.isVisible()
         window.resize(1240, 820)
         window._adjust_inspector()
         app.processEvents()
-        assert not window.compact_inspector and window.splitter.indexOf(window.properties_scroll) == 2
+        assert window.splitter.indexOf(window.properties_scroll) == 2
         assert window.properties.isVisible() and window.properties_scroll.width() >= 260
         assert window.template.to_dict() == saved
     finally:

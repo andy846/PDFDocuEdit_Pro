@@ -305,8 +305,8 @@ def test_clicking_textbox_reveals_properties_without_stealing_canvas_focus(app, 
         assert window.properties.isVisible()
         assert window.actions["properties"].isChecked()
         assert window.canvas.hasFocus()
-        if window.compact_inspector:
-            assert window.left_panel.currentWidget() is window.properties_scroll
+        assert window.splitter.indexOf(window.properties_scroll) == 2
+        assert window.left_panel.currentWidget() is window.data_panel
         window.canvas.select_ids([first, second])
         assert window.properties.isVisible()
         assert set(window.properties.bulk_ids) == {first, second}
@@ -321,7 +321,7 @@ def test_clicking_textbox_reveals_properties_without_stealing_canvas_focus(app, 
         cleanup(window)
 
 
-def test_properties_toolbar_opens_hidden_compact_tab_and_returns_to_design(app):
+def test_properties_toolbar_reopens_right_panel_and_returns_to_design(app):
     window = CompositionWindow()
     try:
         window.resize(960, 640)
@@ -332,12 +332,14 @@ def test_properties_toolbar_opens_hidden_compact_tab_and_returns_to_design(app):
         window.left_panel.setCurrentWidget(window.data_panel)
         window._adjust_inspector()
         assert window.data_panel.isVisible()
-        assert not window.properties_scroll.isVisible()
         button = window.project_toolbar.widgetForAction(window.actions["properties"])
+        button.click()
+        assert not window.properties_scroll.isVisible()
         assert button.isVisible()
         button.click()
         assert window.properties.isVisible()
-        assert window.left_panel.currentWidget() is window.properties_scroll
+        assert window.splitter.indexOf(window.properties_scroll) == 2
+        assert window.left_panel.currentWidget() is window.data_panel
         button.click()
         assert not window.properties.isVisible()
         button.click()

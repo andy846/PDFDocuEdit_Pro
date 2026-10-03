@@ -124,3 +124,42 @@ and larger fonts could consume more of the panel without an outer scroll path.
 
 The operator's running application was retained; save and reopen it to load
 the new sidebar layout. Full regression and packaging remain deferred.
+
+## Follow-up — restore the independent right inspector
+
+The earlier narrow-window Properties-tab arrangement is superseded. The
+operator expects Textbox parameters to stay on the right, so Design now keeps
+Data fields/Layers on the left and the inspector on the right at every width.
+
+- Resizing no longer reparents the inspector into the left tab widget. Its
+  splitter position is always index 2, and it cannot collapse to zero width.
+  Selection and the Properties toolbar button reveal that same right panel.
+  Preview remains a review view; Properties returns to Design for editing.
+- Sidebar minimum width follows the actual import/sequence button requirements
+  and allows scrollbar space. Preset pane widths are applied on entering a
+  narrow/wide band, while user adjustments within a band remain intact.
+- Inspector controls use less vertical padding. Typography and content precede
+  the less frequent Object rules group. Wrapped titles and a width-independent
+  barcode selector prevent unnecessary horizontal overflow.
+- A shared `InspectorScrollArea` reveals complete widget bounds. Native Qt
+  `ensureWidgetVisible` used the text editor's focus proxy in the reproduced
+  case and left 16 pixels of the outer control below the viewport. Template and
+  overlay now use the full-control calculation.
+- Four integrated main-window tests passed for 760×580/960×640, light/dark,
+  fixed right position, full parameter reachability, zero horizontal inspector
+  scroll, mode switching and preventing accidental collapse. The eight sidebar
+  cases passed alongside these four (**12 passed**).
+- Other focused continuity/usability/compact checks: **43 passed**. At 200%
+  scale the four integrated and eight sidebar cases passed (**12 passed**).
+  Ruff and whitespace checks passed. No full regression or packaging run.
+- The old left-tab inspector assertions were replaced with right-panel
+  assertions intentionally; resize, Preview, View toggle and saved-layout
+  preservation checks remain.
+- Integrated screenshots with loaded Windows Segoe UI fonts were reviewed.
+  The isolated layout audit also exercised 640×400 and 1280×820 with generated
+  quantity 100,000, without starting a production job. QA screenshots and
+  scripts remain ignored under `build/designer-continuity-qa/`.
+
+The desktop capture helper failed to initialize twice; the operator's live
+window could not be captured. Validation used isolated application instances
+and synthetic data. An existing operator instance is not forcibly restarted.

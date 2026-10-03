@@ -3,7 +3,7 @@ from __future__ import annotations
 import fitz
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QKeySequence
+from PyQt6.QtGui import QFont, QFontDatabase, QKeySequence
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
@@ -302,6 +302,51 @@ def test_narrow_window_theme_and_main_controls(window, app, theme):
             assert window.command_bar._open.isHidden()
         else:
             assert not window.command_bar._open.isHidden()
+
+
+@pytest.mark.parametrize("size", [(760, 580), (960, 640)])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_integrated_designer_keeps_inspector_on_right_and_controls_reachable(window, app, size, theme):
+    from composition.engine.assets import asset_root
+
+    font_id = QFontDatabase.addApplicationFont(str(asset_root()/"fonts"/"NotoSans-Regular.ttf"))
+    previous_font = app.font()
+    app.setFont(QFont("Noto Sans", 9))
+    try:
+        controller, project = designer(window)
+        window._apply_theme(theme)
+        window.resize(*size)
+        project.add_element("text", "Customer {{Name}}")
+        QTest.qWait(100)
+        assert project.splitter.indexOf(project.properties_scroll) == 2
+        assert project.left_panel.indexOf(project.properties_scroll) == -1
+        assert project.left_panel.currentWidget() is project.data_panel
+        assert project.properties.isVisible()
+        assert project.properties_scroll.mapTo(window, project.properties_scroll.rect().topLeft()).x() > project.canvas.mapTo(window, project.canvas.rect().topRight()).x()
+        assert project.properties_scroll.horizontalScrollBar().maximum() == 0
+        for control in (project.properties.numbers["x_mm"], project.properties.font_family,
+                        project.properties.numbers["font_size"], project.properties.content,
+                        project.properties.colour):
+            project.properties_scroll.ensureWidgetVisible(control, 0, 0)
+            app.processEvents()
+            viewport = project.properties_scroll.viewport()
+            top = control.mapTo(viewport, control.rect().topLeft())
+            bottom = control.mapTo(viewport, control.rect().bottomRight())
+            assert 0 <= top.x() <= bottom.x() < viewport.width()
+            assert 0 <= top.y() <= bottom.y() < viewport.height()
+        selected, view, index = project.canvas.selected_ids(), project.canvas.transform(), project.undo.index()
+        controller.request_mode("pdf")
+        controller.request_mode("designer")
+        assert project.properties_scroll.isVisible()
+        assert project.canvas.selected_ids() == selected
+        assert project.canvas.transform() == view
+        assert project.undo.index() == index
+        project.splitter.setSizes([160, 500, 0])
+        app.processEvents()
+        assert project.properties_scroll.width() >= 260
+    finally:
+        app.setFont(previous_font)
+        QFontDatabase.removeApplicationFont(font_id)
 
 
 def test_ctrl_save_writes_active_tab_and_reopen(window, tmp_path, monkeypatch):

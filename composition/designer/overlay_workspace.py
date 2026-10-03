@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -39,6 +38,7 @@ from ui.icons import icon
 from ui.responsive import scroll_container
 
 from .canvas import Canvas, FieldList
+from .inspector import InspectorScrollArea
 from .overlay_actions import OverlayActions
 from .overlay_dialogs import SCOPE_LABELS
 from .process import Worker
@@ -334,7 +334,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.auto_repair.setChecked(True)
         self.auto_repair.toggled.connect(self.schedule_preview)
         inspector_layout.addWidget(self.auto_repair)
-        scroll = QScrollArea()
+        scroll = InspectorScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
         self.inspector_scroll = scroll

@@ -79,6 +79,13 @@ def designer_style(c):
         QWidget#designerProperties {{ background: {c['bg_sidebar']}; }}
         QScrollArea#designerInspector {{ border: none; border-left: 1px solid {c['separator']}; }}
         QScrollArea#designerDataPanel {{ border: none; }}
+        QWidget#designerSidePanel QPushButton {{ padding: 2px {S.XS}px; }}
+        QWidget#designerProperties QPushButton {{
+            padding: 3px {S.XS}px; min-height: 24px;
+        }}
+        QWidget#designerProperties QComboBox, QWidget#designerProperties QLineEdit {{
+            min-height: 26px; padding-top: 2px; padding-bottom: 2px;
+        }}
         QDockWidget#designerDock {{ color: {c['text_secondary']}; font-weight: {F.MEDIUM}; }}
         QDockWidget#designerDock::title {{
             background: {c['bg_sidebar']}; padding: {S.XS}px {S.SM}px;

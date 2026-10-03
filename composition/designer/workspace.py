@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QProgressDialog,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -48,6 +47,7 @@ from .chrome import DesignerChrome
 from .compact_chrome import CompactMessage
 from .data_dialog import DataDialog
 from .font_controls import FontOperations
+from .inspector import InspectorScrollArea
 from .pages import PageOperations
 from .process import Worker
 from .properties import Properties
@@ -223,7 +223,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.properties.rulesRequested.connect(self.edit_object_rules)
         self.properties.rulesClearRequested.connect(self.clear_object_rules)
         self.properties.revertRequested.connect(self.revert_content_draft)
-        self.properties_scroll = QScrollArea()
+        self.properties_scroll = InspectorScrollArea()
         self.properties_scroll.setObjectName("designerInspector")
         self.properties_scroll.setWidgetResizable(True)
         self.properties_scroll.setWidget(self.properties)
@@ -247,6 +247,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         canvas_layout.addWidget(self.canvas, 1)
         self.splitter.addWidget(self.canvas_panel)
         self.splitter.addWidget(self.properties_scroll)
+        self.splitter.setCollapsible(2, False)
         self.splitter.setSizes([220, 700, 280])
         design_layout.addWidget(self.splitter, 1)
         self.stack.addWidget(self.design_page)

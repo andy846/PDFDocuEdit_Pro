@@ -56,9 +56,10 @@ class Properties(QWidget):
         layout = QVBoxLayout(self)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
         layout.setContentsMargins(8, 8, 8, 8)
-        self.setStyleSheet("QDoubleSpinBox { padding: 4px 18px 4px 6px; } "
+        self.setStyleSheet("QDoubleSpinBox { min-height: 26px; padding: 2px 18px 2px 6px; } "
                           "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 16px; }")
         self.title = QLabel("Select an object")
+        self.title.setWordWrap(True)
         self.title.setStyleSheet("font-weight: 600;")
         layout.addWidget(self.title)
         self.empty = QLabel("Select an object on the page or in Layers to edit its properties.")
@@ -199,7 +200,6 @@ class Properties(QWidget):
         rule_buttons.addWidget(self.rules_button)
         rule_buttons.addWidget(self.rules_clear)
         rules_layout.addLayout(rule_buttons)
-        groups.insertWidget(1, self.rules_group)
         self.text_layout_group = QGroupBox("Text layout")
         text_layout = QFormLayout(self.text_layout_group)
         text_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -234,6 +234,7 @@ class Properties(QWidget):
         form.addRow("Stroke (pt)", control)
         self.appearance_form = form
         groups.addWidget(self.appearance_group)
+        groups.addWidget(self.rules_group)
         self.image_group = QGroupBox("Image")
         form = QFormLayout(self.image_group)
         self.image_path = QLineEdit()
@@ -246,6 +247,9 @@ class Properties(QWidget):
         self.barcode_group = QGroupBox("Barcode")
         form = QFormLayout(self.barcode_group)
         self.barcode_format = QComboBox()
+        self.barcode_format.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.barcode_format.setMinimumContentsLength(10)
+        self.barcode_format.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         for label, kind in (("Code 128", "code128"), ("I25 (Interleaved 2 of 5)", "i25"), ("QR code", "qr")):
             self.barcode_format.addItem(label, kind)
         self.barcode_format.setAccessibleName("Barcode format")

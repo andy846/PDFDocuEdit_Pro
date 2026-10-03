@@ -13,7 +13,7 @@ class DesignerUsability:
     def _init_usability(self):
         self.content_invalid = False
         self.page_views = {}
-        self.compact_inspector = False
+        self.inspector_band = None
         self.inspector_selection = None
         self.layout_timer = QTimer(self)
         self.layout_timer.setSingleShot(True)
@@ -26,22 +26,14 @@ class DesignerUsability:
             self.layout_timer.start()
 
     def _adjust_inspector(self):
-        compact = self.width() < 1100
-        if compact != self.compact_inspector:
-            self.compact_inspector = compact
-            if compact:
-                self.left_panel.addTab(self.properties_scroll, "Properties")
-                self.left_panel.setMinimumWidth(270)
-                self.splitter.setSizes([290, max(250, self.width()-330)])
-                if self.canvas.selected_ids() and self.actions["properties"].isChecked():
-                    self.left_panel.setCurrentWidget(self.properties_scroll)
-            else:
-                index = self.left_panel.indexOf(self.properties_scroll)
-                if index >= 0:
-                    self.left_panel.removeTab(index)
-                self.splitter.addWidget(self.properties_scroll)
-                self.left_panel.setMinimumWidth(150)
-                self.splitter.setSizes([200, max(260, self.width()-500), 280])
+        band = "narrow" if self.width() < 1100 else "wide"
+        sidebar_width = max(150, max(self.import_button.minimumSizeHint().width(),
+                                    self.sequence_button.minimumSizeHint().width())+40)
+        self.left_panel.setMinimumWidth(sidebar_width)
+        if band != self.inspector_band:
+            self.inspector_band = band
+            left, right = (160, 300) if band == "narrow" else (220, 340)
+            self.splitter.setSizes([left, max(160, self.width()-left-right-20), right])
         self.description.hide()
         self._show_properties(self.actions["properties"].isChecked())
         button = self.project_toolbar.widgetForAction(self.actions["properties"])
@@ -51,26 +43,12 @@ class DesignerUsability:
 
     def _show_properties(self, visible):
         visible = visible and self.tabs.currentIndex() != 2
-        if self.compact_inspector:
-            index = self.left_panel.indexOf(self.properties_scroll)
-            if index >= 0:
-                if not visible and self.left_panel.currentIndex() == index:
-                    self.left_panel.setCurrentIndex(0)
-                self.left_panel.setTabVisible(index, visible)
-            # QTabWidget controls the visibility of inactive pages.
-            if visible:
-                self.properties_scroll.setVisible(self.left_panel.currentWidget() is self.properties_scroll)
-        else:
-            self.properties_scroll.setVisible(visible)
+        self.properties_scroll.setVisible(visible)
 
     def reveal_properties(self):
         """Expose the inspector without taking keyboard focus away from the canvas."""
         self.actions["properties"].setChecked(True)
-        self.actions["data_panel"].setChecked(True)
-        self.left_panel.show()
         self._show_properties(True)
-        if self.compact_inspector:
-            self.left_panel.setCurrentWidget(self.properties_scroll)
 
     def toggle_properties_panel(self, visible):
         if visible or not self.properties_scroll.isVisible():
