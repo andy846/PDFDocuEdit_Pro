@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QMainWindow,
@@ -39,6 +40,7 @@ from PyQt6.QtWidgets import (
 
 from composition.template.model import CompositionError, Element, FontSpec, Template
 from composition.template.serializer import load_project
+from ui.responsive import scroll_container
 
 from .bulk_typography import BulkTypography
 from .canvas import Canvas, FieldList
@@ -151,14 +153,19 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         design_layout.setContentsMargins(0, 0, 0, 0)
         self._build_page_navigation(design_layout)
         self.splitter = QSplitter()
-        self.data_panel = QWidget()
-        self.data_panel.setObjectName("designerSidePanel")
-        data_layout = QVBoxLayout(self.data_panel)
+        self.data_content = QWidget()
+        self.data_content.setObjectName("designerSidePanel")
+        data_layout = QVBoxLayout(self.data_content)
+        data_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         data_layout.addWidget(QLabel("DATA"))
-        self.import_button = QPushButton("Import CSV / TXT / Excel…")
+        self.import_button = QPushButton("Import data…")
+        self.import_button.setProperty("compact", True)
+        self.import_button.setToolTip("Import CSV, delimited TXT or Excel data")
         self.import_button.clicked.connect(self.import_data)
         data_layout.addWidget(self.import_button)
-        self.sequence_button = QPushButton("Running sequences…")
+        self.sequence_button = QPushButton("Sequences…")
+        self.sequence_button.setProperty("compact", True)
+        self.sequence_button.setToolTip("Configure running sequences and generated record quantity")
         self.sequence_button.clicked.connect(self.edit_sequences)
         data_layout.addWidget(self.sequence_button)
         self.source_label = QLabel("No data source")
@@ -166,6 +173,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.source_label.setWordWrap(True)
         data_layout.addWidget(self.source_label)
         self.fields = FieldList()
+        self.fields.setMinimumHeight(84)
         self.fields.setDragEnabled(True)
         self.fields.itemDoubleClicked.connect(lambda item: self.add_field(item.text(), 20, 20))
         self.field_filter = QLineEdit()
@@ -174,10 +182,13 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.field_filter.setAccessibleName("Filter data fields")
         self.field_filter.textChanged.connect(self._filter_fields)
         data_layout.addWidget(self.field_filter)
-        data_layout.addWidget(self.fields)
-        help_label = QLabel("Drag a field onto the page. Double-click to add at 20 mm.")
-        help_label.setWordWrap(True)
-        data_layout.addWidget(help_label)
+        data_layout.addWidget(self.fields, 1)
+        self.fields_help = QLabel("Drag a field onto the page. Double-click to add at 20 mm.")
+        self.fields_help.setWordWrap(True)
+        data_layout.addWidget(self.fields_help)
+        self.data_panel = scroll_container(self.data_content)
+        self.data_panel.setObjectName("designerDataPanel")
+        self.data_panel.setAccessibleName("Data fields panel")
         self.data_panel.setMinimumWidth(150)
         self.left_panel = QTabWidget()
         self.left_panel.setObjectName("designerPanelTabs")

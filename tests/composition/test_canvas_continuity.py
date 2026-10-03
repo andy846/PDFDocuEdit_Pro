@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtGui import QColor, QFont, QPixmap
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -369,6 +369,55 @@ def test_selecting_overlay_text_reopens_hidden_inspector_without_focus_change(ap
         assert window.canvas.hasFocus()
     finally:
         finish(window)
+
+
+@pytest.mark.parametrize("overlay", [False, True])
+@pytest.mark.parametrize("font_size", [9, 14])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_field_sidebar_footer_and_controls_are_reachable(app, overlay, font_size, theme):
+    previous_style, previous_font = app.styleSheet(), app.font()
+    apply_theme(app, theme)
+    app.setStyleSheet(global_style())
+    app.setFont(QFont("Segoe UI", font_size))
+    window = OverlayWindow() if overlay else CompositionWindow()
+    try:
+        window.resize(960 if overlay else 760, 640 if overlay else 580)
+        window.show()
+        if not overlay:
+            window._adjust_inspector()
+            window.left_panel.setCurrentWidget(window.data_panel)
+        app.processEvents()
+        requested_height = window.height()
+        scroll = window.source_scroll if overlay else window.data_panel
+        source = window.source_summary if overlay else window.source_label
+        source.setText("Customer source data with extra file details\n" * 12)
+        window.fields.addItems([f"Customer_Field_{index:03d}" for index in range(200)])
+        app.processEvents()
+        assert window.height() == requested_height
+        assert scroll.verticalScrollBar().maximum() > 0
+        scroll.ensureWidgetVisible(window.fields_help, 0, 0)
+        app.processEvents()
+        footer = window.fields_help
+        assert footer.height() >= footer.heightForWidth(footer.width())
+        top = footer.mapTo(scroll.viewport(), footer.rect().topLeft()).y()
+        bottom = footer.mapTo(scroll.viewport(), footer.rect().bottomLeft()).y()
+        assert 0 <= top <= bottom < scroll.viewport().height()
+        assert window.fields.height() >= (1 if overlay else 84)
+        scroll.ensureWidgetVisible(window.fields, 0, 0)
+        window.fields.scrollToItem(window.fields.item(window.fields.count()-1))
+        assert window.fields.visualItemRect(window.fields.item(window.fields.count()-1)).intersects(window.fields.viewport().rect())
+        assert window.fields.dragEnabled()
+        if not overlay:
+            scroll.verticalScrollBar().setValue(0)
+            app.processEvents()
+            for button in (window.import_button, window.sequence_button):
+                assert button.mapTo(scroll.viewport(), button.rect().bottomRight()).x() < scroll.viewport().width()
+                assert button.mapTo(scroll.viewport(), button.rect().topLeft()).y() >= 0
+    finally:
+        finish(window) if overlay else cleanup(window)
+        app.setFont(previous_font)
+        apply_theme(app, "light")
+        app.setStyleSheet(previous_style)
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

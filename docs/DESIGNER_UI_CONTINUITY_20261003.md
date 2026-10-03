@@ -98,3 +98,29 @@ loaded properties which were not visible to the operator.
   and geometry; **8 passed** at 200% scale. Tests include actual mouse selection,
   hidden-panel recovery, bulk size changes/Undo and returning from Preview.
   Ruff and whitespace checks passed. The integrated screenshot was reviewed.
+
+## Follow-up — field sidebar footer clipping
+
+A narrow-window reproduction allocated 40 pixels to a footer requiring 54,
+clipping the instructions beneath the merge/data field list. Long source names
+and larger fonts could consume more of the panel without an outer scroll path.
+
+- Template Data fields and overlay source/system fields now use the existing
+  scroll container. Content has a layout minimum; limited height produces a
+  scrollbar instead of compressed or inaccessible footer content.
+- The field list retains usable height and its own scrolling for long field
+  collections. Filtering, double-click insertion and drag/drop connections are
+  unchanged. The template field list has 84 pixels minimum height; the overlay
+  Fields/Objects tab container has 165 pixels minimum height.
+- Sidebar buttons use short labels (`Import data…`, `Sequences…`) and compact
+  padding. Tooltips retain supported formats and the running-sequence purpose.
+- The sidebars share existing Designer palette and border styling.
+- **31 distinct focused tests passed**, including both sidebars, 200 fields,
+  long source details, 9/14-point UI fonts, light/dark themes, reachable footer
+  bounds, existing compact layout and previous inspector/canvas fixes. **8
+  sidebar cases passed at 200% scale**. Ruff and whitespace checks passed.
+- An integrated narrow-window Data fields screenshot was reviewed at
+  `build/designer-continuity-qa/designer-data-fields-narrow.png`.
+
+The operator's running application was retained; save and reopen it to load
+the new sidebar layout. Full regression and packaging remain deferred.

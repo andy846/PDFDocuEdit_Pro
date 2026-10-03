@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QMainWindow,
@@ -35,6 +36,7 @@ from composition.overlay.model import EnvelopeSpec
 from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
 from composition.template.model import MM_TO_PT, Template
 from ui.icons import icon
+from ui.responsive import scroll_container
 
 from .canvas import Canvas, FieldList
 from .overlay_actions import OverlayActions
@@ -195,6 +197,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         left = QWidget()
         left.setObjectName("designerSidePanel")
         panel = QVBoxLayout(left)
+        panel.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.source_summary = QLabel("Fixed groups of existing PDF pages. Source stays unchanged.")
         self.source_summary.setWordWrap(True)
         self.source_summary.setTextFormat(Qt.TextFormat.PlainText)
@@ -209,6 +212,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.fields.itemDoubleClicked.connect(lambda item: self.add_object("text", item.text()))
         self.source_panels = QTabWidget()
         self.source_panels.setObjectName("designerPanelTabs")
+        self.source_panels.setMinimumHeight(165)
         field_page = QWidget()
         field_layout = QVBoxLayout(field_page)
         field_layout.setContentsMargins(0, 4, 0, 0)
@@ -236,11 +240,14 @@ class OverlayWindow(OverlayActions, QMainWindow):
         object_layout.addWidget(self.layers)
         self.source_panels.addTab(object_page, "Objects")
         panel.addWidget(self.source_panels, 1)
-        note = QLabel("Drag fields onto the page.\nGeneric barcode profiles need actual inserter testing.")
-        note.setWordWrap(True)
-        panel.addWidget(note)
-        left.setMinimumWidth(150)
-        left.setMaximumWidth(260)
+        self.fields_help = QLabel("Drag fields onto the page.\nGeneric barcode profiles need actual inserter testing.")
+        self.fields_help.setWordWrap(True)
+        panel.addWidget(self.fields_help)
+        self.source_scroll = scroll_container(left)
+        self.source_scroll.setObjectName("designerDataPanel")
+        self.source_scroll.setAccessibleName("System fields and source panel")
+        self.source_scroll.setMinimumWidth(150)
+        self.source_scroll.setMaximumWidth(260)
         self.canvas = Canvas()
         self.canvas.set_template(Template())
         self.canvas.editCommitted.connect(self.canvas_edit)
@@ -251,7 +258,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.canvas.objectActivated.connect(self.focus_overlay_properties)
         for name in ("copy", "paste", "duplicate", "delete", "select_all"):
             self.canvas.addAction(self.actions[name])
-        self.splitter.addWidget(left)
+        self.splitter.addWidget(self.source_scroll)
         self.splitter.addWidget(self.canvas)
         self.splitter.setSizes([200, 750])
         self.tabs.addTab(self.splitter, "Design & preview")

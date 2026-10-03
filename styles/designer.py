@@ -75,9 +75,10 @@ def designer_style(c):
         }}
         QTabWidget#designerPanelTabs QTabBar::tab:hover:!selected,
         QTabBar#designerModeTabs::tab:hover:!selected {{ background: {c['bg_hover']}; }}
-        QWidget#designerSidePanel, QScrollArea#designerInspector,
+        QWidget#designerSidePanel, QScrollArea#designerInspector, QScrollArea#designerDataPanel,
         QWidget#designerProperties {{ background: {c['bg_sidebar']}; }}
         QScrollArea#designerInspector {{ border: none; border-left: 1px solid {c['separator']}; }}
+        QScrollArea#designerDataPanel {{ border: none; }}
         QDockWidget#designerDock {{ color: {c['text_secondary']}; font-weight: {F.MEDIUM}; }}
         QDockWidget#designerDock::title {{
             background: {c['bg_sidebar']}; padding: {S.XS}px {S.SM}px;
