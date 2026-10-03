@@ -139,6 +139,8 @@ _hiddenimports = [
     "numpy",
     "fontTools",
     "composition.worker",
+    "workflow.workspace",
+    "workflow.worker",
     "composition.designer.workspace",
     "barcode.codex",
     "segno",

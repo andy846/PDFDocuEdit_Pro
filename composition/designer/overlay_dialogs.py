@@ -172,7 +172,7 @@ class BarcodeProfileDialog(QDialog):
         kind.setCurrentText(token.kind)
         value = QComboBox()
         value.setEditable(True)
-        value.addItems(sorted(SYSTEM_FIELDS))
+        value.addItems(sorted(SYSTEM_FIELDS | set(self.fields)))
         value.setCurrentText(token.value)
         width = QSpinBox()
         width.setRange(0, 18)
@@ -226,7 +226,7 @@ class BarcodeProfileDialog(QDialog):
     def candidate(self):
         profile = BarcodeProfile(name=self.name.text(), machine=self.machine.text(),
                   validation="user_verified" if self.verified.isChecked() else "pending", tokens=self.tokens())
-        profile.validate()
+        profile.validate(self.fields)
         return profile
 
     def refresh(self):
@@ -238,6 +238,10 @@ class BarcodeProfileDialog(QDialog):
             profile = self.candidate()
             lines = []
             for label, fields in [("Current page", self.fields), *self.samples]:
+                pending=any(t.kind=="field" and t.value not in SYSTEM_FIELDS and not fields.get(t.value) for t in profile.tokens)
+                if pending:
+                    lines.append(label+": workflow data required; payload validated during workflow production")
+                    continue
                 payload = profile.payload(fields)
                 if self.symbology:
                     validate_payload(self.symbology, payload)
@@ -253,6 +257,8 @@ class BarcodeProfileDialog(QDialog):
         try:
             self.profile = self.candidate()
             for _, fields in [("Current", self.fields), *self.samples]:
+                if any(t.kind=="field" and t.value not in SYSTEM_FIELDS and not fields.get(t.value) for t in self.profile.tokens):
+                    continue
                 payload = self.profile.payload(fields)
                 if self.symbology:
                     validate_payload(self.symbology, payload)

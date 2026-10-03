@@ -403,6 +403,11 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.actions["generate"].setEnabled(False)
         if self.spec and self.spec.needs_source_review:
             self.actions["generate"].setEnabled(False)
+        if self.spec and self.spec.external_fields:
+            self.actions["generate"].setEnabled(False)
+            self.actions["generate"].setToolTip("Generate this overlay from Workflow using reviewed extraction data.")
+        else:
+            self.actions["generate"].setToolTip("Generate overlay PDF")
         self.actions["cancel"].setEnabled(bool(self.active_worker))
         self.actions["cancel"].setVisible(bool(self.active_worker))
         self.canvas.set_editable(valid and not locked)
@@ -443,6 +448,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
 
     def apply_spec(self, value, selected=None):
         self.spec = EnvelopeSpec.from_dict(value)
+        self.fields.clear()
+        self.fields.addItems(sorted(SYSTEM_FIELDS | set(self.spec.external_fields)))
+        self.filter_system_fields(self.field_filter.text())
         self.draft_error = ""
         self.properties.revert_content.hide()
         plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
@@ -507,6 +515,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def render_preview(self):
         if not self.spec or self.close_pending or self.draft_error:
             return
+        if self.spec.external_fields and not getattr(self,"workflow_database", ""):
+            self.preview_status.setText("Open from Workflow to preview extracted values")
+            return
         if self.preview_worker:
             self.preview_pending = True
             self.preview_worker.stop_preview()
@@ -515,6 +526,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         generation = self.preview_generation
         self.preview_worker = self.worker({"task": "overlay_preview", "project": self.spec.to_dict(),
             "envelope": self.envelope.value(), "print_page": self.print_page.value(),
+            "external_database": getattr(self,"workflow_database", ""),
             "raster_scale": self.canvas.preview_scale(),
             "auto_repair": self.auto_repair.isChecked(), "target": str(self.directory/f"preview-{generation}.pdf")},
             lambda result: self.preview_ready(result, generation),

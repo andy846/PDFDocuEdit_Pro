@@ -34,6 +34,9 @@ def dispatch(request: dict) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task == "workflow":
+        from workflow.worker import dispatch as workflow_dispatch
+        return workflow_dispatch(request, progress, cancelled)
     if task == "mailpiece_preview":
         import fitz
 
@@ -71,9 +74,18 @@ def dispatch(request: dict) -> dict:
 
         from composition.overlay.model import EnvelopeSpec
         from composition.overlay.renderer import render_preview as overlay_preview
-        raw, fields = overlay_preview(EnvelopeSpec.from_dict(request["project"]),
-                                      request["envelope"], request["print_page"],
-                                      auto_repair=request.get("auto_repair", True))
+        spec=EnvelopeSpec.from_dict(request["project"])
+        database=request.get("external_database", "")
+        if database:
+            from workflow.extraction import ExtractionStore
+            with ExtractionStore(database) as store:
+                if store.metadata()["sha256"]!=spec.source.sha256:
+                    raise ValueError("Workflow source changed; reopen the overlay from Workflow.")
+                raw, fields = overlay_preview(spec,request["envelope"],request["print_page"],
+                    auto_repair=request.get("auto_repair", True),external_values=store.production_values)
+        else:
+            raw, fields = overlay_preview(spec,request["envelope"],request["print_page"],
+                                          auto_repair=request.get("auto_repair", True))
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")

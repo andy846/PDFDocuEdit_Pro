@@ -127,7 +127,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         self.commit(raw, "Add overlay "+kind, [element.id])
 
     def insert_field(self):
-        name, ok = QInputDialog.getItem(self, "Insert system field", "Field", sorted(SYSTEM_FIELDS), 0, False)
+        name, ok = QInputDialog.getItem(self, "Insert system field", "Field", sorted(SYSTEM_FIELDS | set(self.spec.external_fields)), 0, False)
         if ok:
             self.properties.content.insertPlainText("{{"+name+"}}")
 
@@ -145,6 +145,17 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             self.error("This barcode has no applicable page in the reviewed mailpieces.")
             return
         samples = [("First applicable mark", first.fields("preview")), ("Last applicable mark", last.fields("preview"))]
+        if self.spec.external_fields:
+            fields.update(dict.fromkeys(self.spec.external_fields,""))
+            for _label, sample in samples:
+                sample.update(dict.fromkeys(self.spec.external_fields,""))
+            database=getattr(self,"workflow_database", "")
+            if database:
+                from workflow.extraction import ExtractionStore
+                with ExtractionStore(database) as store:
+                    fields.update(store.production_values(plan.page(self.envelope.value(), self.print_page.value())))
+                    samples[0][1].update(store.production_values(first))
+                    samples[1][1].update(store.production_values(last))
         dialog = BarcodeProfileDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             raw = self.spec.to_dict()

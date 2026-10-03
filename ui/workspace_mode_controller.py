@@ -12,7 +12,7 @@ from .workspace_modes import WorkspaceMode, WorkspaceModes
 
 
 class WorkspaceModeController(QObject):
-    GLOBAL = {"quit", "command_palette", "main_menu", "preferences", "about", "shortcuts", "readme", "document_designer"}
+    GLOBAL = {"quit", "command_palette", "main_menu", "preferences", "about", "shortcuts", "readme", "document_designer", "visual_workflow"}
 
     def __init__(self, window, layout):
         super().__init__(window)
@@ -43,6 +43,7 @@ class WorkspaceModeController(QObject):
             ("new", "New project", "Ctrl+N", self.new_project),
             ("open", "Open Designer project…", "Ctrl+O", lambda: self.host.open_project()),
             ("overlay", "New PDF envelope overlay", "", lambda: self.host.new_overlay()),
+            ("workflow", "New visual extraction workflow", "", lambda: self.host.new_workflow()),
             ("close", "Close project", "Ctrl+W", self.close_current_project),
             ("pdf", "Switch to PDF Workspace", "", lambda: self.request_mode("pdf")),
         ):
@@ -52,6 +53,12 @@ class WorkspaceModeController(QObject):
             self.designer_actions[key] = action
             window.addAction(action)
             self.workspace_menu.addAction(action)
+        entry=QAction("Visual extraction workflow…",window)
+        entry.triggered.connect(self.new_workflow)
+        window.addAction(entry)
+        window.command_bar._pdf_more_menu.addAction(entry)
+        window._command_action_map["visual_workflow"]=entry
+        window._commands.append(Command("visual_workflow","Visual extraction workflow","","PDF production",self.new_workflow,entry.isEnabled))
         self.capture_pdf_bindings()
         # Keep application-wide actions available when PDF menus are detached.
         for key, action in window._command_action_map.items():
@@ -110,8 +117,15 @@ class WorkspaceModeController(QObject):
         if not self.exit_approved and self.modes.mode == WorkspaceMode.DESIGNER:
             self.sync_mode("designer")
 
+    def new_workflow(self):
+        host=self.ensure_host(create_default=False)
+        self.request_mode("designer")
+        return host.new_workflow()
+
     def new_project(self):
         current = self.host.current_project
+        if current and getattr(current,"is_workflow",False):
+            return self.host.new_workflow()
         return self.host.new_overlay() if current and not hasattr(current, "template") else self.host.new_template()
 
     def close_current_project(self):
@@ -202,6 +216,9 @@ class WorkspaceModeController(QObject):
         merge_page = getattr(self.window, "_merge_workspace", None)
         if merge_page and merge_page.capture_count:
             self.window.info_bar.show_message("Finish capturing open PDFs before exiting.", "warning")
+            return False
+        if self.host and any(getattr(p,"capture_active",False) for p in self.host.projects):
+            self.window.info_bar.show_message("Finish capturing PDFs for Workflow before exiting.", "warning")
             return False
         if self.handoff.capture_active:
             self.window.info_bar.show_message("Cancel or finish the PDF handoff before exiting.", "warning")

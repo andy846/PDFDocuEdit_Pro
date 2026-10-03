@@ -48,7 +48,7 @@ class DesignerProjectHost(QWidget):
         welcome.addStretch()
         welcome.addWidget(title)
         for text, handler in (("Create template", self.new_template), ("Open project…", self.open_project),
-                              ("PDF envelope overlay…", self.new_overlay)):
+                              ("PDF envelope overlay…", self.new_overlay), ("Visual extraction workflow…", self.new_workflow)):
             button = QPushButton(text)
             button.clicked.connect(lambda checked=False, callback=handler: callback())
             welcome.addWidget(button)
@@ -75,7 +75,7 @@ class DesignerProjectHost(QWidget):
 
     @staticmethod
     def identity(path):
-        return os.path.normcase(str(Path(path).expanduser().resolve().with_suffix(".pdcx")))
+        return os.path.normcase(str(Path(path).expanduser().resolve()))
 
     def _append(self, project):
         from ui.workspace import TabCloseButton
@@ -118,6 +118,12 @@ class DesignerProjectHost(QWidget):
         from .workspace import CompositionWindow
         return self._append(CompositionWindow(self.tabs, embedded=True, project_host=self))
 
+    def new_workflow(self):
+        if self.shutting_down:
+            return None
+        from workflow.workspace import WorkflowWindow
+        return self._append(WorkflowWindow(self.tabs, embedded=True, project_host=self))
+
     def new_overlay(self):
         if self.shutting_down:
             return None
@@ -128,7 +134,7 @@ class DesignerProjectHost(QWidget):
         if self.shutting_down:
             return None
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Document Designer projects (*.pdcx)")
+            path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Designer projects (*.pdcx *.pdflow)")
         if not path:
             return None
         key = self.identity(path)
@@ -143,7 +149,13 @@ class DesignerProjectHost(QWidget):
             raw = json.loads(file.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("Invalid Designer project structure.")
-            if raw.get("project_kind") == "pdf_overlay":
+            if raw.get("project_kind") == "pdf_workflow":
+                from workflow.serializer import load_workflow
+                load_workflow(path)
+                project = self.new_workflow()
+                project.project_path=Path(path).resolve()
+                project.load_path(path)
+            elif raw.get("project_kind") == "pdf_overlay":
                 from composition.overlay.serializer import load_project
                 load_project(path)
                 project = self.new_overlay()
@@ -164,7 +176,7 @@ class DesignerProjectHost(QWidget):
             return None
 
     def allow_save_path(self, project, path):
-        key = self.identity(path)
+        key = self.identity(Path(path).with_suffix(".pdflow" if getattr(project,"is_workflow",False) else ".pdcx"))
         if any(p is not project and p.project_path and self.identity(p.project_path) == key for p in self.projects):
             QMessageBox.warning(self, "Project already open", "This file is open in another Designer tab. Switch to that tab or choose another filename.")
             return False
@@ -174,7 +186,7 @@ class DesignerProjectHost(QWidget):
     def is_busy(project):
         return bool(getattr(project, "production_worker", None) or getattr(project, "import_worker", None)
                     or getattr(project, "active_worker", None) or getattr(project, "font_requests", None)
-                    or getattr(project, "font_token", None))
+                    or getattr(project, "font_token", None) or getattr(project,"capture_active",False))
 
     def update_project(self, project):
         if sip.isdeleted(self) or sip.isdeleted(project) or sip.isdeleted(self.tabs):
@@ -182,9 +194,9 @@ class DesignerProjectHost(QWidget):
         index = self.tabs.indexOf(project)
         if index < 0:
             return
-        kind = "Template" if hasattr(project, "template") else "Overlay"
+        kind = "Workflow" if getattr(project,"is_workflow",False) else "Template" if hasattr(project, "template") else "Overlay"
         model = project.template if hasattr(project, "template") else project.spec
-        name = project.project_path.name if project.project_path else model.name if model and model.source_link else "Untitled"
+        name = project.project_path.name if project.project_path else model.name if model and getattr(model,"source_link",None) else "Untitled"
         dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))
         self.tabs.setTabText(index, f"{kind} · {name}" + (" *" if dirty else "") + (" ●" if self.is_busy(project) else ""))
         self.tabs.setTabToolTip(index, project.windowTitle())

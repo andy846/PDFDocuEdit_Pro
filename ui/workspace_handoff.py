@@ -92,6 +92,8 @@ class WorkspaceHandoffService(QObject):
         return model.source_link if model else {}
 
     def attach_project(self, project):
+        if getattr(project,"is_workflow",False):
+            return
         group = QGroupBox("Linked PDF")
         group.setObjectName("linkedPdfPanel")
         group.setStyleSheet("QGroupBox#linkedPdfPanel { padding-left: 0px; padding-right: 0px; }")
