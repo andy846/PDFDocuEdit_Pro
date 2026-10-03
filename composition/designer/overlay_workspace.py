@@ -93,6 +93,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.layout_timer.setInterval(60)
         self.layout_timer.timeout.connect(lambda: self.fit_canvas() if self.auto_fit else None)
         self.build_ui()
+        self.canvas.previewScaleChanged.connect(self.schedule_preview)
         if embedded:
             self.menuBar().hide()
         from .layout_tools import install_layout_tools
@@ -511,6 +512,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         generation = self.preview_generation
         self.preview_worker = self.worker({"task": "overlay_preview", "project": self.spec.to_dict(),
             "envelope": self.envelope.value(), "print_page": self.print_page.value(),
+            "raster_scale": self.canvas.preview_scale(),
             "auto_repair": self.auto_repair.isChecked(), "target": str(self.directory/f"preview-{generation}.pdf")},
             lambda result: self.preview_ready(result, generation),
             lambda error: self.preview_failed(error, generation))

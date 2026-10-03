@@ -4,8 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QColor, QFont, QPixmap
+from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -35,6 +35,62 @@ def image(color="orange"):
     result = QPixmap(200, 280)
     result.fill(QColor(color))
     return result
+
+
+def test_preview_quality_tracks_zoom_dpi_and_avoids_duplicate_requests(app, monkeypatch):
+    canvas = Canvas()
+    canvas.set_template(Template())
+    requested = []
+    canvas.previewScaleChanged.connect(lambda: requested.append(canvas.preview_scale()))
+    canvas.set_zoom(.5)
+    requested.clear()
+    canvas.set_zoom(2)
+    assert len(requested) == 1
+    scale = requested[0]
+    for _ in range(10):
+        canvas.set_zoom(2)
+        canvas.set_template(Template(), context="same-document")
+    assert requested == [scale]
+    canvas.set_zoom(.5)
+    requested.clear()
+    monkeypatch.setattr(canvas.viewport(), "devicePixelRatioF", lambda: 4.0)
+    app.sendEvent(canvas, QEvent(QEvent.Type.DevicePixelRatioChange))
+    assert len(requested) == 1 and requested[0] >= 4
+    assert canvas.renderHints() & QPainter.RenderHint.SmoothPixmapTransform
+    canvas.set_preview(image())
+    assert canvas.preview_item.transformationMode() == Qt.TransformationMode.SmoothTransformation
+    canvas.close()
+
+
+@pytest.mark.parametrize("overlay", [False, True])
+def test_zoom_background_refreshes_sharp_pixels_without_resetting_edit_state(app, tmp_path, overlay):
+    window = OverlayWindow() if overlay else CompositionWindow()
+    try:
+        if overlay:
+            window.apply_spec(sample_spec(tmp_path).to_dict())
+        else:
+            window.add_element("text", "Small, sharp production text")
+        timer = window.timer if overlay else window.preview_timer
+        window.canvas.set_zoom(.5)
+        wait(lambda: window.canvas.preview_item is not None and window.preview_worker is None and not timer.isActive())
+        preview = window.canvas.preview_item
+        item = window.canvas.element_items[0]
+        window.canvas.select_ids([item.element.id])
+        old_width, undo_index = preview.pixmap().width(), window.undo.index()
+        for zoom in (1, 2, 3, 2):
+            window.canvas.set_zoom(zoom)
+            assert window.canvas.preview_item is preview
+        view = window.canvas.transform()
+        wait(lambda: window.preview_worker is None and not timer.isActive() and preview.pixmap().width() > old_width)
+        assert preview.pixmap().width() > old_width * 1.5
+        assert window.canvas.preview_item is preview and window.canvas.element_items[0] is item
+        assert window.canvas.selected_ids() == [item.element.id]
+        assert window.canvas.transform() == view and window.undo.index() == undo_index
+        assert not list(window.directory.glob("preview-*"))
+        window.canvas.set_zoom(2)
+        assert not timer.isActive() and window.preview_worker is None
+    finally:
+        finish(window) if overlay else cleanup(window)
 
 
 def test_scene_edit_preserves_pixels_items_selection_and_view(app):

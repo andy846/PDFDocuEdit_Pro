@@ -163,3 +163,41 @@ Data fields/Layers on the left and the inspector on the right at every width.
 The desktop capture helper failed to initialize twice; the operator's live
 window could not be captured. Validation used isolated application instances
 and synthetic data. An existing operator instance is not forcibly restarted.
+
+## Follow-up — screen-aware canvas resolution
+
+The template and PDF-overlay preview workers previously always rasterized at
+1.5 PDF pixels per point (108 DPI), irrespective of canvas zoom or display
+scale. The canvas also used the fast pixmap transformation mode, which degraded
+text when the image was enlarged or reduced.
+
+- Both workers now accept the canvas raster scale. It follows zoom and the
+  viewport device pixel ratio, with 25% oversampling and reusable quality bands.
+  Zoom changes within a band and ordinary geometry synchronization do not
+  request duplicate quality updates. Display-DPI changes request new pixels.
+- Quality refreshes use the existing debounced, latest-request-only background
+  preview queue. The existing image stays visible until its replacement is
+  ready. Scene, object selection, transforms and Undo state remain intact.
+- Canvas geometry, ruler text and pixmap scaling use antialiasing/smooth
+  transformation. This changes preview display, not production PDF rendering.
+- The headless raster helper independently validates finite positive inputs
+  and caps a page at 16 million pixels / 8192 pixels per edge before native
+  rendering. Custom page sizes and extreme zoom cannot request unbounded full
+  page images. Extreme zoom is limited by this raster budget; viewport tiles
+  are not implemented in this change. This is not a cap on total process RAM.
+- At 200% canvas zoom on a normal-DPI display, the same A4 preview increased
+  from 893 x 1263 (108 DPI) to 2382 x 3368 (288 DPI). Before/after screenshots
+  were reviewed for 6/8-point text, thin lines and Code 128. At 200% display
+  scale, larger previews are requested automatically, within the page budget.
+- Focused headless/raster and canvas-continuity tests: 39 passed; an additional
+  native allocation-budget case passed (40 distinct checks). Three quality and
+  real-worker refresh cases also passed in a fresh 200% display-scale process.
+  Checks include both template/overlay workers, vector PDF text/page geometry,
+  invalid raster input, large custom pages, DPI changes, latest zoom selection,
+  selection/Undo retention and temporary-file cleanup. Ruff/whitespace passed.
+- Old preview requests without a raster scale remain supported with a 2x
+  default. No dependency, public version, template schema or project migration
+  changed. Full regression and Windows packaging remain deferred.
+
+Visual artifacts are ignored under `build/designer-continuity-qa/`:
+`designer-resolution-before.png` and `designer-resolution-after.png`.

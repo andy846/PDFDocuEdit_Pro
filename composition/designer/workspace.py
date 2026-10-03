@@ -123,6 +123,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.preview_timer.setInterval(250)
         self.preview_timer.timeout.connect(self._render_preview)
         self._build_ui()
+        self.canvas.previewScaleChanged.connect(self._schedule_preview)
         if embedded:
             self.menuBar().hide()
         self._apply_template(self.template.to_dict())
@@ -561,6 +562,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         request = {"task": "preview", "template": self.template.to_dict(),
                    "record": self.record.value(), "page": self.page_index, "store": info["store"] if info else "",
                    "design": self.tabs.currentIndex() != 2, "auto_repair": self.auto_repair.isChecked(),
+                   "raster_scale": self.canvas.preview_scale(),
                    "target": str(self.directory / f"preview-{generation}.pdf")}
         self.preview_worker = self._worker(request,
             lambda result: self._preview_ready(result, generation),

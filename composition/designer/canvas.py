@@ -5,7 +5,7 @@ import copy
 import math
 
 from PyQt6.QtCore import QEvent, QLineF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QDrag, QKeySequence, QPen, QPixmap
+from PyQt6.QtGui import QColor, QDrag, QKeySequence, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionGraphicsItem,
 )
 
+from composition.engine.preview_raster import screen_scale
 from styles.theme import get_colors
 
 
@@ -122,6 +123,7 @@ class Canvas(QGraphicsView):
     fieldDropped = pyqtSignal(str, float, float)
     command = pyqtSignal(str)
     zoomChanged = pyqtSignal(float)
+    previewScaleChanged = pyqtSignal()
     objectActivated = pyqtSignal()
     pointerMoved = pyqtSignal(float, float)
     measurementChanged = pyqtSignal(float, float, float)
@@ -132,6 +134,8 @@ class Canvas(QGraphicsView):
         self.setScene(self.scene_model)
         self.setBackgroundBrush(QColor(get_colors()["canvas"]))
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing |
+                            QPainter.RenderHint.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -142,6 +146,7 @@ class Canvas(QGraphicsView):
         self.page_item = None
         self.page_context = None
         self.page_width, self.page_height = 210, 297
+        self._preview_scale = None
         self.grid_visible = False
         self.snap_enabled = False
         self.setMouseTracking(True)
@@ -159,6 +164,18 @@ class Canvas(QGraphicsView):
         self.rulers_visible = True
         self.set_rulers(True)
         self.zoomChanged.connect(lambda *args: self.update_rulers())
+        self.zoomChanged.connect(self._check_preview_scale)
+
+    def preview_scale(self):
+        points_per_mm = 72 / 25.4
+        return screen_scale(self.page_width * points_per_mm, self.page_height * points_per_mm,
+                            self.transform().m11() * self.viewport().devicePixelRatioF() / points_per_mm)
+
+    def _check_preview_scale(self, *args):
+        scale = self.preview_scale()
+        if scale != self._preview_scale:
+            self._preview_scale = scale
+            self.previewScaleChanged.emit()
 
     def snapshot(self):
         return copy.deepcopy(self.template.to_dict())
@@ -216,6 +233,7 @@ class Canvas(QGraphicsView):
             self.scene_model.blockSignals(blocked)
         self.guides = []
         self.update_rulers()
+        self._check_preview_scale()
 
     def set_preview(self, image):
         if not image:
@@ -230,9 +248,16 @@ class Canvas(QGraphicsView):
             self.preview_item = QGraphicsPixmapItem()
             self.preview_item.setZValue(-1)
             self.preview_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.preview_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
             self.scene_model.addItem(self.preview_item)
         self.preview_item.setPixmap(pixmap)
         self.preview_item.setScale(self.page_width / pixmap.width())
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange and hasattr(self, "page_width"):
+            self._check_preview_scale()
+        return result
 
     def changeEvent(self, event):
         super().changeEvent(event)

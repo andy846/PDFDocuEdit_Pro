@@ -8,6 +8,7 @@ from pathlib import Path
 
 from composition.data.sequences import open_records
 from composition.data.source import import_records, suggest_import
+from composition.engine.preview_raster import save_preview
 from composition.engine.renderer import import_background, render_preview
 from composition.production.generator import generate
 from composition.production.model import ProductionJob
@@ -77,8 +78,8 @@ def dispatch(request: dict) -> dict:
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")
         with fitz.open(stream=raw, filetype="pdf") as document:
-            document[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).save(image)
-        return {"pdf": str(pdf), "image": str(image), "fields": fields}
+            raster = save_preview(document[0], image, request.get("raster_scale", 2))
+        return {"pdf": str(pdf), "image": str(image), "fields": fields, **raster}
     if task == "overlay_generate":
         from dataclasses import asdict
 
@@ -151,8 +152,8 @@ def dispatch(request: dict) -> dict:
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")
         with fitz.open(stream=raw, filetype="pdf") as document:
-            document[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).save(image)
-        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs, "rules": rules}
+            raster = save_preview(document[0], image, request.get("raster_scale", 2))
+        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs, "rules": rules, **raster}
     if task == "save":
         from composition.template.serializer import load_project, save_project
         target = save_project(Template.from_dict(request["template"]), request["target"])
