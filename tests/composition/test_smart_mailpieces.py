@@ -40,15 +40,16 @@ def letter(first, key="001"):
         (60, f"MPF Account No. : {key}"), (80, f"ORSO Account No. ： 00{key}")]
 
 
-def fixture_pdf(path):
+def fixture_pdf(path, offset=0, marker_shifts=False):
     with fitz.open() as pdf:
         for i, first in enumerate([True, False, True, False, False, True]):
             page = pdf.new_page()
             if first:
-                page.insert_text((30, 70), "Dear customer")
+                page.insert_text((30, 70+(12*(0 if i<2 else 1 if i<5 else 2) if marker_shifts else 0)), "Dear customer")
             else:
                 page.insert_text((30, 200), "Continuation Dear in body")
             key = "001" if i < 2 else "002" if i < 5 else "003"
+            key = str(int(key)+offset).zfill(3)
             page.insert_text((30, 100), "MPF Account No.")
             page.insert_text((220, 100), ": " + key)
             page.insert_text((30, 120), "ORSO Account No.")
@@ -63,7 +64,7 @@ def test_spatial_join_separate_blocks_and_compound_ids():
     result = detect_index(Index([letter(True), letter(False), letter(True, "002"), letter(False, "002")]), cfg())
     assert result["groups"] == [[1, 2], [3, 4]]
     assert not result["findings"]
-    assert all(e["end_basis"] == "next_start_inferred" for e in result["evidence"])
+    assert [e["end_basis"] for e in result["evidence"]] == ["next_start_inferred", "pdf_end_inferred"]
     assert "001" not in str(result)
 
 
@@ -133,3 +134,42 @@ def test_untrusted_config_rejects_unexpected_options():
     value["rules"][0]["python"] = "exec()"
     with pytest.raises(CompositionError):
         DetectionConfig(**value).validate()
+
+
+def test_all_signals_require_agreement_and_never_hide_conflicts():
+    config = cfg()
+    config.combine = "all"
+    good = detect_index(Index([letter(True), letter(False), letter(True, "002")]), config)
+    assert good["groups"] == [[1, 2], [3, 3]]
+    bad = detect_index(Index([letter(True), letter(False, "002")]), config)
+    assert not bad["groups"] and bad["status"] == "unresolved"
+    assert "conflicting_signals" in {f["code"] for f in bad["findings"]}
+
+
+def test_teach_two_independent_identity_regions(tmp_path):
+    path = fixture_pdf(tmp_path/"source.pdf")
+    result = teach_pdf(path, tmp_path/"pages.sqlite", 1, 2, [8, 19, 70, 8],
+                       [[8, 29, 100, 8], [8, 36, 100, 8]])
+    fields = result["config"]["rules"][1]["fields"]
+    assert len(fields) == 2 and fields[0]["region_mm"] != fields[1]["region_mm"]
+    assert result["detection"]["groups"] == [[1, 2], [3, 5], [6, 6]]
+    assert not result["detection"]["findings"]
+
+
+def test_cancellation_after_extraction_removes_partial_index(tmp_path):
+    path = fixture_pdf(tmp_path/"source.pdf")
+    cache = tmp_path/"pages.sqlite"
+    cancelled = []
+    with pytest.raises(CompositionError, match="cancel"):
+        analyze_pdf(path, cache, progress=lambda *args:cancelled.append(True), is_cancelled=lambda:bool(cancelled))
+    assert not cache.exists()
+
+
+def test_auto_marker_region_covers_observed_address_block_shifts(tmp_path):
+    path = fixture_pdf(tmp_path/"source.pdf", marker_shifts=True)
+    cache = tmp_path/"cache.sqlite"
+    analyzed = analyze_pdf(path, cache)
+    config = DetectionConfig(**analyzed["suggestions"][0]["config"])
+    result = scan_pdf(path, config, cache_path=cache)["detection"]
+    assert result["groups"] == [[1, 2], [3, 5], [6, 6]]
+    assert not result["findings"]

@@ -267,6 +267,7 @@ def test_background_scan_review_responsiveness_and_atomic_apply(app,tmp_path,mon
         assert window.spec.to_dict()==before and not dialog.apply_button.isEnabled()
         dialog.acknowledge.setChecked(True)
         dialog.apply()
+        wait_until(lambda:not window.active_worker and window.undo.count()==1)
         assert window.spec.settings.groups==[[1,1],[2,3]] and window.undo.count()==1
         window.undo.undo()
         assert window.spec.to_dict()==before

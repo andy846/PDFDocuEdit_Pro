@@ -52,12 +52,41 @@ def dispatch(request: dict) -> dict:
                 raise CompositionError("Source page is unavailable.")
             page = pdf[check_page-1]
             image = Path(request["target"])
-            page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False).save(image)
+            scale = min(max(float(request.get("scale", 1)), 1), 4096/max(page.rect.width, page.rect.height))
+            page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).save(image)
             geom = geometry(page)
         if _stat(source) != expected:
             image.unlink(missing_ok=True)
             raise CompositionError("Source changed during preview.")
         return {"image": str(image), "geometry": geom}
+    if task in ("mailpiece_analyze", "mailpiece_smart_scan", "mailpiece_teach"):
+        from composition.pdf_source.detection import DetectionConfig
+        from composition.pdf_source.smart_detection import analyze_pdf, scan_pdf, teach_pdf
+        options = dict(expected_sha256=request.get("expected_sha256"), progress=progress, is_cancelled=cancelled)
+        if task == "mailpiece_analyze":
+            return analyze_pdf(request["source"], request["cache"], **options)
+        if task == "mailpiece_teach":
+            return teach_pdf(request["source"], request["cache"], request["first_page"], request["continuation_page"],
+                             request["marker_region"], request.get("id_regions", []), request.get("marker_terms"), **options)
+        return scan_pdf(request["source"], DetectionConfig(**request["config"]), cache_path=request["cache"], **options)
+    if task == "mailpiece_profile_save":
+        from composition.pdf_source.detection import DetectionConfig
+        from composition.pdf_source.profiles import save_profile
+        return {"path": save_profile(request["path"], DetectionConfig(**request["config"]))}
+    if task == "mailpiece_profile_load":
+        from composition.pdf_source.profiles import load_profile
+        return {"config": load_profile(request["path"])}
+    if task == "mailpiece_review_source":
+        from dataclasses import asdict
+
+        from composition.pdf_source.model import EnvelopeSettings
+        from composition.pdf_source.source import inspect_source
+        from composition.template.model import CompositionError
+        source = inspect_source(request["source"], EnvelopeSettings(pages_per_envelope=1),
+                                uniform=True, progress=progress, is_cancelled=cancelled)
+        if source.sha256 != request["expected_sha256"]:
+            raise CompositionError("Source PDF changed. Reinspect the source, then scan and review before accepting boundaries.")
+        return {"source": asdict(source)}
     if task == "mailpiece_scan":
         from composition.pdf_source.detection import DetectionConfig, scan_pdf
         return scan_pdf(request["source"], DetectionConfig(**request["config"]),

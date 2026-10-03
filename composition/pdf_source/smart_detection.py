@@ -22,9 +22,9 @@ from .source import _hash, _stat, inspect_source
 COUNTERS = [re.compile(p, re.I) for p in (
     r"\bPage\s*(\d{1,6})\s*(?:of|/)\s*(\d{1,6})\b",
     r"第\s*(\d{1,6})\s*[頁页]\s*(?:[/／,，]?\s*(?:共|總共|总共))\s*(\d{1,6})\s*[頁页]",
-    r"(?<!\d)(\d{1,6})\s*[/／]\s*(\d{1,6})(?!\d)",
+    r"(?<![\d/／])(\d{1,6})\s*[/／]\s*(\d{1,6})(?![\d/／])",
 )]
-ID_LABEL = re.compile(r"(?:Account|Member|Document|Customer|Policy|Reference)\s*(?:No\.?|Number|ID)\b\.?\s*[:：]?|(?:帳戶|账户|戶口|會員|会员|客戶|客户|文件)\s*(?:編號|编号|號碼|号码)\s*[:：]?", re.I)
+ID_LABEL = re.compile(r"(?:(?:MPF|ORSO|Employer|Member|Transaction|Document|Scheme|Primary|Secondary|Recipient)\s+)?(?:Account|Member|Document|Customer|Policy|Reference)\s*(?:No\.?|Number|ID)\b\.?\s*[:：]?|(?:帳戶|账户|戶口|會員|会员|客戶|客户|文件)\s*(?:編號|编号|號碼|号码)\s*[:：]?", re.I)
 MARKERS = ("Dear", "敬啟者", "敬启者", "親愛的", "亲爱的", "Statement", "Invoice", "通知書", "通知书")
 
 
@@ -42,8 +42,8 @@ def validate_config(config):
         raise CompositionError("Unsupported detection configuration.")
     if not isinstance(config.profile_name, str) or len(config.profile_name) > 120:
         raise CompositionError("Invalid detection profile name.")
-    if not isinstance(config.rules, list) or not 1 <= len(config.rules) <= 4:
-        raise CompositionError("Choose one to four spatial detection signals.")
+    if not isinstance(config.rules, list) or not 1 <= len(config.rules) <= 3:
+        raise CompositionError("Choose one to three spatial detection signals.")
     kinds = set()
     for rule in config.rules:
         if not isinstance(rule, dict) or rule.get("kind") not in ("page_number", "first_text", "document_id"):
@@ -98,6 +98,7 @@ def spatial_lines(words):
         else:
             rows[-1][1].append(word)
     return [{"text": " ".join(normalized(w[4]) for w in sorted(row, key=lambda w: w[0])),
+             "words": [{"text": normalized(w[4]), "box": list(w[:4])} for w in sorted(row, key=lambda w: w[0])],
              "box": [min(w[0] for w in row), min(w[1] for w in row), max(w[2] for w in row), max(w[3] for w in row)]}
             for _, row in rows]
 
@@ -106,18 +107,22 @@ def text_in(lines, region):
     if region is None:
         return "\n".join(line["text"] for line in lines)
     rect = fitz.Rect(region[0], region[1], region[0] + region[2], region[1] + region[3]) * MM_TO_PT
-    return "\n".join(line["text"] for line in lines if rect.intersects(fitz.Rect(line["box"])))
+    return "\n".join(" ".join(w["text"] for w in line["words"] if rect.contains(
+                        fitz.Point((w["box"][0]+w["box"][2])/2, (w["box"][1]+w["box"][3])/2)))
+                     if "words" in line else line["text"] for line in lines if rect.intersects(fitz.Rect(line["box"])))
 
 
 def identity_fields(lines, region=None):
     fields = []
     for line in lines:
-        if region and not text_in([line], region):
-            continue
-        match = ID_LABEL.search(line["text"])
-        if match:
-            value = line["text"][match.end():].lstrip(" .:：").strip()
-            label = line["text"][:match.end()].strip(" .:：")
+        text = text_in([line], region)
+        matches = list(ID_LABEL.finditer(text))
+        for i, match in enumerate(matches):
+            end = matches[i+1].start() if i+1 < len(matches) else len(text)
+            value = text[match.end():end].lstrip(" .:：").strip()
+            # Only recognized static labels are persisted; preceding recipient text
+            # on the same baseline must never become a profile field name.
+            label = match.group().strip(" .:：")
             if value and len(label) <= 100 and len(value) <= 256:
                 fields.append((label, value, line["box"]))
     return fields
@@ -180,7 +185,7 @@ def index_pdf(path, cache_path, *, expected_sha256=None, progress=None, is_cance
     if cache_path.exists():
         cached = PageIndex(cache_path)
         try:
-            if cached.metadata() == asdict(source):
+            if cached.metadata() == {**asdict(source), "index_version": 2}:
                 return source, cached
         except (sqlite3.Error, ValueError, TypeError):
             pass
@@ -201,7 +206,7 @@ def index_pdf(path, cache_path, *, expected_sha256=None, progress=None, is_cance
                     progress(number, source.pages, f"Analyzing text positions {number:,} / {source.pages:,}")
         if _stat(Path(source.path)) != (source.size, source.mtime_ns) or _hash(Path(source.path), is_cancelled) != source.sha256:
             raise CompositionError("Source changed during analysis. Scan again.")
-        cached.db.execute("INSERT INTO meta VALUES (?)", (json.dumps(asdict(source)),))
+        cached.db.execute("INSERT INTO meta VALUES (?)", (json.dumps({**asdict(source), "index_version": 2}),))
         cached.db.commit()
         return source, cached
     except Exception:
@@ -235,7 +240,8 @@ def analyze_index(index, *, is_cancelled=None):
                     continue
                 key = (term, round(line["box"][0]/6), round(line["box"][1]/6))
                 anchors[key] += 1
-                boxes[key] = line["box"]
+                word_box = next((w["box"] for w in line.get("words", []) if w["text"].casefold() == term.casefold()), line["box"])
+                boxes[key] = list(fitz.Rect(boxes[key]) | fitz.Rect(word_box)) if key in boxes else word_box
                 examples.setdefault(key, [])
                 if len(examples[key]) < 4:
                     examples[key].append(number)
@@ -248,16 +254,30 @@ def analyze_index(index, *, is_cancelled=None):
         suggestions.append({"title": "Printed page sequence", "reason": f"Counters on {counter_pages:,} pages; sequence restarts on {len(counter_starts):,} pages.",
                             "examples": counter_starts[:4], "config": asdict(DetectionConfig(
                                 rules=[{"kind": "page_number", "auto": True, "region_mm": region}], version=2))})
-    for key, hits in anchors.most_common():
-        if hits < 2 or hits >= count or examples[key][0] != 1:
+    proposed_regions = set()
+    for key, _ in anchors.most_common():
+        # Address blocks can shift a salutation by a few lines. Include the
+        # observed nearby positions of the same static feature, retaining its
+        # narrow horizontal anchor rather than the recipient-name extent.
+        related = [other for other in boxes if other[0] == key[0]
+                   and abs(other[1]-key[1]) <= 2 and abs(other[2]-key[2]) <= 4]
+        hits = sum(anchors[other] for other in related)
+        if hits < 2 or hits >= count or not any(1 in examples[other] for other in related):
             continue
-        region = _box_region([boxes[key]])
+        nearby = [boxes[other] for other in related]
+        region = _box_region(nearby)
+        signature = (key[0], *region)
+        if signature in proposed_regions:
+            continue
+        proposed_regions.add(signature)
         rules = [{"kind": "first_text", "terms": [key[0]], "region_mm": region}]
         matching_pages = []
         for number, lines in index.pages():
             check_cancel(is_cancelled)
             if marker_hit(lines, rules[0]):
                 matching_pages.append(number)
+        if len(matching_pages) >= count:
+            continue
         if id_rule["fields"]:
             rules.append(id_rule)
         suggestions.append({"title": f"First-page marker: {key[0]}",
@@ -299,7 +319,9 @@ def detect_index(index, config, *, is_cancelled=None, progress=None):
             hits.append("document_id")
         if counter and counter[0] == 1:
             hits.append("page_number")
-        new = bool(hits)
+        new = bool(hits) if config.combine == "any" else len(hits) == len(rules)
+        if config.combine == "all" and hits and not new:
+            warn(number, "conflicting_signals", "Start signals disagree under the all-signals rule. Review this possible boundary.")
         if number == 1:
             new = True
             if not hits:
@@ -346,10 +368,12 @@ def detect_index(index, config, *, is_cancelled=None, progress=None):
         groups = []
     else:
         EnvelopePlan(pages, EnvelopeSettings(groups=groups))
+        if evidence[-1]["end_basis"] == "next_start_inferred":
+            evidence[-1]["end_basis"] = "pdf_end_inferred"
     return {"config": asdict(config), "pages": pages, "groups": groups, "excluded_pages": [], "findings": findings,
             "evidence": evidence, "distribution": dict(Counter(str(min(4, b-a+1)) for a, b in groups)),
             "accepted": False, "edits": [], "established": established,
-            "status": "needs_review" if findings else "consistent" if established else "unresolved",
+            "status": "unresolved" if not established else "needs_review" if findings else "consistent",
             "message": "Review proposed boundaries before production." if established else "Unable to establish boundaries. Teach a first-page feature or choose another signal."}
 
 

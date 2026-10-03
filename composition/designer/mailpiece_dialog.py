@@ -5,7 +5,7 @@ import copy
 from bisect import bisect_left
 from dataclasses import asdict
 
-from PyQt6.QtCore import QAbstractTableModel, Qt
+from PyQt6.QtCore import QAbstractTableModel, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -32,10 +32,11 @@ from PyQt6.QtWidgets import (
 from composition.pdf_source.detection import DetectionConfig, edit_boundary
 from composition.production.model import now
 
-from .mailpiece_preview import SourcePreview
+from .mailpiece_preview import PairedSourcePreview, SourcePreview
 from .mailpiece_region import RegionView
+from .mailpiece_smart_ui import SIGNAL_LABELS, SmartDetectionControls
 
-METHODS = [("Page number pattern", "page_number"), ("Document / Account ID changes", "document_id"),
+METHODS = [("Auto analysis / detection profile", "smart"), ("Page number pattern", "page_number"), ("Document / Account ID changes", "document_id"),
            ("First-page text markers (all)", "first_text"), ("Separator page", "separator"),
            ("Text present in selected region", "region_present"), ("Combine boundary rules", "combined")]
 
@@ -44,42 +45,51 @@ class BoundaryTable(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.groups, self.warnings = [], []
+        self.rows, self.report = [], {}
 
-    def replace(self, report):
+    def replace(self, report, exceptions_only=False):
         self.beginResetModel()
         self.groups = report["groups"]
+        self.report = report
         self.warnings = sorted({f["page"] for f in report["findings"]})
+        self.rows = [i for i, (start, end) in enumerate(self.groups) if not exceptions_only or not self.warnings
+                     or any(start <= p <= end for p in self.warnings)]
         self.endResetModel()
 
     def rowCount(self, parent=None):
-        return 0 if parent is not None and parent.isValid() else len(self.groups)
+        return 0 if parent is not None and parent.isValid() else len(self.rows)
 
     def columnCount(self, parent=None):
-        return 4
+        return 5
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return ("Envelope", "Source pages", "Count", "Review")[section]
+            return ("Envelope", "Source pages", "Count", "Review", "Evidence / end")[section]
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+        if not index.isValid() or role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return None
-        start, end = self.groups[index.row()]
+        number = self.rows[index.row()]
+        start, end = self.groups[number]
         warning_index = bisect_left(self.warnings, start)
         needs_review = warning_index < len(self.warnings) and self.warnings[warning_index] <= end
-        return (f"{index.row()+1:06}", f"{start}–{end}", end-start+1,
-                "Needs review" if needs_review else "Check boundaries")[index.column()]
+        evidence = next((e for e in self.report.get("evidence", []) if e["page"] == start), {})
+        reason = " + ".join(SIGNAL_LABELS.get(m, m) for m in evidence.get("matched", [])) or "Operator boundary"
+        if evidence.get("end_basis") in ("next_start_inferred", "pdf_end_inferred"):
+            reason += "; end inferred"
+        return (f"{number+1:06}", f"{start}–{end}", end-start+1,
+                "Needs review" if needs_review else "Evidence consistent" if self.report.get("established") else "Check boundaries", reason)[index.column()]
 
 
-class MailpieceDialog(QDialog):
+class MailpieceDialog(SmartDetectionControls, QDialog):
     def __init__(self, window):
         super().__init__(window)
         self.window = window
         self.context_sha256 = window.spec.source.sha256
         self.context_settings = asdict(window.spec.settings)
         self.context_review = copy.deepcopy(window.spec.detection_review)
-        self.setWindowTitle("Mailpiece detection · Scan → Review → Apply")
+        self.setWindowTitle("Auto Detect Mailpieces · Analyze → Review → Apply")
         self.resize(880, 650)
         self.report = self.source = None
         self.scan_worker = None
@@ -92,6 +102,7 @@ class MailpieceDialog(QDialog):
         left = QWidget()
         form = QFormLayout(left)
         self.form = form
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.method = QComboBox()
         for title, key in METHODS:
@@ -142,6 +153,7 @@ class MailpieceDialog(QDialog):
         hint.setWordWrap(True)
         form.addRow(hint)
         scroll = QScrollArea()
+        self.controls_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setWidget(left)
         splitter.addWidget(scroll)
@@ -170,7 +182,7 @@ class MailpieceDialog(QDialog):
         navigation = QHBoxLayout()
         navigation.addWidget(self.preview_page, 1)
         fit = QPushButton("Fit page")
-        fit.clicked.connect(lambda: self.preview.fit_page())
+        fit.clicked.connect(lambda: (self.preview.fit_page(), self.secondary_preview.preview.fit_page()))
         navigation.addWidget(fit)
         self.next_warning = QPushButton("Next warning")
         self.next_warning.clicked.connect(self.select_next_warning)
@@ -181,7 +193,13 @@ class MailpieceDialog(QDialog):
         self.whole.toggled.connect(self.preview.update_region)
         for control in self.region:
             control.valueChanged.connect(self.preview.update_region)
-        layout.addWidget(self.preview, 2)
+        self.preview_pair = QSplitter()
+        self.preview_pair.setChildrenCollapsible(False)
+        self.preview_pair.addWidget(self.preview)
+        self.secondary_preview = PairedSourcePreview(self)
+        self.preview_pair.addWidget(self.secondary_preview)
+        self.preview_pair.setSizes([280, 280])
+        layout.addWidget(self.preview_pair, 2)
         self.preview_status = QLabel()
         self.preview_status.setWordWrap(True)
         layout.addWidget(self.preview_status)
@@ -190,14 +208,16 @@ class MailpieceDialog(QDialog):
         self.detail.setMaximumHeight(72)
         layout.addWidget(self.detail)
         edits = QHBoxLayout()
-        self.split_button = QPushButton("Split here…")
-        self.merge_button = QPushButton("Merge with previous")
+        self.split_button = QPushButton("Split…")
+        self.split_button.setToolTip("Choose the source page where a new mailpiece starts.")
+        self.merge_button = QPushButton("Merge previous")
+        self.merge_button.setToolTip("Merge this mailpiece with the preceding adjacent mailpiece.")
         self.split_button.clicked.connect(self.split)
         self.merge_button.clicked.connect(self.merge)
         edits.addWidget(self.split_button)
         edits.addWidget(self.merge_button)
-        self.undo_boundary = QPushButton("Undo edit")
-        self.redo_boundary = QPushButton("Redo edit")
+        self.undo_boundary = QPushButton("Undo")
+        self.redo_boundary = QPushButton("Redo")
         self.undo_boundary.clicked.connect(lambda: self.restore_boundary_edit(False))
         self.redo_boundary.clicked.connect(lambda: self.restore_boundary_edit(True))
         for button in (self.undo_boundary, self.redo_boundary):
@@ -237,6 +257,7 @@ class MailpieceDialog(QDialog):
         self.method.currentIndexChanged.connect(self.update_method)
         self.update_method()
         self.cancel_button.setEnabled(False)
+        self.setup_smart_controls()
         self.update_apply()
         for control in (self.method, self.number_pattern, self.id_pattern, self.separator, self.combine):
             signal = control.textChanged if isinstance(control, QLineEdit) else control.currentIndexChanged
@@ -276,9 +297,17 @@ class MailpieceDialog(QDialog):
         for control in self.combined.values():
             self.form.setRowVisible(control, kind == "combined")
         self.combine.setEnabled(kind == "combined")
+        if hasattr(self, "lesson_controls"):
+            self.update_smart_controls()
 
     def config(self):
         kind = self.method.currentData()
+        if kind == "smart":
+            if not self.smart_config:
+                raise ValueError("Analyze the PDF, teach a feature, or open a detection profile first.")
+            result = DetectionConfig(**self.smart_config)
+            result.validate()
+            return result
         kinds = [key for key, check in self.combined.items() if check.isChecked()] if kind == "combined" else [kind]
         rules = []
         for key in kinds:
@@ -295,6 +324,11 @@ class MailpieceDialog(QDialog):
         return result
 
     def restore_config(self, config):
+        if config.get("version") == 2:
+            self.method.setCurrentIndex(self.method.findData("smart"))
+            self.set_suggestions([{"title": config.get("profile_name") or "Saved spatial rules", "config": config,
+                                   "examples": [1], "reason": "Saved rules restored. Existing boundaries remain unchanged until you rescan and accept."}])
+            return
         rules = config["rules"]
         self.method.setCurrentIndex(self.method.findData("combined" if len(rules) > 1 else rules[0]["kind"]))
         for key, control in self.combined.items():
@@ -332,6 +366,9 @@ class MailpieceDialog(QDialog):
         self.preview_page.setRange(1, self.window.spec.source.pages)
 
     def scan(self):
+        if self.method.currentData() == "smart":
+            self.smart_scan()
+            return
         if self.window.active_worker or self.window.draft_error:
             return
         try:
@@ -374,6 +411,12 @@ class MailpieceDialog(QDialog):
         self.scan_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self.update_apply()
+        self.analyze_button.setEnabled(True)
+        self.form.parentWidget().setEnabled(True)
+        self.acknowledge.setEnabled(True)
+        if self.pending_smart_scan:
+            self.pending_smart_scan = False
+            QTimer.singleShot(0, self.scan)
 
     def scanned(self, value):
         if not self.isVisible():
@@ -388,6 +431,10 @@ class MailpieceDialog(QDialog):
             self.invalidate()
             self.summary.setText("Options changed during scanning. Scan again.")
             return
+        if self.report.get("version", self.report["config"].get("version")) == 2:
+            self.exceptions_only.blockSignals(True)
+            self.exceptions_only.setChecked(bool(self.report["findings"]))
+            self.exceptions_only.blockSignals(False)
         self.show_report()
 
     def scan_failed(self, message):
@@ -397,20 +444,26 @@ class MailpieceDialog(QDialog):
         self.update_apply()
 
     def show_report(self, selected_row=0):
-        self.model.replace(self.report)
+        self.model.replace(self.report, self.exceptions_only.isChecked())
         groups = self.report["groups"]
         counts = [sum(end-start+1 == n for start,end in groups) for n in (1,2,3)]
         counts.append(len(groups)-sum(counts))
-        self.summary.setText(f"{self.report['pages']:,} source pages · {len(groups):,} mailpieces · {len(self.report['excluded_pages']):,} excluded separators\n"
+        self.summary.setText((self.report.get("message", "") + "\n" if not groups else "") + f"{self.report['pages']:,} source pages · {len(groups):,} mailpieces · {len(self.report['excluded_pages']):,} excluded separators\n"
                              f"1 page: {counts[0]:,} · 2: {counts[1]:,} · 3: {counts[2]:,} · 4+: {counts[3]:,} · {len(self.report['findings']):,} warnings")
         self.acknowledge.setChecked(False)
         self.update_apply()
         if groups:
-            self.table.selectRow(min(selected_row, len(groups)-1))
+            visible = self.model.rows.index(selected_row) if selected_row in self.model.rows else 0
+            self.table.selectRow(visible)
+
+    def selected_row(self):
+        row = self.table.currentIndex().row()
+        return self.model.rows[row] if 0 <= row < len(self.model.rows) else -1
 
     def update_apply(self):
-        self.apply_button.setEnabled(bool(self.report and not self.scan_worker and self.acknowledge.isChecked()))
-        index = self.table.currentIndex().row()
+        self.apply_button.setEnabled(bool(self.report and self.report["groups"] and not self.scan_worker
+                                          and not self.window.active_worker and self.acknowledge.isChecked()))
+        index = self.selected_row()
         selected = self.report and 0 <= index < len(self.report["groups"])
         self.split_button.setEnabled(bool(selected and not self.scan_worker and
                                          self.report["groups"][index][0] < self.report["groups"][index][1]))
@@ -423,17 +476,22 @@ class MailpieceDialog(QDialog):
     def selected(self, current, previous):
         if not self.report or not current.isValid():
             return
-        start, end = self.report["groups"][current.row()]
+        start, end = self.report["groups"][self.model.rows[current.row()]]
         self.update_apply()
         reasons = [f"Source page {f['page']}: {f['message']}" for f in self.report["findings"] if start <= f["page"] <= end]
-        matches = next((e["matched"] for e in self.report["evidence"] if e["page"] == start), [])
-        self.detail.setPlainText(f"Source pages {start}–{end}; boundary evidence: {', '.join(matches) or 'operator/manual start'}\n" + "\n".join(reasons))
+        evidence = next((e for e in self.report["evidence"] if e["page"] == start), {})
+        matches = [SIGNAL_LABELS.get(m, m) for m in evidence.get("matched", [])]
+        end_reason = {"next_start_inferred": "End inferred from the next first page; document completeness is not independently proven.",
+                      "pdf_end_inferred": "Last letter extends to the PDF end; document completeness is not independently proven.",
+                      "printed_sequence": "Printed page sequence checked; review any sequence warnings."}.get(evidence.get("end_basis"), "Operator-edited boundary.")
+        self.detail.setPlainText(f"Source pages {start}–{end}; boundary evidence: {', '.join(matches) or 'operator/manual start'}\n" + end_reason + "\n" + "\n".join(reasons))
         self.preview_page.blockSignals(True)
         self.preview_page.setRange(start, end)
         self.preview_page.setValue(start)
         self.preview_page.blockSignals(False)
         self.warning_cursor = start-1
         self.show_source_page(start)
+        self.refresh_pair()
 
     def select_next_warning(self):
         if not self.report or not self.model.warnings:
@@ -442,11 +500,14 @@ class MailpieceDialog(QDialog):
         page = self.model.warnings[index % len(self.model.warnings)]
         for number, (start, finish) in enumerate(self.report["groups"]):
             if start <= page <= finish:
-                if self.table.currentIndex().row() == number:
-                    self.selected(self.model.index(number, 0), self.table.currentIndex())
+                if number not in self.model.rows:
+                    continue
+                visible = self.model.rows.index(number)
+                if self.selected_row() == number:
+                    self.selected(self.model.index(visible, 0), self.table.currentIndex())
                 else:
-                    self.table.selectRow(number)
-                self.table.scrollTo(self.model.index(number, 0))
+                    self.table.selectRow(visible)
+                self.table.scrollTo(self.model.index(visible, 0))
                 self.preview_page.setValue(page)
                 self.warning_cursor = page
                 return
@@ -466,11 +527,12 @@ class MailpieceDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self.show_source_page(self.preview_page.value())
+        self.refresh_pair()
 
     def boundary_snapshot(self):
         # History retains mutable boundaries only, not every page's scan evidence.
         return (copy.deepcopy(self.report["groups"]), copy.deepcopy(self.report["edits"]),
-                self.table.currentIndex().row())
+                self.selected_row())
 
     def record_boundary_edit(self, report, row):
         self.review_undo.append(self.boundary_snapshot())
@@ -491,7 +553,7 @@ class MailpieceDialog(QDialog):
         self.show_report(row)
 
     def split(self):
-        index = self.table.currentIndex().row()
+        index = self.selected_row()
         if not self.report or index < 0:
             return
         start, end = self.report["groups"][index]
@@ -504,7 +566,7 @@ class MailpieceDialog(QDialog):
 
     def merge(self):
         try:
-            index = self.table.currentIndex().row()
+            index = self.selected_row()
             self.record_boundary_edit(edit_boundary(self.report, index, merge_previous=True), index-1)
         except (ValueError, TypeError) as exc:
             self.detail.setPlainText(str(exc))
@@ -516,6 +578,41 @@ class MailpieceDialog(QDialog):
         if self.window.spec.source.sha256 != self.source["sha256"]:
             self.summary.setText("The project source changed. Close this review and scan the current source.")
             return
+        if self.report["config"].get("version", 1) == 2:
+            # Validate bytes in the background, then commit after the worker releases
+            # the project lock. Never accept stale page boundaries after a file edit.
+            before = copy.deepcopy(self.window.spec.to_dict())
+            generation = self.scan_generation
+            verified = []
+            self.form.parentWidget().setEnabled(False)
+            self.acknowledge.setEnabled(False)
+            self.scan_button.setEnabled(False)
+            self.scan_status.setText("Checking source before accepting boundaries…")
+            self.scan_status.show()
+            self.scan_progress.setRange(0, 0)
+            self.scan_progress.show()
+            self.cancel_button.setEnabled(True)
+            self.scan_worker = self.window.worker({"task": "mailpiece_review_source", "source": self.source["path"],
+                                                   "expected_sha256": self.source["sha256"]}, verified.append,
+                                                  self.scan_failed, active=True)
+            self.update_apply()
+            def ended():
+                self.scan_ended()
+                if not self.isVisible() or generation != self.scan_generation or not verified or not self.report:
+                    return
+                if self.window.spec.to_dict() != before:
+                    self.scan_failed("The project changed during source validation. Scan and review again.")
+                    return
+                self.source = verified[-1]["source"]
+                self.commit_report()
+            if self.scan_worker:
+                self.scan_worker.ended.connect(ended)
+            else:
+                self.scan_ended()
+            return
+        self.commit_report()
+
+    def commit_report(self):
         raw = self.window.spec.to_dict()
         raw["source"] = self.source
         raw["settings"]["groups"] = copy.deepcopy(self.report["groups"])
@@ -530,6 +627,7 @@ class MailpieceDialog(QDialog):
 
     def done(self, result):
         self.source_preview.stop()
+        self.secondary_preview.stop()
         super().done(result)
 
     def reject(self):
@@ -537,4 +635,5 @@ class MailpieceDialog(QDialog):
             self.scan_worker.cancel()
         self.scan_generation += 1
         self.source_preview.stop()
+        self.secondary_preview.stop()
         super().reject()
