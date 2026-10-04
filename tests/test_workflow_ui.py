@@ -331,7 +331,8 @@ def test_multiple_sources_insert_merge_and_compact_add_step(standalone,tmp_path)
     assert not w.spec.node("merge") and not w.spec.node("input").params["paths"]
     w.resize(960,640)
     QApplication.processEvents()
-    assert w.add_step.isVisible()
+    # Optional steps moved into the contextual canvas control to free toolbar space.
+    assert w.next_step.isVisible()
     w.add_optional("overlay")
     assert [n.kind for n in w.spec.chain()][-2:]==["overlay","output"]
     w.canvas.pending=w.spec.node("input").id

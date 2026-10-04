@@ -9,6 +9,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QEventLoop, pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -48,7 +49,7 @@ class DesignerProjectHost(QWidget):
         welcome.addStretch()
         welcome.addWidget(title)
         for text, handler in (("Create template", self.new_template), ("Open project…", self.open_project),
-                              ("PDF envelope overlay…", self.new_overlay), ("Visual extraction workflow…", self.new_workflow)):
+                              ("PDF envelope overlay…", self.new_overlay), ("Visual Workflow…", self.choose_workflow)):
             button = QPushButton(text)
             button.clicked.connect(lambda checked=False, callback=handler: callback())
             welcome.addWidget(button)
@@ -124,6 +125,36 @@ class DesignerProjectHost(QWidget):
         from workflow.workspace import WorkflowWindow
         return self._append(WorkflowWindow(self.tabs, embedded=True, project_host=self))
 
+    def choose_workflow(self):
+        label,ok=QInputDialog.getItem(self,"Create Visual Workflow","Production workflow",
+            ["Mail Merge Production · Letter templates + data","PDF Processing · Extract, group and overlay"],0,False)
+        if ok:
+            return self.new_mail_merge_workflow() if label.startswith("Mail Merge") else self.new_workflow()
+
+    def new_mail_merge_workflow(self):
+        if self.shutting_down:
+            return None
+        from workflow.mail_merge_ui import MailMergeWorkflowWindow
+        return self._append(MailMergeWorkflowWindow(self.tabs,embedded=True,project_host=self))
+
+    def workflow_from_project(self,project):
+        if project.properties.apply() is False or getattr(project,"content_invalid",False):
+            return None
+        if self.is_busy(project):
+            project._error("Finish the template's task before creating a workflow.")
+            return None
+        if not project.project_path or not project.undo.isClean():
+            if not project.save_project():
+                return None
+        from workflow.batch import BatchJob
+        workflow=self.new_mail_merge_workflow()
+        workflow.batch.jobs=[BatchJob(name=project.template.name[:200] or "Letter job",template_path=str(project.project_path),
+            data_path=project.template.data.path,data_options={k:v for k,v in vars(project.template.data).items() if k!="path"},
+            output_name="letters.pdf")]
+        workflow.changed_jobs()
+        workflow.tabs.setCurrentWidget(workflow.review_page)
+        return workflow
+
     def new_overlay(self):
         if self.shutting_down:
             return None
@@ -149,10 +180,10 @@ class DesignerProjectHost(QWidget):
             raw = json.loads(file.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("Invalid Designer project structure.")
-            if raw.get("project_kind") == "pdf_workflow":
+            if raw.get("project_kind") in ("pdf_workflow","mail_merge_workflow"):
                 from workflow.serializer import load_workflow
                 load_workflow(path)
-                project = self.new_workflow()
+                project = self.new_mail_merge_workflow() if raw["project_kind"]=="mail_merge_workflow" else self.new_workflow()
                 project.project_path=Path(path).resolve()
                 project.load_path(path)
             elif raw.get("project_kind") == "pdf_overlay":
@@ -197,7 +228,7 @@ class DesignerProjectHost(QWidget):
         kind = "Workflow" if getattr(project,"is_workflow",False) else "Template" if hasattr(project, "template") else "Overlay"
         model = project.template if hasattr(project, "template") else project.spec
         name = project.project_path.name if project.project_path else model.name if model and (getattr(model,"source_link",None) or getattr(project,"is_workflow",False)) else "Untitled"
-        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))
+        dirty = not project.undo.isClean() or bool(getattr(project,"batch_dirty",False) or getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))
         self.tabs.setTabText(index, f"{kind} · {name}" + (" *" if dirty else "") + (" ●" if self.is_busy(project) else ""))
         self.tabs.setTabToolTip(index, project.windowTitle())
         self.activityChanged.emit()
@@ -207,7 +238,7 @@ class DesignerProjectHost(QWidget):
         if not self.is_busy(project):
             if project.properties.apply() is False:
                 return False
-        dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))
+        dirty = not project.undo.isClean() or bool(getattr(project,"batch_dirty",False) or getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))
         editor = getattr(project, "batch_editor", None)
         if editor and editor.deferred_discard:
             dirty = not project.undo.isClean() or bool(getattr(project, "content_invalid", False) or getattr(project, "draft_error", ""))

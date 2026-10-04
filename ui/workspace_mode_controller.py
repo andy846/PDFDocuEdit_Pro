@@ -44,7 +44,7 @@ class WorkspaceModeController(QObject):
             ("new", "New project", "Ctrl+N", self.new_project),
             ("open", "Open Designer project…", "Ctrl+O", lambda: self.host.open_project()),
             ("overlay", "New PDF envelope overlay", "", lambda: self.host.new_overlay()),
-            ("workflow", "New visual extraction workflow", "", lambda: self.host.new_workflow()),
+            ("workflow", "New Visual Workflow…", "", lambda: self.host.choose_workflow()),
             ("close", "Close project", "Ctrl+W", self.close_current_project),
             ("pdf", "Switch to PDF Workspace", "", lambda: self.request_mode("pdf")),
         ):
@@ -54,12 +54,12 @@ class WorkspaceModeController(QObject):
             self.designer_actions[key] = action
             window.addAction(action)
             self.workspace_menu.addAction(action)
-        entry=QAction("Visual extraction workflow…",window)
+        entry=QAction("Visual Workflow…",window)
         entry.triggered.connect(self.new_workflow)
         window.addAction(entry)
         window.command_bar._pdf_more_menu.addAction(entry)
         window._command_action_map["visual_workflow"]=entry
-        window._commands.append(Command("visual_workflow","Visual extraction workflow","","PDF production",self.new_workflow,entry.isEnabled))
+        window._commands.append(Command("visual_workflow","Visual Workflow","","PDF production",self.new_workflow,entry.isEnabled))
         self.capture_pdf_bindings()
         # Keep application-wide actions available when PDF menus are detached.
         for key, action in window._command_action_map.items():
@@ -121,12 +121,12 @@ class WorkspaceModeController(QObject):
     def new_workflow(self):
         host=self.ensure_host(create_default=False)
         self.request_mode("designer")
-        return host.new_workflow()
+        return host.choose_workflow()
 
     def new_project(self):
         current = self.host.current_project
         if current and getattr(current,"is_workflow",False):
-            return self.host.new_workflow()
+            return self.host.choose_workflow()
         return self.host.new_overlay() if current and not hasattr(current, "template") else self.host.new_template()
 
     def close_current_project(self):

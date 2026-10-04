@@ -143,6 +143,9 @@ class DesignerChrome:
         action("preview", "Preview records", lambda: self.tabs.setCurrentIndex(2), "&Data", "F5", "search")
         action("generate", "Generate PDF…", self.generate_pdf, "&Production", "Ctrl+Shift+G",
                "printer")
+        action("create_workflow", "Create Workflow from Project…",
+               lambda:self.project_host.workflow_from_project(self) if self.project_host else None,
+               "&Production", symbol="layers")
         action("cancel", "Cancel job", self.cancel_job, "&Production", symbol="x")
         action("help", "Designer shortcuts", self.show_shortcuts, "&Help", "F1", "keyboard")
         self.layout_menu = menus["&View"]
@@ -264,6 +267,7 @@ class DesignerChrome:
             elif key.startswith("insert_") or key == "variable":
                 value.setEnabled(not busy)
         self.actions["sequences"].setEnabled(not busy and not self.font_requests and not self.content_invalid)
+        self.actions["create_workflow"].setEnabled(bool(self.project_host) and not busy and not self.font_requests and not self.content_invalid)
         self.actions["generate"].setEnabled(bool(self._store()) and not busy and not self.font_requests)
         self.actions["cancel"].setEnabled(busy)
         count = len(self._selected_text())

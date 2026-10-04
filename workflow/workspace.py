@@ -259,6 +259,10 @@ class WorkflowWindow(QMainWindow):
         pl=QVBoxLayout(self.production_page)
         self.production_summary=QPlainTextEdit()
         self.production_summary.setReadOnly(True)
+        self.production_overview=QLabel("No production job has been run.")
+        self.production_overview.setWordWrap(True)
+        self.production_overview.setTextFormat(Qt.TextFormat.PlainText)
+        pl.addWidget(self.production_overview)
         pl.addWidget(self.production_summary,1)
         output_actions=QHBoxLayout()
         for text,handler in (("Open output PDF",self.open_output),("Show reports",self.show_reports)):
@@ -280,6 +284,8 @@ class WorkflowWindow(QMainWindow):
         self.setCentralWidget(central)
         self.statusBar().hide()
         self.apply_spec(self.spec.to_dict())
+        from .chrome import install
+        install(self)
         self.lock()
         QTimer.singleShot(0,self.canvas.fit)
 
@@ -288,7 +294,9 @@ class WorkflowWindow(QMainWindow):
         self.setWindowTitle(name+(" *" if not self.undo.isClean() or self.draft_error else "")+" — Workflow")
 
     def message(self,text):
-        self.feedback.setText(str(text))
+        value=str(text)
+        self.feedback.setToolTip(value)
+        self.feedback.setText(value[:300]+("…" if len(value)>300 else ""))
 
     error=message
 
@@ -304,7 +312,8 @@ class WorkflowWindow(QMainWindow):
                 self.properties.edited.emit()
                 self.lock()
         for control in controls:
-            signal=control.textChanged if isinstance(control,QLineEdit) else control.currentIndexChanged if isinstance(control,QComboBox) else control.valueChanged
+            signal=(control.textChanged if isinstance(control,QLineEdit) else control.currentIndexChanged
+                    if isinstance(control,QComboBox) else control.toggled if hasattr(control,"toggled") else control.valueChanged)
             signal.connect(changed)
 
     def flush_settings(self):
@@ -390,8 +399,18 @@ class WorkflowWindow(QMainWindow):
         self.inspector=QWidget()
         layout=QVBoxLayout(self.inspector)
         title=QLabel(LABELS[node.kind])
-        title.setStyleSheet("font-size:16px;font-weight:600")
+        font=title.font()
+        font.setPointSizeF(12)
+        font.setBold(True)
+        title.setFont(font)
         layout.addWidget(title)
+        roles={"input":"INPUT · PDF source documents", "merge":"SETTINGS · Source order and selected pages",
+               "extract":"OUTPUT · Named fields from PDF text regions", "group":"OUTPUT · Envelope boundaries",
+               "review":"CHECK · Values, findings and boundaries", "overlay":"SETTINGS · Designer overlay project",
+               "output":"OUTPUT · Validated PDF and production reports"}
+        subtitle=QLabel(roles[node.kind])
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
         self.inspector_scroll.setWidget(self.inspector)
         form=QFormLayout()
         layout.addLayout(form)
@@ -608,7 +627,10 @@ class WorkflowWindow(QMainWindow):
         self.commit(after,"Disconnect workflow steps")
 
     def connect_dialog(self,node):
-        targets=[n for n in self.spec.nodes if n.id!=node.id]
+        targets=[n for n in self.spec.nodes if n.kind in self.spec.allowed_next(node.kind)]
+        if not targets:
+            self.message("Add a compatible next step first, or select an earlier step.")
+            return
         label,ok=QInputDialog.getItem(self,"Connect step","Next step",[LABELS[n.kind] for n in targets],0,False)
         if ok:
             self.connect_nodes(node.id,next(n.id for n in targets if LABELS[n.kind]==label))
@@ -756,6 +778,11 @@ class WorkflowWindow(QMainWindow):
                 if not self.run.output:
                     self.tabs.setCurrentWidget(self.review_page)
             if self.run.output:
+                output=self.run.output
+                self.production_overview.setText(
+                    f"{output.get('status','')} · {output.get('generated_pages',0):,} pages · "
+                    f"{output.get('published_files',output.get('generated_files',0))} PDF(s)\n"
+                    f"{output.get('error','') or output.get('output_pdf','')}")
                 self.production_summary.setPlainText(self.result_summary())
                 self.tabs.setCurrentWidget(self.production_page)
         self.request({"operation":"run","spec":self.spec.to_dict(),"run":asdict(self.run),
@@ -784,6 +811,8 @@ class WorkflowWindow(QMainWindow):
         worker.failed.connect(failures.append)
         if not preview:
             worker.progress.connect(self.update_progress)
+            if hasattr(self,"batch_state"):
+                worker.stateChanged.connect(self.batch_state)
         def ended():
             if worker in self.workers:
                 self.workers.remove(worker)
@@ -846,6 +875,10 @@ class WorkflowWindow(QMainWindow):
         self.progress.setVisible(busy)
         self.actions["cancel"].setVisible(bool(self.active_worker))
         self.activityChanged.emit()
+        if hasattr(self,"next_step"):
+            self.next_step.setEnabled(not busy)
+            from .chrome import context
+            context(self)
 
     def cancel_job(self):
         if self.active_worker:
@@ -1063,7 +1096,7 @@ class WorkflowWindow(QMainWindow):
 
     def new_project(self):
         if self.project_host:
-            self.project_host.new_workflow()
+            self.project_host.choose_workflow()
 
     def open_project(self,checked=False,path=None):
         if self.project_host:
@@ -1143,11 +1176,7 @@ class WorkflowWindow(QMainWindow):
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        if hasattr(self,"toolbox"):
-            self.toolbox.setVisible(self.width()>=1080)
-            self.inspector_scroll.setMinimumWidth(210 if self.width()<1080 else 260)
-            for key in ("scan","generate"):
-                button=self.layout_toolbar.widgetForAction(self.actions[key])
-                if isinstance(button,QToolButton):
-                    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon if self.width()>=1080 else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        if hasattr(self,"library"):
+            from .chrome import resize
+            resize(self)
 
