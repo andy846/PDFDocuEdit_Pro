@@ -104,6 +104,85 @@ def test_merge_tab_identity_modes_shortcuts_and_close_cancel(window, tmp_path, m
     assert window.workspace._tabs.indexOf(page) >= 0
 
 
+@pytest.mark.parametrize("collapsed", [False, True])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("size", [(760, 580), (960, 640)])
+def test_merge_keeps_shared_sidebar_and_toggle_across_tabs_and_modes(window, tmp_path, collapsed, theme, size):
+    window._apply_theme(theme)
+    window.resize(*size)
+    window._open_in_new_tab_sync(str(source(tmp_path / "document.pdf")))
+    session = window._session
+    panel = window.side_panel
+    panel.set_collapsed(collapsed, animate=False)
+    window._merge_pdfs()
+    page = window._merge_workspace
+    QTest.qWait(100)
+    assert window.width() == size[0]
+    assert page.mapTo(window, page.rect().topRight()).x() < window.width()
+    assert panel.isVisible() and panel.is_collapsed() == collapsed
+    assert window.command_bar._panel.isEnabled()
+    assert panel._buttons["merge"].isEnabled()
+    assert panel._buttons["deep_search"].isEnabled()
+    assert not panel._buttons["rotate"].isEnabled()
+    assert "Switch to a PDF tab" in panel._buttons["rotate"].toolTip()
+    # Toggle remains usable inside the Merge tab and persists on the PDF tab.
+    window.command_bar._panel.click()
+    assert panel.is_collapsed() != collapsed and panel.isVisible()
+    for _ in range(2):
+        window.workspace.set_current_session(session)
+        assert panel.isVisible() and panel.is_collapsed() != collapsed
+        assert panel._buttons["rotate"].isEnabled()
+        window.workspace._tabs.setCurrentWidget(page)
+        assert panel.isVisible() and not panel._buttons["rotate"].isEnabled()
+    window._mode_controller.request_mode("designer")
+    window._mode_controller.request_mode("pdf")
+    assert window.workspace.current_tool() is page
+    assert panel.isVisible() and panel.is_collapsed() != collapsed
+    page.undo.setClean()
+    page.request_close()
+    assert window.workspace.current_session() is session
+    assert panel.isVisible() and panel._buttons["rotate"].isEnabled()
+    assert panel.is_collapsed() != collapsed
+
+
+def test_merge_without_pdf_keeps_sidebar_after_last_tool_tab_closes(window):
+    window.side_panel.set_collapsed(False, animate=False)
+    window._merge_pdfs()
+    assert window.side_panel.isVisible()
+    assert window.command_bar._panel.isEnabled()
+    assert not window.side_panel._buttons["rotate"].isEnabled()
+    window._merge_workspace.request_close()
+    assert window.workspace.current_tool() is None
+    assert window.side_panel.isVisible() and not window.side_panel.is_collapsed()
+    assert not window.side_panel._buttons["rotate"].isEnabled()
+    assert "Open a PDF" in window.side_panel._buttons["rotate"].toolTip()
+
+
+def test_merge_sidebar_keyboard_shortcut_is_pdf_mode_only(window, app):
+    window.side_panel.set_collapsed(False, animate=False)
+    window._merge_pdfs()
+    toggle = window._command_action_map["toggle_tools"]
+    assert toggle.isEnabled()
+    assert "toggle_tools" in {command.id for command in window._mode_controller.commands()}
+    page = window._merge_workspace
+    page.table.setFocus()
+    app.processEvents()
+    QTest.keyClick(page.table, Qt.Key.Key_Backslash, Qt.KeyboardModifier.ControlModifier)
+    assert window.side_panel.is_collapsed()
+    window._mode_controller.request_mode("designer")
+    assert "toggle_tools" not in {command.id for command in window._mode_controller.commands()}
+    canvas = window._mode_controller.host.current_project.canvas
+    canvas.setFocus()
+    app.processEvents()
+    QTest.keyClick(canvas, Qt.Key.Key_Backslash, Qt.KeyboardModifier.ControlModifier)
+    assert window.side_panel.is_collapsed()
+    window._mode_controller.request_mode("pdf")
+    page.table.setFocus()
+    app.processEvents()
+    QTest.keyClick(page.table, Qt.Key.Key_Backslash, Qt.KeyboardModifier.ControlModifier)
+    assert not window.side_panel.is_collapsed() and window.side_panel.isVisible()
+
+
 @pytest.mark.parametrize("project_kind", ["mail_merge_template", "overlay"])
 def test_snapshot_save_reopen_generate_and_designer(window, tmp_path, monkeypatch, project_kind):
     from ui.designer_handoff_dialog import DesignerHandoffDialog
@@ -332,6 +411,13 @@ def test_merge_remains_available_with_designer_flag_off(app, tmp_path, monkeypat
         page.add_paths([str(tmp_path/"source.pdf")])
         ready(page)
         assert root.workspace.current_tool() is page
+        assert root.side_panel.isVisible() and root.command_bar._panel.isEnabled()
+        assert not root.side_panel._buttons["rotate"].isEnabled()
+        collapsed = root.side_panel.is_collapsed()
+        page.table.setFocus()
+        app.processEvents()
+        QTest.keyClick(page.table, Qt.Key.Key_Backslash, Qt.KeyboardModifier.ControlModifier)
+        assert root.side_panel.is_collapsed() != collapsed
         assert not root.save_action.shortcuts()
         assert page.result_buttons[1].isHidden()
         assert "merge.save" in {command.id for command in root._commands_for_mode()}

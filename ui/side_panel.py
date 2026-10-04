@@ -608,9 +608,11 @@ class SidePanel(QFrame):
     def refresh_capabilities(self) -> None:
         self._refresh_availability()
 
-    def set_document_available(self, available: bool, encrypted: bool = False) -> None:
+    def set_document_available(self, available: bool, encrypted: bool = False,
+                               *, unavailable_hint: str = "Open a PDF to use this tool.") -> None:
         self._document_available = available
         self._document_encrypted = encrypted
+        self._document_unavailable_hint = unavailable_hint
         self._refresh_availability()
 
     def _refresh_availability(self) -> None:
@@ -621,7 +623,7 @@ class SidePanel(QFrame):
             if key in self.DOCUMENT_TOOLS and not self._document_available:
                 button.setEnabled(False)
                 button.setToolTip(
-                    f"{self._base_tooltip(key)}\nOpen a PDF to use this tool."
+                    f"{self._base_tooltip(key)}\n{getattr(self, '_document_unavailable_hint', 'Open a PDF to use this tool.')}"
                 )
                 continue
             if key == "decrypt" and not self._document_encrypted:

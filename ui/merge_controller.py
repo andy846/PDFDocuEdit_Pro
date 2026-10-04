@@ -11,10 +11,14 @@ class MergeController:
     def __init__(self, window):
         self.window = window
         self.previous_actions = {}
-        self.sidebar_hidden = None
         self.exit_approved = False
         self.pdf_menus = list(window.menuBar().actions())
         self.shortcuts = {a: list(a.shortcuts()) for a in window._registered_shortcut_actions}
+        # Merge replaces the PDF menus. Keep shared navigation shortcuts
+        # associated with the window when their original menu is detached.
+        for key in self.global_ids():
+            if key in window._command_action_map:
+                window.addAction(window._command_action_map[key])
         window.workspace.toolTabChanged.connect(self.active_changed)
         window.workspace.toolTabCloseRequested.connect(lambda tool: tool.request_close())
 
@@ -50,10 +54,12 @@ class MergeController:
             return
         if tool and not self.previous_actions:
             self.previous_actions = {action: action.isEnabled() for action in window._registered_shortcut_actions}
-            self.sidebar_hidden = window.side_panel.isHidden()
         if tool:
             window.command_bar.set_document_available(False)
-            window.side_panel.hide()
+            # Merge is a PDF Workspace tab: keep shared tool navigation and
+            # the user's expanded/collapsed choice. Only document tools are
+            # unavailable while no PDF document tab is active.
+            window.side_panel.set_document_available(False, unavailable_hint="Switch to a PDF tab to use this tool.")
             keep = self.global_ids() | {"merge"}
             for key, action in window._command_action_map.items():
                 if key not in keep:
@@ -64,10 +70,9 @@ class MergeController:
             for action, enabled in self.previous_actions.items():
                 action.setEnabled(enabled)
             self.previous_actions.clear()
-            if self.sidebar_hidden is not None:
-                window.side_panel.setVisible(not self.sidebar_hidden)
-                self.sidebar_hidden = None
-            window.command_bar.set_document_available(window.engine.is_loaded())
+            available = window.engine.is_loaded()
+            window.side_panel.set_document_available(available, encrypted=available and window.engine.is_encrypted())
+            window.command_bar.set_document_available(available)
             window.bottom_bar.show()
         mode = getattr(window, "_mode_controller", None)
         if mode:
@@ -93,7 +98,7 @@ class MergeController:
     @staticmethod
     def global_ids():
         from .workspace_mode_controller import WorkspaceModeController
-        return WorkspaceModeController.GLOBAL
+        return WorkspaceModeController.GLOBAL | WorkspaceModeController.PDF_NAVIGATION
 
     def pdf_active(self):
         mode = getattr(self.window, "_mode_controller", None)
@@ -112,6 +117,7 @@ class MergeController:
         if sip.isdeleted(self.window.workspace._tabs) or getattr(self.window, "_closing", False):
             return
         bar = self.window.command_bar
+        bar._panel.setEnabled(True)
         page = self.window.workspace.current_tool()
         active = page is not None and self.pdf_active()
         if active:
@@ -119,12 +125,10 @@ class MergeController:
             bar._save.setToolTip("Save merge list (Ctrl+S)")
             bar._save.setEnabled(not page.busy_state and not page.saving)
             bar._save_as.setEnabled(not page.busy_state and not page.saving)
-            bar._panel.setEnabled(False)
             bar.set_undo_redo_enabled(page.undo.canUndo() and not page.busy_state, page.undo.canRedo() and not page.busy_state)
         else:
             bar._open.setToolTip("Open PDF (Ctrl+O)")
             bar._save.setToolTip("Save (Ctrl+S)")
-            bar._panel.setEnabled(True)
 
     def sync_activity(self):
         page = getattr(self.window, "_merge_workspace", None)

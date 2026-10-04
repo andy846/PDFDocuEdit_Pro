@@ -13,6 +13,7 @@ from .workspace_modes import WorkspaceMode, WorkspaceModes
 
 class WorkspaceModeController(QObject):
     GLOBAL = {"quit", "command_palette", "main_menu", "preferences", "about", "shortcuts", "readme", "document_designer", "visual_workflow"}
+    PDF_NAVIGATION = {"toggle_tools"}
 
     def __init__(self, window, layout):
         super().__init__(window)
@@ -135,11 +136,12 @@ class WorkspaceModeController(QObject):
     def sync_bindings(self):
         pdf = self.modes.mode == WorkspaceMode.PDF
         tool = self.window.workspace.current_tool()
-        global_actions = {action for key, action in self.window._command_action_map.items() if key in self.GLOBAL}
+        shared_ids = self.GLOBAL | (self.PDF_NAVIGATION if pdf else set())
+        global_actions = {action for key, action in self.window._command_action_map.items() if key in shared_ids}
         for action, sequences in self.pdf_bindings.items():
             action.setShortcuts(sequences if (pdf and tool is None) or action in global_actions else [])
         for shortcut in self.window._command_shortcuts:
-            shortcut.setEnabled((pdf and tool is None) or shortcut.property("commandId") in self.GLOBAL)
+            shortcut.setEnabled((pdf and tool is None) or shortcut.property("commandId") in shared_ids)
         current = self.host.current_project if self.host else None
         for project, bindings in self.project_bindings.items():
             # New/Open/Close belong to the host, including its empty state.
@@ -189,7 +191,7 @@ class WorkspaceModeController(QObject):
         if self.modes.mode == WorkspaceMode.PDF:
             tool = self.window.workspace.current_tool()
             if tool:
-                return [c for c in self.window._commands if c.id in self.GLOBAL] + self.window._merge_controller.commands(tool)
+                return [c for c in self.window._commands if c.id in self.GLOBAL | self.PDF_NAVIGATION] + self.window._merge_controller.commands(tool)
             return [*self.window._commands, Command("send_to_designer", "Send current PDF to Designer", "",
                     "Workspace handoff", lambda: self.handoff.choose_project(self.window._session), self.handoff.send_button.isEnabled)]
         commands = [c for c in self.window._commands if c.id in self.GLOBAL]
