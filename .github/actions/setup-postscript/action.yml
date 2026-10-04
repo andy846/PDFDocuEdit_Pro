@@ -6,12 +6,15 @@ runs:
     - shell: pwsh
       run: |
         $installer = Join-Path $env:RUNNER_TEMP 'gs10051w64.exe'
-        Invoke-WebRequest -Uri 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe' -OutFile $installer
+        Invoke-WebRequest -Uri 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe' -OutFile $installer -TimeoutSec 180
         $expected = 'A0E49D912D21D8193FF0CB89EF741A47B21286FBB0A0E35DD0192B0097D35766'
         if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne $expected) { throw 'Ghostscript installer checksum mismatch' }
         $destination = Join-Path $env:RUNNER_TEMP 'pdfdocuedit-ghostscript'
-        $install = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$destination") -WindowStyle Hidden -Wait -PassThru
-        if ($install.ExitCode -ne 0) { throw 'Ghostscript installation failed' }
+        # AGPL Ghostscript 10.05.1 no longer supports NSIS /S. Extract its
+        # verified payload instead of launching an interactive installer in CI.
+        # https://ghostscript.readthedocs.io/en/gs10.05.1/Install.html
+        & 7z x $installer "-o$destination" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Ghostscript extraction failed' }
         $bin = Join-Path $destination 'bin'
         $converter = Join-Path $bin 'gswin64c.exe'
         if (-not (Test-Path -LiteralPath $converter)) { throw 'Ghostscript converter missing' }
