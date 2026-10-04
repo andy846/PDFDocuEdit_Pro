@@ -1,6 +1,6 @@
 # v3.0.0 正式驗收記錄
 
-2026-10-05，Windows x64 / Python 3.12。正式測試及打包正在進行；發佈前填入實際結果。
+2026-10-05，Windows x64 / Python 3.12.14。本機正式回歸、編譯版、隔離安裝、簽署更新及發布包驗收已完成。GitHub PR 與版本 tag 的檢查結果可在 [GitHub Actions](https://github.com/andy846/PDFDocuEdit_Pro/actions/workflows/ci.yml) 查看；正式發布以所需 CI 通過為門檻。
 
 ## 驗收項目
 
@@ -30,7 +30,31 @@
 
 116 個模組均已執行；首輪揭露的失敗保留在 log，修正後重驗受影響模組。最終覆蓋 1,638 個案例，全部通過，無移除／跳過既有 Windows 案例。Ruff、來源驗證及 pip check 通過。
 
-來源版端到端 smoke 通過：含 Windows font、CJK、Excel/XLS、多頁、序號、規則、barcode decode、200 頁 reconciliation、simplex/duplex overlay 及 6 頁含 CJK/I25 的 PS。發布包與更新測試結果待打包後記錄。
+來源版端到端 smoke 通過：含 Windows font、CJK、Excel/XLS、多頁、序號、規則、barcode decode、200 頁 reconciliation、simplex/duplex overlay 及 6 頁含 CJK/I25 的 PS。
+
+## 發布包與更新驗收
+
+| 項目 | 實際結果 |
+|---|---|
+| Windows build | PyInstaller 6.14.2 主程式、managed Launcher、Managed Portable、簽署 Update ZIP、Inno Setup 6 Setup 均完成。 |
+| Frozen acceptance | 編譯版在 200% 縮放、深淺色及窄窗通過；100 records / 200 pages、Excel/XLS、CJK、序號、條件規則、barcode decode 及背景工作均通過。 |
+| Overlay | 60 頁 / 20 封：simplex 60 頁；duplex 80 頁 / 40 sheets，含 20 張空白背頁。兩者均成功解碼 120 個 barcode。 |
+| PostScript | 2 records × 3 pages、三種 Stock、CJK 及 I25，生成 6 頁 PS + 核對 PDF；Ghostscript 解譯後頁數／尺寸一致。沒有產生 JDF。實機紙匣驗收仍待提供設備樣本。 |
+| 隔離安裝 | QA 專用 Inno installer 安裝相同編譯 payload、執行端到端 acceptance，然後卸載；不註冊 PDF handlers／快捷方式。這是 payload 安裝驗收，沒有在使用者現有安裝上執行正式 Setup。 |
+| 更新 | 真實 v2.5.16 / v3.0.0 frozen 程式使用目前 source supervisor、腳本發出 restart，驗證簽署更新、啟動 handshake、保留設定 sentinel，最終 state current=3.0.0、previous=2.5.16、phase=stable。不是手動操作 updater UI 的驗收。 |
+| Integrity | Ed25519 manifest 簽章、三個主要下載的 SHA256、Update/Managed ZIP 內版本與 source fingerprint 均一致；Ghostscript 原始 COPYING 已包含，未包含 signing key。 |
+
+發布 payload 的 source fingerprint：`e28c71de358eb2e21d02478efb96e7f98d9f23bb9e341a82118d5fe93624a69d`。CI／文件的後續修正不變更這份已驗證的應用程式 payload。
+
+| 發布檔案 | Bytes | SHA256 |
+|---|---:|---|
+| Update-Windows-x64.zip | 351508581 | `925c9f3e13c11eb9240eac6eebfa24d4fc87b6cada8ed57d1774f5abfcae5ebe` |
+| Managed-Portable-Windows-x64.zip | 364480422 | `20e8eb972086df02857c6d7878b0b1b99f8c8d2e1835e72536892d8e87d2ebee` |
+| Setup-Windows-x64.exe | 242653585 | `8deda2a98d0ccd32f419c588210858d16dbd43c5adf8fa5b3734c81ab52cc55f` |
+
+完整檔名前綴為 `PDFDocuEdit-Pro-v3.0.0-`，下載另附 `.sha256`。本機證據保留於 `build/release-v3.0.0-validation/`：`formal-final.json`、各模組 JUnit/log、`source-smoke-4/result.json`、`frozen-200/result.json`、`upgrade-final/result.json`、`artifacts.json`；隔離安裝證據為 `build/composition-install-qa/result.json`。初次測試失敗及修正重驗紀錄亦保留。
+
+Windows CI 的 Ghostscript 準備步驟改為驗證固定 installer SHA256 後抽取 payload，避免 10.05.1 不支援 `/S` 而等待互動視窗；不跳過 PS 測試。
 
 ## 合成性能樣本
 
