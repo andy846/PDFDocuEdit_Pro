@@ -33,6 +33,11 @@ datas.extend(
 # Bundle the complete Ghostscript distribution (Windows binaries ship in the
 # repository) so PostScript conversion works on machines without Ghostscript.
 _GS_ROOT = ROOT / "Ghostscript"
+if sys.platform == "win32":
+    _gs_license = _GS_ROOT / "doc" / "COPYING"
+    if not _gs_license.is_file():
+        raise RuntimeError("Bundled Ghostscript licence is missing: Ghostscript/doc/COPYING")
+    datas.append((str(_gs_license), "ghostscript/doc"))
 for _rel in ("bin", "lib", "Resource", "iccprofiles"):
     _src = _GS_ROOT / _rel
     if _src.is_dir():

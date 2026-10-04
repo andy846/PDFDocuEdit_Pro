@@ -1,5 +1,14 @@
 # Third-party notices
 
+## Ghostscript 10.05.1
+
+The Windows distribution bundles Ghostscript for PDF/PostScript conversion.
+Ghostscript is distributed under GNU Affero General Public License version 3
+(with commercial licensing available separately from Artifex).
+The original licence text accompanies the runtime at `ghostscript/doc/COPYING`.
+Upstream source and release: https://github.com/ArtifexSoftware/ghostpdl/tree/gs10051
+No Ghostscript licence text or notices have been modified.
+
 ## Lucide Icons
 
 The user-interface icon paths are derived from the Lucide icon project.
