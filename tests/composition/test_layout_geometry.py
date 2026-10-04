@@ -86,12 +86,12 @@ def test_format_migration_roundtrip_and_rotated_bounds(tmp_path):
     template = Template(elements=[Element(value="Saved", x_mm=60, y_mm=80, rotation_deg=37)])
     path = save_project(template, tmp_path / "rotated.pdcx")
     assert load_project(path).elements[0].rotation_deg == 37
-    assert load_project(path).template_version == 8
+    assert load_project(path).template_version == 9
     legacy = Template(elements=[Element()]).to_dict()
     legacy["template_version"] = 6
     del legacy["pages"][0]["elements"][0]["rotation_deg"]
     migrated = Template.from_dict(legacy)
-    assert migrated.template_version == 8 and migrated.elements[0].rotation_deg == 0
+    assert migrated.template_version == 9 and migrated.elements[0].rotation_deg == 0
     assert "rotation_deg" not in legacy["pages"][0]["elements"][0]
     legacy["pages"][0]["elements"][0]["rotation_deg"] = 37
     with pytest.raises(CompositionError, match="version 7"):

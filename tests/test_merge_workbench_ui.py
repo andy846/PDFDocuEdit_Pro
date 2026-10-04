@@ -104,7 +104,13 @@ def test_merge_tab_identity_modes_shortcuts_and_close_cancel(window, tmp_path, m
     assert window.workspace._tabs.indexOf(page) >= 0
 
 
-def test_snapshot_save_reopen_generate_and_designer(window, tmp_path):
+@pytest.mark.parametrize("project_kind", ["mail_merge_template", "overlay"])
+def test_snapshot_save_reopen_generate_and_designer(window, tmp_path, monkeypatch, project_kind):
+    from ui.designer_handoff_dialog import DesignerHandoffDialog
+    def choose(dialog):
+        dialog.kind.setCurrentIndex(int(project_kind == "overlay"))
+        return dialog.DialogCode.Accepted
+    monkeypatch.setattr(DesignerHandoffDialog, "exec", choose)
     path = source(tmp_path/"open.pdf")
     window._open_in_new_tab_sync(str(path))
     session = window._session
@@ -133,8 +139,13 @@ def test_snapshot_save_reopen_generate_and_designer(window, tmp_path):
     assert page.result.page_count == 4
     page.send_output()
     wait_until(lambda: window._mode_controller.host is not None and not window._mode_controller.handoff.pending and not window._tasks)
-    assert window._mode_controller.host.current_project.spec.source.pages == 4
-    assert not window._mode_controller.host.current_project.spec.objects
+    project = window._mode_controller.host.current_project
+    if project_kind == "overlay":
+        assert project.spec.source.pages == 4
+        assert not project.spec.objects
+    else:
+        assert len(project.template.pages) == 4 and project.record_count == 0
+        assert project.template.source_link["purpose"] == "mail_merge_template"
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

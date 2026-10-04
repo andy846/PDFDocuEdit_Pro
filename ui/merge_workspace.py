@@ -1132,7 +1132,7 @@ class MergeWorkspace(QWidget):
                     if self.window._tasks:
                         QTimer.singleShot(100, transfer)
                         return
-                    self.window._mode_controller.handoff.send_pdf(session)
+                    self.window._mode_controller.handoff.choose_project(session)
                 QTimer.singleShot(0, transfer)
             self.window.open_in_new_tab(str(self.result.output_path), on_open=opened)
 

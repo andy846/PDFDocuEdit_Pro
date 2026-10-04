@@ -913,14 +913,16 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         self._page_dict(after, page_id).update(
             background=result["background"], width_mm=result["width_mm"], height_mm=result["height_mm"])
-        after["source_link"] = {}
+        from composition.handoff import detach_template_page
+        detach_template_page(after, page_id or self.active_page_id)
         self._commit(before, after, "Use PDF background")
         self.canvas.fit_page()
 
     def remove_background(self):
         before, after = self.template.to_dict(), self.template.to_dict()
         self._page_dict(after)["background"] = ""
-        after["source_link"] = {}
+        from composition.handoff import detach_template_page
+        detach_template_page(after, self.active_page_id)
         self._commit(before, after, "Remove background")
 
     def import_data(self):

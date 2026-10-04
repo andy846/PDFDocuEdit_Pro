@@ -191,7 +191,7 @@ class WorkspaceModeController(QObject):
             if tool:
                 return [c for c in self.window._commands if c.id in self.GLOBAL] + self.window._merge_controller.commands(tool)
             return [*self.window._commands, Command("send_to_designer", "Send current PDF to Designer", "",
-                    "Workspace handoff", lambda: self.handoff.send_pdf(self.window._session), self.handoff.send_button.isEnabled)]
+                    "Workspace handoff", lambda: self.handoff.choose_project(self.window._session), self.handoff.send_button.isEnabled)]
         commands = [c for c in self.window._commands if c.id in self.GLOBAL]
         for key, action in self.designer_actions.items():
             commands.append(Command("designer.host." + key, action.text().replace("&", ""),

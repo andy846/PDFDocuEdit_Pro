@@ -11,6 +11,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QGroupBox,
     QLabel,
@@ -22,12 +23,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from composition.handoff import capture_pdf
+from composition.handoff import capture_pdf, capture_template_pdf
 from composition.overlay.geometry import check_object_bounds
 from composition.overlay.model import EnvelopeSpec
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.planner import EnvelopePlan
-from composition.template.model import MM_TO_PT, CompositionError
+from composition.template.model import MM_TO_PT, CompositionError, Template
 from styles.theme import get_color
 
 from .icons import icon
@@ -51,10 +52,13 @@ class WorkspaceHandoffService(QObject):
         self.send_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.send_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.send_button.setToolTip("Send the current PDF, including unsaved edits, to Document Designer")
-        self.send_button.clicked.connect(lambda: self.send_pdf(self.window._session))
+        self.send_button.clicked.connect(lambda: self.choose_project(self.window._session))
         menu = QMenu(self.send_button)
         self.send_actions = []
         for text, callback in (
+            ("Entire PDF as Mail Merge template", lambda: self.send_pdf(self.window._session, "mail_merge_template")),
+            ("Current page as Mail Merge template", lambda: self.send_pdf(self.window._session, "mail_merge_template", [self.window._session.page])),
+            ("Create separate Mail Merge project", lambda: self.send_pdf(self.window._session, "mail_merge_template", force_new=True)),
             ("Entire PDF overlay", lambda: self.send_pdf(self.window._session)),
             ("Current page overlay", lambda: self.send_pdf(self.window._session, pages=[self.window._session.page])),
             ("Current page as template background", lambda: self.send_pdf(self.window._session, "template_background", [self.window._session.page])),
@@ -188,6 +192,9 @@ class WorkspaceHandoffService(QObject):
             project.link_status.setText(f"{link['label']}\n{len(link['page_map']):,} source page(s) · {state}\n"
                                        + ("Grouping not confirmed / source review required" if blocked else "") )
             project.link_status.setToolTip(f"Captured: {link['captured_at']}\n{link['original_path']}")
+            if link.get("purpose") == "mail_merge_template":
+                project.link_status.setText(project.link_status.text().rstrip() +
+                                           f"\nMail Merge · {len(project.template.pages)} template page(s) per customer")
             project.link_update.setEnabled(bool(connected) and not self.project_busy(project) and not busy)
             if not hasattr(project, "template") and project.spec:
                 cached = self.geometry_cache.get(project)
@@ -229,7 +236,8 @@ class WorkspaceHandoffService(QObject):
             return
         identity = (session.engine.document_id, session.engine.revision)
         for project, binding in list(self.links.items()):
-            if not force_new and binding["session"] is session and binding["purpose"] == purpose and binding["pages"] == chosen:
+            if (not force_new and self.link(project).get("purpose") == purpose
+                    and binding["session"] is session and binding["purpose"] == purpose and binding["pages"] == chosen):
                 if binding["revision"] == identity[1] and self.link(project).get("transfer_id") == binding["transfer_id"]:
                     self.focus_project(project)
                     return project
@@ -237,6 +245,67 @@ class WorkspaceHandoffService(QObject):
                     return self.update_source(project, session)
                 break
         return self._capture(session, purpose, chosen)
+
+    def choose_project(self, session, *, pages=None):
+        if session is None or session not in self.window._sessions or not session.engine.is_loaded():
+            return
+        if self.pending or self.window._tasks or self.window._printing:
+            self.message("Wait for the current operation before handing off a PDF.")
+            return
+        from .designer_handoff_dialog import DesignerHandoffDialog
+        dialog = DesignerHandoffDialog(self.window, label=session.document_name,
+                                       page_count=session.engine.page_count, current_page=session.page, pages=pages)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            purpose, selected = dialog.request()
+            return self.send_pdf(session, purpose, selected)
+
+    def _accept_template_capture(self, captured, project):
+        """Validate a complete background replacement before touching a Designer tab."""
+        link = copy.deepcopy(captured.link)
+        if project:
+            previous = project.template
+            old_link = previous.source_link
+            if old_link["page_map"] != link["page_map"]:
+                answer = QMessageBox.question(self.window, "Template page count changed",
+                    "The source page selection/count changed. Keep the existing project and create a separate Mail Merge project?")
+                if answer != QMessageBox.StandardButton.Yes:
+                    return None
+                project = None
+        if project:
+            raw = project.template.to_dict()
+            mapping = project.template.source_link["template_page_map"]
+            replacements = {number: page for page, number in zip(captured.pages, link["page_map"], strict=True)}
+            details = []
+            for page in raw["pages"]:
+                if page["id"] not in mapping:
+                    continue
+                new = replacements[mapping[page["id"]]]
+                details.append(f"{page['name']}: {page['width_mm']:.2f} × {page['height_mm']:.2f} → {new.width_mm:.2f} × {new.height_mm:.2f} mm")
+                page.update(background=new.background, width_mm=new.width_mm, height_mm=new.height_mm)
+            link["template_page_map"] = dict(mapping)
+            raw["source_link"] = link
+        else:
+            raw = Template(name=link["label"], pages=captured.pages, source_link=link).to_dict()
+        try:
+            Template.from_dict(raw)
+        except CompositionError as error:
+            self.message(f"Template source update blocked: {error}")
+            return None
+        if project:
+            if QMessageBox.question(self.window, "Update Mail Merge template",
+                    "\n".join(details) + "\n\nObjects, fonts, rules, data mapping and page order are retained.\n"
+                    "Review the updated backgrounds and object positions before generation.") != QMessageBox.StandardButton.Yes:
+                return None
+        self.controller.ensure_host(create_default=False)
+        target = project or self.controller.host.new_template()
+        if not target:
+            return None
+        target._commit(target.template.to_dict(), raw,
+                       "Update Mail Merge backgrounds" if project else "Create Mail Merge from workspace PDF",
+                       page_id=target.active_page_id if project else raw["pages"][0]["id"])
+        target._handoff_created = not bool(project)
+        captured.link = link
+        return target
 
     def update_source(self, project, session=None):
         binding = self.links.get(project)
@@ -248,6 +317,13 @@ class WorkspaceHandoffService(QObject):
             self.message("Finish generation, import or the unfinished edit before updating the source.")
             return
         link = self.link(project)
+        if not link:
+            self.message("This project has no linked PDF background. Send the current PDF as a new project.")
+            return
+        if hasattr(project, "template"):
+            if project.properties.apply() is False or self.project_busy(project):
+                self.message("Finish the active property edit before updating the source.")
+                return
         pages = binding["pages"] if binding else (None if link.get("selection") == "all" else link["page_map"])
         return self._capture(session, link["purpose"], pages, project)
 
@@ -294,59 +370,65 @@ class WorkspaceHandoffService(QObject):
             if project and (project not in self.controller.host.projects or self.project_busy(project)):
                 self.message("Target project is busy or closed. Its source was retained.")
                 return
-            source, link = result
-            if project:
-                old = self.model(project)
-                old_pages = len(old.source_link.get("page_map", []))
-                geom = source.geometries[0]
-                old_geom = old.source.geometries[0] if hasattr(old, "source") else {
-                    "width_pt": old.pages[0].width_mm*MM_TO_PT, "height_pt": old.pages[0].height_mm*MM_TO_PT, "rotation": 0}
-                summary = (f"Source pages: {old_pages:,} → {source.pages:,}\n"
-                           f"Old page: {old_geom['width_pt']/MM_TO_PT:.2f} × {old_geom['height_pt']/MM_TO_PT:.2f} mm; rotation {old_geom['rotation']}°\n"
-                           f"New page: {geom['width_pt']/MM_TO_PT:.2f} × {geom['height_pt']/MM_TO_PT:.2f} mm; rotation {geom['rotation']}°\n"
-                           "Objects and fonts are retained. Review grouping and object positions before generation.")
-                if QMessageBox.question(self.window, "Update linked PDF", summary) != QMessageBox.StandardButton.Yes:
+            if purpose == "mail_merge_template":
+                target = self._accept_template_capture(result, project)
+                if not target:
                     return
-            self.controller.ensure_host(create_default=False)
-            target = project or (self.controller.host.new_template() if purpose == "template_background" else self.controller.host.new_overlay())
-            if not target:
-                return
-            if purpose == "overlay":
-                if project:
-                    raw = target.spec.to_dict()
-                    raw["source"] = copy.deepcopy(source.__dict__)
-                    raw["source_link"] = link
-                    if raw["settings"]["groups"]:
-                        raw["settings"].update(pages_per_envelope=1, groups=[], excluded_pages=[])
-                        raw["detection_review"] = {"required": True, "accepted": False, "source_sha256": source.sha256}
-                    elif source.pages % raw["settings"]["pages_per_envelope"]:
-                        raw["settings"]["pages_per_envelope"] = 1
-                    raw["detection_review"] = raw["detection_review"] if raw["detection_review"].get("required") else {}
-                    if not target.commit(raw, "Update linked PDF source"):
-                        return
-                else:
-                    spec = EnvelopeSpec(source, EnvelopeSettings(pages_per_envelope=1), name=link["label"], source_link=link)
-                    target.apply_spec(spec.to_dict())
-                    target.undo.resetClean()
+                link = result.link
             else:
-                before, raw = target.template.to_dict(), target.template.to_dict()
-                page_id = self.link(target).get("page_id", target.active_page_id)
-                page = next((item for item in raw["pages"] if item["id"] == page_id), None)
-                if page is None:
-                    self.message("The linked template page was removed. Create a new background handoff.")
+                source, link = result
+                if project:
+                    old = self.model(project)
+                    old_pages = len(old.source_link.get("page_map", []))
+                    geom = source.geometries[0]
+                    old_geom = old.source.geometries[0] if hasattr(old, "source") else {
+                        "width_pt": old.pages[0].width_mm*MM_TO_PT, "height_pt": old.pages[0].height_mm*MM_TO_PT, "rotation": 0}
+                    summary = (f"Source pages: {old_pages:,} → {source.pages:,}\n"
+                               f"Old page: {old_geom['width_pt']/MM_TO_PT:.2f} × {old_geom['height_pt']/MM_TO_PT:.2f} mm; rotation {old_geom['rotation']}°\n"
+                               f"New page: {geom['width_pt']/MM_TO_PT:.2f} × {geom['height_pt']/MM_TO_PT:.2f} mm; rotation {geom['rotation']}°\n"
+                               "Objects and fonts are retained. Review grouping and object positions before generation.")
+                    if QMessageBox.question(self.window, "Update linked PDF", summary) != QMessageBox.StandardButton.Yes:
+                        return
+                self.controller.ensure_host(create_default=False)
+                target = project or (self.controller.host.new_template() if purpose == "template_background" else self.controller.host.new_overlay())
+                if not target:
                     return
-                geom = source.geometries[0]
-                page.update(background=source.path, width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT)
-                link["page_id"] = page_id
-                raw["source_link"] = link
-                raw["name"] = target.template.name if project else link["label"]
-                target._commit(before, raw, "Update PDF background" if project else "Use workspace PDF background", page_id=target.active_page_id)
+                if purpose == "overlay":
+                    if project:
+                        raw = target.spec.to_dict()
+                        raw["source"] = copy.deepcopy(source.__dict__)
+                        raw["source_link"] = link
+                        if raw["settings"]["groups"]:
+                            raw["settings"].update(pages_per_envelope=1, groups=[], excluded_pages=[])
+                            raw["detection_review"] = {"required": True, "accepted": False, "source_sha256": source.sha256}
+                        elif source.pages % raw["settings"]["pages_per_envelope"]:
+                            raw["settings"]["pages_per_envelope"] = 1
+                        raw["detection_review"] = raw["detection_review"] if raw["detection_review"].get("required") else {}
+                        if not target.commit(raw, "Update linked PDF source"):
+                            return
+                    else:
+                        spec = EnvelopeSpec(source, EnvelopeSettings(pages_per_envelope=1), name=link["label"], source_link=link)
+                        target.apply_spec(spec.to_dict())
+                        target.undo.resetClean()
+                else:
+                    before, raw = target.template.to_dict(), target.template.to_dict()
+                    page_id = self.link(target).get("page_id", target.active_page_id)
+                    page = next((item for item in raw["pages"] if item["id"] == page_id), None)
+                    if page is None:
+                        self.message("The linked template page was removed. Create a new background handoff.")
+                        return
+                    geom = source.geometries[0]
+                    page.update(background=source.path, width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT)
+                    link["page_id"] = page_id
+                    raw["source_link"] = link
+                    raw["name"] = target.template.name if project else link["label"]
+                    target._commit(before, raw, "Update PDF background" if project else "Use workspace PDF background", page_id=target.active_page_id)
             self.source_dirs.setdefault(target, []).append(directory)
             adopted = True
             self.links[target] = {"session": session, "document_id": identity[0], "revision": identity[1],
                                   "transfer_id": link["transfer_id"], "purpose": purpose, "pages": pages}
             self.focus_project(target)
-            if not project:
+            if not project or (purpose == "mail_merge_template" and target._handoff_created):
                 target.canvas.fit_page()
             self.refresh()
 
@@ -366,8 +448,10 @@ class WorkspaceHandoffService(QObject):
                 directory.cleanup()
             self.refresh()
 
-        self.window._run_task("Sending PDF to Document Designer", capture_pdf, session.engine, directory.name, identity,
-                              pages=pages, purpose=purpose, source_label=session.document_name,
+        capture = capture_template_pdf if purpose == "mail_merge_template" else capture_pdf
+        options = {} if purpose == "mail_merge_template" else {"purpose": purpose}
+        self.window._run_task("Sending PDF to Document Designer", capture, session.engine, directory.name, identity,
+                              pages=pages, **options, source_label=session.document_name,
                               original_path=str(session.display_path or session.engine.original_path or ""),
                               progress_argument="progress", cancel_argument="is_cancelled", on_result=ready,
                               on_finished=finished, on_discard=lambda result: directory.cleanup())
@@ -457,10 +541,16 @@ class WorkspaceHandoffService(QObject):
                 self.message("Output was edited; its original page mapping cannot be assumed.")
                 return
             page = template["pages"][session.page % len(template["pages"])]
-            if page["id"] != link.get("page_id"):
+            if link.get("version") == 2:
+                original = link["template_page_map"].get(page["id"])
+                if original is None:
+                    self.message("This template page has no linked original PDF background.")
+                    return
+            elif page["id"] != link.get("page_id"):
                 self.message("This template page has no linked original PDF background.")
                 return
-            original = link["page_map"][0]
+            else:
+                original = link["page_map"][0]
         else:
             return self._open_overlay_source(session, data)
         if not self._source_mapping_current(data["project"], link):

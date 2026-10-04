@@ -437,5 +437,17 @@ def import_background(path: str | Path, page_number: int, target: str | Path) ->
         background.bake(annots=True, widgets=True)
         rect = background[0].rect
         with atomic_output(target, overwrite=False) as staged:
-            background.save(staged, deflate=True)
+            rotation = background[0].rotation
+            if rotation:
+                # show_pdf_page does not apply the source page's /Rotate, and
+                # remove_rotation also changes cropped-page geometry. Bake the
+                # visible orientation into a vector form on its exact page size.
+                background[0].set_rotation(0)
+                with fitz.open() as oriented:
+                    page = oriented.new_page(width=rect.width, height=rect.height)
+                    if background[0].get_contents():
+                        page.show_pdf_page(page.rect, background, 0, rotate=-rotation)
+                    oriented.save(staged, deflate=True)
+            else:
+                background.save(staged, deflate=True)
     return rect.width / MM_TO_PT, rect.height / MM_TO_PT

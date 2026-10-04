@@ -56,7 +56,7 @@ def test_background_flattens_annotations_and_survives_save(engine, tmp_path):
     saved = save_template(template, tmp_path / "template.pdcx")
     shutil.rmtree(tmp_path / "handoff")
     reopened = load_template(saved)
-    assert reopened.template_version == 8
+    assert reopened.template_version == 9
     with fitz.open(reopened.background) as pdf:
         assert "Original Source Page 3" in pdf[0].get_text()
         assert not list(pdf[0].annots() or [])
@@ -104,7 +104,7 @@ def test_legacy_formats_migrate_and_invalid_metadata_rejected(engine, tmp_path):
     value = Template().to_dict()
     value["template_version"] = 7
     value.pop("source_link")
-    assert Template.from_dict(value).template_version == 8
+    assert Template.from_dict(value).template_version == 9
     for mutation in ({"page_map": [0, 0]}, {"managed": "yes"}, {"page_map": [-1]}, {"version": 99}):
         broken = {**copy.deepcopy(link), **mutation}
         with pytest.raises(CompositionError):

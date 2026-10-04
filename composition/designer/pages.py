@@ -157,6 +157,8 @@ class PageOperations:
             self._error("Keep at least one template page.")
             return
         before, after = self.template.to_dict(), self.template.to_dict()
+        from composition.handoff import detach_template_page
+        detach_template_page(after, self.active_page_id)
         after["pages"].pop(self.page_index)
         target = after["pages"][min(self.page_index, len(after["pages"])-1)]["id"]
         self._commit(before, after, "Delete template page", [], page_id=target)

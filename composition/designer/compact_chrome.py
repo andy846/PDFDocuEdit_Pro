@@ -3,9 +3,19 @@ from __future__ import annotations
 
 import html
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtGui import QPainter
-from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox, QStatusBar, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStatusBar,
+    QWidget,
+)
 
 
 class DesignerStatusBar(QStatusBar):
@@ -17,12 +27,22 @@ class DesignerStatusBar(QStatusBar):
     """
 
     def _content_height(self):
-        return max([
-            self.fontMetrics().height() + 6,
-            *(max(widget.sizeHint().height(), widget.minimumSizeHint().height()) + 4
-              for widget in self.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly)
-              if not widget.isHidden()),
-        ])
+        baseline = self.fontMetrics().height() + 6
+        if getattr(self, "_measuring", False):
+            return baseline
+        self._measuring = True
+        try:
+            # Qt creates private layout widgets while repolishing QStatusBar.
+            # Asking their size hints re-enters the native status-bar layout.
+            # Measure only the actual labels/buttons/progress controls.
+            return max([baseline, *(
+                max(widget.sizeHint().height(), widget.minimumSizeHint().height()) + 4
+                for widget in self.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly)
+                if not sip.isdeleted(widget) and isinstance(widget, (QLabel, QPushButton, QProgressBar))
+                and not widget.isHidden()
+            )])
+        finally:
+            self._measuring = False
 
     def sizeHint(self):
         size = super().sizeHint()

@@ -4749,7 +4749,7 @@ class PDFViewer(QMainWindow):
         elif action == "designer":
             controller = getattr(self, "_mode_controller", None)
             if controller:
-                controller.handoff.send_pdf(session, pages=valid)
+                controller.handoff.choose_project(session, pages=valid)
 
     def _goto_search_hit(
         self, page: int, rects, session: DocumentSession | None = None

@@ -62,7 +62,7 @@ def test_one_click_transfers_unsaved_revision_and_deduplicates(window, tmp_path)
     assert session.engine.is_modified
 
 
-def test_current_page_background_and_search_checked_pages(window, tmp_path):
+def test_current_page_background_and_search_checked_pages(window, tmp_path, monkeypatch):
     session, service = opened(window, tmp_path)
     service.send_pdf(session, "template_background", [2])
     template = finish_transfer(window, service)
@@ -75,6 +75,12 @@ def test_current_page_background_and_search_checked_pages(window, tmp_path):
     session.search_panel.set_results(hits, 6, identity)
     for row in (1, 4):
         session.search_panel._list.item(row).setCheckState(Qt.CheckState.Checked)
+    from ui.designer_handoff_dialog import DesignerHandoffDialog
+    def choose_overlay(dialog):
+        assert dialog.request() == ("mail_merge_template", [1, 4])
+        dialog.kind.setCurrentIndex(1)
+        return dialog.DialogCode.Accepted
+    monkeypatch.setattr(DesignerHandoffDialog, "exec", choose_overlay)
     session.search_panel._request_pages_action("designer")
     overlay = finish_transfer(window, service)
     assert overlay.spec.source_link["page_map"] == [1, 4]

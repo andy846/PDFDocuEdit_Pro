@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 8
+TEMPLATE_VERSION = 9
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
@@ -214,6 +214,8 @@ class Template:
             raw = dict(value)
             if version < 8 and raw.get("source_link"):
                 raise CompositionError("PDF source links require template version 8.")
+            if version < 9 and isinstance(raw.get("source_link"), dict) and raw["source_link"].get("version") == 2:
+                raise CompositionError("Multi-page PDF source links require template version 9.")
             if version < 6 and any(key in raw.get("data", {}) for key in ("sheet", "excel_formulas", "preserve_zeros")):
                 raise CompositionError("Excel source settings require template version 6.")
             if version < 5 and any(key in raw for key in ("sequences", "record_mode", "generated_count")):
@@ -347,6 +349,12 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             raise CompositionError("Invalid background or element list.")
         if page.background and check_assets and not Path(page.background).is_file():
             raise CompositionError(f"PDF background not found: {page.background}")
+    if template.source_link.get("version") == 2:
+        mapped = template.source_link["template_page_map"]
+        if any(key not in page_ids for key in mapped):
+            raise CompositionError("A linked template page no longer exists.")
+        if any(page.id in mapped and not page.background for page in template.pages):
+            raise CompositionError("A linked template page needs its PDF background.")
     if sum(len(page.elements) for page in template.pages) > 5000:
         raise CompositionError("A template can contain at most 5,000 elements.")
     data = template.data
