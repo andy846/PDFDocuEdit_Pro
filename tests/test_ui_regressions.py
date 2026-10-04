@@ -25,6 +25,30 @@ def _app() -> QApplication:
     return _app_instance
 
 
+def test_theme_changes_retain_qss_owned_proxy_style() -> None:
+    from PyQt6 import sip
+    from styles.components import global_style
+    from styles.theme import apply_theme
+
+    app = _app()
+    previous_style, previous_palette = app.styleSheet(), app.palette()
+    widget = QWidget()
+    try:
+        apply_theme(app, "dark")
+        proxy = app._pdfdocuedit_round_style
+        widget.show()
+        for mode in ("light", "dark") * 5:
+            app.setStyleSheet(global_style())
+            apply_theme(app, mode)
+            app.processEvents()
+            assert app._pdfdocuedit_round_style is proxy
+            assert not sip.isdeleted(proxy)
+    finally:
+        widget.close()
+        app.setStyleSheet(previous_style)
+        app.setPalette(previous_palette)
+
+
 def test_pdf_table_accepts_drag_move_and_drop(tmp_path: Path) -> None:
     _app()
     source = tmp_path / "dragged.pdf"

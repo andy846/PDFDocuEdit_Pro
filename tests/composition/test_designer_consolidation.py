@@ -216,6 +216,9 @@ def test_live_background_preview_ready_error_and_review(app, tmp_path, bounded_u
         window.timer.stop()
         bounded_ui_work(window)
         wait_until(lambda: window.preview_status.text() == "Preview ready")
+        # Results arrive before QThread.ended; this test replaces the timer's
+        # preview callback, so wait for teardown before explicitly dispatching.
+        wait_until(lambda: window.preview_worker is None)
         assert window.canvas.preview_item is not None
         spec.objects[1].element.type = "i25"
         spec.objects[1].profile.tokens = [BarcodeToken("literal", "1")]

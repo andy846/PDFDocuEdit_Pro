@@ -17,6 +17,16 @@ def qt_application():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def flush_qt_deferred_deletions():
+    """processEvents alone does not perform event-loop DeferredDelete teardown."""
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 def pytest_configure(config) -> None:
     """Redirect Qt QSettings to a sandbox-safe temporary directory.
 

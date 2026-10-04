@@ -91,7 +91,7 @@ for _file in _VERA_ROOT.rglob("*"):
     if _file.is_file():
         datas.append((str(_file), f"verapdf/{_file.relative_to(_VERA_ROOT).parent}"))
 
-# Composition is opt-in while its release validation is in progress.
+# V3 enables Designer by default; explicit development overrides remain available.
 from composition.enabled import is_enabled
 _composition_enabled = is_enabled()
 if _composition_enabled:
@@ -158,7 +158,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=_hiddenimports,
-    hookspath=[],
+    hookspath=[str(ROOT / "scripts" / "pyinstaller_hooks")],
     hooksconfig={},
     runtime_hooks=[],
     # Keep builds deterministic even when they run in a broad Conda environment.
