@@ -331,6 +331,8 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                 job.status="Needs review"
                 job.error="Inputs/settings changed. Check and approve this item again."
                 _reports(run,root)
+                if on_state:
+                    on_state({"status":run.status,"jobs":[job.record()]})
                 continue
             if not job.snapshot_hashes or any(not Path(p).is_file() or file_hash(Path(p))!=digest for p,digest in job.snapshot_hashes.items()):
                 raise CompositionError("Checked snapshot changed or is unavailable. Check this item again.")
