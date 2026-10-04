@@ -107,7 +107,8 @@ class EnvelopeSpec:
         if type(self.overlay_version) is not int or self.overlay_version != 5 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if (not isinstance(self.external_fields,list) or len(self.external_fields)>400
-                or any(not isinstance(v,str) or not re.fullmatch(r"(?:Page_|Envelope_)[A-Za-z_][A-Za-z0-9_]{0,63}",v) for v in self.external_fields)
+                or any(not isinstance(v,str) or not re.fullmatch(r"(?:Page_|Envelope_)?[A-Za-z_][A-Za-z0-9_]{0,63}",v)
+                       or v in SYSTEM_FIELDS or v.startswith("Barcode_") for v in self.external_fields)
                 or len(set(self.external_fields))!=len(self.external_fields)):
             raise CompositionError("Invalid workflow extraction fields.")
         if not isinstance(self.name, str) or len(self.name) > 200:

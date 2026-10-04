@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import shutil
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -21,6 +22,44 @@ from composition.template.serializer import file_hash, load_project, save_projec
 from core.io_atomic import atomic_output
 
 from .model import WorkflowSpec
+from .registry import EXTRA_KINDS
+
+
+def _validate_summary(summary):
+    """Validate cached findings before the UI uses counts and nested rows."""
+    for name in ("input","retained","excluded","errors","warnings"):
+        value=summary.get(name,0)
+        if type(value) is not int or not 0<=value<=100_000_000:
+            raise CompositionError("Invalid workflow data counts.")
+    fields=summary.get("fields",[])
+    steps=summary.get("steps",[])
+    outputs=summary.get("outputs",[])
+    if (not isinstance(fields,list) or len(fields)>10000 or any(not isinstance(v,str) for v in fields)
+            or not isinstance(steps,list) or len(steps)>64
+            or not isinstance(outputs,list) or len(outputs)>10000):
+        raise CompositionError("Invalid workflow data summary.")
+    for step in steps:
+        if not isinstance(step,dict) or any(not isinstance(step.get(k),str) for k in ("node_id","kind")):
+            raise CompositionError("Invalid workflow step findings.")
+        for name in ("input","retained","excluded","issues","errors"):
+            value=step.get(name,0)
+            if type(value) is not int or not 0<=value<=100_000_000:
+                raise CompositionError("Invalid workflow step counts.")
+        samples=step.get("samples",[])
+        if not isinstance(samples,list) or len(samples)>8:
+            raise CompositionError("Invalid workflow preview samples.")
+        for sample in samples:
+            if not isinstance(sample,dict) or type(sample.get("source_id")) is not int:
+                raise CompositionError("Invalid workflow source identity.")
+            for name in ("before","after"):
+                values=sample.get(name,{})
+                if not isinstance(values,dict) or len(values)>12 or any(not isinstance(k,str) or not isinstance(v,str) for k,v in values.items()):
+                    raise CompositionError("Invalid workflow preview values.")
+    for item in outputs:
+        if not isinstance(item,dict) or not isinstance(item.get("name"),str) or type(item.get("records")) is not int:
+            raise CompositionError("Invalid workflow output partition.")
+    if any(not isinstance(summary.get(name,""),str) for name in ("findings_report","exclusions_report")):
+        raise CompositionError("Invalid workflow findings paths.")
 
 
 @dataclass
@@ -50,6 +89,7 @@ class BatchJob:
     snapshot_hashes: dict = field(default_factory=dict)
     result: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
+    data_summary: dict = field(default_factory=dict)
 
     def validate(self):
         if not isinstance(self.id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",self.id):
@@ -70,12 +110,14 @@ class BatchJob:
                 or not isinstance(self.warnings,list) or any(not isinstance(v,str) for v in self.warnings)
                 or not isinstance(self.prepared_template,dict) or not isinstance(self.snapshot_hashes,dict)
                 or not isinstance(self.result,dict) or not isinstance(self.history,list)
+                or not isinstance(self.data_summary,dict)
                 or any(not isinstance(v,dict) for v in self.history)
                 or not isinstance(self.template_fields,list) or any(not isinstance(v,str) for v in self.template_fields)
                 or not isinstance(self.sequence_fields,list) or any(not isinstance(v,dict) for v in self.sequence_fields)):
             raise CompositionError("Invalid batch findings or snapshot metadata.")
         if any(not isinstance(self.result.get(k,""),str) for k in ("output_pdf","report_dir","job_id","status")):
             raise CompositionError("Invalid batch output record.")
+        _validate_summary(self.data_summary)
         for name,value in self.sequence_starts.items():
             if not isinstance(name,str) or type(value) is not int or abs(value)>10**18:
                 raise CompositionError("Sequence starts must be integers within ±10^18.")
@@ -85,6 +127,10 @@ class BatchJob:
         # Reopen always rechecks inputs. Never rely on stale temporary snapshots.
         for key in ("prepared_template","record_store","snapshot_dir","snapshot_hashes"):
             value.pop(key)
+        for step in value.get("data_summary",{}).get("steps",[]):
+            step.pop("samples",None)
+        for key in ("findings_report","exclusions_report"):
+            value.get("data_summary",{}).pop(key,None)
         return value
 
 
@@ -155,12 +201,19 @@ def _signature(spec, job):
     hashes={str(Path(p).resolve()):file_hash(Path(p)) for p in sources}
     signature=hashlib.sha256(json.dumps({"files":hashes,"config":asdict(config) if config else None,
         "starts":job.sequence_starts,"output":job.output_name,
-        "pipeline":[n.kind for n in spec.chain()],"auto_repair":spec.node("compose").params.get("auto_repair",True)},sort_keys=True).encode()).hexdigest()
+        "pipeline":[{"kind":n.kind,"id":n.id,"params":n.params} if n.kind in EXTRA_KINDS else n.kind for n in spec.chain()],
+        "auto_repair":spec.node("compose").params.get("auto_repair",True)},sort_keys=True).encode()).hexdigest()
     return signature,template,config,hashes
 
 
 def _finished_valid(job):
     result=job.result
+    if result.get("status")=="completed" and result.get("generated_files")==0 and result.get("input_records")==0:
+        return Path(result.get("report_dir",""),"job.json").is_file()
+    if result.get("output_files"):
+        return (result.get("status")=="completed" and all(Path(f["output_pdf"]).is_file()
+            and f.get("output_sha256")==file_hash(Path(f["output_pdf"])) for f in result["output_files"])
+            and Path(result.get("report_dir",""),"job.json").is_file())
     pdf=Path(result.get("output_pdf", ""))
     return (result.get("status")=="completed" and pdf.is_file()
             and result.get("output_sha256")==file_hash(pdf)
@@ -230,6 +283,21 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                 store=import_records(config,snapshot/"records.sqlite",progress=progress,is_cancelled=is_cancelled)
                 job.record_store=str(store.path)
             with_records=open_records(template,job.record_store)
+            job.data_summary={}
+            if any(n.kind in EXTRA_KINDS for n in spec.chain()):
+                from .pipeline import prepare_records, split_names, summary, validate_result
+                transformed=prepare_records(spec,with_records,snapshot/"pipeline",template=template,
+                    progress=progress,is_cancelled=is_cancelled)
+                job.record_store=str(transformed.path)
+                job.data_summary=summary(transformed,with_records.count)
+                job.data_summary["outputs"]=split_names(transformed,job.output_name)
+                from .transforms import export_audit
+                report=snapshot/"data-review"
+                export_audit(transformed,report)
+                job.data_summary.update(findings_report=str(report/"findings.csv"),exclusions_report=str(report/"exclusions.csv"))
+                validate_result(transformed)
+                template.record_mode="imported"
+                with_records=open_records(template,job.record_store)
             missing=required_fields(template)-set(with_records.fields)
             if missing:
                 raise CompositionError("Missing mapped fields: "+", ".join(sorted(missing)))
@@ -241,6 +309,8 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             job.pages_per_record=len(template.pages)
             job.expected_pages=job.input_records*job.pages_per_record
             job.warnings=list(with_records.metadata.get("warnings",[]))
+            if job.data_summary.get("warnings"):
+                job.warnings.append(f"Data validation: {job.data_summary['warnings']} warning(s). Review findings.csv.")
             job.signature=signature
             job.approved=was_approved
             job.status="Ready" if was_approved else "Needs review"
@@ -298,10 +368,11 @@ def _reports(run, root):
     save_record(run,root/"batch.json")
     with atomic_output(root/"batch-summary.csv") as temp, temp.open("w",encoding="utf-8-sig",newline="") as stream:
         writer=csv.writer(stream)
-        writer.writerow(["Batch ID","Name","Template","Data","Status","Job ID","Input records","Expected pages","Generated pages","PDF","Reports","Error"])
+        writer.writerow(["Batch ID","Name","Template","Data","Status","Job ID","Retained records","Expected pages","Generated pages","PDF","Reports","Error","Source records","Excluded records"])
         for job in run.jobs:
             values=[run.batch_id,job.name,job.template_path,job.data_path,job.status,job.result.get("job_id",""),job.input_records,
-                job.expected_pages,job.result.get("generated_pages",0),job.result.get("output_pdf",""),job.result.get("report_dir",""),job.error]
+                job.expected_pages,job.result.get("generated_pages",0),job.result.get("output_pdf",""),job.result.get("report_dir",""),job.error,
+                job.data_summary.get("input",job.input_records),job.data_summary.get("excluded",0)]
             writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in values])
 
 
@@ -346,14 +417,29 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                 current_job.stage=message
                 if progress:
                     progress(done,total,f"Job {current_index}/{len(run.jobs)} · {current_job.name} · {message}")
-            result=generate(ProductionJob(job.prepared_template,job.record_store,str(root),
-                auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name),
-                progress=job_progress,is_cancelled=is_cancelled).to_dict()
+            partitions=job.data_summary.get("outputs",[])
+            if job.input_records==0:
+                from .transforms import DataSet, export_audit
+                empty_id=new_job_id()
+                report=root/empty_id
+                report.mkdir()
+                export_audit(DataSet(job.record_store),report)
+                result={"job_id":empty_id,"status":"completed","input_records":0,"successful_records":0,
+                    "generated_pages":0,"generated_files":0,"output_pdf":"","report_dir":str(report),"error":"",
+                    "source_records":job.data_summary.get("input",0),"excluded_records":job.data_summary.get("excluded",0),
+                    "warnings":["No records selected. No empty PDF was generated."]}
+                (report/"job.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
+            else:
+                result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled)
+            if job.data_summary:
+                result.update(source_records=job.data_summary["input"],excluded_records=job.data_summary["excluded"],
+                              retained_records=job.data_summary["retained"])
             job.result=result
             job.error=result["error"]
             job.status={"completed":"Completed","cancelled":"Cancelled"}.get(result["status"],"Failed")
             if job.status=="Completed":
-                job.result["output_sha256"]=file_hash(Path(result["output_pdf"]))
+                if result["output_pdf"]:
+                    job.result["output_sha256"]=file_hash(Path(result["output_pdf"]))
                 job.warnings=list(result.get("warnings",[]))
             job.stage="Finished"
         except JobCancelled:
@@ -374,3 +460,31 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
     run.finished_at=now()
     _reports(run,root)
     return run
+
+
+def _compose_item(spec,job,root,partitions,progress,is_cancelled):
+    from contextlib import nullcontext
+    # Short owned scratch paths avoid Windows MAX_PATH failures in nested font caches.
+    context=tempfile.TemporaryDirectory(prefix="wf-prod-") if partitions else nullcontext(str(root))
+    with context as directory:
+        def reports(report,result):
+            if job.data_summary:
+                from .transforms import DataSet, export_audit
+                export_audit(DataSet(job.record_store),report)
+                (report/"workflow-data.json").write_text(json.dumps({
+                    "input":job.data_summary["input"],"retained":job.data_summary["retained"],
+                    "excluded":job.data_summary["excluded"],"errors":job.data_summary["errors"],
+                    "warnings":job.data_summary["warnings"]},indent=2),encoding="utf-8")
+        result=generate(ProductionJob(job.prepared_template,job.record_store,str(directory),
+            auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name),
+            progress=progress,is_cancelled=is_cancelled,additional_reports=reports).to_dict()
+        if result["status"]=="completed" and partitions:
+            from .splitter import split_composed
+            from .transforms import DataSet
+            result=split_composed(result,DataSet(job.record_store),partitions,root,job.pages_per_record,
+                                  is_cancelled=is_cancelled,progress=progress)
+        elif partitions and result.get("report_dir"):
+            report=root/(result["job_id"]+"-failed")
+            shutil.copytree(result["report_dir"],report)
+            result["report_dir"]=str(report)
+        return result

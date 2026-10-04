@@ -166,6 +166,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
 
 def generate(
     job: ProductionJob, *, progress: Callable | None = None, is_cancelled: Callable | None = None,
+    additional_reports: Callable | None = None,
 ) -> JobResult:
     """Compose a disk-backed imported snapshot without loading all rendered pages."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job.job_id):
@@ -282,6 +283,8 @@ def generate(
         result.status = "completed"
         result.finished_at = now()
         _write_reports(staging, result, template, store)
+        if additional_reports:
+            additional_reports(staging,result)
         check_cancel(is_cancelled)
         # A unique, same-parent directory rename publishes the PDF and both reports together.
         os.rename(staging, final)
@@ -325,6 +328,8 @@ def generate(
             result.warnings.append("Font scan report includes proposed substitutions and unresolved glyphs; no production PDF published.")
         try:
             _write_reports(staging, result, template, store)
+            if additional_reports:
+                additional_reports(staging,result)
             os.rename(staging, failure_dir)
         except OSError as report_error:
             result.report_dir = ""

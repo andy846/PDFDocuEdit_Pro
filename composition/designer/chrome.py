@@ -386,14 +386,15 @@ class DesignerChrome:
             self.properties.content.setTextCursor(cursor)
 
     def _remember_project(self, path):
-        recent = self.preferences.value("recent_projects", [], type=list)
-        values = [str(path)] + [value for value in recent if value != str(path)]
-        self.preferences.setValue("recent_projects", values[:8])
+        from .recents import remember
+        remember(path,settings=self.preferences)
         self._refresh_recent()
 
     def _refresh_recent(self):
         self.recent_menu.clear()
-        for value in self.preferences.value("recent_projects", [], type=list):
+        from .recents import entries
+        for row in entries(self.preferences):
+            value=row["path"]
             item = self.recent_menu.addAction(
                 Path(value).name, lambda checked=False, path=value: self.open_project_path(path))
             item.setToolTip(value)

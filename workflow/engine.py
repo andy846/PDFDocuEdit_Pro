@@ -44,6 +44,11 @@ def context_fingerprint(spec, *, include_overlay=True):
 
 def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None):
     spec.chain()
+    if spec.workflow_version==3:
+        from .registry import EXTRA_KINDS
+        if any(n.kind in EXTRA_KINDS for n in spec.nodes):
+            from .pdf_pipeline import execute_pdf
+            return execute_pdf(spec,run,directory,until=until,progress=progress,is_cancelled=is_cancelled)
     if spec.project_kind!="pdf_workflow":
         raise CompositionError("Use the Mail Merge batch executor for this workflow type.")
     root=Path(directory)
@@ -248,13 +253,27 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
 
 def external_fields(spec):
     regions=ExtractionSpec.from_dict(spec.node("extract").params).regions
-    return [prefix+r.name for prefix in ("Page_","Envelope_") for r in regions]
+    page_names={r.name for r in regions}
+    names=set(page_names)
+    grouped=False
+    for node in spec.chain():
+        grouped=grouped or node.kind=="group"
+        if node.kind=="create_fields":
+            names.update(f["field"] for f in node.params.get("fields",[]))
+            if not grouped:
+                page_names.update(f["field"] for f in node.params.get("fields",[]))
+        if node.kind=="running_sequence" and node.params.get("scope")!="page":
+            names.add(node.params.get("name","Sequence"))
+    fields=["Page_"+name for name in sorted(page_names)]+["Envelope_"+name for name in sorted(names)]
+    fields.extend(n.params.get("name","Sequence") for n in spec.nodes if n.kind=="running_sequence")
+    return fields
 
 
 def group(spec,run,*,progress=None,is_cancelled=None):
     node=spec.node("group")
     cfg=node.params
     with ExtractionStore(run.database) as store:
+        extraction=ExtractionSpec.from_dict(json.loads(store.metadata()["spec"]))
         pages=int(store.metadata()["pages"])
         method=cfg.get("method","fixed")
         if method=="fixed":
@@ -264,7 +283,7 @@ def group(spec,run,*,progress=None,is_cancelled=None):
             groups=[[start,min(start+size-1,pages)] for start in range(1,pages+1,size)]
         elif method=="field":
             key=cfg.get("field","")
-            if key not in [r.name for r in ExtractionSpec.from_dict(spec.node("extract").params).regions]:
+            if key not in [r.name for r in extraction.regions]:
                 raise CompositionError("Choose an extracted field for grouping.")
             groups=[]
             previous=None
@@ -298,7 +317,7 @@ def group(spec,run,*,progress=None,is_cancelled=None):
         else:
             raise CompositionError("Unsupported grouping method.")
         EnvelopePlan(pages,EnvelopeSettings(groups=groups,pages_per_envelope=1))
-        store.grouped(groups,ExtractionSpec.from_dict(spec.node("extract").params),progress=progress,is_cancelled=is_cancelled)
+        store.grouped(groups,extraction,progress=progress,is_cancelled=is_cancelled)
         with store.db:
             store.db.execute("DELETE FROM meta WHERE key='mailpiece_review'")
             if method == "reviewed_detection":

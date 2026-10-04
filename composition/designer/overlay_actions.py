@@ -163,7 +163,22 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             for _label, sample in samples:
                 sample.update(dict.fromkeys(self.spec.external_fields,""))
             database=getattr(self,"workflow_database", "")
-            if database:
+            if database and getattr(self,"workflow_data",""):
+                from pathlib import Path
+
+                from composition.template.serializer import file_hash
+                from workflow.pdf_pipeline import ProductionValues
+                try:
+                    if file_hash(Path(self.workflow_data))!=self.workflow_data_sha256:
+                        raise CompositionError("Workflow samples changed. Refresh the overlay from Workflow.")
+                    with ProductionValues(self.workflow_data,database,self.spec) as values:
+                        fields.update(values(plan.page(self.envelope.value(),self.print_page.value())))
+                        samples[0][1].update(values(first))
+                        samples[1][1].update(values(last))
+                except (OSError,ValueError,sqlite3.DatabaseError,KeyError) as exc:
+                    self.error(str(exc))
+                    return
+            elif database:
                 from workflow.extraction import ExtractionStore
                 try:
                     with ExtractionStore(database) as store:

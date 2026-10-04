@@ -198,7 +198,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         self.preview_generation=0
         super().__init__(*args,**kwargs)
         self._build_batch_ui()
-        self.apply_spec(WorkflowSpec.mail_merge().to_dict())
+        self.apply_spec(WorkflowSpec.mail_merge().upgraded().to_dict())
         self.actions["generate"].setText("Run Ready Jobs")
         self.actions["generate"].setIconText("Run Ready Jobs")
         self.setAcceptDrops(True)
@@ -356,7 +356,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.selected=spec.nodes[0].id
         self._draft_getter=None
         self.draft_error=""
-        self.toolbox.configure(spec.kinds)
+        from .registry import EXTRA_KINDS
+        self.toolbox.configure(tuple(dict.fromkeys(spec.kinds+EXTRA_KINDS)))
         self.canvas.summaries={"data":f"{len(self.batch.jobs)} batch job(s)","mapping":"Reusable field aliases",
             "template":"One template per job","sequences":"Independent per job","mail_review":"Check and approve",
             "compose":"Background generation","reports":"PDF + CSV + JSON"}
@@ -376,6 +377,10 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         node=next((n for n in self.spec.nodes if n.id==identity),None)
         if not node:
             return
+        from .registry import EXTRA_KINDS
+        if node.kind in EXTRA_KINDS:
+            from .node_settings import install
+            return install(self,node)
         old=self.inspector_scroll.takeWidget()
         if old:
             old.deleteLater()
@@ -590,6 +595,10 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.batch=BatchRun.from_dict(result["batch"])
             for node in self.spec.nodes:
                 self.run.statuses[node.id]="Needs review" if node.kind=="mail_review" else "Completed" if node.kind in ("data","mapping","template","sequences") else "Pending"
+                from .registry import EXTRA_KINDS
+                if node.kind in EXTRA_KINDS:
+                    findings=[s for j in self.batch.jobs for s in j.data_summary.get("steps",[]) if s.get("node_id")==node.id]
+                    self.run.statuses[node.id]="Failed" if any(s.get("errors") for s in findings) else "Completed" if findings else "Pending"
             self.batch_dirty=True
             self.refresh_jobs()
             self.tabs.setCurrentWidget(self.review_page)
@@ -619,10 +628,16 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         self.preview_record.setMaximum(max(1,job.input_records))
         self.preview_page.setMaximum(max(1,job.pages_per_record))
         detail=f"{job.name} · {job.status}\n{job.input_records:,} records × {job.pages_per_record} pages = {job.expected_pages:,} expected pages"
+        if job.data_summary:
+            detail+=f"\nSource {job.data_summary['input']:,} · Kept {job.data_summary['retained']:,} · Excluded {job.data_summary['excluded']:,}"
         detail+="\n"+(job.error or "\n".join(job.warnings) or "Primary fonts, rules and barcode layout come from the template.")
         if job.template_fields:
             detail+="\nTemplate fields: "+", ".join(job.template_fields)
         self.job_detail.setText(detail)
+        from .registry import EXTRA_KINDS
+        selected=next((n for n in self.spec.nodes if n.id==self.selected),None)
+        if selected and selected.kind in EXTRA_KINDS:
+            self.select_node(selected.id)
         self.accept_button.setEnabled(not self.active_worker and any(j.status in ("Needs review","Ready") and j.prepared_template for j in jobs))
         self.schedule_preview()
 
@@ -753,8 +768,10 @@ class MailMergeWorkflowWindow(WorkflowWindow):
 
     def open_output(self):
         job=self.output_job()
-        if job and job.result.get("output_pdf") and self.project_host:
-            self.project_host.open_pdf(job.result["output_pdf"])
+        if job and self.project_host:
+            path=self.choose_output_path(job.result)
+            if path:
+                self.project_host.open_pdf(path)
 
     def show_reports(self):
         from PyQt6.QtCore import QUrl

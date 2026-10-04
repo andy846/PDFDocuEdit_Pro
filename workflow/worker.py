@@ -12,6 +12,7 @@ from composition.template.model import MM_TO_PT, CompositionError
 from .engine import execute, external_fields
 from .extraction import ExtractionSpec, ExtractionStore, extract_page
 from .model import WorkflowRun, WorkflowSpec
+from .registry import EXTRA_KINDS
 
 
 def dispatch(request, progress, cancelled, emit_state=None):
@@ -89,6 +90,9 @@ def dispatch(request, progress, cancelled, emit_state=None):
             spec=ExtractionSpec.from_dict(json.loads(store.metadata()["spec"]))
             groups=request["groups"]
             action=request.get("action","")
+            checked=None
+            has_pipeline=request.get("workflow",{}).get("workflow_version")==3 and any(
+                n["kind"] in EXTRA_KINDS for n in request["workflow"]["nodes"])
             if action=="correct":
                 with store.db:
                     store.correct(request["page"],request["field"],request["value"],request["reason"],commit=False)
@@ -101,6 +105,12 @@ def dispatch(request, progress, cancelled, emit_state=None):
                     store.db.execute("INSERT INTO group_edits VALUES (?,?,?)",
                         (json.dumps(old),json.dumps(groups),request.get("reason","Operator boundary correction")))
             elif action=="accept":
+                if has_pipeline:
+                    from .pdf_pipeline import prepare_mailpieces
+                    checked=WorkflowRun(**request["workflow_run"])
+                    checked.groups=groups
+                    prepare_mailpieces(WorkflowSpec.from_dict(request["workflow"]),checked,request["directory"],
+                                       progress=progress,is_cancelled=cancelled)
                 store.accept()
             elif action=="export":
                 store.export(request["target"])
@@ -114,7 +124,16 @@ def dispatch(request, progress, cancelled, emit_state=None):
                 number=found[0] if found else number
             rows=store.page(number)
             envelope=store.db.execute("SELECT envelope FROM groups WHERE ? BETWEEN start AND end",(number,)).fetchone()
-            return {"groups":[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")],"cells":rows,"page":number,"issues":store.issues(),"accepted":store.metadata()["accepted"]=="true",
+            pipeline={}
+            if has_pipeline and action in ("accept","correct","groups"):
+                from .pdf_pipeline import prepare_mailpieces
+                if checked is None:
+                    checked=WorkflowRun(**request["workflow_run"])
+                    checked.groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
+                    prepare_mailpieces(WorkflowSpec.from_dict(request["workflow"]),checked,request["directory"],
+                                       progress=progress,is_cancelled=cancelled)
+                pipeline={"data_summary":checked.data_summary,"data_steps":checked.data_steps,"data_set":checked.data_set}
+            return {**pipeline,"groups":[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")],"cells":rows,"page":number,"issues":store.issues(),"accepted":store.metadata()["accepted"]=="true",
                     "pages":int(store.metadata()["pages"]),"envelope":envelope[0] if envelope else None,
                     "envelope_cells":[dict(r) for r in store.db.execute("SELECT * FROM envelope_cells WHERE envelope=?",(envelope[0],))] if envelope else []}
     if operation in ("make_overlay","bind_overlay"):
@@ -122,11 +141,26 @@ def dispatch(request, progress, cancelled, emit_state=None):
         from composition.overlay.serializer import save_project
         from composition.pdf_source.model import EnvelopeSettings
         from composition.pdf_source.source import inspect_source
+        from composition.template.serializer import file_hash
 
         from .engine import detection_audit
         workflow=WorkflowSpec.from_dict(request["spec"])
         project=EnvelopeSpec.from_dict(request["project"]) if operation=="bind_overlay" else None
-        cfg=EnvelopeSettings(pages_per_envelope=1,groups=request["groups"])
+        external={}
+        source_path=request["source"]
+        groups=request["groups"]
+        if workflow.workflow_version==3 and any(n.kind in EXTRA_KINDS for n in workflow.nodes):
+            import shutil
+            import uuid
+
+            from .pdf_pipeline import production_view
+            state=WorkflowRun(**request["workflow_run"])
+            state.groups=groups
+            data,source_path,groups,_selected=production_view(workflow,state,request["directory"],progress=progress,is_cancelled=cancelled)
+            frozen=Path(request["directory"])/("overlay-data-"+uuid.uuid4().hex+".sqlite")
+            shutil.copyfile(data.path,frozen)
+            external={"external_data":str(frozen),"external_database":state.database,"external_data_sha256":file_hash(frozen)}
+        cfg=EnvelopeSettings(pages_per_envelope=1,groups=groups)
         if project:
             for name in ("start","increment","digits","prefix","suffix","duplex"):
                 setattr(cfg,name,getattr(project.settings,name))
@@ -137,13 +171,13 @@ def dispatch(request, progress, cancelled, emit_state=None):
         target=Path(request["path"]).resolve().with_suffix(".pdcx")
         assets=target.parent/(target.stem+".assets")
         assets.mkdir(parents=True,exist_ok=True)
-        digest=file_hash(Path(request["source"]))
+        digest=file_hash(Path(source_path))
         source_copy=assets/(digest+".pdf")
         if source_copy.exists() and file_hash(source_copy)!=digest:
             raise CompositionError("The saved overlay source asset has changed. Choose another project filename.")
         if not source_copy.exists():
             with atomic_output(source_copy,overwrite=False) as temp:
-                shutil.copyfile(request["source"],temp)
+                shutil.copyfile(source_path,temp)
                 if file_hash(temp)!=digest:
                     raise CompositionError("Source changed while creating the overlay project.")
         source=inspect_source(source_copy,cfg,uniform=True,is_cancelled=cancelled)
@@ -152,12 +186,12 @@ def dispatch(request, progress, cancelled, emit_state=None):
                           name=project.name if project else workflow.name,external_fields=external_fields(workflow))
         if project and project.source.sha256==source.sha256:
             spec.source_link=project.source_link
-        report = workflow.node("group").params.get("detection_review")
+        report = None if external else workflow.node("group").params.get("detection_review")
         if report and report.get("source_sha256") != source.sha256:
             raise CompositionError("Detection source changed. Analyze and review again before opening Designer.")
         spec.detection_review=detection_audit(spec, report)
         spec.validate()
         if operation=="bind_overlay":
-            return {"spec":spec.to_dict()}
-        return {"path":str(save_project(spec,request["path"]))}
+            return {"spec":spec.to_dict(),**external}
+        return {"path":str(save_project(spec,request["path"])),**external}
     raise CompositionError("Unknown workflow worker operation.")

@@ -43,6 +43,7 @@ from ui.icons import icon
 
 from .canvas import NodeToolbox, WorkflowCanvas
 from .model import KINDS, LABELS, WorkflowNode, WorkflowRun, WorkflowSpec
+from .registry import EXTRA_KINDS, REGISTRY, default_options
 
 
 class ProjectProperties(QObject):
@@ -102,7 +103,7 @@ class WorkflowWindow(QMainWindow):
         self.embedded,self.project_host=embedded,project_host
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,embedded)
         self.resize(1280,820)
-        self.spec=WorkflowSpec.default()
+        self.spec=WorkflowSpec.default().upgraded()
         self.run=WorkflowRun()
         self.project_path=None
         self.properties=ProjectProperties(self)
@@ -185,6 +186,7 @@ class WorkflowWindow(QMainWindow):
         self.toolbox.itemDoubleClicked.connect(lambda item:self.add_node(KINDS[self.toolbox.row(item)],0,150))
         self.canvas=WorkflowCanvas()
         self.canvas.nodeSelected.connect(self.select_node)
+        self.canvas.nodeCommand.connect(self.node_command)
         self.canvas.nodeDropped.connect(self.add_node)
         self.canvas.positionChanged.connect(self.move_node)
         self.canvas.connectionRequested.connect(self.connect_nodes)
@@ -350,6 +352,26 @@ class WorkflowWindow(QMainWindow):
         previous=self.spec if hasattr(self,"spec") else None
         self.spec=WorkflowSpec.from_dict(raw)
         if previous and previous.fingerprint()!=self.spec.fingerprint():
+            if self.spec.workflow_version==3:
+                try:
+                    old_chain=previous.chain()
+                    new_chain=self.spec.chain()
+                    first=0
+                    while first<min(len(old_chain),len(new_chain)) and (
+                            old_chain[first].id,old_chain[first].kind,old_chain[first].params)==(
+                            new_chain[first].id,new_chain[first].kind,new_chain[first].params):
+                        first+=1
+                    valid_prefix={n.id for n in new_chain[:first]}
+                    self.run.statuses={k:v for k,v in self.run.statuses.items() if k in valid_prefix}
+                    self.run.signatures={k:v for k,v in self.run.signatures.items() if k in valid_prefix}
+                    self.run.data_steps=[s for s in self.run.data_steps if s.get("node_id") in valid_prefix]
+                except ValueError:
+                    self.run.statuses={}
+                    self.run.signatures={}
+                    self.run.data_steps=[]
+                self.run.accepted=False
+                self.run.data_set=""
+                self.run.data_summary={}
             upstream=("input","merge","extract")
             changed=any((previous.node(k).params if previous.node(k) else None)!=(self.spec.node(k).params if self.spec.node(k) else None) for k in upstream)
             if changed:
@@ -382,6 +404,7 @@ class WorkflowWindow(QMainWindow):
         self._draft_getter=None
         self.draft_error=""
         self.canvas.display(self.spec,self.run.statuses,self.selected)
+        self.toolbox.configure(tuple(dict.fromkeys(self.spec.kinds+EXTRA_KINDS)))
         self.select_node(self.selected)
         self.title()
 
@@ -393,6 +416,9 @@ class WorkflowWindow(QMainWindow):
         node=next((n for n in self.spec.nodes if n.id==identity),None)
         if not node:
             return
+        if node.kind in EXTRA_KINDS:
+            from .node_settings import install
+            return install(self,node)
         old=self.inspector_scroll.takeWidget()
         if old:
             old.deleteLater()
@@ -584,12 +610,97 @@ class WorkflowWindow(QMainWindow):
     def add_node(self,kind,x,y):
         if not self.flush_settings():
             return
+        if kind in EXTRA_KINDS:
+            closest=None
+            distance=30
+            from PyQt6.QtCore import QPointF
+            point=QPointF(x,y)
+            for edge in self.canvas.edges:
+                path=edge.path()
+                current=min((path.pointAtPercent(i/40)-point).manhattanLength() for i in range(41))
+                if current<distance:
+                    closest=edge.a
+                    distance=current
+            return self.ensure_v3(lambda:self.insert_step(kind,x,y,after_id=closest))
         if self.spec.node(kind):
             self.message("This step already exists. Select it to change its settings.")
             return
         after=self.spec.to_dict()
         after["nodes"].append(asdict(WorkflowNode(kind,x=x,y=y)))
         self.commit(after,"Add workflow step")
+
+    def ensure_v3(self,callback):
+        if self.spec.workflow_version==3:
+            return callback()
+        if not self.project_path:
+            if self.commit(self.spec.upgraded().to_dict(),"Upgrade unsaved workflow"):
+                return callback()
+            return
+        path,_=QFileDialog.getSaveFileName(self,"Save upgraded workflow copy",
+            str(self.project_path.with_name(self.project_path.stem+"-v3.pdflow")),"Workflow (*.pdflow)")
+        if not path:
+            return
+        if Path(path).resolve().with_suffix(".pdflow")==self.project_path.resolve():
+            self.error("Choose a new filename to preserve the original workflow.")
+            return
+        if self.project_host and not self.project_host.allow_save_path(self,path):
+            return
+        upgraded=self.spec.upgraded()
+        request={"operation":"save","spec":upgraded.to_dict(),"path":path}
+        if hasattr(self,"batch"):
+            request.update(operation="batch_project_save",batch=self.batch.to_dict())
+        def ready(result):
+            self.project_path=Path(result["path"])
+            self.apply_spec(upgraded.to_dict())
+            self.undo.clear()
+            self.undo.setClean()
+            callback()
+        return self.request(request,ready)
+
+    def insert_step(self,kind,x=None,y=None,*,after_id=None,params=None):
+        source=next((n for n in self.spec.nodes if n.id==(after_id or self.selected)),None)
+        if not source:
+            return
+        try:
+            fields=[r["name"] for r in self.spec.node("extract").params.get("regions",[])] if self.spec.node("extract") else []
+            node=WorkflowNode(kind,x=source.x+230 if x is None else x,y=source.y if y is None else y,
+                params=copy.deepcopy(params if params is not None else default_options(kind,fields[0] if fields else "Name")))
+            after=self.spec.insert_after(source.id,node)
+            if self.commit(after.to_dict(),"Insert "+LABELS[kind]):
+                self.select_node(node.id)
+        except ValueError as exc:
+            self.error(f"Cannot insert here: {exc}. Select a compatible earlier step.")
+
+    def duplicate_node(self,node):
+        if not self.flush_settings() or not REGISTRY[node.kind].repeatable:
+            return
+        return self.insert_step(node.kind,after_id=node.id,params=node.params)
+
+    def node_command(self,identity,command):
+        node=next((n for n in self.spec.nodes if n.id==identity),None)
+        if not node:
+            return
+        if command=="duplicate":
+            self.duplicate_node(node)
+        elif command=="remove":
+            self.remove_node(node)
+        else:
+            self.reorder_node(node,-1 if command=="earlier" else 1)
+
+    def reorder_node(self,node,direction):
+        if not self.flush_settings():
+            return
+        try:
+            order=[n.id for n in self.spec.chain()]
+            index=order.index(node.id)
+            target=index+direction
+            if not 0<=target<len(order):
+                return
+            order[index],order[target]=order[target],order[index]
+            after=self.spec.reorder(order)
+            self.commit(after.to_dict(),"Reorder workflow step")
+        except ValueError as exc:
+            self.error(f"Cannot move this step: {exc}")
 
     def remove_node(self,node):
         if not self.flush_settings():
@@ -601,6 +712,12 @@ class WorkflowWindow(QMainWindow):
         after["edges"]=[e for e in after["edges"] if node.id not in e]
         if previous and following:
             after["edges"].append([previous,following])
+        if self.spec.workflow_version==3:
+            try:
+                WorkflowSpec.from_dict(after).chain()
+            except ValueError as exc:
+                self.error(f"Cannot remove this step: {exc}")
+                return
         self.commit(after,"Remove optional step")
 
     def move_node(self,identity,x,y):
@@ -735,7 +852,7 @@ class WorkflowWindow(QMainWindow):
 
     def run_selected(self):
         node=next(n for n in self.spec.nodes if n.id==self.selected)
-        self.execute(node.kind)
+        self.execute(node.id if node.kind in EXTRA_KINDS else node.kind)
 
     def execute(self,until):
         if self.active_worker or self.capture_active or not self.flush_settings():
@@ -896,6 +1013,10 @@ class WorkflowWindow(QMainWindow):
                 return
             self.run.accepted=result["accepted"]
             self.run.groups=result["groups"]
+            if "data_summary" in result:
+                self.run.data_summary=result["data_summary"]
+                self.run.data_steps=result["data_steps"]
+                self.run.data_set=result["data_set"]
             self.groups_model.update(self.run.groups)
             self.page.blockSignals(True)
             self.page.setMaximum(result["pages"])
@@ -919,13 +1040,17 @@ class WorkflowWindow(QMainWindow):
                         self.results.selectRow(row)
             self.review_summary.setText(f"{result['pages']:,} pages · {len(self.run.groups):,} envelopes · {result['issues']:,} unresolved findings · "
                                         +("Review accepted" if self.run.accepted else "Review required"))
+            if self.run.data_summary:
+                counts=self.run.data_summary
+                self.review_summary.setText(self.review_summary.text()+f"\nProduction: {counts['retained']:,} kept · {counts['excluded']:,} excluded · original boundaries retained")
             if self.spec.node("review"):
                 self.run.statuses[self.spec.node("review").id]="Completed" if self.run.accepted else "Needs review"
             self.canvas.display(self.spec,self.run.statuses,self.selected)
             if after:
                 after(result)
         self.request({"operation":"review","database":self.run.database,"groups":self.run.groups,
-                      "page":self.page.value(),"action":action,**values},ready,preview=action in ("","next_issue","previous_issue"))
+                      "page":self.page.value(),"action":action,"workflow":self.spec.to_dict(),"workflow_run":asdict(self.run),
+                      "directory":str(self.directory),**values},ready,preview=action in ("","next_issue","previous_issue"))
 
     def correct(self):
         row=self.results.currentRow()
@@ -1027,10 +1152,12 @@ class WorkflowWindow(QMainWindow):
                     project=self.project_host.open_project(result["path"])
                     if project:
                         project.workflow_database=self.run.database
+                        project.workflow_data=result.get("external_data","")
+                        project.workflow_data_sha256=result.get("external_data_sha256","")
                         project.timer.start()
             QTimer.singleShot(0,adopt)
         self.request({"operation":"make_overlay","spec":self.spec.to_dict(),"groups":self.run.groups,
-                      "source":self.run.source,"path":str(target)},ready)
+                      "source":self.run.source,"path":str(target),"workflow_run":asdict(self.run),"directory":str(self.directory)},ready)
 
     def bind_overlay(self,project):
         if sip.isdeleted(self) or sip.isdeleted(project) or self.close_pending or project.close_pending:
@@ -1057,11 +1184,14 @@ class WorkflowWindow(QMainWindow):
             # The binding is an undoable project edit. Layout, fonts, sequence and
             # barcode choices are preserved; production still requires a saved project.
             project.workflow_database=self.run.database
+            project.workflow_data=result.get("external_data","")
+            project.workflow_data_sha256=result.get("external_data_sha256","")
             if project.commit(result["spec"],"Synchronise workflow source and envelopes"):
                 project.schedule_preview()
                 self.message("Designer now previews the current workflow source and envelope boundaries. Save the overlay if its source changed.")
         worker=self.request({"operation":"bind_overlay","spec":self.spec.to_dict(),"groups":self.run.groups,
-                             "source":self.run.source,"path":str(project.project_path),"project":project.spec.to_dict()},ready)
+                             "source":self.run.source,"path":str(project.project_path),"project":project.spec.to_dict(),
+                             "workflow_run":asdict(self.run),"directory":str(self.directory)},ready)
         def release():
             if not sip.isdeleted(project):
                 project.workflow_binding=False
@@ -1083,9 +1213,17 @@ class WorkflowWindow(QMainWindow):
                           "decoded_barcodes","output_pdf","report_dir","error"))
 
     def open_output(self):
-        path=self.run.output.get("output_pdf")
+        path=self.choose_output_path(self.run.output)
         if path and self.project_host:
             self.project_host.open_pdf(path)
+
+    def choose_output_path(self,result):
+        files=result.get("output_files",[])
+        if len(files)<=1:
+            return result.get("output_pdf","")
+        labels=[f"{Path(item['output_pdf']).name} · {item['records']:,} records / envelopes · {item['pages']:,} pages" for item in files]
+        choice,ok=QInputDialog.getItem(self,"Open production output","Choose a split PDF",labels,0,False)
+        return files[labels.index(choice)]["output_pdf"] if ok else ""
 
     def show_reports(self):
         path=self.run.output.get("report_dir")
@@ -1161,6 +1299,8 @@ class WorkflowWindow(QMainWindow):
             for project in self.project_host.projects:
                 if getattr(project,"workflow_database",None)==self.run.database:
                     project.workflow_database=""
+                    project.workflow_data=""
+                    project.workflow_data_sha256=""
         self.temp.cleanup()
         event.accept()
         self.projectClosed.emit()

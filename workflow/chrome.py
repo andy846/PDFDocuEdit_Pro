@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .model import LABELS
+from .registry import EXTRA_KINDS
 
 
 def install(window):
@@ -56,7 +57,9 @@ def install(window):
     def choose_step(item):
         kind=item.data(Qt.ItemDataRole.UserRole)
         node=w.spec.node(kind)
-        if node:
+        if kind in EXTRA_KINDS:
+            w.ensure_v3(lambda:w.insert_step(kind))
+        elif node:
             w.canvas.scene().clearSelection()
             w.canvas.nodes[node.id].setSelected(True)
             w.canvas.ensureVisible(w.canvas.nodes[node.id])
@@ -100,6 +103,9 @@ def populate_next(w):
     node=next((n for n in w.spec.nodes if n.id==w.selected),None)
     for kind in sorted(w.spec.allowed_next(node.kind) if node else []):
         target=w.spec.node(kind)
+        if kind in EXTRA_KINDS:
+            w.next_menu.addAction("Insert "+LABELS[kind],lambda checked=False,k=kind:w.ensure_v3(lambda:w.insert_step(k)))
+            continue
         label=("Connect to " if target else "Add ")+LABELS[kind]
         def connect(checked=False,k=kind):
             source=next(n for n in w.spec.nodes if n.id==w.selected)

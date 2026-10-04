@@ -6,13 +6,11 @@ import os
 from pathlib import Path
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QEventLoop, pyqtSignal
+from PyQt6.QtCore import QEvent, QEventLoop, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
     QInputDialog,
-    QLabel,
     QMessageBox,
-    QPushButton,
     QStackedWidget,
     QTabBar,
     QTabWidget,
@@ -42,18 +40,8 @@ class DesignerProjectHost(QWidget):
         self.tabs.setMovable(True)
         self.tabs.tabCloseRequested.connect(lambda index: self.close_project(self.tabs.widget(index)))
         self.tabs.currentChanged.connect(lambda *args: self.activeProjectChanged.emit())
-        self.start = QWidget()
-        welcome = QVBoxLayout(self.start)
-        title = QLabel("Document Designer")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
-        welcome.addStretch()
-        welcome.addWidget(title)
-        for text, handler in (("Create template", self.new_template), ("Open project…", self.open_project),
-                              ("PDF envelope overlay…", self.new_overlay), ("Visual Workflow…", self.choose_workflow)):
-            button = QPushButton(text)
-            button.clicked.connect(lambda checked=False, callback=handler: callback())
-            welcome.addWidget(button)
-        welcome.addStretch()
+        from .home import DesignerHome
+        self.start = DesignerHome(self)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.start)
         self.stack.addWidget(self.tabs)
@@ -112,6 +100,11 @@ class DesignerProjectHost(QWidget):
         if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
             for button in getattr(self, "close_buttons", {}).values():
                 button.refresh_icon()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        if hasattr(self,"start"):
+            QTimer.singleShot(0,self.start.arrange)
 
     def new_template(self):
         if self.shutting_down:
@@ -225,6 +218,11 @@ class DesignerProjectHost(QWidget):
         index = self.tabs.indexOf(project)
         if index < 0:
             return
+        if project.project_path and getattr(project,"_recent_path",None)!=str(project.project_path):
+            from .recents import remember
+            remember(project.project_path,"Workflow" if getattr(project,"is_workflow",False) else
+                     "Template" if hasattr(project,"template") else "Overlay")
+            project._recent_path=str(project.project_path)
         kind = "Workflow" if getattr(project,"is_workflow",False) else "Template" if hasattr(project, "template") else "Overlay"
         model = project.template if hasattr(project, "template") else project.spec
         name = project.project_path.name if project.project_path else model.name if model and (getattr(model,"source_link",None) or getattr(project,"is_workflow",False)) else "Untitled"

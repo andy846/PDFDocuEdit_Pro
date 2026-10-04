@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, field
 
 from composition.template.model import CompositionError
 
+from .registry import EXTRA_KINDS, REGISTRY, validate_chain
+
 KINDS = ("input", "merge", "extract", "group", "review", "overlay", "output")
 MAIL_KINDS = ("data", "mapping", "template", "sequences", "mail_review", "compose", "reports")
 LABELS = {"input":"PDF Input", "merge":"Merge PDFs", "extract":"Extract Regions",
@@ -18,6 +20,7 @@ LABELS = {"input":"PDF Input", "merge":"Merge PDFs", "extract":"Extract Regions"
           "data":"Data Input", "mapping":"Field Mapping", "template":"Letter Template",
           "sequences":"Fields & Sequences", "mail_review":"Preview & Review", "compose":"Compose",
           "reports":"Validate & Reports"}
+LABELS.update({k: REGISTRY[k].label for k in EXTRA_KINDS})
 
 
 @dataclass
@@ -54,9 +57,27 @@ class WorkflowSpec:
 
     @property
     def kinds(self):
-        return MAIL_KINDS if self.project_kind=="mail_merge_workflow" else KINDS
+        base=MAIL_KINDS if self.project_kind=="mail_merge_workflow" else KINDS
+        return base+EXTRA_KINDS if self.workflow_version==3 else base
+
+    def upgraded(self):
+        result=copy.deepcopy(self)
+        result.workflow_version=3
+        return result
 
     def allowed_next(self, kind):
+        if self.workflow_version==3:
+            if kind in ("output","reports"):
+                return set()
+            definition=REGISTRY[kind]
+            outputs=(definition.output,) if definition.output else definition.inputs
+            compatible={k for k in self.kinds if k not in ("input","data") and
+                        any(REGISTRY[k].accepts(t) for t in outputs)}
+            if kind not in EXTRA_KINDS:
+                legacy=copy.copy(self)
+                legacy.workflow_version=2 if self.project_kind=="mail_merge_workflow" else 1
+                compatible&=legacy.allowed_next(kind)|set(EXTRA_KINDS)
+            return compatible
         if self.project_kind=="mail_merge_workflow":
             index=MAIL_KINDS.index(kind)
             return set(MAIL_KINDS[index+1:index+2])
@@ -73,21 +94,25 @@ class WorkflowSpec:
             raise CompositionError("Invalid workflow structure") from exc
 
     def validate(self):
-        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2)
+        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3)
                 or self.project_kind not in ("pdf_workflow","mail_merge_workflow")
-                or (self.project_kind=="mail_merge_workflow" and self.workflow_version!=2)
+                or (self.project_kind=="mail_merge_workflow" and self.workflow_version not in (2,3))
                 or not isinstance(self.name,str) or len(self.name)>200 or not isinstance(self.nodes,list)
-                or not 1<=len(self.nodes)<=7 or not isinstance(self.edges,list) or len(self.edges)>6):
+                or not 1<=len(self.nodes)<=(64 if self.workflow_version==3 else 7)
+                or not isinstance(self.edges,list) or len(self.edges)>(63 if self.workflow_version==3 else 6)):
             raise CompositionError("Unsupported workflow format or graph size.")
         ids=set()
         kinds=set()
         for n in self.nodes:
             if (not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",n.id) or n.id in ids or n.kind not in self.kinds
-                    or n.kind in kinds or not isinstance(n.params,dict)
+                    or (n.kind in kinds and not (self.workflow_version==3 and REGISTRY[n.kind].repeatable))
+                    or not isinstance(n.params,dict)
                     or any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>100000 for v in (n.x,n.y))):
                 raise CompositionError("Invalid/duplicate workflow node.")
             ids.add(n.id)
             kinds.add(n.kind)
+            if self.workflow_version==3:
+                REGISTRY[n.kind].validate_options(n.params)
         for edge in self.edges:
             if not isinstance(edge,list) or len(edge)!=2 or any(v not in ids for v in edge):
                 raise CompositionError("Invalid workflow connection.")
@@ -104,6 +129,24 @@ class WorkflowSpec:
             right=next(n.kind for n in self.nodes if n.id==b)
             if right not in self.allowed_next(left):
                 raise CompositionError(f"{LABELS[left]} cannot connect to {LABELS[right]}.")
+        for identity in ids:
+            visited=set()
+            cursor=identity
+            while cursor in outgoing:
+                if cursor in visited:
+                    raise CompositionError("Workflow loops are not supported.")
+                visited.add(cursor)
+                cursor=outgoing[cursor]
+        if self.workflow_version==3:
+            root=self.node("data" if self.project_kind=="mail_merge_workflow" else "input")
+            if root:
+                path=[]
+                lookup={n.id:n for n in self.nodes}
+                cursor=root
+                while cursor:
+                    path.append(cursor)
+                    cursor=lookup.get(outgoing.get(cursor.id))
+                validate_chain(path,self.project_kind)
 
     def chain(self):
         self.validate()
@@ -122,7 +165,28 @@ class WorkflowSpec:
             current=next((n for n in self.nodes if n.id==following),None)
         if len(chain)!=len(self.nodes) or chain[-1].kind!=("reports" if self.project_kind=="mail_merge_workflow" else "output"):
             raise CompositionError("Connect every node into one complete input-to-output chain.")
+        if self.workflow_version==3:
+            validate_chain(chain,self.project_kind)
         return chain
+
+    def insert_after(self, identity, node):
+        result=copy.deepcopy(self)
+        following=next((b for a,b in result.edges if a==identity),None)
+        result.nodes.append(copy.deepcopy(node))
+        result.edges=[e for e in result.edges if e[0]!=identity]
+        result.edges.append([identity,node.id])
+        if following:
+            result.edges.append([node.id,following])
+        result.chain()
+        return result
+
+    def reorder(self, identities):
+        if len(identities)!=len(self.nodes) or set(identities)!={n.id for n in self.nodes}:
+            raise CompositionError("Reordering must include every node exactly once.")
+        result=copy.deepcopy(self)
+        result.edges=[[a,b] for a,b in zip(identities,identities[1:],strict=False)]
+        result.chain()
+        return result
 
     def node(self, kind):
         return next((n for n in self.nodes if n.kind==kind),None)
@@ -149,3 +213,7 @@ class WorkflowRun:
     accepted: bool = False
     output: dict = field(default_factory=dict)
     error: str = ""
+    data_set: str = ""
+    data_steps: list = field(default_factory=list)
+    data_summary: dict = field(default_factory=dict)
+    page_pipeline_signature: str = ""

@@ -135,7 +135,10 @@ def test_port_rejection_preserves_connection_and_next_step_is_compatible(window)
     w.select_node(w.spec.node("data").id)
     from workflow.chrome import populate_next
     populate_next(w)
-    assert [a.text() for a in w.next_menu.actions()]==["Connect to Field Mapping"]
+    choices=[a.text() for a in w.next_menu.actions()]
+    assert "Connect to Field Mapping" in choices
+    assert "Insert Clean Fields" in choices
+    assert "Connect to Compose" not in choices
 
 
 @pytest.mark.parametrize("theme",["light","dark"])

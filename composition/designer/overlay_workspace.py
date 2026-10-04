@@ -548,6 +548,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.preview_worker = self.worker({"task": "overlay_preview", "project": self.spec.to_dict(),
             "envelope": self.envelope.value(), "print_page": self.print_page.value(),
             "external_database": getattr(self,"workflow_database", ""),
+            "external_data":getattr(self,"workflow_data",""),
+            "external_data_sha256":getattr(self,"workflow_data_sha256",""),
             "raster_scale": self.canvas.preview_scale(),
             "auto_repair": self.auto_repair.isChecked(), "target": str(self.directory/f"preview-{generation}.pdf")},
             lambda result: self.preview_ready(result, generation),

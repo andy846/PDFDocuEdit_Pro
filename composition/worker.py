@@ -105,7 +105,15 @@ def dispatch(request: dict) -> dict:
         from composition.overlay.renderer import render_preview as overlay_preview
         spec=EnvelopeSpec.from_dict(request["project"])
         database=request.get("external_database", "")
-        if database:
+        if database and request.get("external_data"):
+            from composition.template.serializer import file_hash
+            from workflow.pdf_pipeline import ProductionValues
+            if file_hash(Path(request["external_data"]))!=request.get("external_data_sha256"):
+                raise ValueError("Checked workflow preview data changed. Refresh the overlay from Workflow.")
+            with ProductionValues(request["external_data"],database,spec) as values:
+                raw,fields=overlay_preview(spec,request["envelope"],request["print_page"],
+                    auto_repair=request.get("auto_repair",True),external_values=values)
+        elif database:
             from workflow.extraction import ExtractionStore
             with ExtractionStore(database) as store:
                 if store.metadata()["sha256"]!=spec.source.sha256:
@@ -183,6 +191,28 @@ def dispatch(request: dict) -> dict:
     if task == "background":
         size = import_background(request["source"], request.get("page", 0), request["target"])
         return {"background": request["target"], "width_mm": size[0], "height_mm": size[1]}
+    if task == "template_backgrounds":
+        import fitz
+
+        from composition.production.generator import check_cancel
+        from composition.template.model import MAX_TEMPLATE_PAGES, CompositionError, PageSpec
+        from composition.template.serializer import file_hash
+        source=Path(request["source"])
+        digest=file_hash(source)
+        target=Path(request["target"])
+        target.mkdir(parents=True,exist_ok=True)
+        pages=[]
+        with fitz.open(source) as pdf:
+            if pdf.needs_pass or pdf.get_sigflags()>0 or not 1<=pdf.page_count<=MAX_TEMPLATE_PAGES:
+                raise CompositionError("Use an unlocked, unsigned PDF within the template page limit.")
+            for index in range(pdf.page_count):
+                check_cancel(cancelled)
+                background=target/f"page-{index+1}.pdf"
+                width,height=import_background(source,index,background)
+                pages.append(PageSpec(name=f"Page {index+1}",width_mm=width,height_mm=height,background=str(background)))
+        if file_hash(source)!=digest:
+            raise CompositionError("Source changed during template import; import it again.")
+        return {"template":Template(name=source.stem,pages=pages).to_dict()}
     if task == "preview":
         import fitz
         template = Template.from_dict(request["template"])

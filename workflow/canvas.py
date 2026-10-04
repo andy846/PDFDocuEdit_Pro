@@ -12,13 +12,16 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QListWidget,
     QListWidgetItem,
+    QMenu,
 )
 
 from .model import KINDS, LABELS
+from .registry import DATA_KINDS, EXTRA_KINDS
 
 SYMBOLS={"input":"folder-open","merge":"layers","extract":"scan","group":"table","review":"search",
          "overlay":"file-text","output":"printer","data":"table","mapping":"settings","template":"file-text",
          "sequences":"table","mail_review":"search","compose":"printer","reports":"file-text"}
+SYMBOLS.update({k:"settings" for k in EXTRA_KINDS})
 
 
 class NodeToolbox(QListWidget):
@@ -26,7 +29,7 @@ class NodeToolbox(QListWidget):
         super().__init__(parent)
         self.configure(KINDS)
         self.setDragEnabled(True)
-        self.setToolTip("Drag a step to the canvas. Each tool can appear once in a linear workflow.")
+        self.setToolTip("Drag a step onto the canvas. Data preparation steps can be repeated.")
 
     def configure(self,kinds):
         self.clear()
@@ -36,7 +39,7 @@ class NodeToolbox(QListWidget):
             item.setIcon(icon(SYMBOLS[kind]))
             item.setSizeHint(QSize(150,32))
             item.setData(Qt.ItemDataRole.UserRole,kind)
-            item.setToolTip("Add "+LABELS[kind]+". Each step appears once in this workflow.")
+            item.setToolTip("Add "+LABELS[kind]+(". Repeatable data step." if kind in DATA_KINDS else ". Production step."))
             self.addItem(item)
 
     def changeEvent(self,event):
@@ -173,6 +176,7 @@ class WorkflowCanvas(QGraphicsView):
     disconnectRequested=pyqtSignal(str,str)
     message=pyqtSignal(str)
     zoomChanged=pyqtSignal(float)
+    nodeCommand=pyqtSignal(str,str)
 
     def __init__(self,parent=None):
         super().__init__(parent)
@@ -229,6 +233,12 @@ class WorkflowCanvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def keyPressEvent(self,event):
+        if event.key()==Qt.Key.Key_Delete:
+            selected=[item for item in self.scene().selectedItems() if isinstance(item,NodeItem)]
+            if len(selected)==1:
+                self.nodeCommand.emit(selected[0].node.id,"remove")
+                event.accept()
+                return
         if event.key()==Qt.Key.Key_Escape and self.pending:
             self.pending=None
             self.viewport().update()
@@ -245,6 +255,22 @@ class WorkflowCanvas(QGraphicsView):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def contextMenuEvent(self,event):
+        item=self.itemAt(event.pos())
+        if not isinstance(item,NodeItem):
+            return super().contextMenuEvent(event)
+        self.scene().clearSelection()
+        item.setSelected(True)
+        from .registry import REGISTRY
+        menu=QMenu(self)
+        if REGISTRY[item.node.kind].repeatable:
+            menu.addAction("Duplicate step",lambda:self.nodeCommand.emit(item.node.id,"duplicate"))
+        menu.addAction("Move earlier in flow",lambda:self.nodeCommand.emit(item.node.id,"earlier"))
+        menu.addAction("Move later in flow",lambda:self.nodeCommand.emit(item.node.id,"later"))
+        menu.addSeparator()
+        menu.addAction("Remove step",lambda:self.nodeCommand.emit(item.node.id,"remove"))
+        menu.exec(event.globalPos())
 
     def display(self,spec,statuses,selected=None):
         self.spec=spec

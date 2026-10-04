@@ -12,6 +12,8 @@ TESTS = ROOT / "tests"
 
 SMOKE_TESTS = ("tests/test_commands.py", "tests/test_source_contract.py")
 UI_TESTS = (
+    "tests/test_workflow_designer_home.py",
+    "tests/test_mail_merge_workflow_ui.py",
     "tests/test_workflow_ui.py",
     "tests/test_merge_workbench_ui.py",
     "tests/test_advanced_organizer.py",
@@ -64,6 +66,9 @@ UI_TESTS = (
     "tests/composition/test_workspace_handoff.py",
 )
 CROSS_PLATFORM_TESTS = (
+    "tests/test_workflow_data_steps.py",
+    "tests/test_mail_merge_workflow.py",
+    "tests/composition/test_production.py",
     "tests/test_workflow_core.py",
     "tests/test_annotation_transactions.py",
     "tests/test_annotations.py",
@@ -93,7 +98,8 @@ ZERO_SHA = "0" * 40
 
 def is_ui_change(path: str) -> bool:
     return path == "main.py" or path == "core/viewer.py" or path.startswith(
-        ("ui/", "dialogs/", "styles/", "composition/designer/", "composition/preview/", "workflow/workspace", "workflow/regions_ui", "workflow/canvas")
+        ("ui/", "dialogs/", "styles/", "composition/designer/", "composition/preview/", "workflow/workspace",
+         "workflow/regions_ui", "workflow/canvas", "workflow/chrome", "workflow/mail_merge_ui", "workflow/node_settings")
     ) or path in UI_TESTS
 
 
