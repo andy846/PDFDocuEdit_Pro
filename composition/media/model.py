@@ -7,6 +7,8 @@ from composition.template.model import CompositionError
 
 ROLES=("SINGLE","FIRST","CONTINUATION","LAST")
 FAMILIES={"vp6000":"varioPRINT 6300 / 6000","i300":"varioPRINT i300","ix":"varioPRINT iX"}
+PS_FAMILIES={"generic":"Generic PostScript 3", "canon":"Canon / PRISMAsync",
+             "xerox":"Xerox / FreeFlow", "custom":"Other PostScript controller"}
 
 
 @dataclass
@@ -18,24 +20,39 @@ class PrinterProfile:
     validation:str="pending"
     mappings:dict=field(default_factory=dict)
     max_ticket_bytes:int=1048576
+    profile_name:str=""
+    selection_mode:str="attributes"
+    tumble:bool=False
+    resolution_dpi:int=600
+    emit_media_weight:bool=False
 
     @classmethod
     def from_dict(cls,raw):
         try:
             profile=cls(**raw)
-            if (profile.profile_version!=1 or profile.backend!="canon_prismasync" or profile.family not in FAMILIES
+            if (type(profile.profile_version) is not int or profile.profile_version not in (1,2)
+                    or profile.backend not in ("canon_prismasync","postscript")
+                    or (profile.backend=="postscript" and profile.profile_version!=2)
+                    or profile.family not in (FAMILIES if profile.backend=="canon_prismasync" else FAMILIES|PS_FAMILIES)
                     or profile.validation!="pending" or not isinstance(profile.controller_version,str)
                     or len(profile.controller_version)>200 or type(profile.max_ticket_bytes) is not int
                     or not 1024<=profile.max_ticket_bytes<=1048576 or not isinstance(profile.mappings,dict)
-                    or len(profile.mappings)>100):
-                raise CompositionError("Invalid reference printer profile. Device validation remains pending.")
+                    or len(profile.mappings)>100 or not isinstance(profile.profile_name,str) or len(profile.profile_name)>100
+                    or any(ord(c)<32 for c in profile.profile_name) or profile.selection_mode not in ("attributes","tray")
+                    or type(profile.tumble) is not bool or type(profile.emit_media_weight) is not bool
+                    or type(profile.resolution_dpi) is not int or profile.resolution_dpi not in (300,600,1200)):
+                raise CompositionError("Invalid printer profile. Device validation remains pending.")
             for key,item in profile.mappings.items():
-                if not valid_id(key) or not isinstance(item,dict) or set(item)-{"name","catalog_id"}:
-                    raise CompositionError("Invalid Stock / Media Catalog mapping.")
-                for name in ("name","catalog_id"):
+                allowed={"name","catalog_id"} if profile.backend=="canon_prismasync" else {"name","catalog_id","media_type","media_color","media_position"}
+                if not valid_id(key) or not isinstance(item,dict) or set(item)-allowed:
+                    raise CompositionError("Invalid Stock / printer mapping.")
+                for name in allowed-{"media_position"}:
                     value=item.get(name,"")
                     if not isinstance(value,str) or len(value)>40 or any(ord(c)<32 for c in value):
-                        raise CompositionError("Media Catalog identifiers need up to 40 printable characters.")
+                        raise CompositionError("Media identifiers need up to 40 printable characters.")
+                position=item.get("media_position")
+                if position is not None and (type(position) is not int or not 0<=position<=9999):
+                    raise CompositionError("MediaPosition must be a device paper-source number from 0 to 9999.")
             return profile
         except (TypeError,AttributeError) as exc:
             raise CompositionError("Invalid printer profile.") from exc
@@ -43,6 +60,23 @@ class PrinterProfile:
 
 def valid_id(value):
     return isinstance(value,str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}",value)
+
+
+def validate_stock_mapping(profile,stock):
+    """Return the effective device request; production requires an explicit mapping."""
+    mapping=profile.mappings.get(stock["id"],{})
+    if profile.backend=="canon_prismasync":
+        if not mapping.get("name") and not mapping.get("catalog_id"):
+            raise CompositionError(f"Stock {stock['id']}: configure its Media Catalog mapping.")
+        return (mapping.get("name"),mapping.get("catalog_id"))
+    if profile.selection_mode=="tray":
+        if mapping.get("media_position") is None:
+            raise CompositionError(f"Stock {stock['id']}: configure its PostScript MediaPosition (0 is valid).")
+        return (stock["width_mm"],stock["height_mm"],mapping["media_position"])
+    if not mapping.get("media_type"):
+        raise CompositionError(f"Stock {stock['id']}: configure an explicit PostScript MediaType.")
+    return (stock["width_mm"],stock["height_mm"],mapping["media_type"],mapping.get("media_color", ""),
+            stock["weight_gsm"] if profile.emit_media_weight else None)
 
 
 @dataclass

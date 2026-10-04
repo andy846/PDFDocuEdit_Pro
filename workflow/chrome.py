@@ -23,9 +23,11 @@ def install(window):
     for index,text in enumerate(("Build","Review","Run")):
         w.tabs.setTabText(index,text)
     w.layout_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    # File actions remain in the shared main menu. Keep the project toolbar compact.
-    for key in ("new","open","save","fit","step"):
+    # Keep Save visible in every project, with file commands also in the shared menu.
+    for key in ("new","open","fit","step"):
         w.layout_toolbar.removeAction(w.actions[key])
+    w.layout_toolbar.widgetForAction(w.actions["save"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    w.actions["save"].setToolTip("Save workflow (Ctrl+S)")
     w.actions["scan"].setText("Check && Preview")
     w.actions["scan"].setIconText("Check && Preview")
     w.actions["generate"].setText("Run workflow")

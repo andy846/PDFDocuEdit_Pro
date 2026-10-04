@@ -15,8 +15,8 @@ from workflow.registry import EXTRA_KINDS, MEDIA_KINDS, default_options
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 @pytest.fixture

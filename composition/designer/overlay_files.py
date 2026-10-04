@@ -1,6 +1,7 @@
 """Source inspection, project persistence and production transport for PDF overlays."""
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -55,6 +56,11 @@ class OverlayFiles:
             spec = EnvelopeSpec(SourceInfo(**info), settings)
             self.active_worker = None
             if preserve and self.spec:
+                # Reinspection updates the source and grouping, not the production project.
+                spec = replace(copy.deepcopy(self.spec), source=SourceInfo(**info), settings=settings,
+                               source_link={}, detection_review={})
+                if spec.media.get("enabled") and settings.duplex != self.spec.settings.duplex:
+                    spec.media["duplex"] = settings.duplex
                 same_source = spec.source.sha256 == self.spec.source.sha256
                 if same_source:
                     spec.source_link = dict(self.spec.source_link)
@@ -186,6 +192,8 @@ class OverlayFiles:
                   ("Sheets", "sheets"), ("Expected barcodes", "expected_barcodes"), ("Decoded barcodes", "decoded_barcodes"),
                   ("Published PDFs", "generated_files"), ("PDF", "output_pdf"), ("Reports", "report_dir")]
         text = "\n".join(f"{label}: {result[key]:,}" if type(result[key]) is int else f"{label}: {result[key]}" for label, key in labels)
+        if result.get("output_ps"):
+            text+="\nPostScript: "+result["output_ps"]
         if result["error"]:
             text += (f"\nError envelope: {result['error_envelope']} · source page: {result['error_source_page']} · "
                      f"output page: {result['error_output_page']}\nError: {result['error']}")
@@ -193,7 +201,8 @@ class OverlayFiles:
         if result.get("media_summary"):
             summary=result["media_summary"]
             text+="\n\nMedia: "+" · ".join(f"{k}: {v:,} sheets" for k,v in summary.get("stock_sheets",{}).items())
-            text+="\nOffline default_ticket.jdf · Canon device validation pending"
+            text+=("\nPostScript selection embedded · device validation pending" if summary.get("backend")=="postscript"
+                   else "\nOffline default_ticket.jdf · Canon device validation pending")
         self.production_text.setPlainText(text)
         self.pdf_button.setEnabled(result["status"] == "completed")
         self.report_button.setEnabled(bool(result["report_dir"]))

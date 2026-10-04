@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -26,7 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from composition.media.model import FAMILIES, ROLES, MediaSpec, PrinterProfile, default_media
+from composition.media.model import FAMILIES, PS_FAMILIES, ROLES, MediaSpec, PrinterProfile, default_media
 from composition.media.ticket import HEADERS
 from core.io_atomic import atomic_output
 
@@ -36,7 +37,7 @@ from .process import Worker
 class MediaDialog(QDialog):
     def __init__(self,media,context=None,parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Print Media · Stocks, page rules and Canon ticket")
+        self.setWindowTitle("Print Media · Stocks, PostScript and job tickets")
         self.resize(890,620)
         self.context=copy.deepcopy(context)
         self.worker=None
@@ -45,15 +46,19 @@ class MediaDialog(QDialog):
         self.options=None
         self.start=1
         self.total=0
+        self.rule_mode=None
+        self.rule_drafts={}
+        self.profile_families={}
+        self.profile_backend=None
         self.directory=Path(tempfile.mkdtemp(prefix="media-preview-"))
         self.initial=copy.deepcopy(media or default_media())
         if not media and context and context.get("kind")=="template":
             pages=context["project"]["pages"]
             self.initial.update(mode="template",assignments={p["id"]:"LH_"+"ABC"[i] for i,p in enumerate(pages[:3])})
         root=QVBoxLayout(self)
-        self.enabled=QCheckBox("Enable Media Assignment and export PDF + offline JDF package")
+        self.enabled=QCheckBox("Enable Media Assignment and selected production output")
         root.addWidget(self.enabled)
-        note=QLabel("Stock identifies paper, not a tray. Map the catalog on your DFE. All Canon reference profiles require device validation and a proof print.")
+        note=QLabel("Assign logical Stocks to pages, then choose PDF + JDF or PDF + PostScript in Printer profile. Save a profile for each environment; verify paper selection with a test print.")
         note.setWordWrap(True)
         root.addWidget(note)
         self.tabs=QTabWidget()
@@ -99,7 +104,7 @@ class MediaDialog(QDialog):
         rules.addWidget(self.assignments,1)
         rule_buttons=QHBoxLayout()
         add=QPushButton("Add rule")
-        add.clicked.connect(lambda:self.append(self.assignments,[str(self.assignments.rowCount()+1),""]))
+        add.clicked.connect(self.add_rule)
         rule_buttons.addWidget(add)
         remove=QPushButton("Remove selected rules")
         remove.clicked.connect(lambda:self.remove_rows(self.assignments))
@@ -114,30 +119,58 @@ class MediaDialog(QDialog):
         role_note=QLabel("SINGLE is a one-page letter; FIRST / LAST apply to longer letters. Duplex pads odd letter endings. Blank backs inherit the front's Stock; logical template pages keep their identity.")
         role_note.setWordWrap(True)
         rules.addWidget(role_note)
-        printer=page("Canon profile")
+        printer=page("Printer profile")
         form=QFormLayout()
+        self.output_format=QComboBox()
+        self.output_format.addItem("PDF + Canon offline JDF","canon_prismasync")
+        self.output_format.addItem("PDF + PostScript (no separate job ticket)","postscript")
+        form.addRow("Production output",self.output_format)
+        self.profile_name=QLineEdit()
+        self.profile_name.setPlaceholderText("e.g. Production room A")
+        form.addRow("Profile name",self.profile_name)
         self.family=QComboBox()
-        for key,label in FAMILIES.items():
+        for key,label in (FAMILIES|PS_FAMILIES).items():
             self.family.addItem(label,key)
         self.controller=QLineEdit()
-        form.addRow("Reference device family",self.family)
+        form.addRow("Device / controller family",self.family)
         form.addRow("Controller/version notes",self.controller)
         form.addRow("Device validation",QLabel("Pending · offline review only"))
+        self.selection_mode=QComboBox()
+        self.selection_mode.addItem("Paper attributes (MediaType / colour)","attributes")
+        self.selection_mode.addItem("Paper source position (MediaPosition)","tray")
+        form.addRow("PS paper selection",self.selection_mode)
+        self.tumble=QCheckBox("Duplex short-edge binding (Tumble)")
+        form.addRow(self.tumble)
+        self.emit_weight=QCheckBox("Include Stock weight in attribute matching")
+        form.addRow(self.emit_weight)
+        self.resolution=QComboBox()
+        for dpi in (300,600,1200):
+            self.resolution.addItem(f"{dpi} dpi",dpi)
+        form.addRow("PS flattening resolution",self.resolution)
         printer.addLayout(form)
-        self.mappings=self.table(["Stock ID","Media Catalog name","Media Catalog ID (optional)"])
+        self.printer_hint=QLabel()
+        self.printer_hint.setWordWrap(True)
+        printer.addWidget(self.printer_hint)
+        self.mappings=self.table(["Stock ID","Media Catalog name","Media Catalog ID (optional)","PS MediaType","PS MediaColor (optional)","PS MediaPosition"])
         self.mappings.setColumnWidth(0,120)
         self.mappings.setColumnWidth(1,240)
         printer.addWidget(self.mappings,1)
-        sync=QPushButton("Synchronise Stock rows with Catalog mappings")
+        sync=QPushButton("Synchronise Stock rows with printer mappings")
         sync.clicked.connect(self.sync_stocks)
         printer.addWidget(sync)
-        files=QHBoxLayout()
+        self.profile_actions=QWidget()
+        files=QHBoxLayout(self.profile_actions)
+        files.setContentsMargins(0,0,0,0)
+        self.profile_buttons=[]
         for label,callback in (("Save media profile…",lambda:self.save_profile(False)),("Load media profile…",lambda:self.load_profile(False)),
                                ("Save printer profile…",lambda:self.save_profile(True)),("Load printer profile…",lambda:self.load_profile(True))):
             button=QPushButton(label)
             button.clicked.connect(callback)
             files.addWidget(button)
-        printer.addLayout(files)
+            self.profile_buttons.append(button)
+        root.addWidget(self.profile_actions)
+        self.profile_actions.setVisible(False)
+        self.tabs.currentChanged.connect(lambda index:self.profile_actions.setVisible(index==2))
         preview=page("Media preview")
         self.summary=QLabel("Preview calculates final pages, front/back pairing and physical sheets per Stock. No PDF is generated.")
         self.summary.setWordWrap(True)
@@ -168,6 +201,10 @@ class MediaDialog(QDialog):
         self.locate.setVisible(bool(host and (hasattr(host,"select_template_page") or hasattr(host,"print_page") or hasattr(host,"preview_record"))))
         navigation.addWidget(self.locate)
         preview.addLayout(navigation)
+        self.proof_button=QPushButton("Export paper-selection test PS…")
+        self.proof_button.setToolTip("One sheet per Stock, using these profile settings. No customer data; print to verify paper sources.")
+        self.proof_button.clicked.connect(self.export_paper_test)
+        preview.addWidget(self.proof_button)
         self.error=QLabel()
         self.error.setWordWrap(True)
         self.error.setTextFormat(Qt.TextFormat.PlainText)
@@ -181,12 +218,18 @@ class MediaDialog(QDialog):
         self.stocks.itemChanged.connect(lambda *_:self.invalidate())
         self.assignments.itemChanged.connect(lambda *_:self.invalidate())
         self.mappings.itemChanged.connect(lambda *_:self.invalidate())
-        for widget in (self.mode,self.policy,self.family,self.fallback):
+        for widget in (self.mode,self.policy,self.family,self.fallback,self.output_format,self.selection_mode,self.resolution):
             widget.currentIndexChanged.connect(self.invalidate)
+        self.output_format.currentIndexChanged.connect(self.printer_controls)
+        self.selection_mode.currentIndexChanged.connect(self.printer_controls)
         self.fallback.editTextChanged.connect(self.invalidate)
         self.controller.textChanged.connect(self.invalidate)
+        self.profile_name.textChanged.connect(self.invalidate)
+        self.tumble.toggled.connect(self.invalidate)
+        self.emit_weight.toggled.connect(self.invalidate)
         self.enabled.toggled.connect(self.invalidate)
         self.duplex.toggled.connect(self.invalidate)
+        self.printer_controls()
         self.navigation()
         self.error.setText("Check & Preview to review the physical pages before applying." if self.context else
                            "Save rules, then select and check a job to review the physical pages.")
@@ -227,6 +270,33 @@ class MediaDialog(QDialog):
         self.append(self.stocks,["STOCK_"+str(self.stocks.rowCount()+1),"Paper",210,297,80,"false"])
         self.invalidate()
 
+    def rule_keys(self,mode):
+        if mode=="role":
+            return list(ROLES)
+        if mode=="template":
+            return [p["id"] for p in self.context.get("project",{}).get("pages",[])] if self.context else []
+        return [str(i) for i in range(1,101)]
+
+    def add_rule(self):
+        mode=self.mode.currentData()
+        used={row[0] for row in self.rows(self.assignments)}
+        available=[key for key in self.rule_keys(mode) if key not in used]
+        if not available:
+            self.error.setText("All pages / roles already have a rule. Edit or remove an existing rule.")
+            return
+        key=available[0]
+        if mode in ("template","role") and len(available)>1:
+            names={p["id"]:f"{i+1} · {p.get('name','Page')}" for i,p in enumerate(self.context.get("project",{}).get("pages",[]))} if self.context else {}
+            labels=[names.get(value,value) for value in available]
+            label,ok=QInputDialog.getItem(self,"Add paper rule","Page / role",labels,0,False)
+            if not ok:
+                return
+            key=available[labels.index(label)]
+        self.append(self.assignments,[key,""])
+        self.label_template_pages()
+        self.assignments.setCurrentCell(self.assignments.rowCount()-1,1)
+        self.invalidate()
+
     def assign_selected(self):
         for row in {i.row() for i in self.assignments.selectedIndexes()}:
             self.assignments.setItem(row,1,QTableWidgetItem(self.batch_stock.currentText()))
@@ -236,7 +306,7 @@ class MediaDialog(QDialog):
         current={r[0]:r for r in self.rows(self.mappings)}
         self.mappings.setRowCount(0)
         for key in ids:
-            self.append(self.mappings,current.get(key,[key,key,""]))
+            self.append(self.mappings,current.get(key,[key,key,"","","",""]))
         for box in (self.fallback,self.batch_stock):
             text=box.currentText()
             box.clear()
@@ -246,6 +316,8 @@ class MediaDialog(QDialog):
 
     def fill(self,raw):
         spec=MediaSpec.from_dict(raw)
+        self.rule_mode=spec.mode
+        self.rule_drafts={}
         self.enabled.setChecked(spec.enabled)
         self.mode.blockSignals(True)
         self.mode.setCurrentIndex(max(0,self.mode.findData(spec.mode)))
@@ -266,23 +338,89 @@ class MediaDialog(QDialog):
     def fill_printer(self,raw):
         profile=PrinterProfile.from_dict(raw)
         self.ticket_limit=profile.max_ticket_bytes
+        self.profile_families[profile.backend]=profile.family
+        self.output_format.blockSignals(True)
+        self.output_format.setCurrentIndex(self.output_format.findData(profile.backend))
+        self.output_format.blockSignals(False)
+        self.profile_name.setText(profile.profile_name)
+        self.selection_mode.setCurrentIndex(self.selection_mode.findData(profile.selection_mode))
+        self.tumble.setChecked(profile.tumble)
+        self.emit_weight.setChecked(profile.emit_media_weight)
+        self.resolution.setCurrentIndex(self.resolution.findData(profile.resolution_dpi))
+        self.printer_controls()
         self.family.setCurrentIndex(self.family.findData(profile.family))
         self.controller.setText(profile.controller_version)
         self.mappings.setRowCount(0)
         for key,value in profile.mappings.items():
-            self.append(self.mappings,[key,value.get("name",""),value.get("catalog_id","")])
+            self.append(self.mappings,[key,value.get("name",""),value.get("catalog_id",""),
+                                      value.get("media_type",""),value.get("media_color",""),
+                                      "" if value.get("media_position") is None else value["media_position"]])
+
+    def printer_controls(self,*_):
+        backend=self.output_format.currentData()
+        ps=backend=="postscript"
+        tray=self.selection_mode.currentData()=="tray"
+        family=self.family.currentData()
+        if self.profile_backend!=backend:
+            if self.profile_backend and family:
+                self.profile_families[self.profile_backend]=family
+            family=self.profile_families.get(backend,"generic" if ps else "vp6000")
+            self.profile_backend=backend
+        options=FAMILIES|PS_FAMILIES if ps else FAMILIES
+        if [self.family.itemData(i) for i in range(self.family.count())]!=list(options):
+            self.family.clear()
+            for key,label in options.items():
+                self.family.addItem(label,key)
+            self.family.setCurrentIndex(self.family.findData(family) if family in options else 0)
+        elif family in options:
+            self.family.setCurrentIndex(self.family.findData(family))
+        for control in (self.selection_mode,self.tumble,self.resolution):
+            control.setEnabled(ps)
+        self.emit_weight.setEnabled(ps and not tray)
+        for col in (1,2):
+            self.mappings.setColumnHidden(col,ps)
+        self.mappings.setColumnHidden(3,not ps or tray)
+        self.mappings.setColumnHidden(4,not ps or tray)
+        self.mappings.setColumnHidden(5,not ps or not tray)
+        self.printer_hint.setText(
+            "MediaPosition is the controller's paper-source number; 0 is valid. It may differ from the tray label. Page size is always requested; type/colour/weight are not forced."
+            if ps and tray else
+            "Enter an explicit MediaType for each Stock and optional colour. Different letterheads need distinguishable requests. These are PS attributes, not automatically Media Catalog names."
+            if ps else "Map each Stock to the exact Canon Media Catalog name / ID. This backend produces an offline JDF package.")
+        self.proof_button.setVisible(ps)
+        self.navigation()
 
     def reset_rules(self):
+        old_mode=self.rule_mode
+        rows=self.rows(self.assignments)
+        if old_mode:
+            self.rule_drafts[old_mode]=copy.deepcopy(rows)
         self.assignments.setRowCount(0)
         mode=self.mode.currentData()
         pages=self.context.get("project",{}).get("pages",[]) if self.context else []
-        keys=ROLES if mode=="role" else [p["id"] for p in pages] if mode=="template" else [str(i+1) for i in range(len(pages) or 3)]
-        for key in keys:
-            self.append(self.assignments,[key,""])
+        if mode in self.rule_drafts:
+            rows=copy.deepcopy(self.rule_drafts[mode])
+        elif pages and {old_mode,mode}=={"page","template"}:
+            mapping={str(i+1):p["id"] for i,p in enumerate(pages)}
+            if mode=="page":
+                mapping={value:key for key,value in mapping.items()}
+            # Conversion is explicit in the selected mode; other mode drafts remain intact.
+            rows=[[mapping[key],stock] for key,stock in rows if key in mapping]
+        else:
+            keys=ROLES if mode=="role" else [p["id"] for p in pages] if mode=="template" else [str(i+1) for i in range(len(pages) or 3)]
+            rows=[[key,""] for key in keys]
+        for row in rows:
+            self.append(self.assignments,row)
+        self.rule_mode=mode
         self.label_template_pages()
         self.invalidate()
 
     def label_template_pages(self):
+        if self.mode.currentData()=="role":
+            for row in range(self.assignments.rowCount()):
+                item=self.assignments.item(row,0)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            return
         if self.mode.currentData()!="template" or not self.context:
             return
         names={p["id"]:f"{i+1} · {p.get('name','Page')}" for i,p in enumerate(self.context.get("project",{}).get("pages",[]))}
@@ -298,8 +436,20 @@ class MediaDialog(QDialog):
         rows=self.rows(self.mappings)
         if len({r[0] for r in rows})!=len(rows):
             raise ValueError("Duplicate Stock in Catalog mappings.")
-        profile=PrinterProfile(family=self.family.currentData(),controller_version=self.controller.text(),
-                               mappings={r[0]:{"name":r[1],"catalog_id":r[2]} for r in rows},max_ticket_bytes=self.ticket_limit)
+        ps=self.output_format.currentData()=="postscript"
+        mappings={}
+        for r in rows:
+            item={"name":r[1],"catalog_id":r[2]}
+            if ps:
+                if r[5] and (not r[5].isascii() or not r[5].isdigit()):
+                    raise ValueError("MediaPosition must be a whole paper-source number; leave blank if unknown.")
+                item.update(media_type=r[3],media_color=r[4],media_position=int(r[5]) if r[5] else None)
+            mappings[r[0]]=item
+        profile=PrinterProfile(profile_version=2 if ps else 1,backend=self.output_format.currentData(),
+                               family=self.family.currentData(),controller_version=self.controller.text(),
+                               mappings=mappings,max_ticket_bytes=self.ticket_limit,profile_name=self.profile_name.text().strip(),
+                               selection_mode=self.selection_mode.currentData(),tumble=self.tumble.isChecked(),
+                               resolution_dpi=self.resolution.currentData(),emit_media_weight=self.emit_weight.isChecked())
         from dataclasses import asdict
         return asdict(PrinterProfile.from_dict(asdict(profile)))
 
@@ -330,6 +480,25 @@ class MediaDialog(QDialog):
         self.cancel.setEnabled(busy)
         self.locate.setEnabled(not busy and self.checked is not None and self.preview_table.currentRow()>=0)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(not busy)
+        self.proof_button.setEnabled(not busy and self.output_format.currentData()=="postscript")
+
+    def export_paper_test(self):
+        if self.worker:
+            return
+        try:
+            media=self.value()
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
+        path,_=QFileDialog.getSaveFileName(self,"Export paper-selection test","paper-test.ps","PostScript (*.ps)")
+        if not path:
+            return
+        self.worker=Worker(self.directory,{"task":"media_paper_test","media":media,"target":path},self)
+        self.worker.resultReady.connect(lambda result:self.error.setText("Paper test saved: "+result["path"]+". Print it to check actual Stock / tray selection."))
+        self.worker.failed.connect(lambda message:self.error.setText(message))
+        self.worker.ended.connect(self.ended)
+        self.error.setText("Generating and validating paper-selection test…")
+        self.navigation()
 
     def scan(self,start):
         if self.worker or not self.context:
@@ -414,10 +583,11 @@ class MediaDialog(QDialog):
     def save_profile(self,printer):
         try:
             value=self.read_printer() if printer else self.value()
-            path,_=QFileDialog.getSaveFileName(self,"Save reference profile",str(self.profile_directory()/('printer.json' if printer else 'media.json')),"JSON (*.json)")
+            path,_=QFileDialog.getSaveFileName(self,"Save printer profile" if printer else "Save media profile",str(self.profile_directory()/('printer.json' if printer else 'media.json')),"JSON (*.json)")
             if path:
                 with atomic_output(Path(path)) as temp:
-                    temp.write_text(json.dumps({"kind":"printer" if printer else "media","profile_version":1,"settings":value},indent=2),encoding="utf-8")
+                    version=2 if (value if printer else value["printer_profile"]).get("backend")=="postscript" else 1
+                    temp.write_text(json.dumps({"kind":"printer" if printer else "media","profile_version":version,"settings":value},indent=2),encoding="utf-8")
         except (ValueError,OSError) as exc:
             self.error.setText(str(exc))
 
@@ -429,7 +599,7 @@ class MediaDialog(QDialog):
             if Path(path).stat().st_size>1024*1024:
                 raise ValueError("Profile exceeds 1 MB.")
             raw=json.loads(Path(path).read_text(encoding="utf-8"))
-            if raw.get("profile_version")!=1 or raw.get("kind")!=("printer" if printer else "media"):
+            if raw.get("profile_version") not in (1,2) or raw.get("kind")!=("printer" if printer else "media"):
                 raise ValueError("Incorrect profile type / version.")
             self.fill_printer(raw["settings"]) if printer else self.fill(raw["settings"])
             self.invalidate()

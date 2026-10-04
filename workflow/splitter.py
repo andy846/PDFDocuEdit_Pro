@@ -93,11 +93,17 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
                                 yield [file_page,*row[1:]]
                     files[-1]["media_summary"]=export_rows(package,media,media_rows(),expected_pages,pdf.name,is_cancelled=is_cancelled)
                     shutil.move(pdf,package/pdf.name)
+                    from composition.media.postscript import export_postscript
+                    ps=export_postscript(package,media,pdf.name,is_cancelled=is_cancelled,progress=progress)
+                    files[-1]["media_summary"].update(ps)
+                    if ps:
+                        files[-1]["output_ps"]=str(final/pdf.stem/ps["postscript"])
                     files[-1]["output_pdf"]=str(final/pdf.stem/pdf.name)
                     files[-1]["output_sha256"]=digest(package/pdf.name)
                     (package/"job.json").write_text(json.dumps({"job_version":2,"job_id":result["job_id"]+"-"+str(index),
                         "status":"completed","global_job_id":result["job_id"],"records":part["records"],"pages":expected_pages,
-                        "output_pdf":pdf.name,"media_summary":files[-1]["media_summary"],"page_mapping":"media-plan.csv",
+                        "output_pdf":pdf.name,"output_ps":ps.get("postscript",""),
+                        "media_summary":files[-1]["media_summary"],"page_mapping":"media-plan.csv",
                         "sequence_policy":"Global production sequence retained; File page rebased to 1"},indent=2),encoding="utf-8")
                 with (staging/(pdf.stem+"-source-map.csv")).open("w",encoding="utf-8-sig",newline="") as stream:
                     writer=csv.writer(stream)
@@ -117,6 +123,7 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
         if sum(f["records"] for f in files)!=source.count or sum(f["pages"] for f in files)!=result["generated_pages"]:
             raise CompositionError("Split reconciliation failed.")
         updated={**result,"job_id":job_id,"output_pdf":files[0]["output_pdf"] if files else "",
+                 "output_ps":files[0].get("output_ps","") if files else "",
                  "generated_files":len(files),"output_files":files,"report_dir":str(final),
                  "output_size":sum((staging/Path(f["output_pdf"]).relative_to(final)).stat().st_size for f in files)}
         if files:
@@ -138,9 +145,10 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
                 shutil.copyfile(path,staging/name)
         with (staging/"control.csv").open("w",encoding="utf-8-sig",newline="") as stream:
             writer=csv.writer(stream)
-            writer.writerow(["Job ID","Output file","Records / envelopes","Pages","SHA256","Status"])
+            writer.writerow(["Job ID","Output file","PostScript file","Records / envelopes","Pages","SHA256","PostScript SHA256","Status"])
             for item in files:
-                writer.writerow([job_id,item["output_pdf"],item["records"],item["pages"],item["output_sha256"],"completed"])
+                writer.writerow([job_id,item["output_pdf"],item.get("output_ps",""),item["records"],item["pages"],
+                                 item["output_sha256"],item.get("media_summary",{}).get("postscript_sha256",""),"completed"])
         from .transforms import export_audit
         export_audit(source,staging)
         (staging/"workflow-data.json").write_text(json.dumps({"input":updated["source_records"],

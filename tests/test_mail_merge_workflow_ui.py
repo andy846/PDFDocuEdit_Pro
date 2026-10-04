@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QPushButton
 
 from composition.designer.project_host import DesignerProjectHost
 from tests.composition.test_workspace import wait_until
@@ -14,8 +14,8 @@ from workflow.mail_merge_ui import MailMergeWorkflowWindow
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 @pytest.fixture
@@ -189,3 +189,103 @@ def test_designer_project_creates_paired_workflow_and_dirty_template_blocks_run(
         tab.close()
     wait_until(lambda:not host.projects)
     host.close()
+
+
+def template_opener(window,monkeypatch):
+    from types import SimpleNamespace
+
+    opened=[]
+    monkeypatch.setattr(window,"project_host",SimpleNamespace(open_project=opened.append,projects=[]))
+    return opened
+
+
+def test_edit_template_button_opens_only_job_without_review_selection(window,tmp_path,monkeypatch):
+    job=pair(tmp_path)
+    window.batch.jobs=[job]
+    window.refresh_jobs()
+    assert not window.selected_jobs()
+    opened=template_opener(window,monkeypatch)
+    window.select_node(window.spec.node("template").id)
+    button=next(b for b in window.inspector.findChildren(QPushButton) if b.text()=="Edit template in Designer…")
+    button.click()
+    assert opened==[job.template_path]
+    assert window.batch.jobs==[job]
+
+
+def test_edit_template_uses_selected_job_in_multiple_job_batch(window,tmp_path,monkeypatch):
+    jobs=[pair(tmp_path,"GS"),pair(tmp_path,"IS")]
+    window.batch.jobs=jobs
+    window.refresh_jobs()
+    window.jobs_table.selectRow(1)
+    opened=template_opener(window,monkeypatch)
+    monkeypatch.setattr(QInputDialog,"getItem",lambda *args:pytest.fail("A single selected job needs no picker"))
+    window.edit_template()
+    assert opened==[jobs[1].template_path]
+
+
+def test_edit_template_picker_is_unambiguous_and_cancel_preserves_workflow(window,tmp_path,monkeypatch):
+    jobs=[pair(tmp_path,"GS"),pair(tmp_path,"IS")]
+    # Different jobs may have the same display name and template filename.
+    for job in jobs:
+        job.name="Letter"
+        job.template_path="same.pdcx"
+    window.batch.jobs=jobs
+    window.refresh_jobs()
+    window.jobs_table.clearSelection()
+    opened=template_opener(window,monkeypatch)
+    snapshot=window.spec.to_dict()
+    selection=window.canvas.scene().selectedItems()
+    def cancel(*args):
+        assert len(set(args[3]))==2
+        assert args[5] is False
+        return "",False
+    monkeypatch.setattr(QInputDialog,"getItem",cancel)
+    window.edit_template()
+    assert not opened and window.spec.to_dict()==snapshot
+    assert window.canvas.scene().selectedItems()==selection
+    jobs[1].template_path="chosen.pdcx"
+    monkeypatch.setattr(QInputDialog,"getItem",lambda *args:(args[3][1],True))
+    window.edit_template()
+    assert opened==["chosen.pdcx"]
+
+
+@pytest.mark.parametrize("has_job",[False,True])
+def test_edit_template_missing_input_routes_to_review(window,monkeypatch,has_job):
+    from workflow.batch import BatchJob
+
+    window.batch.jobs=[BatchJob(name="Unassigned")] if has_job else []
+    window.refresh_jobs()
+    opened=template_opener(window,monkeypatch)
+    window.tabs.setCurrentWidget(window.flow_page)
+    window.edit_template()
+    assert not opened and window.tabs.currentWidget() is window.review_page
+    assert "Edit Job" in window.feedback.text() if has_job else "Add a template + data pair" in window.feedback.text()
+
+
+def test_edit_template_in_host_focuses_existing_template_and_preserves_draft(app,tmp_path,monkeypatch):
+    from composition.designer.workspace import CompositionWindow
+
+    monkeypatch.setattr(CompositionWindow,"_load_windows_fonts",lambda self:None)
+    monkeypatch.setattr(CompositionWindow,"_render_preview",lambda self:None)
+    host=DesignerProjectHost()
+    host.show()
+    try:
+        job=pair(tmp_path)
+        project=host.open_project(job.template_path)
+        project.add_element("text","Keep this unsaved edit")
+        snapshot=project.template.to_dict()
+        undo_index=project.undo.index()
+        workflow=host.new_mail_merge_workflow()
+        workflow.batch.jobs=[job]
+        workflow.refresh_jobs()
+        assert not workflow.selected_jobs()
+        assert workflow.edit_template() is project
+        assert host.current_project is project and len(host.projects)==2
+        assert project.template.to_dict()==snapshot and project.undo.index()==undo_index
+        assert not project.undo.isClean()
+    finally:
+        for tab in host.projects[:]:
+            tab._close_approved=True
+            tab.close()
+        wait_until(lambda:not host.projects)
+        host.close()

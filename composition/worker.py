@@ -37,6 +37,9 @@ def dispatch(request: dict) -> dict:
     if task == "workflow":
         from workflow.worker import dispatch as workflow_dispatch
         return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state))
+    if task == "media_paper_test":
+        from composition.media.postscript import export_paper_test
+        return export_paper_test(request["target"],request["media"],is_cancelled=cancelled,progress=progress)
     if task == "media_preview":
         from dataclasses import asdict
 

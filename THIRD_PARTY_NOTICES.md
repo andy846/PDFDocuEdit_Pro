@@ -75,7 +75,7 @@ The bundled cryptography distribution metadata includes its license texts and
 notices for its OpenSSL and Rust dependencies. Source: https://github.com/pyca/cryptography
 
 
-## Print Composition components (opt-in development builds)
+## Document Designer components (V3 production builds)
 
 qpdf 12.4.2 is distributed under Apache License 2.0. Its LICENSE.txt and
 NOTICE.md accompany the pinned Windows runtime. Source: https://github.com/qpdf/qpdf

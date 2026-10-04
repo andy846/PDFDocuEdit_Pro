@@ -730,6 +730,12 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                 element["id"] = uuid.uuid4().hex
                 element["x_mm"] = min(self.page.width_mm-element["width_mm"], element["x_mm"]+3)
                 element["y_mm"] = min(self.page.height_mm-element["height_mm"], element["y_mm"]+3)
+                from composition.template.geometry import fit_rotated_position
+                try:
+                    fit_rotated_position(element, self.page.width_mm, self.page.height_mm)
+                except ValueError as exc:
+                    self._error(str(exc))
+                    return
                 self._page_dict(after)["elements"].append(element)
         self._commit(before, after, command.title())
 
@@ -1038,6 +1044,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                  f"Generated pages: {result['generated_pages']:,}",
                  f"Published files: {result['generated_files']}",
                  "PDF: " + result["output_pdf"], "Reports: " + result["report_dir"]]
+        if result.get("output_ps"):
+            lines.append("PostScript: "+result["output_ps"])
         if result["error"]:
             lines.append("Error: " + result["error"])
         lines.extend(result["warnings"])
@@ -1058,7 +1066,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                           f"Alternative content occurrences: {rules.get('alternate_occurrences', 0)}"])
         if result.get("media_summary"):
             lines.append("Media: "+" · ".join(f"{k}: {v:,} sheets" for k,v in result["media_summary"].get("stock_sheets",{}).items()))
-            lines.append("Offline default_ticket.jdf · Canon device validation pending")
+            lines.append("PostScript selection embedded · device validation pending" if result["media_summary"].get("backend")=="postscript"
+                         else "Offline default_ticket.jdf · Canon device validation pending")
         self.production_summary.setPlainText("\n".join(lines))
         self.failed_record = result.get("error_record")
         self._record_font_error(result["error"], result.get("error_record"))

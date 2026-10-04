@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 import pytest
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
@@ -16,8 +16,8 @@ from tests.composition.test_workspace import close_window
 
 
 @pytest.fixture(scope="session")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 @pytest.fixture(autouse=True)

@@ -89,3 +89,19 @@ def test_api_uses_json_media_type(monkeypatch):
     monkeypatch.setattr(protocol.urllib.request, "build_opener", lambda *_: Opener())
     protocol._open("https://api.github.com/repos/owner/repo/releases/latest")
     assert requests[0].headers["Accept"] == "application/vnd.github+json"
+
+
+def test_build_fingerprint_tracks_designer_and_workflow_sources(tmp_path,monkeypatch):
+    from scripts import update_release
+
+    monkeypatch.setattr(update_release,"ROOT",tmp_path)
+    for name in ("main.py","launcher.py","PDFDocuEdit Pro.spec","requirements-base.txt"):
+        (tmp_path/name).write_text("initial",encoding="utf-8")
+    baseline=update_release.source_fingerprint()
+    for name in ("composition/engine/renderer.py","workflow/engine.py"):
+        path=tmp_path/name
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text("changed source",encoding="utf-8")
+        changed=update_release.source_fingerprint()
+        assert changed!=baseline
+        baseline=changed

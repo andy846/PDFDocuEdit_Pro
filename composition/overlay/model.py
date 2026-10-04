@@ -293,6 +293,7 @@ class OverlayResult:
     decoded_barcodes: int = 0
     generated_files: int = 0
     output_pdf: str = ""
+    output_ps: str = ""
     report_dir: str = ""
     error: str = ""
     error_envelope: int | None = None

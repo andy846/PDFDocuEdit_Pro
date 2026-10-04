@@ -11,6 +11,7 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.resources import APP_VERSION
 from scripts.build import ROOT, _find_inno_setup_compiler
 
 
@@ -31,7 +32,7 @@ def run(source=None):
     script.write_text(f'''[Setup]
 AppId=PDFDocuEdit-Composition-Local-QA
 AppName=PDFDocuEdit Composition Local QA
-AppVersion=2.5.15
+AppVersion={APP_VERSION}
 DefaultDirName={installation}
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible

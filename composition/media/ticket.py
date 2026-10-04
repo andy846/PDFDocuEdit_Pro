@@ -1,4 +1,4 @@
-"""Offline Canon JDF page programming and complete page/media reconciliation."""
+"""Shared media reconciliation with offline JDF or PostScript package metadata."""
 import csv
 import json
 import sqlite3
@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 from composition.production.generator import check_cancel
 from composition.template.model import CompositionError
 
-from .model import FAMILIES, MediaSpec, PrinterProfile
+from .model import FAMILIES, PS_FAMILIES, MediaSpec, PrinterProfile
 
 NS="http://www.CIP4.org/JDFSchema_1_1"
 OCE="http://www.oce.com/JDF_Extension/1_00"
@@ -34,6 +34,10 @@ def export_print_package(directory,plan,pdf_name="production.pdf",*,is_cancelled
 def export_rows(directory,media,rows,expected_pages,pdf_name,*,is_cancelled=None,write_ticket=True):
     spec=MediaSpec.from_dict(media)
     profile=PrinterProfile.from_dict(spec.printer_profile)
+    if profile.backend=="postscript":
+        from .postscript import ghostscript_executable
+        ghostscript_executable()
+        write_ticket=False
     directory=Path(directory)
     database=directory/"media-plan.sqlite"
     database.unlink(missing_ok=True)
@@ -71,21 +75,31 @@ def export_rows(directory,media,rows,expected_pages,pdf_name,*,is_cancelled=None
         (directory/"default_ticket.jdf").write_bytes(ticket)
     (directory/"media-definition.json").write_text(json.dumps(spec.to_dict(),ensure_ascii=False,indent=2),encoding="utf-8")
     summary={"pages":count,"sheets":sum(stock_sheets.values()),"stock_sheets":dict(stock_sheets),
-             "printer":FAMILIES[profile.family],"controller_version":profile.controller_version,"device_validation":"pending",
-             "pdf":pdf_name,"ticket":"default_ticket.jdf" if write_ticket else ""}
+             "printer":(FAMILIES|PS_FAMILIES)[profile.family],"controller_version":profile.controller_version,"device_validation":"pending",
+             "backend":profile.backend,"pdf":pdf_name,"ticket":"default_ticket.jdf" if write_ticket else ""}
     (directory/"media-summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     with (directory/"media-summary.csv").open("w",encoding="utf-8-sig",newline="") as stream:
         writer=csv.writer(stream)
         writer.writerow(["Stock","Required sheets","Device validation"])
         writer.writerows((name,count,"pending") for name,count in sorted(stock_sheets.items()))
-    (directory/"SUBMISSION.txt").write_text(
+    submission=(
         "CANON REFERENCE PACKAGE - DEVICE VALIDATION PENDING\n"
         "PDF: "+pdf_name+"\n"
         "Load default_ticket.jdf using your PRISMAsync ticket editor and inspect page programming before a proof print.\n"
         "Hotfolder tickets apply to the hotfolder: do not mix packages or replace a ticket while another job is pending.\n"
         "An automated workflow may override the ticket. Check Overrule job ticket and disable banner / trailer / imposition changes for this proof.\n"
         "Map Stock names / Catalog IDs to loaded media on the DFE. No tray availability was queried.\n"
-        "This is an offline hotfolder ticket; it is not a JMF submission with a PDF URL.\n",encoding="utf-8")
+        "This is an offline hotfolder ticket; it is not a JMF submission with a PDF URL.\n")
+    if profile.backend=="postscript":
+        submission=("POSTSCRIPT PRINT PACKAGE - DEVICE VALIDATION PENDING\n"
+                    "PDF proof: "+pdf_name+"\n"
+                    "Production PS: "+Path(pdf_name).with_suffix(".ps").name+"\n"
+                    "Submit the PS directly to a PostScript 3 capable controller. No separate JDF is required.\n"
+                    "MediaType / MediaPosition are device settings; confirm Stock mappings using a paper-selection proof.\n"
+                    "Keep queue media, duplex and imposition overrides from replacing the file's page instructions.\n"
+                    "postscript-pages.csv records actual programmed fronts; backs inherit the front Stock.\n"
+                    "PDF transparency may be flattened during PS conversion; compare the retained PDF and proof print.\n")
+    (directory/"SUBMISSION.txt").write_text(submission,encoding="utf-8")
     return summary
 
 

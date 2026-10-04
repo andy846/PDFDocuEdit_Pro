@@ -52,6 +52,7 @@ class JobResult:
     generated_pages: int = 0
     generated_files: int = 0
     output_pdf: str = ""
+    output_ps: str = ""
     report_dir: str = ""
     output_size: int = 0
     composer_peak_memory_bytes: int = 0

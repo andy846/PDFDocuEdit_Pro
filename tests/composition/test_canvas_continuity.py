@@ -7,7 +7,6 @@ import pytest
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
 
 from composition.designer.canvas import Canvas
 from composition.designer.overlay_workspace import OverlayWindow
@@ -21,8 +20,8 @@ from tests.composition.test_pdf_overlay_ui import finish
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 @pytest.fixture(autouse=True)

@@ -3,7 +3,18 @@ from __future__ import annotations
 import os
 import tempfile
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qt_application():
+    """Keep Qt alive across UI modules; destroying and recreating it is unsafe."""
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 def pytest_configure(config) -> None:

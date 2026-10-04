@@ -90,7 +90,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             from composition.media.ticket import export_print_package
             result.media_summary=export_print_package(staging,plan,"production.pdf",is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket)
             result.media_summary["inserted_blanks"]=plan.inserted_blanks
-            result.warnings.append("Canon media profile: device validation pending. Inspect catalog mappings and proof print before production.")
+            result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
         if progress:
             progress(0,plan.output_pages,"Creating hash-checked source snapshot")
         snapshot=snapshot_source(spec.source.path,staging/"source-snapshot.pdf",spec.source.sha256,is_cancelled=is_cancelled)
@@ -211,6 +211,12 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         result.unverified_envelopes=plan.envelopes-result.successful_envelopes
         result.generated_files=1
         reconcile(result)
+        if isinstance(plan,PrintPlan) and not _defer_media_ticket:
+            from composition.media.postscript import export_postscript
+            ps=export_postscript(staging,spec.media,pdf.name,is_cancelled=is_cancelled,progress=progress)
+            result.media_summary.update(ps)
+            if ps:
+                result.output_ps=str(final/ps["postscript"])
         result.output_size=pdf.stat().st_size
         result.output_pdf=str(final/pdf.name)
         result.report_dir=str(final)
@@ -255,11 +261,14 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                 result.failed_envelopes = 1
         result.unverified_envelopes=max(0,result.input_envelopes-result.successful_envelopes-result.failed_envelopes)
         result.output_pdf=""
+        result.output_ps=""
         result.generated_files=0
         result.finished_at=now()
         result.report_dir=str(failure)
         for path in staging.glob("*.pdf"):
             path.unlink(missing_ok=True)
+        from composition.media.postscript import discard_postscript
+        discard_postscript(staging,result.media_summary)
         (staging/"default_ticket.jdf").unlink(missing_ok=True)
         for directory in (staging/"fonts",staging/"fallback"):
             if directory.exists():

@@ -77,15 +77,15 @@ def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
     )
 
 
-def test_release_metadata_is_v2_5_16() -> None:
-    assert APP_VERSION == "2.5.16"
+def test_release_metadata_is_v3_0_0() -> None:
+    assert APP_VERSION == "3.0.0"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "2.5.16"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "2.5.16"' in (
+    assert 'version = "3.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "3.0.0"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "2.5.16"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(2, 5, 16, 0)" in (
+    assert 'VERSION = "3.0.0"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(3, 0, 0, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 
@@ -106,6 +106,18 @@ def test_windows_installer_has_professional_shell_integration() -> None:
     )
     assert not [entry for entry in required if entry not in script]
     assert 'Subkey: "Software\\Classes\\.pdf"; ValueType:' not in script
+
+
+def test_v3_enables_designer_by_default_and_keeps_override(monkeypatch):
+    import sys
+
+    from composition.enabled import is_enabled
+
+    monkeypatch.delenv("PDFDOCUEDIT_ENABLE_COMPOSITION",raising=False)
+    monkeypatch.setattr(sys,"frozen",False,raising=False)
+    assert is_enabled()
+    monkeypatch.setenv("PDFDOCUEDIT_ENABLE_COMPOSITION","0")
+    assert not is_enabled()
 
 
 def test_managed_installer_uses_launcher_and_avoids_existing_installations() -> None:

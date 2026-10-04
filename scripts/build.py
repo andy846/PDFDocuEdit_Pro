@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "2.5.16"
+VERSION = "3.0.0"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -185,7 +185,7 @@ def _clean_portable_tree(tree: Path) -> None:
 
 
 def _windows_artifact_prefix() -> str:
-    suffix = "-Document-Designer-Dev" if os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION") == "1" else ""
+    suffix = "-Document-Designer-Dev" if os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION") == "1" and VERSION.startswith("2.") else ""
     return f"PDFDocuEdit-Pro-v{VERSION}{suffix}"
 
 

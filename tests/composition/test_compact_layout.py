@@ -5,7 +5,6 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
 
 from composition.designer.workspace import CompositionWindow
 from composition.engine.assets import asset_root
@@ -16,8 +15,8 @@ from tests.composition.test_designer_controls import cleanup
 
 
 @pytest.fixture
-def styled_app():
-    app = QApplication.instance() or QApplication([])
+def styled_app(qt_application):
+    app = qt_application
     palette, font, style = app.palette(), app.font(), app.styleSheet()
     ids = [QFontDatabase.addApplicationFont(str(asset_root()/"fonts"/name))
            for name in ("NotoSans-Regular.ttf", "NotoSansCJKhk-Regular.otf")]

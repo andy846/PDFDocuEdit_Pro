@@ -92,7 +92,8 @@ for _file in _VERA_ROOT.rglob("*"):
         datas.append((str(_file), f"verapdf/{_file.relative_to(_VERA_ROOT).parent}"))
 
 # Composition is opt-in while its release validation is in progress.
-_composition_enabled = os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION", "").lower() in {"1", "true", "yes", "on"}
+from composition.enabled import is_enabled
+_composition_enabled = is_enabled()
 if _composition_enabled:
     if sys.platform != "win32":
         raise RuntimeError("Initial Document Designer production builds target Windows x64.")
@@ -249,12 +250,12 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="2.5.16",
+        version="3.0.0",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "2.5.16",
+            "CFBundleShortVersionString": "3.0.0",
             "CFBundleVersion": "256",
-            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.5.16",
+            "CFBundleGetInfoString": "PDFDocuEdit Pro V3.0.0",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

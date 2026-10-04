@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -113,8 +114,9 @@ class Properties(QWidget):
                                "Position in millimetres from the page top-left.")
             self.numbers[key] = control
             cell = QWidget()
-            row = QHBoxLayout(cell)
+            row = QVBoxLayout(cell)
             row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(2)
             label_widget = QCheckBox(label) if key in {"width_mm", "height_mm", "rotation_deg"} else QLabel(label)
             if isinstance(label_widget, QCheckBox):
                 self.geometry_checks[key] = label_widget
@@ -123,7 +125,7 @@ class Properties(QWidget):
             self.geometry_cells[key] = cell
             row.addWidget(label_widget)
             row.addWidget(control)
-            grid.addWidget(cell, index, 0)
+            grid.addWidget(cell, index // 2, index % 2)
             control.editingFinished.connect(lambda name=key: self.apply_field(name))
         for check in self.geometry_checks.values():
             check.toggled.connect(lambda: self.bulkChanged.emit() if self.multi_selection and not self.loading else None)
@@ -131,7 +133,7 @@ class Properties(QWidget):
         self.geometry_apply.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.geometry_apply.setToolTip("Only checked width, height and angle settings change. Text, fonts and other settings are retained.")
         self.geometry_apply.clicked.connect(self.apply_geometry)
-        grid.addWidget(self.geometry_apply, 5, 0)
+        grid.addWidget(self.geometry_apply, 3, 0, 1, 2)
         groups.addWidget(self.geometry)
         self.content_group = QGroupBox("Content")
         content_layout = QVBoxLayout(self.content_group)
@@ -175,12 +177,21 @@ class Properties(QWidget):
         form.addRow("Family", self.font_family)
         form.addRow("Style", self.font_style)
         form.addRow(self.font_status)
+        self.font_details_toggle = QToolButton()
+        self.font_details_toggle.setText("Font details / repairs")
+        self.font_details_toggle.setCheckable(True)
+        self.font_details_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.font_details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.font_details_toggle.setAccessibleName("Show advanced font settings")
+        self.font_details = QWidget()
+        details_layout = QVBoxLayout(self.font_details)
+        details_layout.setContentsMargins(0, 0, 0, 0)
         self.repair_status = QLabel("No missing-glyph repairs configured")
         self.repair_status.setWordWrap(True)
-        form.addRow(self.repair_status)
+        details_layout.addWidget(self.repair_status)
         self.repair_button = QPushButton("Repair missing glyph…")
         self.repair_button.clicked.connect(self.glyphRepairRequested)
-        form.addRow(self.repair_button)
+        details_layout.addWidget(self.repair_button)
         self.bold, self.italic = QCheckBox("Bold"), QCheckBox("Italic")
         self.bold.hide()
         self.italic.hide()
@@ -190,7 +201,7 @@ class Properties(QWidget):
         self.custom_font.setMinimumWidth(0)
         font_button = QPushButton("Choose font file…")
         font_button.clicked.connect(self._font_file)
-        form.addRow(font_button)
+        details_layout.addWidget(font_button)
         self.custom_font.setVisible(False)
         self.font_status.setToolTip("The selected font face is embedded in the PDF. No silent substitution.")
         for key, _label, low, high, step in [
@@ -204,7 +215,10 @@ class Properties(QWidget):
             self.numbers[key] = control
             control.editingFinished.connect(lambda name=key: self.apply_field(name))
             if key == "font_size":
-                form.addRow("Size (pt)", control)
+                form.insertRow(2, "Size (pt)", control)
+        form.addRow(self.font_details_toggle)
+        form.addRow(self.font_details)
+        self.font_details.hide()
         self.alignment = QComboBox()
         self.alignment.addItems(["left", "center", "right"])
         self.vertical = QComboBox()
@@ -326,6 +340,7 @@ class Properties(QWidget):
             control.valueChanged.connect(lambda *args, name=key: self._mark_bulk_dirty(name))
             control.lineEdit().textEdited.connect(lambda *args, name=key: self._mark_bulk_dirty(name))
         self.colour.textChanged.connect(lambda: self._mark_bulk_dirty("colour"))
+        self.font_details_toggle.toggled.connect(self._toggle_font_details)
         self.alignment.activated.connect(lambda: self.apply_field("align") if self.bulk_ids else None)
         self.vertical.activated.connect(lambda: self.apply_field("vertical_align") if self.bulk_ids else None)
         self._configure_completion()
@@ -486,6 +501,7 @@ class Properties(QWidget):
             self.barcode_hint.setVisible(element.type == "i25")
             self.human.setEnabled(element.type in {"code128", "i25"})
         self.loading = False
+        self._refresh_layout()
 
     def show_selection(self, selected):
         if len(selected) <= 1:
@@ -579,17 +595,24 @@ class Properties(QWidget):
 
     def _refresh_layout(self):
         # Apply hidden-group size constraints now, before the inspector computes scrollbars.
-        for widget in reversed(self.findChildren(QWidget)):
-            if widget.layout():
-                widget.layout().invalidate()
-                widget.layout().activate()
-        self.form_widget.layout().activate()
-        self.layout().invalidate()
-        self.layout().activate()
+        # Only touch layouts owned by this panel, not Qt's private combo/spinbox widgets.
+        for widget in (*self.geometry_cells.values(), self.geometry, self.font_details,
+                       self.font_group, self.content_group, self.rules_group,
+                       self.text_layout_group, self.appearance_group, self.image_group,
+                       self.barcode_group, self.form_widget, self):
+            layout = widget.layout()
+            if layout:
+                layout.invalidate()
+                layout.activate()
         self.setMinimumWidth(self.minimumSizeHint().width())
         if self.parentWidget() and self.parentWidget().layout() is None:
             self.resize(max(self.minimumWidth(), self.parentWidget().width()), self.height())
         self.updateGeometry()
+
+    def _toggle_font_details(self, expanded):
+        self.font_details.setVisible(expanded)
+        self.font_details_toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self._refresh_layout()
 
     def has_batch_draft(self):
         return bool(self.multi_selection and (self.bulk_dirty or self.bulk_font_request or

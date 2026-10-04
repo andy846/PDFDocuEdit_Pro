@@ -86,7 +86,9 @@ jobs:
         run: python -m pip check
       - name: Prepare pinned composition runtime
         run: python scripts/prepare_composition_assets.py
-      - name: Run affected tests and smoke
+      - name: Prepare pinned Ghostscript
+        uses: ./.github/actions/setup-postscript
+      - name: Execute affected tests and smoke
         run: python scripts/ci_plan.py run focused "$env:FOCUSED_TESTS"
 
   core:
@@ -115,7 +117,9 @@ jobs:
         run: python -m pip check
       - name: Prepare pinned composition runtime
         run: python scripts/prepare_composition_assets.py
-      - name: Run automated suite excluding slow UI interaction tests
+      - name: Prepare pinned Ghostscript
+        uses: ./.github/actions/setup-postscript
+      - name: Execute automated suite excluding slow UI interaction tests
         run: python scripts/ci_plan.py run core
       - name: Composition performance smoke
         run: python scripts/benchmark_composition.py --records 100 --output build/composition-benchmark
@@ -153,7 +157,9 @@ jobs:
         run: python -m pip check
       - name: Prepare pinned composition runtime
         run: python scripts/prepare_composition_assets.py
-      - name: Run UI interaction tests
+      - name: Prepare pinned Ghostscript
+        uses: ./.github/actions/setup-postscript
+      - name: Execute UI interaction tests
         run: python scripts/ci_plan.py run ui
 
   cross-platform-core:

@@ -154,7 +154,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
         "Pages Per Record": result.pages_per_record, "Expected Pages": result.expected_pages,
         "Page Count": result.generated_pages, "Output Files": result.generated_files,
-        "Output File": result.output_pdf, "File Size": result.output_size,
+        "Output File": result.output_pdf, "PostScript File": result.output_ps, "File Size": result.output_size,
         "Repaired Glyphs": result.repaired_glyphs, "Repaired Records": result.repaired_records,
         "Glyph Repair Report": result.glyph_repair_report,
         "Conditional Objects": result.rule_summary.get("configured_objects", 0),
@@ -208,7 +208,7 @@ def generate(
             result.pages_per_record=media_plan.settings_for(1).output_pages_per_envelope
             result.expected_pages=media_plan.output_pages
             result.media_summary=asdict(media_plan.preflight())
-            result.warnings.append("Canon media profile: device validation pending. Inspect ticket settings and proof print before production.")
+            result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
             from composition.media.ticket import export_print_package
             result.media_summary.update(export_print_package(staging,media_plan,job.output_name,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket))
         missing = required_fields(template) - set(store.fields)
@@ -279,6 +279,12 @@ def generate(
             result.generated_pages = checked.page_count
         result.generated_files = 1
         reconcile(result)
+        if media_plan and not _defer_media_ticket:
+            from composition.media.postscript import export_postscript
+            ps=export_postscript(staging,template.media,pdf.name,is_cancelled=is_cancelled,progress=progress)
+            result.media_summary.update(ps)
+            if ps:
+                result.output_ps=str(final/ps["postscript"])
         if repair_summary["occurrences"]:
             repair_audit.rename(staging / "glyph-repairs.csv")
             result.repaired_glyphs = repair_summary["occurrences"]
@@ -329,6 +335,7 @@ def generate(
             result.warnings.append("Rule validation failed before composition. Review the reported condition; no records composed.")
         result.finished_at = now()
         result.output_pdf = ""
+        result.output_ps = ""
         result.output_size = 0
         result.generated_files = 0
         if result.error_record is None and current_record is not None and result.failed_records:
@@ -336,6 +343,8 @@ def generate(
         # Keep only diagnostics; incomplete PDFs are never published.
         for path in staging.glob("*.pdf"):
             path.unlink(missing_ok=True)
+        from composition.media.postscript import discard_postscript
+        discard_postscript(staging,result.media_summary)
         (staging/"default_ticket.jdf").unlink(missing_ok=True)
         failure_dir = output_root / f"{job.job_id}-failed"
         result.report_dir = str(failure_dir)

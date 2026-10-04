@@ -1,4 +1,4 @@
-"""Explicit opt-in during development; frozen builds carry their own flag."""
+"""V3 enables Designer by default; explicit overrides and frozen flags remain."""
 from __future__ import annotations
 
 import json
@@ -17,4 +17,5 @@ def is_enabled() -> bool:
             return json.loads(config.read_text(encoding="utf-8")).get("enabled") is True
         except (OSError, ValueError):
             return False
-    return False
+    from core.resources import APP_VERSION
+    return int(APP_VERSION.split(".",1)[0]) >= 3

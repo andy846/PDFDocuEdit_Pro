@@ -16,8 +16,8 @@ from tests.composition.test_workspace import wait_until
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 def test_media_dialog_batch_assign_roundtrip_profile_and_narrow_layout(app,tmp_path,monkeypatch):

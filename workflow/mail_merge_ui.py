@@ -420,7 +420,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.watch_settings(node,lambda:{**node.params,"default_profile":selected.currentData()},[selected])
             button("Create / update from selected job…",self.create_mapping)
         elif node.kind=="template":
-            button("Edit selected template in Designer",self.edit_template)
+            button("Edit template in Designer…",self.edit_template)
             button("Choose template per job…",self.edit_job)
         elif node.kind=="sequences":
             button("Set selected job sequence starts…",self.edit_job)
@@ -741,7 +741,9 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             return
         job=self.batch.jobs[rows[0].row()]
         self.production_summary.setPlainText("\n".join([f"{job.name} · {job.status}",job.error,
-            f"PDF: {job.result.get('output_pdf','')}",f"Reports: {job.result.get('report_dir','')}",*job.warnings]))
+            f"PDF: {job.result.get('output_pdf','')}",
+            *([f"PostScript: {job.result['output_ps']}"] if job.result.get('output_ps') else []),
+            f"Reports: {job.result.get('report_dir','')}",*job.warnings]))
 
     def review_run_job(self):
         rows=self.run_table.selectionModel().selectedRows()
@@ -781,11 +783,27 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def edit_template(self):
-        jobs=self.selected_jobs()
-        if jobs and self.project_host:
-            self.project_host.open_project(jobs[0].template_path)
-        else:
-            self.message("Select a template job in Review first.")
+        if not self.project_host:
+            self.message("Open this workflow in Document Designer to edit its templates.")
+            return
+        jobs=self.selected_jobs() or self.batch.jobs
+        if not jobs:
+            self.tabs.setCurrentWidget(self.review_page)
+            self.message("Add a template + data pair before editing a letter template.")
+            return
+        job=jobs[0]
+        if len(jobs)>1:
+            labels=[f"{i+1} · {j.name} — {Path(j.template_path).name or 'No template assigned'}"
+                    for i,j in enumerate(jobs)]
+            label,ok=QInputDialog.getItem(self,"Edit letter template","Choose a job's template",labels,0,False)
+            if not ok:
+                return
+            job=jobs[labels.index(label)]
+        if not job.template_path:
+            self.tabs.setCurrentWidget(self.review_page)
+            self.message(f"Assign a letter template to '{job.name}' using Edit Job first.")
+            return
+        return self.project_host.open_project(job.template_path)
 
     def locate_issue(self):
         jobs=self.selected_jobs()

@@ -233,14 +233,14 @@ def run(output: Path):
         window.canvas.select_ids([window.template.elements[0].id])
         check(window.properties.element is not None, "Selected object properties missing")
         window._adjust_inspector()
-        check(window.compact_inspector, "Compact inspector missing at 960 px")
+        check(window.inspector_band == "narrow", "Narrow inspector sizing missing at 960 px")
         window.focus_properties()
         app.processEvents()
         check(window.properties.isVisible() and window.properties.content.width() > 30, "Compact properties were not laid out")
         window.grab().save(str(output/f"designer-{theme}.png"))
     window.resize(1240, 820)
     window._adjust_inspector()
-    check(not window.compact_inspector, "Wide inspector did not restore")
+    check(window.inspector_band == "wide", "Wide inspector sizing did not restore")
     app.processEvents()
     check(window.properties_scroll.width() >= 260 and window.properties.isVisible(), "Wide properties were not laid out")
     window.grab().save(str(output/"designer-wide.png"))
@@ -450,7 +450,35 @@ def run(output: Path):
     wait(lambda: not excel_window.workers)
     from scripts.pdf_overlay_smoke import run_overlay
     overlay_summary = run_overlay(output/"pdf-overlay")
-    summary = {"pdf_overlay": overlay_summary, "passed":True,"frozen":bool(getattr(sys,"frozen",False)),
+    # Exercise the same frozen background worker used by a real PS production job.
+    from dataclasses import asdict
+
+    from composition.media.model import PrinterProfile, default_media
+    from composition.template.model import Element, PageSpec, Template
+    ps_window = CompositionWindow()
+    ps_window.show()
+    media=default_media()
+    media["printer_profile"]=asdict(PrinterProfile(profile_version=2,backend="postscript",family="generic",
+        profile_name="Isolated release proof",selection_mode="tray",mappings={s["id"]:{"media_position":i}
+        for i,s in enumerate(media["stocks"])}))
+    ps_template=Template(record_mode="generated",generated_count=2,media=media,pages=[
+        PageSpec(elements=[Element(value="田 / Chinese release proof",font=FontSpec(family="Noto Sans CJK HK"),width_mm=150),
+                           Element(type="i25",value="000100",x_mm=20,y_mm=70,width_mm=80,height_mm=20)]),
+        PageSpec(elements=[Element(value="Continuation")]),PageSpec(elements=[Element(value="Final page")])])
+    ps_window._commit(ps_window.template.to_dict(),ps_template.to_dict(),"PS release acceptance")
+    ps_window.start_production(str(output/"postscript"))
+    wait(lambda: ps_window.production_worker is None,120)
+    check(bool(ps_window.last_output),ps_window.production_summary.toPlainText())
+    ps_report=json.loads((Path(ps_window.last_output).parent/"job.json").read_text(encoding="utf-8"))
+    check(ps_report["status"]=="completed" and ps_report["generated_pages"]==6,"PS reconciliation failed")
+    check(Path(ps_report["output_ps"]).is_file(),"Frozen PS output missing")
+    check(ps_report["media_summary"]["postscript_pages"]==6,"Interpreted PS page count missing")
+    check(not (Path(ps_window.last_output).parent/"default_ticket.jdf").exists(),"PS backend wrote JDF")
+    ps_window.grab().save(str(output/"postscript-production.png"))
+    ps_window.undo.setClean()
+    ps_window.close()
+    wait(lambda: not ps_window.workers)
+    summary = {"postscript":ps_report,"pdf_overlay": overlay_summary, "passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
                "pdf":window.last_output, "event_loop_ticks":len(ticks), "layout":layout_metrics,
                "checks":["compact toolbar/canvas", "narrow preview navigation", "single-line full status message", "Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",

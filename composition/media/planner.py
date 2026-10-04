@@ -6,7 +6,7 @@ from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.planner import EnvelopePlan
 from composition.template.model import CompositionError
 
-from .model import MediaSpec, PrinterProfile
+from .model import MediaSpec, PrinterProfile, validate_stock_mapping
 
 
 def page_role(index,count):
@@ -84,6 +84,7 @@ class PrintPlan:
         self.dimensions=dimensions
         stocks={s["id"]:s for s in self.media.stocks}
         profile=PrinterProfile.from_dict(self.media.printer_profile)
+        requests={}
         for envelope in range(1,self.envelopes+1 if self.groups else 2):
             if is_cancelled and is_cancelled():
                 from composition.production.generator import JobCancelled
@@ -99,9 +100,10 @@ class PrintPlan:
                     stock=self.media.assignments.get(key,self.media.fallback_stock)
                     if not stock:
                         raise CompositionError(f"Media preflight: envelope / record {envelope}, logical page {logical}: no assigned Stock or fallback.")
-                    mapping=profile.mappings.get(stock,{})
-                    if not mapping.get("name") and not mapping.get("catalog_id"):
-                        raise CompositionError(f"Stock {stock}: configure its Media Catalog mapping.")
+                    request=validate_stock_mapping(profile,stocks[stock])
+                    if profile.backend=="postscript" and request in requests and requests[request]!=stock:
+                        raise CompositionError(f"Stocks {requests[request]} and {stock} have identical PostScript selection requests. Configure distinguishable media / paper sources.")
+                    requests[request]=stock
                     if dimensions:
                         width,height=dimensions[logical-1]
                         if abs(width-stocks[stock]["width_mm"])>.2 or abs(height-stocks[stock]["height_mm"])>.2:

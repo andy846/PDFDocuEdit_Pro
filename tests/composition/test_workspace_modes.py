@@ -20,8 +20,8 @@ from ui.workspace_modes import WorkspaceMode
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 @pytest.fixture
@@ -357,7 +357,9 @@ def test_integrated_designer_keeps_inspector_on_right_and_controls_reachable(win
         assert project.properties.isVisible()
         assert project.properties_scroll.mapTo(window, project.properties_scroll.rect().topLeft()).x() > project.canvas.mapTo(window, project.canvas.rect().topRight()).x()
         assert project.properties_scroll.horizontalScrollBar().maximum() == 0
-        for control in (project.properties.numbers["x_mm"], project.properties.font_family,
+        for control in (project.properties.numbers["x_mm"], project.properties.numbers["y_mm"],
+                        project.properties.numbers["width_mm"], project.properties.numbers["height_mm"],
+                        project.properties.numbers["rotation_deg"], project.properties.font_family,
                         project.properties.numbers["font_size"], project.properties.content,
                         project.properties.colour):
             project.properties_scroll.ensureWidgetVisible(control, 0, 0)

@@ -5,7 +5,7 @@ from dataclasses import asdict
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QFileDialog
+from PyQt6.QtWidgets import QFileDialog
 
 from composition.designer.workspace import CompositionWindow
 from composition.template.model import DataConfig
@@ -13,8 +13,8 @@ from tests.composition.test_designer_controls import cleanup, wait
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    return qt_application
 
 
 def close(window):

@@ -36,7 +36,7 @@ from updates.protocol import (  # noqa: E402
 
 def source_fingerprint() -> str:
     sources = [ROOT / "main.py", ROOT / "launcher.py", ROOT / "PDFDocuEdit Pro.spec", ROOT / "requirements-base.txt"]
-    for name in ("core", "ui", "dialogs", "styles", "updates"):
+    for name in ("core", "ui", "dialogs", "styles", "updates", "composition", "workflow"):
         sources.extend((ROOT / name).rglob("*.py"))
     digest = hashlib.sha256()
     for path in sorted(sources):
@@ -161,16 +161,19 @@ def main() -> int:
         return 0
     if args.skip_build and args.run_tests:
         parser.error("--run-tests requires a new build")
+    from composition.enabled import is_enabled
     from core.resources import APP_VERSION
     from updates.trust import PUBLIC_KEY_HEX
 
     if sys.platform != "win32" or sys.version_info[:2] != (3, 12) or sys.maxsize <= 2**32:
         raise UpdateError("Release builds require Windows x64 and Python 3.12.")
+    if int(APP_VERSION.split(".",1)[0])>=3 and not is_enabled():
+        raise UpdateError("V3 release packages must enable Document Designer.")
     key = serialization.load_pem_private_key(args.key.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey) or key.public_key().public_bytes_raw().hex() != PUBLIC_KEY_HEX:
         raise UpdateError("Private key does not match the embedded update public key.")
     fingerprint = source_fingerprint()
-    build_info = {"version": APP_VERSION, "source_fingerprint": fingerprint}
+    build_info = {"version": APP_VERSION, "source_fingerprint": fingerprint,"composition_enabled":is_enabled()}
     dist = ROOT / "dist" / "PDFDocuEdit Pro"
     if not args.skip_build:
         atomic_json(ROOT / "build_assets" / "update_build.json", build_info)
