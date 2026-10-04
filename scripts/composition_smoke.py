@@ -60,10 +60,10 @@ def run(output: Path):
     check(any(button.text() == "Document Designer" for button in editor.findChildren(QPushButton)),
           "Welcome composition entry missing")
     editor._welcome_tool("composition")
-    window = editor._composition_window
+    window = editor._mode_controller.host.current_project
     check(window is not None, "Composition workspace did not launch")
     from scripts.composition_layout_qa import verify_layout
-    layout_metrics = verify_layout(window, output)
+    layout_metrics = verify_layout(window, output, outer=editor)
     background = output/"company.pdf"
     with fitz.open() as doc:
         page = doc.new_page()
@@ -124,6 +124,7 @@ def run(output: Path):
     window.canvas.select_ids([window.page.elements[0].id, window.page.elements[1].id])
     window.font_size_tool.setValue(12)
     window.font_size_tool.editingFinished.emit()
+    check(window.batch_editor.apply(wait=True), "Bulk size draft did not commit")
     expected = deepcopy(bulk_before)
     for element in expected["pages"][0]["elements"][:2]:
         element["font"]["size_pt"] = 12
@@ -142,6 +143,7 @@ def run(output: Path):
     window.properties.font_style.setCurrentIndex(window.properties.font_style.findText("Bold"))
     window.properties.loading = False
     window.properties.font_style.activated.emit(window.properties.font_style.currentIndex())
+    check(window.batch_editor.apply(wait=True), "Bulk font draft did not commit")
     wait(lambda: not window.font_requests)
     for index in (1, 4):
         check(load_font(window.page.elements[index].font)[0].is_bold, "Bulk exact face failed")
@@ -219,7 +221,7 @@ def run(output: Path):
     check("1 hidden / 0 alternative" in window.preview_state.text(), "Record rule preview mismatch")
     window.grab().save(str(output/"preview-page-two.png"))
     window.page_combo.setCurrentIndex(0)
-    window.resize(960, 640)
+    editor.resize(960, 640)
     window.tabs.setCurrentIndex(2)
     wait(lambda: window.canvas.preview_item is not None)
     window.record.setValue(18)
@@ -238,13 +240,15 @@ def run(output: Path):
         app.processEvents()
         check(window.properties.isVisible() and window.properties.content.width() > 30, "Compact properties were not laid out")
         window.grab().save(str(output/f"designer-{theme}.png"))
-    window.resize(1240, 820)
+    editor.resize(1240, 820)
+    app.processEvents()
     window._adjust_inspector()
     check(window.inspector_band == "wide", "Wide inspector sizing did not restore")
     app.processEvents()
     check(window.properties_scroll.width() >= 260 and window.properties.isVisible(), "Wide properties were not laid out")
     window.grab().save(str(output/"designer-wide.png"))
-    window.resize(960, 640)
+    editor.resize(960, 640)
+    app.processEvents()
     window._adjust_inspector()
     window.field_filter.setText("account")
     check(window.fields.item(0).isHidden() and not window.fields.item(1).isHidden(), "Field filter failed")

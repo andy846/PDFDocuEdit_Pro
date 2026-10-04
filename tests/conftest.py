@@ -14,6 +14,11 @@ def qt_application():
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
+    # The real entry point installs the proxy theme before constructing any
+    # controls. Mirror that lifecycle instead of replacing native/offscreen
+    # styles for the first time after several production dialogs were closed.
+    from styles.theme import apply_theme
+    apply_theme(app, "system")
     yield app
 
 

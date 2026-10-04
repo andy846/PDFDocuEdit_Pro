@@ -98,7 +98,7 @@ def test_build_fingerprint_tracks_designer_and_workflow_sources(tmp_path,monkeyp
     for name in ("main.py","launcher.py","PDFDocuEdit Pro.spec","requirements-base.txt"):
         (tmp_path/name).write_text("initial",encoding="utf-8")
     baseline=update_release.source_fingerprint()
-    for name in ("composition/engine/renderer.py","workflow/engine.py"):
+    for name in ("composition/engine/renderer.py","workflow/engine.py", "scripts/composition_smoke.py"):
         path=tmp_path/name
         path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text("changed source",encoding="utf-8")

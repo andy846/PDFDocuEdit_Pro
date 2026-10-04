@@ -35,8 +35,12 @@ def run_overlay(output):
     window.show()
     window.inspect_source(source)
     wait(lambda: window.spec is not None and not window.active_worker)
-    if len(window.spec.objects) != 2:
-        raise RuntimeError("Default sequence/control barcode missing")
+    if len(window.spec.objects) != 1 or window.spec.requires_control_barcode:
+        raise RuntimeError("New source must start with a sequence and no implicit control barcode")
+    window.add_object("code128", x=20, y=35)
+    window.control.setChecked(True)
+    if not window.spec.requires_control_barcode:
+        raise RuntimeError("Explicit control barcode was not enabled")
     window.add_object("qr", "EnvelopeSeq", x=120, y=65)
     window.envelope.setValue(20)
     window.print_page.setValue(3)

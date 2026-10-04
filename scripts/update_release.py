@@ -36,7 +36,7 @@ from updates.protocol import (  # noqa: E402
 
 def source_fingerprint() -> str:
     sources = [ROOT / "main.py", ROOT / "launcher.py", ROOT / "PDFDocuEdit Pro.spec", ROOT / "requirements-base.txt"]
-    for name in ("core", "ui", "dialogs", "styles", "updates", "composition", "workflow"):
+    for name in ("core", "ui", "dialogs", "styles", "updates", "composition", "workflow", "scripts"):
         sources.extend((ROOT / name).rglob("*.py"))
     digest = hashlib.sha256()
     for path in sorted(sources):
