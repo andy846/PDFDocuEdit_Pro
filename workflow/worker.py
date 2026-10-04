@@ -14,8 +14,44 @@ from .extraction import ExtractionSpec, ExtractionStore, extract_page
 from .model import WorkflowRun, WorkflowSpec
 
 
-def dispatch(request, progress, cancelled):
+def dispatch(request, progress, cancelled, emit_state=None):
     operation=request["operation"]
+    if operation.startswith("batch_"):
+        from .batch import BatchRun, approve, execute_batch, load_record, prepare, save_record
+        if operation=="batch_load":
+            return {"batch":load_record(request["path"]).to_dict()}
+        run=BatchRun.from_dict(request["batch"])
+        if operation=="batch_project_save":
+            from .serializer import save_workflow
+            path=save_workflow(WorkflowSpec.from_dict(request["spec"]),request["path"],is_cancelled=cancelled)
+            save_record(run,Path(path).with_suffix(".batch.json"))
+            return {"path":path}
+        if operation=="batch_save":
+            save_record(run,request["path"])
+            return {"path":request["path"]}
+        spec=WorkflowSpec.from_dict(request["spec"])
+        if operation=="batch_check":
+            return {"batch":prepare(spec,run,request["directory"],progress=progress,is_cancelled=cancelled).to_dict()}
+        if operation=="batch_run":
+            approve(run,request["approved"])
+            return {"batch":execute_batch(spec,run,request["output_dir"],progress=progress,is_cancelled=cancelled,on_state=emit_state).to_dict()}
+        if operation=="batch_preview":
+            from composition.data.sequences import open_records
+            from composition.engine.preview_raster import save_preview
+            from composition.engine.renderer import render_preview
+            from composition.template.model import Template
+            job=next(j for j in run.jobs if j.id==request["job_id"])
+            # Preview the exact frozen input that was checked, only one requested page.
+            template=Template.from_dict(job.prepared_template)
+            records=open_records(template,job.record_store)
+            ordinal=request["record"]
+            raw=render_preview(template,records.record(ordinal),ordinal=ordinal,page_index=request.get("page",1)-1,
+                               auto_repair=bool(spec.node("compose").params.get("auto_repair",True)))
+            image=Path(request["target"])
+            with fitz.open(stream=raw,filetype="pdf") as doc:
+                save_preview(doc[0],image,2)
+            return {"image":str(image),"job_id":job.id,"record":ordinal,"pages":len(template.pages)}
+        raise CompositionError("Unknown batch operation.")
     if operation=="run":
         return asdict(execute(WorkflowSpec.from_dict(request["spec"]),WorkflowRun(**request["run"]),
                               request["directory"],until=request.get("until","review"),

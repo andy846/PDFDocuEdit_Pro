@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 
 def new_job_id() -> str:
@@ -15,6 +17,15 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def validate_output_name(name):
+    from composition.template.model import CompositionError
+    if (not isinstance(name,str) or len(name)>160 or not name.lower().endswith(".pdf")
+            or name!=Path(name).name or re.search(r'[<>:"/\\|?*\x00-\x1f]',name)
+            or name.rstrip(" .")!=name or name in (".pdf","..pdf")
+            or re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?",name)):
+        raise CompositionError("Output needs a valid PDF filename, without folders or reserved characters.")
+
+
 @dataclass
 class ProductionJob:
     template: dict
@@ -23,6 +34,7 @@ class ProductionJob:
     job_id: str = field(default_factory=new_job_id)
     chunk_size: int = 500
     auto_repair: bool = False
+    output_name: str = "production.pdf"
 
 
 @dataclass

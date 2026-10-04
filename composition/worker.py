@@ -36,7 +36,7 @@ def dispatch(request: dict) -> dict:
 
     if task == "workflow":
         from workflow.worker import dispatch as workflow_dispatch
-        return workflow_dispatch(request, progress, cancelled)
+        return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state))
     if task == "mailpiece_preview":
         import fitz
 

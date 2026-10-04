@@ -13,6 +13,7 @@ class Worker(QObject):
     resultReady = pyqtSignal(dict)
     failed = pyqtSignal(str)
     progress = pyqtSignal(int, int, str)
+    stateChanged = pyqtSignal(dict)
     ended = pyqtSignal()
 
     def __init__(self, directory: Path, request: dict, parent=None):
@@ -70,6 +71,8 @@ class Worker(QObject):
             kind = event.get("event")
             if kind == "progress":
                 self.progress.emit(event["done"], event["total"], event["message"])
+            elif kind == "state":
+                self.stateChanged.emit(event["state"])
             elif kind == "result" and not self.delivered:
                 self.delivered = True
                 self.resultReady.emit(event["result"])

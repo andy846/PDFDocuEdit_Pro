@@ -25,7 +25,7 @@ from composition.template.model import CompositionError, Template, required_fiel
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
 
-from .model import JobResult, ProductionJob, now
+from .model import JobResult, ProductionJob, now, validate_output_name
 from .resources import peak_memory
 
 
@@ -174,6 +174,7 @@ def generate(
         raise CompositionError("Chunk size must be between 1 and 1,000 pages.")
     if type(job.auto_repair) is not bool:
         raise CompositionError("Automatic glyph repair must be a boolean.")
+    validate_output_name(job.output_name)
     template = Template.from_dict(job.template)
     output_root = Path(job.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -250,7 +251,7 @@ def generate(
                 raise CompositionError("A template asset changed during production. Run the job again.")
         if progress:
             progress(store.count, store.count, "Assembling and validating production PDF")
-        pdf = staging / "production.pdf"
+        pdf = staging / job.output_name
         result.assembler_peak_memory_bytes = _assemble(chunks, pdf, executable, is_cancelled)
         for path in chunks:
             path.unlink()

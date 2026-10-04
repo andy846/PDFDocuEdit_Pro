@@ -12,8 +12,12 @@ from dataclasses import asdict, dataclass, field
 from composition.template.model import CompositionError
 
 KINDS = ("input", "merge", "extract", "group", "review", "overlay", "output")
+MAIL_KINDS = ("data", "mapping", "template", "sequences", "mail_review", "compose", "reports")
 LABELS = {"input":"PDF Input", "merge":"Merge PDFs", "extract":"Extract Regions",
-          "group":"Group Mailpieces", "review":"Review", "overlay":"Overlay", "output":"Validate & Output"}
+          "group":"Group Mailpieces", "review":"Review", "overlay":"Overlay", "output":"Validate & Output",
+          "data":"Data Input", "mapping":"Field Mapping", "template":"Letter Template",
+          "sequences":"Fields & Sequences", "mail_review":"Preview & Review", "compose":"Compose",
+          "reports":"Validate & Reports"}
 
 
 @dataclass
@@ -42,6 +46,24 @@ class WorkflowSpec:
         return cls(nodes=nodes,edges=[[a.id,b.id] for a,b in zip(nodes,nodes[1:],strict=False)])
 
     @classmethod
+    def mail_merge(cls):
+        nodes = [WorkflowNode(k, x=(i % 3)*230, y=(i // 3)*150) for i, k in enumerate(MAIL_KINDS)]
+        return cls(name="Mail Merge Production", nodes=nodes,
+                   edges=[[a.id,b.id] for a,b in zip(nodes,nodes[1:],strict=False)],
+                   workflow_version=2, project_kind="mail_merge_workflow")
+
+    @property
+    def kinds(self):
+        return MAIL_KINDS if self.project_kind=="mail_merge_workflow" else KINDS
+
+    def allowed_next(self, kind):
+        if self.project_kind=="mail_merge_workflow":
+            index=MAIL_KINDS.index(kind)
+            return set(MAIL_KINDS[index+1:index+2])
+        return {"input":{"merge","extract"},"merge":{"extract"},"extract":{"group"},
+                "group":{"review"},"review":{"overlay","output"},"overlay":{"output"}}.get(kind,set())
+
+    @classmethod
     def from_dict(cls, raw):
         try:
             result=cls(**{**copy.deepcopy(raw),"nodes":[WorkflowNode(**n) for n in raw["nodes"]]})
@@ -51,14 +73,16 @@ class WorkflowSpec:
             raise CompositionError("Invalid workflow structure") from exc
 
     def validate(self):
-        if (type(self.workflow_version) is not int or self.workflow_version!=1 or self.project_kind!="pdf_workflow"
+        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2)
+                or self.project_kind not in ("pdf_workflow","mail_merge_workflow")
+                or (self.project_kind=="mail_merge_workflow" and self.workflow_version!=2)
                 or not isinstance(self.name,str) or len(self.name)>200 or not isinstance(self.nodes,list)
                 or not 1<=len(self.nodes)<=7 or not isinstance(self.edges,list) or len(self.edges)>6):
             raise CompositionError("Unsupported workflow format or graph size.")
         ids=set()
         kinds=set()
         for n in self.nodes:
-            if (not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",n.id) or n.id in ids or n.kind not in KINDS
+            if (not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",n.id) or n.id in ids or n.kind not in self.kinds
                     or n.kind in kinds or not isinstance(n.params,dict)
                     or any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>100000 for v in (n.x,n.y))):
                 raise CompositionError("Invalid/duplicate workflow node.")
@@ -78,24 +102,25 @@ class WorkflowSpec:
             incoming[b]=a
             left=next(n.kind for n in self.nodes if n.id==a)
             right=next(n.kind for n in self.nodes if n.id==b)
-            allowed={"input":{"merge","extract"},"merge":{"extract"},"extract":{"group"},
-                     "group":{"review"},"review":{"overlay","output"},"overlay":{"output"}}
-            if right not in allowed.get(left,set()):
+            if right not in self.allowed_next(left):
                 raise CompositionError(f"{LABELS[left]} cannot connect to {LABELS[right]}.")
 
     def chain(self):
         self.validate()
         kinds={n.kind:n for n in self.nodes}
-        if not {"input","extract","group","review","output"}<=kinds.keys():
+        required=set(MAIL_KINDS) if self.project_kind=="mail_merge_workflow" else {"input","extract","group","review","output"}
+        if not required<=kinds.keys():
+            if self.project_kind=="mail_merge_workflow":
+                raise CompositionError("Connect every Mail Merge step, from Data Input to Validate & Reports.")
             raise CompositionError("Connect PDF Input, Extract Regions, Group Mailpieces, Review and Output.")
         edges=dict(self.edges)
-        current=kinds["input"]
+        current=kinds["data" if self.project_kind=="mail_merge_workflow" else "input"]
         chain=[]
         while current:
             chain.append(current)
             following=edges.get(current.id)
             current=next((n for n in self.nodes if n.id==following),None)
-        if len(chain)!=len(self.nodes) or chain[-1].kind!="output":
+        if len(chain)!=len(self.nodes) or chain[-1].kind!=("reports" if self.project_kind=="mail_merge_workflow" else "output"):
             raise CompositionError("Connect every node into one complete input-to-output chain.")
         return chain
 

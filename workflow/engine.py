@@ -44,6 +44,8 @@ def context_fingerprint(spec, *, include_overlay=True):
 
 def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None):
     spec.chain()
+    if spec.project_kind!="pdf_workflow":
+        raise CompositionError("Use the Mail Merge batch executor for this workflow type.")
     root=Path(directory)
     root.mkdir(parents=True,exist_ok=True)
     reserved={(root/name).resolve() for name in ("source.pdf","extraction.sqlite","source-map.jsonl","run.json")}
