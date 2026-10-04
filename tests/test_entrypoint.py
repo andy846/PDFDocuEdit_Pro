@@ -204,3 +204,59 @@ def test_single_instance_router_forwards_pdf_paths(tmp_path) -> None:
     assert received == [[str(source.resolve())]]
     router._server.close()
     QLocalServer.removeServer(server_name)
+
+
+def test_single_instance_router_releases_pending_connections() -> None:
+    """Late disconnects must not retain or call an already collected router."""
+    script = """
+import gc
+import sys
+import time
+import traceback
+import uuid
+import weakref
+from PyQt6.QtCore import QCoreApplication, QEvent
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
+from PyQt6.QtWidgets import QApplication
+from main import SingleInstanceRouter
+
+app = QApplication(['router-lifetime-test'])
+errors = []
+sys.excepthook = lambda *args: errors.append(''.join(traceback.format_exception(*args)))
+for _ in range(20):
+    name = 'PDFDocuEditPro-lifetime-' + uuid.uuid4().hex
+    router = SingleInstanceRouter(name)
+    assert router.listen()
+    client = QLocalSocket()
+    client.connectToServer(name)
+    assert client.waitForConnected(1000)
+    deadline = time.monotonic() + 3
+    while not router._buffers and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.001)
+    assert router._buffers
+    reference = weakref.ref(router)
+    router._server.close()
+    del router
+    # Qt must disconnect slots belonging to the deleted QObject without a
+    # Python lambda/socket cycle keeping that QObject alive until cyclic GC.
+    assert reference() is None
+    client.disconnectFromServer()
+    gc.collect()
+    app.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QLocalServer.removeServer(name)
+assert not errors, errors
+"""
+    environment = os.environ.copy()
+    environment["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

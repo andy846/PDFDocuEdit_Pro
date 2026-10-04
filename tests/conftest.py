@@ -3,7 +3,33 @@ from __future__ import annotations
 import os
 import tempfile
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qt_application():
+    """Keep Qt alive across UI modules; destroying and recreating it is unsafe."""
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    # The real entry point installs the proxy theme before constructing any
+    # controls. Mirror that lifecycle instead of replacing native/offscreen
+    # styles for the first time after several production dialogs were closed.
+    from styles.theme import apply_theme
+    apply_theme(app, "system")
+    yield app
+
+
+@pytest.fixture(autouse=True)
+def flush_qt_deferred_deletions():
+    """processEvents alone does not perform event-loop DeferredDelete teardown."""
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def pytest_configure(config) -> None:

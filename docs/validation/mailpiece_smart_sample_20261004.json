@@ -1,0 +1,88 @@
+{
+  "pages": 2497,
+  "candidate_mailpieces": 398,
+  "first_groups": [
+    [
+      1,
+      8
+    ],
+    [
+      9,
+      16
+    ],
+    [
+      17,
+      24
+    ],
+    [
+      25,
+      31
+    ],
+    [
+      32,
+      37
+    ],
+    [
+      38,
+      43
+    ],
+    [
+      44,
+      49
+    ],
+    [
+      50,
+      55
+    ]
+  ],
+  "findings": 0,
+  "suggestions": [
+    {
+      "title": "First-page marker: Dear",
+      "reason": "Fixed-position marker on 398 pages; 2 identity field(s) available for cross-checking. Ends are inferred from the next start.",
+      "examples": [
+        1,
+        9,
+        17,
+        25
+      ],
+      "config": {
+        "rules": [
+          {
+            "kind": "first_text",
+            "terms": [
+              "Dear"
+            ],
+            "region_mm": [
+              23.794445546468097,
+              191.94945933024087,
+              9.820274289449054,
+              13.75167999267578
+            ]
+          },
+          {
+            "kind": "document_id",
+            "fields": [
+              {
+                "label": "Employer Account No"
+              },
+              {
+                "label": "Member Account No"
+              }
+            ]
+          }
+        ],
+        "combine": "any",
+        "region_mm": null,
+        "remove_separators": true,
+        "version": 2,
+        "profile_name": ""
+      }
+    }
+  ],
+  "analysis_seconds": 4.71,
+  "cached_scan_seconds": 3.2,
+  "coverage": 2497,
+  "end_basis": "pdf_end_inferred",
+  "full_count_independently_confirmed": false
+}

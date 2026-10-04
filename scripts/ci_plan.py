@@ -12,6 +12,13 @@ TESTS = ROOT / "tests"
 
 SMOKE_TESTS = ("tests/test_commands.py", "tests/test_source_contract.py")
 UI_TESTS = (
+    "tests/composition/test_media_ui.py",
+    "tests/composition/test_postscript_ui.py",
+    "tests/composition/test_review_fixes.py",
+    "tests/test_workflow_designer_home.py",
+    "tests/test_mail_merge_workflow_ui.py",
+    "tests/test_workflow_ui.py",
+    "tests/test_merge_workbench_ui.py",
     "tests/test_advanced_organizer.py",
     "tests/test_detailed_dialogs.py",
     "tests/test_entrypoint.py",
@@ -36,8 +43,33 @@ UI_TESTS = (
     "tests/test_ui_smoke.py",
     "tests/test_update_ui.py",
     "tests/test_windows_taskbar.py",
+    "tests/test_overlay_ui.py",
+    "tests/composition/test_auto_fallback.py",
+    "tests/composition/test_bulk_typography.py",
+    "tests/composition/test_canvas_continuity.py",
+    "tests/composition/test_compact_layout.py",
+    "tests/composition/test_designer_consolidation.py",
+    "tests/composition/test_designer_controls.py",
+    "tests/composition/test_designer_entry.py",
+    "tests/composition/test_designer_hardening.py",
+    "tests/composition/test_designer_usability.py",
+    "tests/composition/test_document_designer.py",
+    "tests/composition/test_excel_import.py",
+    "tests/composition/test_glyph_repair_ui.py",
+    "tests/composition/test_i25.py",
+    "tests/composition/test_layout_geometry.py",
+    "tests/composition/test_mailpiece_detection.py",
+    "tests/composition/test_multipage_ui.py",
+    "tests/composition/test_optional_overlay_barcode.py",
+    "tests/composition/test_pdf_overlay_ui.py",
+    "tests/composition/test_rules_ui.py",
+    "tests/composition/test_sequences.py",
+    "tests/composition/test_workspace.py",
+    "tests/composition/test_workspace_modes.py",
+    "tests/composition/test_workspace_handoff.py",
 )
 CROSS_PLATFORM_TESTS = (
+    "tests/composition/test_production.py",
     "tests/test_annotation_transactions.py",
     "tests/test_annotations.py",
     "tests/test_bookmarks.py",
@@ -58,18 +90,21 @@ CROSS_PLATFORM_TESTS = (
     "tests/test_tasks.py",
     "tests/test_toc.py",
     "tests/test_undo_history.py",
+    "tests/composition/test_models_data.py",
+    "tests/composition/test_renderer.py",
 )
 ZERO_SHA = "0" * 40
 
 
 def is_ui_change(path: str) -> bool:
     return path == "main.py" or path == "core/viewer.py" or path.startswith(
-        ("ui/", "dialogs/", "styles/")
+        ("ui/", "dialogs/", "styles/", "composition/designer/", "composition/preview/", "workflow/workspace",
+         "workflow/regions_ui", "workflow/canvas", "workflow/chrome", "workflow/mail_merge_ui", "workflow/node_settings")
     ) or path in UI_TESTS
 
 
 def is_cross_platform_change(path: str) -> bool:
-    return path.startswith(("core/", "ui/", "dialogs/", "styles/", "updates/")) or path in {
+    return path.startswith(("core/", "ui/", "dialogs/", "styles/", "updates/", "composition/", "workflow/")) or path in {
         "main.py", "launcher.py", "pyproject.toml", "requirements-base.txt", "requirements-dev.txt"
     } or path in CROSS_PLATFORM_TESTS
 
@@ -78,7 +113,7 @@ def focused_tests(paths: list[str]) -> tuple[str, ...]:
     selected = set(SMOKE_TESTS)
     test_sources = {
         path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
-        for path in TESTS.glob("test_*.py")
+        for path in TESTS.rglob("test_*.py")
     }
     for path in paths:
         if path.startswith("tests/") and path in test_sources:
@@ -142,14 +177,14 @@ def plan(event: str, ref: str, paths: list[str]) -> dict[str, str]:
 def run_tests(mode: str, tests: str = "") -> int:
     if mode == "focused":
         paths = tests.split()
-        available = {item.relative_to(ROOT).as_posix() for item in TESTS.glob("test_*.py")}
+        available = {item.relative_to(ROOT).as_posix() for item in TESTS.rglob("test_*.py")}
         if not paths or any(path not in available for path in paths):
             raise ValueError("Invalid focused test selection")
         command = [sys.executable, "-m", "pytest", *paths]
     elif mode == "core":
-        command = [sys.executable, "-m", "pytest", *(f"--ignore={path}" for path in UI_TESTS)]
+        command = [sys.executable, "scripts/regression_suite.py", "--group", "core", "--output", "build/ci-core"]
     elif mode == "ui":
-        command = [sys.executable, "-m", "pytest", *UI_TESTS]
+        command = [sys.executable, "scripts/regression_suite.py", "--group", "ui", "--output", "build/ci-ui"]
     elif mode == "cross":
         command = [sys.executable, "-m", "pytest", *CROSS_PLATFORM_TESTS]
     else:

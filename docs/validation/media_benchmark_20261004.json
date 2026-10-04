@@ -1,0 +1,48 @@
+{
+  "fixture": "synthetic, 3 A4 pages / record, 3 alternating stocks, simplex",
+  "scope": "Physical planning + disk-backed reports + JDF; not PDF rendering, hardware validation or a throughput guarantee",
+  "results": [
+    {
+      "records": 1000,
+      "pages": 3000,
+      "planning_seconds": 0.0010273000225424767,
+      "report_seconds": 0.3362963000545278,
+      "python_peak_bytes": 588017,
+      "stock_sheets": {
+        "LH_A": 1000,
+        "LH_B": 1000,
+        "LH_C": 1000
+      },
+      "ticket_bytes": 17020,
+      "ticket_status": "checked"
+    },
+    {
+      "records": 10000,
+      "pages": 30000,
+      "planning_seconds": 0.000367300002835691,
+      "report_seconds": 2.8172247000038624,
+      "python_peak_bytes": 4060638,
+      "stock_sheets": {
+        "LH_A": 10000,
+        "LH_B": 10000,
+        "LH_C": 10000
+      },
+      "ticket_bytes": 191556,
+      "ticket_status": "checked"
+    },
+    {
+      "records": 50000,
+      "pages": 150000,
+      "planning_seconds": 0.00036669999826699495,
+      "report_seconds": 13.953076699981466,
+      "python_peak_bytes": 2222813,
+      "stock_sheets": {
+        "LH_A": 50000,
+        "LH_B": 50000,
+        "LH_C": 50000
+      },
+      "ticket_bytes": 0,
+      "ticket_status": "Canon reference ticket exceeds the configured size limit. Split output into fewer complete records / envelopes per file."
+    }
+  ]
+}

@@ -1,6 +1,43 @@
-# PDFDocuEdit Pro V2.5.16
+# PDFDocuEdit Pro V3.0.0
 
-PDFDocuEdit Pro 是一套以 PyQt6 及 PyMuPDF 開發的桌面 PDF 工作空間，集中處理閱覽、整理、標註、搜尋、列印、格式轉換及批次文件工作。支援 Windows 及 macOS。
+**PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
+
+本次發佈平台為 **Windows x64**，提供 Setup、Managed Portable 及簽署更新包。macOS 核心測試與 Windows 安裝包驗收分開記錄；本次不提供 V3 macOS 安裝包。
+
+## V3.0.0 新功能
+
+| 工作區 | 能力 |
+| --- | --- |
+| PDF Workspace | 保留閱覽、編輯、標註、Organizer、Preflight、OCR、搜尋、列印及間尺；Merge PDFs 使用獨立分頁，可調整來源、選頁與預覽。 |
+| Document Designer | 多頁 PDF 背景或空白模板、CSV/TXT/Excel 資料、Merge Fields、流水號、Code 128／QR／I25、條件規則、批次文字與幾何設定、間尺與磁吸對齊。 |
+| PDF 套印 | 固定或覆核後的可變頁數分封；加入序號、文字及入信 Barcode，保留來源頁對照及 QC 紀錄。 |
+| Visual Workflow | 可視節點設定 Visual Extraction Region、資料映射／處理、不同信件模板、預覽覆核、生成、選紙及分檔；批次工作各自記錄狀態與結果。 |
+| 生產輸出 | PDF、PDF + Canon offline JDF 或 **PDF + PostScript**；以 Stock 指定各頁用紙，Printer Profile 保存各環境的 MediaType／MediaPosition 對應。 |
+
+### 快速開始
+
+1. 在主工具列切換 **PDF Workspace｜Document Designer**。切換保留當次工作、未保存修改與背景任務。
+2. 已加工的 PDF 可用 **Send to Designer** 建立一般多頁 Mail Merge 專案或 PDF Overlay 專案。
+3. 一般模板：匯入資料 → 放置 Fields／Sequences／Barcode → 逐筆預覽 → 保存 `.pdcx` → Generate Production PDF。
+4. 已完成 PDF：Auto Detect Mailpieces → 查看規律與例外 → 接受邊界 → 加入套印物件 → 生成及核對。
+5. 選紙輸出：一般 Designer 的 **Page → Print Media / Stocks…**；Overlay 的 **Production → Print Media / Stocks…**；Workflow 則配置 **Media Assignment** 節點。
+
+### PostScript 與 Printer Profile
+
+在 **Printer profile** 選擇 `PDF + PostScript (no separate job ticket)`，配置每個 Stock 的 **MediaType／Colour** 或 **MediaPosition**，保存環境 profile。先用 **Export paper-selection test PS…** 列印少量測試紙，再正式生成。
+
+PS 模式保留核對 PDF，另產生 PS、逐頁選紙 CSV、機器可讀報告及 Job log；分檔後每個套件有自己的 PS。程式會解譯 PS 核對頁數及尺寸，失敗／取消不發布半成品。
+
+實際紙匣編號、紙張屬性及 DFE 佇列覆蓋行為需要實機確認；通用 profile 不包含未驗證的機型 preset。PS 透明效果可能平面化，提供 300／600／1200 dpi 設定。詳見 [PS / Profile 操作指南](docs/POSTSCRIPT_USER_GUIDE.md)。
+
+### 生產核對與邊界
+
+- 生成在背景執行，提供取消、輸入／處理／成功／失敗筆數、頁數、輸出檔案及 reconciliation。
+- Windows 字體供模板選用；缺字可逐字修復或自動使用可用字體，保留主要字體並記錄替代頁數／字元。
+- 自動分封依文字層、位置、頁碼及識別資料；證據不足時要求覆核，不宣稱能替任何 PDF 自動證明信件完整。
+- 入信機的 barcode value／讀取位置，以及打印機選紙仍須按實際設備規格配置。軟件驗證不代表實機已驗收。
+
+詳見 [v3.0.0 發佈說明](docs/RELEASE_NOTES_3.0.0.md) 及 [正式驗收記錄](docs/RELEASE_VALIDATION_3.0.0.md)。以下 V2 章節保留作歷史更新記錄。
 
 ## V2.5.16 Deep Search 與間尺增強
 
@@ -70,7 +107,7 @@ startup rollback. First deployment can use the Inno Setup installer or extract
 the Managed Portable ZIP; both launch through Launcher.exe.
 See [更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V2.5.16 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v2.5.16). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
+Download the [V3.0.0 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.0). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
 Existing legacy Setup installations need a one-time transition to the managed installer or portable package.
 
 ## V2.5.4 stability update
@@ -82,7 +119,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - CI runs affected tests and basic smoke checks on ordinary branch pushes. PRs and merges run the Windows automated suite; UI interaction and Linux/macOS core jobs run when relevant files change, and version tags run every test group. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V2.5.16. Setup and Managed Portable downloads include SHA-256 files.
+The current Windows x64 release is V3.0.0. Setup and Managed Portable downloads include SHA-256 files.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -158,8 +195,8 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：[Inno Setup V2.5.16](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.16/PDFDocuEdit-Pro-v2.5.16-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
-- 免安裝版：[Managed Portable V2.5.16](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v2.5.16/PDFDocuEdit-Pro-v2.5.16-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 安裝版：[Inno Setup V3.0.0](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.0/PDFDocuEdit-Pro-v3.0.0-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
+- 免安裝版：[Managed Portable V3.0.0](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.0/PDFDocuEdit-Pro-v3.0.0-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
 - 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。各下載均有同名 .sha256 校驗檔。
 
 ### Windows release build
@@ -167,6 +204,8 @@ Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/relea
 在 Windows x64 安裝 Python 3.12、Inno Setup 6 並設定更新簽署私鑰後，可執行
 `scripts\build_windows.bat`。確認同一提交的 GitHub CI 已通過後執行；流程會驗證 source，並建立 PyInstaller
 程式、簽署更新 ZIP、Managed Portable ZIP、Inno Setup 安裝檔及各自的 SHA-256 checksum。
+
+V3 預設包含 Document Designer；先以 Python 3.12 執行 `scripts/prepare_composition_assets.py`，準備 manifest 驗證的字體及 qpdf。開發時可用 `PDFDOCUEDIT_ENABLE_COMPOSITION=0` 暫時關閉；正式發佈不可關閉此功能。
 
 正式簽署 build 可設定以下環境變數：
 

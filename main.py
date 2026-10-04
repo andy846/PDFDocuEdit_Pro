@@ -9,7 +9,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
+# Worker dispatch must precede Qt/editor imports in frozen development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-worker":
+    from composition.worker import main as composition_worker_main
+    raise SystemExit(composition_worker_main(sys.argv[2:]))
+
+# Internal acceptance mode is available only in explicitly enabled development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-smoke":
+    from composition.enabled import is_enabled
+    if not is_enabled() or os.environ.get("PDFDOCUEDIT_COMPOSITION_QA") != "1":
+        raise SystemExit("Composition acceptance mode requires an enabled development build.")
+    from importlib import import_module
+    raise SystemExit(import_module("scripts.composition_smoke").main(sys.argv[2:]))
+
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QSplashScreen
@@ -112,13 +125,21 @@ class SingleInstanceRouter(QObject):
             if socket is None:
                 continue
             self._buffers[socket] = bytearray()
-            socket.readyRead.connect(
-                lambda current=socket: self._read_socket(current)
-            )
-            socket.disconnected.connect(
-                lambda current=socket: self._drop_socket(current)
-            )
+            socket.readyRead.connect(self._socket_ready)
+            socket.disconnected.connect(self._socket_disconnected)
             self._read_socket(socket)
+
+    @pyqtSlot()
+    def _socket_ready(self) -> None:
+        socket = self.sender()
+        if isinstance(socket, QLocalSocket):
+            self._read_socket(socket)
+
+    @pyqtSlot()
+    def _socket_disconnected(self) -> None:
+        socket = self.sender()
+        if isinstance(socket, QLocalSocket):
+            self._drop_socket(socket)
 
     def _read_socket(self, socket: QLocalSocket) -> None:
         if socket not in self._buffers:

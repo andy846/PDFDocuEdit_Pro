@@ -1,0 +1,78 @@
+{
+  "date": "2026-10-01",
+  "code_commit": "066d7bb",
+  "public_version": "2.5.15",
+  "full_regression": {
+    "tests": 934,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "console_elapsed_seconds": 818.68,
+    "composition_tests": 101
+  },
+  "new_usability_tests": 13,
+  "static_checks": [
+    "Ruff all repository passed",
+    "source verification passed",
+    "git diff --check passed"
+  ],
+  "frozen_acceptance": {
+    "passed": true,
+    "scale": "2",
+    "records": 100,
+    "pages": 200,
+    "event_loop_ticks": 528,
+    "checks": [
+      "Welcome entry",
+      "PDF background",
+      "CSV import",
+      "Chinese preview",
+      "exact fonts",
+      "Windows font family/style selection",
+      "Code128 decoding",
+      "QR decoding",
+      "save and reopen",
+      "reconciliation",
+      "background production",
+      "existing editor open",
+      "per-glyph repair preserves primary face",
+      "glyph repair audit",
+      "multi-page template/save/preview",
+      "page reorder and undo",
+      "independent page sizes",
+      "record/page reconciliation",
+      "typed variable drafts",
+      "compact/wide inspector",
+      "field filtering"
+    ]
+  },
+  "installed_acceptance": {
+    "passed": true,
+    "scale": "1",
+    "qa_installation_removed": true,
+    "registered_pdf_handlers": false,
+    "records": 100,
+    "pages": 200
+  },
+  "executable": {
+    "path": "dist-designer-usability\\PDFDocuEdit Pro\\PDFDocuEdit Pro.exe",
+    "sha256": "cf18cef1d1d20ba9c19e334bf7daff142ca4d406e5b2c12452342c69dd27792a"
+  },
+  "portable_archive": {
+    "path": "release\\PDFDocuEdit-Pro-v2.5.15-Document-Designer-Dev-Usability-Portable-Windows-x64.zip",
+    "bytes": 350307593,
+    "sha256": "75af29a81f4bc86b0897704c234b55830028fbba8b5a4ec44451ed90cd6141b8"
+  },
+  "evidence": [
+    "build/qa-designer-usability-regression.xml",
+    "build/qa-designer-usability-focused.xml",
+    "build/qa-designer-usability-frozen/result.json",
+    "build/composition-install-qa/result.json"
+  ],
+  "limitations": [
+    "Synthetic acceptance data; customer source files not modified",
+    "Qt screenshots rendered offscreen; current user window not inspected",
+    "No new production throughput benchmark; engine unchanged",
+    "QA installer isolation; not an in-place production upgrade"
+  ]
+}

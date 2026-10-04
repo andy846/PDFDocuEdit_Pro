@@ -20,6 +20,7 @@ from styles.tokens import D, S
 
 from .icons import brand_pixmap
 from .motion import MotionIconButton
+from .workspace_modes import ModeSwitcher, WorkspaceMode
 
 
 class CommandBar(QWidget):
@@ -40,6 +41,7 @@ class CommandBar(QWidget):
     minimizeRequested = pyqtSignal()
     maximizeRestoreRequested = pyqtSignal()
     closeRequested = pyqtSignal()
+    modeRequested = pyqtSignal(str)
 
     def __init__(self, theme: str = "system", parent=None):
         super().__init__(parent)
@@ -73,9 +75,19 @@ class CommandBar(QWidget):
         )
         layout.addWidget(self._panel)
 
+        self._designer_action: QAction | None = None
+        self._mode = WorkspaceMode.PDF
+        self.mode_switcher = ModeSwitcher(self)
+        self._designer = self.mode_switcher.buttons[WorkspaceMode.DESIGNER]
+        self.mode_switcher.modeRequested.connect(self._request_mode)
+        self._designer.hide()
+        self.mode_switcher.hide()
+        layout.addWidget(self.mode_switcher)
+
         divider = QFrame()
         divider.setObjectName("commandDivider")
         divider.setFrameShape(QFrame.Shape.VLine)
+        self._document_divider = divider
         layout.addWidget(divider)
         layout.addSpacing(S.XS)
 
@@ -98,6 +110,7 @@ class CommandBar(QWidget):
         canvas_divider = QFrame()
         canvas_divider.setObjectName("commandDivider")
         canvas_divider.setFrameShape(QFrame.Shape.VLine)
+        self._canvas_divider = canvas_divider
         layout.addWidget(canvas_divider)
         self._canvas_group = QButtonGroup(self)
         self._canvas_group.setExclusive(True)
@@ -240,6 +253,7 @@ class CommandBar(QWidget):
         menu.addAction(preferences)
         menu.addSeparator()
         menu.addAction(about)
+        self._pdf_more_menu = menu
         self._more.setMenu(menu)
         self._more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         layout.addWidget(self._more)
@@ -283,10 +297,20 @@ class CommandBar(QWidget):
 
         self.set_document_available(False)
 
+    def set_designer_action(self, action: QAction) -> None:
+        """Expose the feature-gated editor action without coupling this bar to Composition."""
+        self._designer_action = action
+        self._designer.setEnabled(action.isEnabled())
+        action.changed.connect(lambda: self._designer.setEnabled(action.isEnabled()))
+        self._designer.show()
+        self.mode_switcher.show()
+        self._update_compact_state()
+
     def set_application_menu(self, menu_bar: QMenuBar) -> None:
         """Expose the complete QMainWindow menu through a compact title button."""
 
-        menu = QMenu(self._main_menu_button)
+        menu = self._main_menu_button.menu() or QMenu(self._main_menu_button)
+        menu.clear()
         for action in menu_bar.actions():
             source_menu = action.menu()
             if source_menu is not None:
@@ -295,6 +319,7 @@ class CommandBar(QWidget):
                 menu.addAction(action)
         self._main_menu_button.setMenu(menu)
         self._main_menu_button.setEnabled(bool(menu.actions()))
+        self._more.setMenu(menu if self._mode == WorkspaceMode.DESIGNER else self._pdf_more_menu)
 
     def open_application_menu(self) -> None:
         if self._main_menu_button.menu() is not None:
@@ -350,15 +375,36 @@ class CommandBar(QWidget):
         super().resizeEvent(event)
         self._update_compact_state()
 
+    def _request_mode(self, mode):
+        if mode == WorkspaceMode.DESIGNER and self._designer_action is not None:
+            self._designer_action.trigger()
+        else:
+            self.modeRequested.emit(mode)
+
+    def set_mode(self, mode):
+        self._mode = WorkspaceMode(mode)
+        self._update_compact_state()
+        self.mode_switcher.set_mode(mode)
+
     def _update_compact_state(self) -> None:
         width = self.width()
+        pdf = self._mode == WorkspaceMode.PDF
+        if self._designer_action is not None:
+            self.mode_switcher.set_compact(width < 900)
+            width -= self.mode_switcher.sizeHint().width() + S.XS
+        for button in (self._panel, self._open, self._save, self._undo):
+            button.setVisible(pdf and width >= 420)
+        self._search.setVisible(pdf and width >= 650)
+        self._redo.setVisible(pdf and width >= 700)
+        self._document_divider.setVisible(pdf and width >= 420)
+        self._canvas_divider.setVisible(pdf and width >= 900)
         for button in self._canvas_buttons.values():
-            button.setVisible(width >= 900)
+            button.setVisible(pdf and width >= 900)
         self._title.setVisible(width >= 1080)
-        self._save_as.setVisible(width >= 1020)
-        self._print.setVisible(width >= 1100)
-        self._work.setVisible(width >= 1250)
-        self._diagnostics.setVisible(width >= 1180)
+        self._save_as.setVisible(pdf and width >= 1020)
+        self._print.setVisible(pdf and width >= 1100)
+        self._work.setVisible(pdf and width >= 1250)
+        self._diagnostics.setVisible(pdf and width >= 1180)
         self._theme.setVisible(width >= 1160)
 
     def _button(self, icon_name: str, tooltip: str, signal) -> MotionIconButton:
@@ -394,6 +440,7 @@ class CommandBar(QWidget):
         self._work.style().polish(self._work)
 
     def set_animations_enabled(self, enabled: bool) -> None:
+        self.mode_switcher.set_animations_enabled(enabled)
         for button in (
             self._panel,
             self._open,
@@ -414,6 +461,7 @@ class CommandBar(QWidget):
             button.set_animations_enabled(enabled)
 
     def refresh_icons(self) -> None:
+        self.mode_switcher.refresh_style()
         for button in (
             self._panel,
             self._open,

@@ -1,5 +1,14 @@
 # Third-party notices
 
+## Ghostscript 10.05.1
+
+The Windows distribution bundles Ghostscript for PDF/PostScript conversion.
+Ghostscript is distributed under GNU Affero General Public License version 3
+(with commercial licensing available separately from Artifex).
+The original licence text accompanies the runtime at `ghostscript/doc/COPYING`.
+Upstream source and release: https://github.com/ArtifexSoftware/ghostpdl/tree/gs10051
+No Ghostscript licence text or notices have been modified.
+
 ## Lucide Icons
 
 The user-interface icon paths are derived from the Lucide icon project.
@@ -73,3 +82,22 @@ The portable updater uses cryptography 46.0.7 for Ed25519 signature verification
 It is distributed under the Apache License 2.0 or BSD 3-Clause license.
 The bundled cryptography distribution metadata includes its license texts and
 notices for its OpenSSL and Rust dependencies. Source: https://github.com/pyca/cryptography
+
+
+## Document Designer components (V3 production builds)
+
+qpdf 12.4.2 is distributed under Apache License 2.0. Its LICENSE.txt and
+NOTICE.md accompany the pinned Windows runtime. Source: https://github.com/qpdf/qpdf
+
+Noto Sans and Noto Sans CJK HK fonts are distributed under the SIL Open Font
+License 1.1. Their OFL texts accompany the font files.
+Sources: https://github.com/notofonts/noto-fonts and https://github.com/notofonts/noto-cjk
+
+Segno 1.6.6 is distributed under BSD 3-Clause.
+Source: https://github.com/heuer/segno
+
+python-barcode 0.16.1 is distributed under MIT.
+Source: https://github.com/WhyNotHugo/python-barcode
+
+The installed package licence files and the composition asset manifest
+identify the exact versions and checksums used by the build.

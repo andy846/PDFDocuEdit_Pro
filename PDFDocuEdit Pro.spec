@@ -33,6 +33,11 @@ datas.extend(
 # Bundle the complete Ghostscript distribution (Windows binaries ship in the
 # repository) so PostScript conversion works on machines without Ghostscript.
 _GS_ROOT = ROOT / "Ghostscript"
+if sys.platform == "win32":
+    _gs_license = _GS_ROOT / "doc" / "COPYING"
+    if not _gs_license.is_file():
+        raise RuntimeError("Bundled Ghostscript licence is missing: Ghostscript/doc/COPYING")
+    datas.append((str(_gs_license), "ghostscript/doc"))
 for _rel in ("bin", "lib", "Resource", "iccprofiles"):
     _src = _GS_ROOT / _rel
     if _src.is_dir():
@@ -91,6 +96,30 @@ for _file in _VERA_ROOT.rglob("*"):
     if _file.is_file():
         datas.append((str(_file), f"verapdf/{_file.relative_to(_VERA_ROOT).parent}"))
 
+# V3 enables Designer by default; explicit development overrides remain available.
+from composition.enabled import is_enabled
+_composition_enabled = is_enabled()
+if _composition_enabled:
+    if sys.platform != "win32":
+        raise RuntimeError("Initial Document Designer production builds target Windows x64.")
+    import json as _json
+    import hashlib as _hashlib
+    _composition_root = ROOT / "build_assets" / "composition"
+    _manifest = _json.loads((_composition_root / "BUNDLE_INFO.json").read_text(encoding="utf-8"))
+    for _entry in _manifest["assets"]:
+        _relative = _entry["path"]
+        _asset = _composition_root / _relative
+        if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
+            raise RuntimeError(f"Invalid composition asset: {_relative}. Run scripts/prepare_composition_assets.py.")
+        datas.append((str(_asset), str(Path("build_assets/composition") / Path(_relative).parent)))
+    datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
+    _enabled_file = ROOT / "build" / "composition-enabled" / "enabled.json"
+    _enabled_file.parent.mkdir(parents=True, exist_ok=True)
+    _enabled_file.write_text('{"enabled":true}', encoding="utf-8")
+    datas.append((str(_enabled_file), "build_assets/composition"))
+    for _package in ("segno", "python-barcode"):
+        datas.extend(copy_metadata(_package))
+
 # pyzbar ships the zbar native library as DLLs inside its package on Windows.
 binaries = []
 try:
@@ -115,7 +144,15 @@ _hiddenimports = [
     "cv2",
     "numpy",
     "fontTools",
+    "composition.worker",
+    "workflow.workspace",
+    "workflow.worker",
+    "composition.designer.workspace",
+    "barcode.codex",
+    "segno",
 ]
+if _composition_enabled:
+    _hiddenimports.append("scripts.composition_smoke")
 if sys.platform == "win32":
     # Microsoft Office COM backend for Office-to-PDF conversion.
     _hiddenimports += ["comtypes", "comtypes.client"]
@@ -126,7 +163,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=_hiddenimports,
-    hookspath=[],
+    hookspath=[str(ROOT / "scripts" / "pyinstaller_hooks")],
     hooksconfig={},
     runtime_hooks=[],
     # Keep builds deterministic even when they run in a broad Conda environment.
@@ -218,12 +255,12 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
         bundle_identifier="com.pdfdocuedit.pro",
-        version="2.5.16",
+        version="3.0.0",
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "2.5.16",
+            "CFBundleShortVersionString": "3.0.0",
             "CFBundleVersion": "256",
-            "CFBundleGetInfoString": "PDFDocuEdit Pro V2.5.16",
+            "CFBundleGetInfoString": "PDFDocuEdit Pro V3.0.0",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [

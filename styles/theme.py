@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from PyQt6 import sip
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QPalette, QPen
 from PyQt6.QtWidgets import (
@@ -96,27 +97,25 @@ _round_style = None
 
 def _install_round_menu_style(app: QApplication) -> None:
     global _platform_style, _round_style
+    # QSS wraps the proxy in QStyleSheetStyle, so app.style() is no longer
+    # isinstance(_RoundMenuStyle). Reinstalling that already-owned proxy lets
+    # Qt delete its wrapper/base during setStyle(), leaving a dangling pointer.
+    installed = getattr(app, "_pdfdocuedit_round_style", None)
+    if installed is not None and not sip.isdeleted(installed):
+        return
     try:
         already = isinstance(app.style(), _RoundMenuStyle)
     except RuntimeError:
         already = False
     if already:
         return
-    if _round_style is not None:
-        try:
-            # QApplication owns the style; if a previous QApplication instance
-            # was destroyed, Qt deleted the C++ object behind our reference.
-            app.setStyle(_round_style)
-            return
-        except RuntimeError:
-            _round_style = None
-            _platform_style = None
     keys = QStyleFactory.keys()
     # The UI is styled by QSS. Fusion supplies a deterministic base and avoids
     # native Windows polish callbacks on partly constructed/offscreen widgets.
     _platform_style = QStyleFactory.create("Fusion" if "Fusion" in keys else keys[0])
     _round_style = _RoundMenuStyle(_platform_style)
     app.setStyle(_round_style)
+    app._pdfdocuedit_round_style = _round_style
 
 
 LIGHT = {

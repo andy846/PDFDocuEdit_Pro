@@ -88,66 +88,14 @@ def merge_pdfs(
     *,
     compact: bool = False,
 ) -> Path:
+    from .merge import MergeItem, MergeSpec, merge_pdf_items
     trace = PerformanceTrace("merge_pdf")
-    sources = [Path(os.path.abspath(os.path.expanduser(path))) for path in paths]
-    if not sources:
-        raise ToolError("Select at least one PDF to merge.")
-    if is_cancelled and is_cancelled():
-        raise ToolError("The merge was cancelled.")
-    target = Path(output_path).expanduser().resolve()
-    temporary = _temporary_pdf_path(target)
-    expected_pages = 0
-    trace.values["open_total"] = 0.0
-    trace.values["insert_total"] = 0.0
-    trace.values["files"] = len(sources)
-    trace.values["deep_compression"] = compact
-    try:
-        with fitz.open() as output:
-            total = len(sources)
-            first_metadata: dict | None = None
-            for index, source_path in enumerate(sources):
-                if is_cancelled and is_cancelled():
-                    break
-                _progress(progress, index, total + 2, source_path.name)
-                try:
-                    with trace.span("source_open"):
-                        source = fitz.open(source_path)
-                    trace.values["open_total"] += trace.values.pop("source_open")
-                    with source:
-                        if first_metadata is None:
-                            first_metadata = source.metadata or {}
-                        expected_pages += source.page_count
-                        with trace.span("insert"):
-                            start = output.page_count
-                            output.insert_pdf(source)
-                            copy_page_scales(source, output,
-                                             list(range(source.page_count)), start)
-                        trace.values["insert_total"] += trace.values.pop("insert")
-                except Exception as exc:
-                    raise ToolError(f"Cannot read {source_path.name}: {exc}") from exc
-                _progress(progress, index + 1, total + 2, source_path.name)
-            if is_cancelled and is_cancelled():
-                raise ToolError("The merge was cancelled.")
-            if first_metadata:
-                set_safe_pdf_metadata(output, first_metadata)
-            trace.mark("assembly")
-            _progress(progress, total, total + 2, "Saving merged PDF…")
-            with trace.span("save"):
-                output.save(temporary, garbage=4 if compact else 1, deflate=compact)
-        if is_cancelled and is_cancelled():
-            raise ToolError("The merge was cancelled.")
-        _progress(progress, total + 1, total + 2, "Validating merged PDF…")
-        with trace.span("validation"):
-            validate_pdf_file(temporary, expected_page_count=expected_pages)
-        if is_cancelled and is_cancelled():
-            raise ToolError("The merge was cancelled.")
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    trace.values["pages"] = expected_pages
+    result = merge_pdf_items(MergeSpec([MergeItem(str(path)) for path in paths], str(output_path), compact),
+                             progress, is_cancelled)
+    trace.values.update(pages=result.page_count, deep_compression=compact)
     trace.mark("total")
     trace.report("saved")
-    return target
+    return result.output_path
 
 
 def overlay_pdf(

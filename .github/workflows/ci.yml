@@ -84,7 +84,11 @@ jobs:
         run: python -m pip install comtypes==1.4.12
       - name: Verify dependency consistency
         run: python -m pip check
-      - name: Run affected tests and smoke
+      - name: Prepare pinned composition runtime
+        run: python scripts/prepare_composition_assets.py
+      - name: Prepare pinned Ghostscript
+        uses: ./.github/actions/setup-postscript
+      - name: Execute affected tests and smoke
         run: python scripts/ci_plan.py run focused "$env:FOCUSED_TESTS"
 
   core:
@@ -111,8 +115,21 @@ jobs:
         run: python -m pip install comtypes==1.4.12
       - name: Verify dependency consistency
         run: python -m pip check
-      - name: Run automated suite excluding slow UI interaction tests
+      - name: Prepare pinned composition runtime
+        run: python scripts/prepare_composition_assets.py
+      - name: Prepare pinned Ghostscript
+        uses: ./.github/actions/setup-postscript
+      - name: Execute automated suite excluding slow UI interaction tests
         run: python scripts/ci_plan.py run core
+      - name: Composition performance smoke
+        run: python scripts/benchmark_composition.py --records 100 --output build/composition-benchmark
+      - name: Multi-page composition performance smoke
+        run: python scripts/benchmark_composition.py --records 100 --pages 2 --output build/composition-benchmark/multipage
+      - name: Retain composition benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: composition-performance-smoke
+          path: build/composition-benchmark/**/benchmark.json
 
   ui-interaction:
     name: UI interaction tests on Windows
@@ -138,7 +155,11 @@ jobs:
         run: python -m pip install comtypes==1.4.12
       - name: Verify dependency consistency
         run: python -m pip check
-      - name: Run UI interaction tests
+      - name: Prepare pinned composition runtime
+        run: python scripts/prepare_composition_assets.py
+      - name: Prepare pinned Ghostscript
+        uses: ./.github/actions/setup-postscript
+      - name: Execute UI interaction tests
         run: python scripts/ci_plan.py run ui
 
   cross-platform-core:
@@ -173,5 +194,7 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
       - name: Verify dependency consistency
         run: python -m pip check
+      - name: Prepare composition fonts
+        run: python scripts/prepare_composition_assets.py --fonts-only
       - name: Run platform-neutral core tests
         run: python scripts/ci_plan.py run cross

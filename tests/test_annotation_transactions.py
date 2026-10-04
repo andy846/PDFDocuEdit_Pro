@@ -5,7 +5,7 @@ import json
 import fitz
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QThreadPool
-from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
+from PyQt6.QtWidgets import QDialog, QMessageBox
 
 import core.annotation_io as annotation_io
 import core.viewer as viewer_module
@@ -14,9 +14,9 @@ from core.settings import SettingsManager
 
 
 @pytest.fixture(scope="module")
-def annotation_app():
+def annotation_app(qt_application):
     # Keep one application for this module and drain its workers before teardown.
-    app = QApplication.instance() or QApplication(["annotation-transaction-test"])
+    app = qt_application
     yield app
     QThreadPool.globalInstance().waitForDone()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -43,6 +43,10 @@ def viewer(tmp_path, monkeypatch, annotation_app):
     window.engine._is_modified = False
     window.close_document()
     window.close()
+    # Close retires PDF readers asynchronously. A test must drain those readers
+    # before explicitly destroying their widgets or starting the next case.
+    QThreadPool.globalInstance().waitForDone()
+    app.processEvents()
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()

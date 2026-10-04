@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfdocuedit-pro"
-version = "2.5.16"
-description = "Cross-platform PDF editing and document workflow desktop application"
+version = "3.0.0"
+description = "PDF editing, document design and print production desktop suite"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "PyQt6==6.8.1",
@@ -26,6 +26,8 @@ dependencies = [
     "Pillow==11.3.0",
     "pyzbar==0.1.9",
     "cryptography==46.0.7",
+    "segno==1.6.6",
+    "python-barcode==0.16.1",
 ]
 
 [project.gui-scripts]
@@ -35,7 +37,7 @@ pdfdocuedit-pro = "main:main"
 py-modules = ["main", "PDFdocuEdit_Pro", "launcher"]
 
 [tool.setuptools.packages.find]
-include = ["core*", "ui*", "styles*", "updates*"]
+include = ["core*", "ui*", "styles*", "updates*", "composition*", "workflow*"]
 exclude = ["backup*", "tests*"]
 
 [tool.pytest.ini_options]

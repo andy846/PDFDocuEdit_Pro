@@ -52,3 +52,34 @@ pytest_out*.txt
 
 # Local update signing key: never distribute
 .update-keys/
+
+!build_assets/composition/
+build_assets/composition/*
+!build_assets/composition/BUNDLE_INFO.json
+
+# Isolated Composition font-fix development build
+/dist-font-fix/
+
+/dist-designer-ux/
+
+/dist-glyph-repair/
+
+/dist-multipage/
+
+/dist-designer-usability/
+
+/dist-rules/
+
+/dist-bulk-format/
+
+/dist-sequences/
+
+/dist-excel/
+
+/dist-font-diagnostics/
+
+/dist-auto-font/
+
+/dist-compact-designer/
+
+/dist-pdf-overlay/

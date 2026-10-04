@@ -13,6 +13,7 @@ ACTIVE = [
     ROOT / "dialogs",
     ROOT / "ui",
     ROOT / "styles",
+    ROOT / "composition",
 ]
 FORBIDDEN = {
     "PyQt5": "PyQt5 import",

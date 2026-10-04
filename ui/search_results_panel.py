@@ -149,6 +149,13 @@ class SearchResultsPanel(QFrame):
         self._extract_pages.clicked.connect(lambda: self._request_pages_action("extract"))
         action_row.addWidget(self._extract_pages)
         layout.addLayout(action_row)
+        from composition.enabled import is_enabled
+        self._designer_pages = QPushButton("Send to Designer")
+        self._designer_pages.setProperty("compact", True)
+        self._designer_pages.setToolTip("Create a PDF overlay from checked result pages, including current edits")
+        self._designer_pages.setVisible(is_enabled())
+        self._designer_pages.clicked.connect(lambda: self._request_pages_action("designer"))
+        layout.addWidget(self._designer_pages)
         self._update_page_actions()
 
         self._ocr = QPushButton("Run OCR…")
@@ -259,6 +266,7 @@ class SearchResultsPanel(QFrame):
             "A PDF must keep at least one page." if selected >= self._page_count and selected else ""
         )
         self._extract_pages.setEnabled(bool(selected))
+        self._designer_pages.setEnabled(bool(selected) and self._result_identity is not None)
 
     def _check_all(self, checked: bool) -> None:
         for row in range(self._list.count()):

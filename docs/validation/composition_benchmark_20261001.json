@@ -1,0 +1,109 @@
+{
+  "date": "2026-10-01",
+  "cpu": "Intel Core i7-1185G7; 4 cores / 8 logical processors",
+  "samples_per_case": 1,
+  "reports": [
+    {
+      "benchmark_version": 1,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+      "fixture": "plain",
+      "results": [
+        {
+          "records": 100,
+          "fixture": "plain",
+          "import_seconds": 0.019461999996565282,
+          "generation_seconds": 0.688953600008972,
+          "total_seconds": 0.7084156000055373,
+          "records_per_second": 145.14765580540944,
+          "pages_per_second": 145.14765580540944,
+          "output_size_bytes": 53522,
+          "composer_peak_memory_bytes": 78999552,
+          "assembler_peak_memory_bytes": 10989568
+        },
+        {
+          "records": 1000,
+          "fixture": "plain",
+          "import_seconds": 0.028289199981372803,
+          "generation_seconds": 2.3838762000086717,
+          "total_seconds": 2.4121653999900445,
+          "records_per_second": 419.48487089906865,
+          "pages_per_second": 419.48487089906865,
+          "output_size_bytes": 487438,
+          "composer_peak_memory_bytes": 79589376,
+          "assembler_peak_memory_bytes": 19271680
+        },
+        {
+          "records": 10000,
+          "fixture": "plain",
+          "import_seconds": 0.18165799998678267,
+          "generation_seconds": 18.3061624999973,
+          "total_seconds": 18.487820499984082,
+          "records_per_second": 546.2641337310032,
+          "pages_per_second": 546.2641337310032,
+          "output_size_bytes": 4954382,
+          "composer_peak_memory_bytes": 91627520,
+          "assembler_peak_memory_bytes": 106557440
+        },
+        {
+          "records": 50000,
+          "fixture": "plain",
+          "import_seconds": 0.7267942000180483,
+          "generation_seconds": 81.96919159998652,
+          "total_seconds": 82.69598580000456,
+          "records_per_second": 609.9852764682898,
+          "pages_per_second": 609.9852764682898,
+          "output_size_bytes": 25093365,
+          "composer_peak_memory_bytes": 143642624,
+          "assembler_peak_memory_bytes": 491810816
+        }
+      ],
+      "limitations": "Synthetic fixed-page local data; assembler memory is separate, not zero."
+    },
+    {
+      "benchmark_version": 1,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+      "fixture": "mixed",
+      "results": [
+        {
+          "records": 1000,
+          "fixture": "mixed",
+          "import_seconds": 0.024748200026806444,
+          "generation_seconds": 14.39291830000002,
+          "total_seconds": 14.417666500026826,
+          "records_per_second": 69.47861296482164,
+          "pages_per_second": 69.47861296482164,
+          "output_size_bytes": 3032571,
+          "composer_peak_memory_bytes": 199811072,
+          "assembler_peak_memory_bytes": 44134400
+        },
+        {
+          "records": 10000,
+          "fixture": "mixed",
+          "import_seconds": 0.3311053999932483,
+          "generation_seconds": 130.61258390004514,
+          "total_seconds": 130.9436893000384,
+          "records_per_second": 76.56230128371685,
+          "pages_per_second": 76.56230128371685,
+          "output_size_bytes": 30579779,
+          "composer_peak_memory_bytes": 199880704,
+          "assembler_peak_memory_bytes": 355495936
+        },
+        {
+          "records": 50000,
+          "fixture": "mixed",
+          "import_seconds": 0.644861199951265,
+          "generation_seconds": 561.4361575000221,
+          "total_seconds": 562.0810186999734,
+          "records_per_second": 89.05732082280082,
+          "pages_per_second": 89.05732082280082,
+          "output_size_bytes": 153550019,
+          "composer_peak_memory_bytes": 272936960,
+          "assembler_peak_memory_bytes": 1737703424
+        }
+      ],
+      "limitations": "Synthetic fixed-page local data; assembler memory is separate, not zero."
+    }
+  ]
+}

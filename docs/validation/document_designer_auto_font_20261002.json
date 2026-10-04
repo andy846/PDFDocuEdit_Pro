@@ -1,0 +1,118 @@
+{
+  "date_local": "2026-10-02",
+  "composition_tests": {
+    "passed": 250,
+    "seconds": 108.74,
+    "xml": "build/qa-auto-fallback.xml"
+  },
+  "final_ui_tests": {
+    "passed": 3,
+    "seconds": 10.5
+  },
+  "frozen_smoke": {
+    "passed": true,
+    "scale": "2",
+    "checks": [
+      "Welcome entry",
+      "PDF background",
+      "CSV import",
+      "Chinese preview",
+      "exact fonts",
+      "Windows font family/style selection",
+      "Code128 decoding",
+      "QR decoding",
+      "save and reopen",
+      "reconciliation",
+      "background production",
+      "existing editor open",
+      "per-glyph repair preserves primary face",
+      "glyph repair audit",
+      "multi-page template/save/preview",
+      "page reorder and undo",
+      "independent page sizes",
+      "record/page reconciliation",
+      "typed variable drafts",
+      "compact/wide inspector",
+      "field filtering",
+      "rules editor",
+      "conditional visibility",
+      "alternative text/image",
+      "rules save/reopen",
+      "rule reconciliation",
+      "bulk text size",
+      "bulk exact Windows face",
+      "bulk one-command Undo",
+      "bulk glyph repair preservation",
+      "running sequence dialog",
+      "virtual records",
+      "sequence Undo",
+      "per-record/page sequence",
+      "sequence QR/Code128 decoding",
+      "generated project reopen",
+      "XLSX sheet/header/mapping",
+      "Excel dates/leading zeros",
+      "Excel preview/sequence/QR/Code128",
+      "Excel save/reimport",
+      "OLE BIFF8 XLS import/production",
+      "automatic glyph fallback preview/production",
+      "private-use fallback/report",
+      "substitution record/page report",
+      "primary font retained"
+    ]
+  },
+  "customer_job": {
+    "input_records": 398,
+    "successful_records": 398,
+    "generated_pages": 796,
+    "automatic_occurrences": 2398,
+    "repaired_records": 166,
+    "unresolved_occurrences": 0,
+    "private_use_occurrences": 1,
+    "original_template_modified": false,
+    "original_data_modified": false,
+    "sample_pages_rendered": [
+      3,
+      691
+    ]
+  },
+  "benchmark": [
+    {
+      "records": 10000,
+      "pages_per_record": 1,
+      "generated_pages": 10000,
+      "fixture": "fallback",
+      "import_seconds": 0.16426229994976893,
+      "generation_seconds": 59.04460130003281,
+      "total_seconds": 59.20886359998258,
+      "records_per_second": 169.36349437242188,
+      "pages_per_second": 169.36349437242188,
+      "output_size_bytes": 10619629,
+      "composer_peak_memory_bytes": 176058368,
+      "assembler_peak_memory_bytes": 168857600,
+      "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\build\\bench-auto-font\\20261002-015134\\10000-0\\20261001-175135-a74ce2a8\\job.json",
+      "rule_summary": {
+        "configured_objects": 0,
+        "records_checked": 10000,
+        "hidden_occurrences": 0,
+        "alternate_occurrences": 0,
+        "complete": true
+      },
+      "font_scan": {
+        "occurrences": 30000,
+        "records": 10000,
+        "automatic_occurrences": 30000,
+        "unresolved_occurrences": 0,
+        "unresolved_records": 0,
+        "private_use_occurrences": 0,
+        "checked_records": 10000,
+        "complete": true
+      }
+    }
+  ],
+  "limitations": [
+    "One synthetic 10,000-record measurement; concurrent load/cache not controlled, not a median or comparison.",
+    "Selected sample pages verified, not every customer page manually proofread or printer certified.",
+    "Private-use glyph substitutions marked for visual review.",
+    "No complete editor suite rerun in this milestone; Composition and frozen smoke cover the changed module."
+  ]
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from core.resources import resource_path
 
+from .designer import designer_style
 from .theme import get_colors, is_dark
 from .tokens import D, F, R, S
 
@@ -787,6 +788,11 @@ def global_style() -> str:
             border-radius: {R.MD}px;
             font-weight: {F.SEMIBOLD};
         }}
+        QPushButton#documentDesignerButton {{
+            min-height: 32px;
+            max-height: 32px;
+            padding: 0 10px;
+        }}
         QPushButton[primary="true"]:hover {{
             color: {c['on_primary']};
             background: {c['primary_hover']};
@@ -1010,7 +1016,7 @@ def global_style() -> str:
         QSplitter::handle:horizontal {{ width: 1px; }}
         QSplitter::handle:vertical {{ height: 1px; }}
         QSplitter::handle:hover {{ background: {c['border_strong']}; }}
-    """
+    """ + designer_style(c)
 
 
 # Compatibility aliases retained while old imports are removed.

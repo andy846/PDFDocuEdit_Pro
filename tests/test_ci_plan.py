@@ -55,5 +55,35 @@ def test_core_and_ui_jobs_do_not_repeat_modules(monkeypatch) -> None:
     assert run_tests("core") == 0
     assert run_tests("ui") == 0
     core, ui = calls
-    assert all(f"--ignore={path}" in core for path in UI_TESTS)
-    assert ui[3:] == list(UI_TESTS)
+    assert core[1:4] == ["scripts/regression_suite.py", "--group", "core"]
+    assert ui[1:4] == ["scripts/regression_suite.py", "--group", "ui"]
+    all_paths = {p.relative_to(ci_plan.ROOT).as_posix() for p in ci_plan.TESTS.rglob("test_*.py")}
+    core_paths = all_paths - set(UI_TESTS)
+    assert core_paths.isdisjoint(UI_TESTS)
+    assert core_paths | set(UI_TESTS) == all_paths
+
+
+def test_composition_changes_are_selected_recursively() -> None:
+    selected = focused_tests(["composition/engine/renderer.py",
+                              "tests/composition/test_workspace_modes.py"])
+    assert "tests/composition/test_renderer.py" in selected
+    assert "tests/composition/test_workspace_modes.py" in selected
+    assert "tests/composition/test_models_data.py" in CROSS_PLATFORM_TESTS
+    assert "tests/composition/test_workspace_modes.py" in UI_TESTS
+    assert "tests/test_overlay_ui.py" in UI_TESTS
+    core = plan("pull_request", "refs/pull/7/merge", ["composition/engine/renderer.py"])
+    assert core["cross_platform"] == "true"
+    assert core["ui"] == "false"
+    designer = plan("push", "refs/heads/feature/print-composition-v3",
+                    ["composition/designer/workspace.py"])
+    assert designer["ui"] == designer["cross_platform"] == "true"
+
+
+def test_focused_runner_accepts_composition_test_paths(monkeypatch) -> None:
+    from scripts import ci_plan
+
+    calls = []
+    monkeypatch.setattr(ci_plan.subprocess, "call",
+                        lambda command, **kwargs: calls.append(command) or 0)
+    assert run_tests("focused", "tests/composition/test_renderer.py") == 0
+    assert calls[0][3:] == ["tests/composition/test_renderer.py"]

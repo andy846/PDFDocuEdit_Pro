@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "2.5.16"
+VERSION = "3.0.0"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -184,6 +184,11 @@ def _clean_portable_tree(tree: Path) -> None:
                 shutil.rmtree(Path(dirpath) / name, ignore_errors=True)
 
 
+def _windows_artifact_prefix() -> str:
+    suffix = "-Document-Designer-Dev" if os.environ.get("PDFDOCUEDIT_ENABLE_COMPOSITION") == "1" and VERSION.startswith("2.") else ""
+    return f"PDFDocuEdit-Pro-v{VERSION}{suffix}"
+
+
 def build_portable_zip() -> Path:
     """Create the Portable ZIP from the PyInstaller ``dist`` folder."""
     dist_dir = ROOT / "dist" / APP_NAME
@@ -197,7 +202,7 @@ def build_portable_zip() -> Path:
         _clean_portable_tree(staging)
         release = ROOT / "release"
         release.mkdir(exist_ok=True)
-        zip_path = release / f"PDFDocuEdit-Pro-v{VERSION}-Portable-Windows-x64.zip"
+        zip_path = release / f"{_windows_artifact_prefix()}-Portable-Windows-x64.zip"
         shutil.make_archive(
             str(zip_path.with_suffix("")),
             "zip",
@@ -298,8 +303,9 @@ def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
         raise RuntimeError(
             "Inno Setup 6 (ISCC.exe) is required to build the installer."
         )
-    run(compiler, *_inno_signing_args(signing), "installer/PDFDocuEditPro.iss")
-    output = ROOT / "release" / f"PDFDocuEdit-Pro-v{VERSION}-Legacy-Setup-Windows-x64.exe"
+    installer_name = f"{_windows_artifact_prefix()}-Legacy-Setup-Windows-x64"
+    run(compiler, *_inno_signing_args(signing), f"/F{installer_name}", "installer/PDFDocuEditPro.iss")
+    output = ROOT / "release" / f"{installer_name}.exe"
     sha256(output)
     return output, portable
 
@@ -308,7 +314,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
     parser.add_argument("--run-tests", action="store_true", help="Explicitly run the full local suite (normally covered by CI)")
+    parser.add_argument("--composition", "--document-designer", action="store_true", help="Build the opt-in Windows Document Designer development workspace")
     args = parser.parse_args(argv or [])
+    if args.composition:
+        if platform.system() != "Windows":
+            parser.error("Initial composition builds require Windows x64.")
+        os.environ["PDFDOCUEDIT_ENABLE_COMPOSITION"] = "1"
+        run(sys.executable, "scripts/prepare_composition_assets.py")
+
     if sys.version_info[:2] != (3, 12):
         current = ".".join(map(str, sys.version_info[:3]))
         raise RuntimeError(

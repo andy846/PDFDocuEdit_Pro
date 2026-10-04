@@ -528,6 +528,11 @@ def test_manage_content_editor_only_shows_for_text_annotations(
     assert window.workspace.canvas.current_page == 1
     assert window.workspace.canvas.selected_annotation() is None
 
+    # Navigation commands are intentionally protected while a text editor has
+    # focus. Move focus to the PDF for this document-navigation assertion.
+    window.activateWindow()
+    window.workspace.canvas.setFocus()
+    app.processEvents()
     QTest.keyClick(
         window,
         Qt.Key.Key_Right,

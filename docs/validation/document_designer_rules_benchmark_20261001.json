@@ -1,0 +1,523 @@
+{
+  "benchmark_version": 3,
+  "date": "2026-10-01",
+  "code_checkpoint": "889b4e6",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+  "description": "Two fixed A4 pages per record. Plain has one account text object per page; rules has account alternative plus conditionally visible balance message per page.",
+  "metrics": [
+    {
+      "fixture": "plain",
+      "records": 1000,
+      "generated_pages": 2000,
+      "samples": 5,
+      "median_generation_seconds": 2.9802086999989115,
+      "median_records_per_second": 335.5469702508973,
+      "median_pages_per_second": 671.0939405017946,
+      "median_composer_peak_memory_bytes": 82505728,
+      "median_assembler_peak_memory_bytes": 28876800,
+      "median_output_size_bytes": 976077,
+      "baseline_generation_seconds": 2.7109562999685295,
+      "generation_change_percent": 9.932008126929514
+    },
+    {
+      "fixture": "plain",
+      "records": 10000,
+      "generated_pages": 20000,
+      "samples": 5,
+      "median_generation_seconds": 27.003013299952727,
+      "median_records_per_second": 370.32904027853465,
+      "median_pages_per_second": 740.6580805570693,
+      "median_composer_peak_memory_bytes": 105893888,
+      "median_assembler_peak_memory_bytes": 200814592,
+      "median_output_size_bytes": 9914643,
+      "baseline_generation_seconds": 25.954070699983276,
+      "generation_change_percent": 4.041534031769922
+    },
+    {
+      "fixture": "rules",
+      "records": 1000,
+      "generated_pages": 2000,
+      "samples": 5,
+      "median_generation_seconds": 4.66032120003365,
+      "median_records_per_second": 214.57748448600057,
+      "median_pages_per_second": 429.15496897200114,
+      "median_composer_peak_memory_bytes": 82722816,
+      "median_assembler_peak_memory_bytes": 31928320,
+      "median_output_size_bytes": 1221914
+    },
+    {
+      "fixture": "rules",
+      "records": 10000,
+      "generated_pages": 20000,
+      "samples": 5,
+      "median_generation_seconds": 41.106887299974915,
+      "median_records_per_second": 243.26823695079688,
+      "median_pages_per_second": 486.53647390159375,
+      "median_composer_peak_memory_bytes": 106631168,
+      "median_assembler_peak_memory_bytes": 233852928,
+      "median_output_size_bytes": 12429050
+    }
+  ],
+  "samples": {
+    "plain": {
+      "benchmark_version": 1,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+      "fixture": "plain",
+      "results": [
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "plain",
+          "import_seconds": 0.030397599970456213,
+          "generation_seconds": 2.8367471999954432,
+          "total_seconds": 2.8671447999658994,
+          "records_per_second": 352.51643149647117,
+          "pages_per_second": 705.0328629929423,
+          "output_size_bytes": 976727,
+          "composer_peak_memory_bytes": 82513920,
+          "assembler_peak_memory_bytes": 28856320,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\1000-0\\20261001-130504-5a6d204c\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 1000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "plain",
+          "import_seconds": 0.028963299992028624,
+          "generation_seconds": 3.6371718000154942,
+          "total_seconds": 3.666135100007523,
+          "records_per_second": 274.9388962038417,
+          "pages_per_second": 549.8777924076834,
+          "output_size_bytes": 976439,
+          "composer_peak_memory_bytes": 82173952,
+          "assembler_peak_memory_bytes": 28876800,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\1000-1\\20261001-130507-98bdf62c\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 1000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "plain",
+          "import_seconds": 0.02952979999827221,
+          "generation_seconds": 2.9802086999989115,
+          "total_seconds": 3.0097384999971837,
+          "records_per_second": 335.5469702508973,
+          "pages_per_second": 671.0939405017946,
+          "output_size_bytes": 975005,
+          "composer_peak_memory_bytes": 82460672,
+          "assembler_peak_memory_bytes": 28921856,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\1000-2\\20261001-130511-f4200ea7\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 1000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "plain",
+          "import_seconds": 0.024517800018657,
+          "generation_seconds": 2.8838067000033334,
+          "total_seconds": 2.9083245000219904,
+          "records_per_second": 346.76387983939566,
+          "pages_per_second": 693.5277596787913,
+          "output_size_bytes": 974181,
+          "composer_peak_memory_bytes": 82554880,
+          "assembler_peak_memory_bytes": 28815360,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\1000-3\\20261001-130515-aad5d050\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 1000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "plain",
+          "import_seconds": 0.027537600020878017,
+          "generation_seconds": 2.99613349995343,
+          "total_seconds": 3.023671099974308,
+          "records_per_second": 333.76349886129685,
+          "pages_per_second": 667.5269977225937,
+          "output_size_bytes": 976077,
+          "composer_peak_memory_bytes": 82505728,
+          "assembler_peak_memory_bytes": 28930048,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\1000-4\\20261001-130518-c64bfa40\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 1000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "plain",
+          "import_seconds": 0.14550000004237518,
+          "generation_seconds": 26.393987099989317,
+          "total_seconds": 26.539487100031693,
+          "records_per_second": 378.8741716860219,
+          "pages_per_second": 757.7483433720438,
+          "output_size_bytes": 9936189,
+          "composer_peak_memory_bytes": 105922560,
+          "assembler_peak_memory_bytes": 200916992,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\10000-0\\20261001-130521-f6518166\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 10000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "plain",
+          "import_seconds": 0.13380720000714064,
+          "generation_seconds": 27.317920100002084,
+          "total_seconds": 27.451727300009225,
+          "records_per_second": 366.06007936889887,
+          "pages_per_second": 732.1201587377977,
+          "output_size_bytes": 9865601,
+          "composer_peak_memory_bytes": 105992192,
+          "assembler_peak_memory_bytes": 200753152,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\10000-1\\20261001-130548-478b4575\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 10000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "plain",
+          "import_seconds": 0.13970190001418814,
+          "generation_seconds": 27.003013299952727,
+          "total_seconds": 27.142715199966915,
+          "records_per_second": 370.32904027853465,
+          "pages_per_second": 740.6580805570693,
+          "output_size_bytes": 9914643,
+          "composer_peak_memory_bytes": 105893888,
+          "assembler_peak_memory_bytes": 200814592,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\10000-2\\20261001-130616-17187c7b\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 10000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "plain",
+          "import_seconds": 0.1395310999942012,
+          "generation_seconds": 28.116632300021593,
+          "total_seconds": 28.256163400015794,
+          "records_per_second": 355.6613712941831,
+          "pages_per_second": 711.3227425883662,
+          "output_size_bytes": 9931211,
+          "composer_peak_memory_bytes": 105873408,
+          "assembler_peak_memory_bytes": 200753152,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\10000-3\\20261001-130644-e2443749\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 10000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "plain",
+          "import_seconds": 0.13030919997254387,
+          "generation_seconds": 26.18662220000988,
+          "total_seconds": 26.316931399982423,
+          "records_per_second": 381.8743755350099,
+          "pages_per_second": 763.7487510700198,
+          "output_size_bytes": 9909991,
+          "composer_peak_memory_bytes": 105840640,
+          "assembler_peak_memory_bytes": 200814592,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-no-rule\\20261001-210504\\10000-4\\20261001-130712-635deab7\\job.json",
+          "rule_summary": {
+            "configured_objects": 0,
+            "records_checked": 10000,
+            "hidden_occurrences": 0,
+            "alternate_occurrences": 0,
+            "complete": true
+          }
+        }
+      ],
+      "limitations": "Synthetic fixed-page local data; assembler memory is separate, not zero."
+    },
+    "rules": {
+      "benchmark_version": 1,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+      "fixture": "rules",
+      "results": [
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "rules",
+          "import_seconds": 0.02732239995384589,
+          "generation_seconds": 5.1941614000243135,
+          "total_seconds": 5.221483799978159,
+          "records_per_second": 192.52385957727827,
+          "pages_per_second": 385.04771915455655,
+          "output_size_bytes": 1221914,
+          "composer_peak_memory_bytes": 82808832,
+          "assembler_peak_memory_bytes": 32002048,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\1000-0\\20261001-130739-9cab556a\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 1000,
+            "hidden_occurrences": 1000,
+            "alternate_occurrences": 1000,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "rules",
+          "import_seconds": 0.03345859999535605,
+          "generation_seconds": 4.66032120003365,
+          "total_seconds": 4.693779800029006,
+          "records_per_second": 214.57748448600057,
+          "pages_per_second": 429.15496897200114,
+          "output_size_bytes": 1220514,
+          "composer_peak_memory_bytes": 82796544,
+          "assembler_peak_memory_bytes": 31891456,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\1000-1\\20261001-130745-c6bb5e98\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 1000,
+            "hidden_occurrences": 1000,
+            "alternate_occurrences": 1000,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "rules",
+          "import_seconds": 0.030653800000436604,
+          "generation_seconds": 4.559478499984834,
+          "total_seconds": 4.590132299985271,
+          "records_per_second": 219.32332831557954,
+          "pages_per_second": 438.6466566311591,
+          "output_size_bytes": 1223346,
+          "composer_peak_memory_bytes": 82702336,
+          "assembler_peak_memory_bytes": 31846400,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\1000-2\\20261001-130750-bab34e67\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 1000,
+            "hidden_occurrences": 1000,
+            "alternate_occurrences": 1000,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "rules",
+          "import_seconds": 0.025435700023081154,
+          "generation_seconds": 4.712030499998946,
+          "total_seconds": 4.737466200022027,
+          "records_per_second": 212.22273497597772,
+          "pages_per_second": 424.44546995195543,
+          "output_size_bytes": 1223974,
+          "composer_peak_memory_bytes": 82722816,
+          "assembler_peak_memory_bytes": 31928320,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\1000-3\\20261001-130755-9938f37f\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 1000,
+            "hidden_occurrences": 1000,
+            "alternate_occurrences": 1000,
+            "complete": true
+          }
+        },
+        {
+          "records": 1000,
+          "pages_per_record": 2,
+          "generated_pages": 2000,
+          "fixture": "rules",
+          "import_seconds": 0.030336399970110506,
+          "generation_seconds": 4.279793500027154,
+          "total_seconds": 4.310129899997264,
+          "records_per_second": 233.65613317410183,
+          "pages_per_second": 467.31226634820365,
+          "output_size_bytes": 1219296,
+          "composer_peak_memory_bytes": 82714624,
+          "assembler_peak_memory_bytes": 31981568,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\1000-4\\20261001-130800-191ba6b7\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 1000,
+            "hidden_occurrences": 1000,
+            "alternate_occurrences": 1000,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "rules",
+          "import_seconds": 0.13905309996334836,
+          "generation_seconds": 40.848420199996326,
+          "total_seconds": 40.987473299959674,
+          "records_per_second": 244.80750910413175,
+          "pages_per_second": 489.6150182082635,
+          "output_size_bytes": 12429050,
+          "composer_peak_memory_bytes": 106618880,
+          "assembler_peak_memory_bytes": 233955328,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\10000-0\\20261001-130804-f6884482\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 10000,
+            "hidden_occurrences": 10000,
+            "alternate_occurrences": 10000,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "rules",
+          "import_seconds": 0.14590230002067983,
+          "generation_seconds": 39.293463699985296,
+          "total_seconds": 39.439366000005975,
+          "records_per_second": 254.49525336713296,
+          "pages_per_second": 508.9905067342659,
+          "output_size_bytes": 12433962,
+          "composer_peak_memory_bytes": 106631168,
+          "assembler_peak_memory_bytes": 234110976,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\10000-1\\20261001-130846-bb0b6bfd\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 10000,
+            "hidden_occurrences": 10000,
+            "alternate_occurrences": 10000,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "rules",
+          "import_seconds": 0.14315219997661188,
+          "generation_seconds": 43.63299760001246,
+          "total_seconds": 43.77614979998907,
+          "records_per_second": 229.1843455650442,
+          "pages_per_second": 458.3686911300884,
+          "output_size_bytes": 12382646,
+          "composer_peak_memory_bytes": 106692608,
+          "assembler_peak_memory_bytes": 233848832,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\10000-2\\20261001-130926-a8da93d0\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 10000,
+            "hidden_occurrences": 10000,
+            "alternate_occurrences": 10000,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "rules",
+          "import_seconds": 0.13595129997702315,
+          "generation_seconds": 42.75585820002016,
+          "total_seconds": 42.89180949999718,
+          "records_per_second": 233.8860783291513,
+          "pages_per_second": 467.7721566583026,
+          "output_size_bytes": 12430164,
+          "composer_peak_memory_bytes": 106676224,
+          "assembler_peak_memory_bytes": 233852928,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\10000-3\\20261001-131010-c7863c1f\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 10000,
+            "hidden_occurrences": 10000,
+            "alternate_occurrences": 10000,
+            "complete": true
+          }
+        },
+        {
+          "records": 10000,
+          "pages_per_record": 2,
+          "generated_pages": 20000,
+          "fixture": "rules",
+          "import_seconds": 0.14595690002897754,
+          "generation_seconds": 41.106887299974915,
+          "total_seconds": 41.25284420000389,
+          "records_per_second": 243.26823695079688,
+          "pages_per_second": 486.53647390159375,
+          "output_size_bytes": 12416434,
+          "composer_peak_memory_bytes": 105607168,
+          "assembler_peak_memory_bytes": 233828352,
+          "job_log": "C:\\Users\\andy8\\.codex\\worktrees\\print-composition-v3\\PDFdocuEdit_Pro\\.benchmarks\\rules-conditional\\20261001-210739\\10000-4\\20261001-131053-e1962073\\job.json",
+          "rule_summary": {
+            "configured_objects": 4,
+            "records_checked": 10000,
+            "hidden_occurrences": 10000,
+            "alternate_occurrences": 10000,
+            "complete": true
+          }
+        }
+      ],
+      "limitations": "Synthetic fixed-page local data; assembler memory is separate, not zero."
+    }
+  },
+  "limitations": "Synthetic local data; trials within each series are sequential. Cold/warm cache and other host activity were not controlled. Focused GUI checks ran during parts of these series. Composer/assembler peaks are separate process metrics; qpdf memory scales with total output objects. Not a guarantee for image-heavy/background production or physical printing."
+}
