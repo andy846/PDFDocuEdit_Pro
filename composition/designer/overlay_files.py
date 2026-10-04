@@ -151,6 +151,9 @@ class OverlayFiles:
     def generate_pdf(self, checked=False, *, output_dir=None):
         if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
             return
+        if getattr(self,"media_error",""):
+            self.error(self.media_error)
+            return
         if self.spec and self.spec.needs_source_review:
             self.error("Confirm grouping / review the updated PDF source before generating.")
             return
@@ -187,6 +190,10 @@ class OverlayFiles:
             text += (f"\nError envelope: {result['error_envelope']} · source page: {result['error_source_page']} · "
                      f"output page: {result['error_output_page']}\nError: {result['error']}")
         text += "\n\n"+"\n".join(result["warnings"])
+        if result.get("media_summary"):
+            summary=result["media_summary"]
+            text+="\n\nMedia: "+" · ".join(f"{k}: {v:,} sheets" for k,v in summary.get("stock_sheets",{}).items())
+            text+="\nOffline default_ticket.jdf · Canon device validation pending"
         self.production_text.setPlainText(text)
         self.pdf_button.setEnabled(result["status"] == "completed")
         self.report_button.setEnabled(bool(result["report_dir"]))

@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from composition.template.model import CompositionError
 
 DATA_KINDS = ("clean_fields", "create_fields", "filter_records", "sort_records", "validate_data")
-PRODUCTION_KINDS = ("running_sequence", "split_output")
+MEDIA_KINDS = ("media_assignment",)
+PRODUCTION_KINDS = ("running_sequence", "split_output")+MEDIA_KINDS
 EXTRA_KINDS = DATA_KINDS + PRODUCTION_KINDS
 
 
@@ -23,7 +24,10 @@ class NodeDefinition:
     def validate_options(self, options):
         if not isinstance(options, dict):
             raise CompositionError(f"{self.label}: settings must be an object.")
-        if self.tool_id in EXTRA_KINDS:
+        if self.tool_id=="media_assignment":
+            from composition.media.model import MediaSpec
+            MediaSpec.from_dict(options)
+        elif self.tool_id in EXTRA_KINDS:
             from .transforms import validate_options
             validate_options(self.tool_id, options)
 
@@ -65,10 +69,15 @@ REGISTRY = {d.tool_id: d for d in (
                 description="Generate a record/envelope or output-page sequence after selection and sorting."),
     _definition("split_output", "Split Output", "Record Set|Mailpiece Set",
                 description="Partition output by a field or by whole records/envelopes."),
+    _definition("media_assignment", "Media Assignment", "Record Set|Mailpiece Set",
+                description="Assign logical pages to Stock, inspect physical sheets and export an offline Canon JDF package."),
 )}
 
 
 def default_options(kind, field="Name"):
+    if kind=="media_assignment":
+        from composition.media.model import default_media
+        return default_media()
     return {
         "clean_fields":{"operations":[{"field":field,"operation":"trim"}]},
         "create_fields":{"fields":[{"field":"NewField","operation":"constant","value":""}]},
@@ -89,7 +98,11 @@ def validate_chain(nodes, project_kind):
         if not definition.accepts(state):
             raise CompositionError(f"{definition.label} cannot use {state or 'an empty input'}.")
         if node.kind in ("filter_records", "sort_records") and finishing:
-            raise CompositionError("Place filtering and sorting before Running Sequence / Split Output.")
+            raise CompositionError("Place filtering and sorting before Media Assignment / Running Sequence / Split Output.")
+        if node.kind=="media_assignment" and seen.intersection(("running_sequence","split_output","overlay")):
+            raise CompositionError("Place Media Assignment before Running Sequence, Split Output and Overlay.")
+        if node.kind in DATA_KINDS and "media_assignment" in seen:
+            raise CompositionError("Place data preparation before Media Assignment.")
         finishing = finishing or node.kind in PRODUCTION_KINDS
         if node.kind == "compose" and "template" not in seen:
             raise CompositionError("Compose needs a Letter Template step.")

@@ -7,7 +7,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QListWidgetItem, QMessageBox
 
 from composition.engine.barcodes import validate_payload
-from composition.pdf_source.planner import EnvelopePlan, applies
+from composition.media.planner import preview_plan
+from composition.pdf_source.planner import applies
 
 from .overlay_dialogs import SCOPE_LABELS
 
@@ -66,7 +67,7 @@ class OverlayUsability:
         if not chosen:
             self.canvas.select_ids([])
             return
-        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        plan = preview_plan(self.spec)
         current = self.print_page.value()
         candidates = [current, *[page for page in range(1, plan.settings_for(self.envelope.value()).output_pages_per_envelope + 1) if page != current]]
         for page in candidates:
@@ -95,7 +96,7 @@ class OverlayUsability:
         if not obj or not obj.profile:
             return
         try:
-            fields = EnvelopePlan(self.spec.source.pages, self.spec.settings).page(
+            fields = preview_plan(self.spec).page(
                 self.envelope.value(), self.print_page.value()).fields("preview")
             payload = obj.profile.payload(fields)
             validate_payload(obj.element.type, payload)

@@ -104,7 +104,7 @@ class BatchJob:
         if (type(self.approved) is not bool or not isinstance(self.status,str)
                 or self.status not in ("Pending","Ready","Needs review","Blocked","Running","Completed","Failed","Cancelled")
                 or any(type(v) is not int or not 0<=v<=100_000_000 for v in (self.input_records,self.pages_per_record,self.expected_pages))
-                or self.pages_per_record>100):
+                or self.pages_per_record>200):
             raise CompositionError("Invalid batch status/counts.")
         if (any(not isinstance(v,str) for v in (self.signature,self.error,self.stage,self.record_store,self.snapshot_dir))
                 or not isinstance(self.warnings,list) or any(not isinstance(v,str) for v in self.warnings)
@@ -308,6 +308,15 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             job.input_records=with_records.count
             job.pages_per_record=len(template.pages)
             job.expected_pages=job.input_records*job.pages_per_record
+            if template.media.get("enabled") and job.input_records:
+                from composition.media.planner import build_print_plan
+                media_plan=build_print_plan(template,job.input_records,is_cancelled=is_cancelled)
+                job.pages_per_record=media_plan.settings_for(1).output_pages_per_envelope
+                job.expected_pages=media_plan.output_pages
+                if not job.data_summary:
+                    job.data_summary={"input":job.input_records,"retained":job.input_records,"excluded":0,
+                                      "errors":0,"warnings":0,"steps":[],"fields":list(with_records.fields)}
+                job.data_summary["media"]={**asdict(media_plan.preflight()),"profile":template.media["printer_profile"]}
             job.warnings=list(with_records.metadata.get("warnings",[]))
             if job.data_summary.get("warnings"):
                 job.warnings.append(f"Data validation: {job.data_summary['warnings']} warning(s). Review findings.csv.")
@@ -468,7 +477,7 @@ def _compose_item(spec,job,root,partitions,progress,is_cancelled):
     context=tempfile.TemporaryDirectory(prefix="wf-prod-") if partitions else nullcontext(str(root))
     with context as directory:
         def reports(report,result):
-            if job.data_summary:
+            if job.data_summary.get("steps"):
                 from .transforms import DataSet, export_audit
                 export_audit(DataSet(job.record_store),report)
                 (report/"workflow-data.json").write_text(json.dumps({
@@ -477,7 +486,7 @@ def _compose_item(spec,job,root,partitions,progress,is_cancelled):
                     "warnings":job.data_summary["warnings"]},indent=2),encoding="utf-8")
         result=generate(ProductionJob(job.prepared_template,job.record_store,str(directory),
             auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name),
-            progress=progress,is_cancelled=is_cancelled,additional_reports=reports).to_dict()
+            progress=progress,is_cancelled=is_cancelled,additional_reports=reports,_defer_media_ticket=bool(partitions)).to_dict()
         if result["status"]=="completed" and partitions:
             from .splitter import split_composed
             from .transforms import DataSet

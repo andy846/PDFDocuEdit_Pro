@@ -28,6 +28,9 @@ def prepare_records(spec, records, directory, *, template=None, progress=None, i
     for node in spec.chain():
         if node.kind not in EXTRA_KINDS:
             continue
+        if node.kind=="media_assignment" and template:
+            import copy
+            template.media=copy.deepcopy(node.params)
         if node.kind=="running_sequence" and template:
             name=node.params.get("name","Sequence")
             if name in {seq.name for seq in template.sequences}:

@@ -11,7 +11,7 @@ from composition.designer.project_host import DesignerProjectHost
 from tests.composition.test_workspace import wait_until
 from workflow.model import WorkflowSpec
 from workflow.node_settings import StepDialog
-from workflow.registry import EXTRA_KINDS, default_options
+from workflow.registry import EXTRA_KINDS, MEDIA_KINDS, default_options
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +80,7 @@ def test_repeatable_steps_insert_duplicate_reorder_undo_and_last_tab_home(host):
     assert host.stack.currentWidget() is host.start
 
 
-@pytest.mark.parametrize("kind",EXTRA_KINDS)
+@pytest.mark.parametrize("kind",[k for k in EXTRA_KINDS if k not in MEDIA_KINDS])
 def test_human_readable_step_dialog_roundtrips_settings(host,kind):
     from workflow.model import WorkflowNode
     node=WorkflowNode(kind,params=default_options(kind))

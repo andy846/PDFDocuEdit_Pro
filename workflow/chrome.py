@@ -58,7 +58,7 @@ def install(window):
         kind=item.data(Qt.ItemDataRole.UserRole)
         node=w.spec.node(kind)
         if kind in EXTRA_KINDS:
-            w.ensure_v3(lambda:w.insert_step(kind))
+            w.insert_step(kind)
         elif node:
             w.canvas.scene().clearSelection()
             w.canvas.nodes[node.id].setSelected(True)
@@ -104,7 +104,7 @@ def populate_next(w):
     for kind in sorted(w.spec.allowed_next(node.kind) if node else []):
         target=w.spec.node(kind)
         if kind in EXTRA_KINDS:
-            w.next_menu.addAction("Insert "+LABELS[kind],lambda checked=False,k=kind:w.ensure_v3(lambda:w.insert_step(k)))
+            w.next_menu.addAction("Insert "+LABELS[kind],lambda checked=False,k=kind:w.insert_step(k))
             continue
         label=("Connect to " if target else "Add ")+LABELS[kind]
         def connect(checked=False,k=kind):

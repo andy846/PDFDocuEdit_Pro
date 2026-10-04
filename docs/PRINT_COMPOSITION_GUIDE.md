@@ -184,3 +184,11 @@ Data → Running sequences 可設定多個起始值／增量／補零／前後�
 ## Excel 匯入 — 2026-10-02
 
 Import data 可選 .xlsx / .xls，指定工作表、標題列及映射。中文、ISO 日期、文字前置零及單一 000000 補零格式可用；公式不會重算，.xlsx 預設拒絕公式，可顯式選用已儲存結果；.xls 使用 saved values 並警告無法稽核公式快取。模板保存為 schema 6；請 Save as 保留原檔。詳見 DOCUMENT_DESIGNER_EXCEL_IMPORT.md。
+
+## Print Media / Canon PDF＋JDF — 2026-10-04
+
+模板用 Page → Print Media / Stocks；套印用 Production → Print Media / Stocks。
+可按模板頁／封內頁碼／頁面角色指定 Stock、批量套用、預覽正反面及用紙量，
+並輸出離線 Canon reference JDF 套件。雙面同一張紙指定不同 Stock 預設阻止；
+明確選擇並確認後可插入空白背頁。Visual Workflow 新增 Media Assignment 節點。
+Canon profile 仍待實機驗證，沒有自動送印或 PS 輸出。詳見 PRINT_MEDIA_20261004.md。

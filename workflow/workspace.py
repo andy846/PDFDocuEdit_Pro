@@ -352,7 +352,7 @@ class WorkflowWindow(QMainWindow):
         previous=self.spec if hasattr(self,"spec") else None
         self.spec=WorkflowSpec.from_dict(raw)
         if previous and previous.fingerprint()!=self.spec.fingerprint():
-            if self.spec.workflow_version==3:
+            if self.spec.workflow_version>=3:
                 try:
                     old_chain=previous.chain()
                     new_chain=self.spec.chain()
@@ -621,7 +621,7 @@ class WorkflowWindow(QMainWindow):
                 if current<distance:
                     closest=edge.a
                     distance=current
-            return self.ensure_v3(lambda:self.insert_step(kind,x,y,after_id=closest))
+            return self.insert_step(kind,x,y,after_id=closest)
         if self.spec.node(kind):
             self.message("This step already exists. Select it to change its settings.")
             return
@@ -629,15 +629,15 @@ class WorkflowWindow(QMainWindow):
         after["nodes"].append(asdict(WorkflowNode(kind,x=x,y=y)))
         self.commit(after,"Add workflow step")
 
-    def ensure_v3(self,callback):
-        if self.spec.workflow_version==3:
+    def ensure_v3(self,callback,version=3):
+        if self.spec.workflow_version>=version:
             return callback()
         if not self.project_path:
-            if self.commit(self.spec.upgraded().to_dict(),"Upgrade unsaved workflow"):
+            if self.commit(self.spec.upgraded(version).to_dict(),"Upgrade unsaved workflow"):
                 return callback()
             return
         path,_=QFileDialog.getSaveFileName(self,"Save upgraded workflow copy",
-            str(self.project_path.with_name(self.project_path.stem+"-v3.pdflow")),"Workflow (*.pdflow)")
+            str(self.project_path.with_name(self.project_path.stem+f"-v{version}.pdflow")),"Workflow (*.pdflow)")
         if not path:
             return
         if Path(path).resolve().with_suffix(".pdflow")==self.project_path.resolve():
@@ -645,7 +645,7 @@ class WorkflowWindow(QMainWindow):
             return
         if self.project_host and not self.project_host.allow_save_path(self,path):
             return
-        upgraded=self.spec.upgraded()
+        upgraded=self.spec.upgraded(version)
         request={"operation":"save","spec":upgraded.to_dict(),"path":path}
         if hasattr(self,"batch"):
             request.update(operation="batch_project_save",batch=self.batch.to_dict())
@@ -658,6 +658,11 @@ class WorkflowWindow(QMainWindow):
         return self.request(request,ready)
 
     def insert_step(self,kind,x=None,y=None,*,after_id=None,params=None):
+        target_id=after_id or self.selected
+        if kind!="media_assignment" and self.spec.workflow_version<3:
+            return self.ensure_v3(lambda:self.insert_step(kind,x,y,after_id=target_id,params=params))
+        if kind=="media_assignment" and self.spec.workflow_version<4:
+            return self.ensure_v3(lambda:self.insert_step(kind,x,y,after_id=target_id,params=params),version=4)
         source=next((n for n in self.spec.nodes if n.id==(after_id or self.selected)),None)
         if not source:
             return
@@ -712,7 +717,7 @@ class WorkflowWindow(QMainWindow):
         after["edges"]=[e for e in after["edges"] if node.id not in e]
         if previous and following:
             after["edges"].append([previous,following])
-        if self.spec.workflow_version==3:
+        if self.spec.workflow_version>=3:
             try:
                 WorkflowSpec.from_dict(after).chain()
             except ValueError as exc:

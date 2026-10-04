@@ -146,6 +146,11 @@ class PageOperations:
             page = asdict(PageSpec(name=f"Page {len(after['pages'])+1}",
                                    width_mm=self.page.width_mm, height_mm=self.page.height_mm))
         after["pages"].insert(self.page_index+1, page)
+        media=after.get("media",{})
+        if duplicate and media.get("mode")=="template":
+            stock=media.get("assignments",{}).get(self.active_page_id)
+            if stock:
+                media["assignments"][page["id"]]=stock
         self._commit(before, after, "Duplicate template page" if duplicate else "Add template page",
                      [], page_id=page["id"])
         self.canvas.fit_page()
@@ -159,6 +164,8 @@ class PageOperations:
         before, after = self.template.to_dict(), self.template.to_dict()
         from composition.handoff import detach_template_page
         detach_template_page(after, self.active_page_id)
+        if after.get("media",{}).get("mode")=="template":
+            after["media"].get("assignments",{}).pop(self.active_page_id,None)
         after["pages"].pop(self.page_index)
         target = after["pages"][min(self.page_index, len(after["pages"])-1)]["id"]
         self._commit(before, after, "Delete template page", [], page_id=target)

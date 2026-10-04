@@ -626,7 +626,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             return
         job=jobs[0]
         self.preview_record.setMaximum(max(1,job.input_records))
-        self.preview_page.setMaximum(max(1,job.pages_per_record))
+        self.preview_page.setMaximum(max(1,len(job.prepared_template.get("pages",[])) or job.pages_per_record))
         detail=f"{job.name} · {job.status}\n{job.input_records:,} records × {job.pages_per_record} pages = {job.expected_pages:,} expected pages"
         if job.data_summary:
             detail+=f"\nSource {job.data_summary['input']:,} · Kept {job.data_summary['retained']:,} · Excluded {job.data_summary['excluded']:,}"

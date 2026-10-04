@@ -204,6 +204,9 @@ def install(window,node):
     description.setWordWrap(True)
     layout.addWidget(description)
     def settings_text():
+        if node.kind=="media_assignment":
+            return (f"{node.params.get('mode','page')} rules · {len(node.params.get('stocks',[]))} Stocks\n"
+                    f"{'Duplex' if node.params.get('duplex') else 'Simplex'} · blank policy: {node.params.get('blank_policy','block')}\nCanon device validation pending")
         if node.kind in DATA_KINDS:
             key={"clean_fields":"operations","create_fields":"fields","filter_records":"conditions",
                  "sort_records":"keys","validate_data":"checks"}[node.kind]
@@ -231,7 +234,17 @@ def install(window,node):
     def configure():
         if not window.flush_settings() or window.active_worker:
             return
-        dialog=StepDialog(node,fields,window)
+        if node.kind=="media_assignment":
+            from composition.designer.media_dialog import MediaDialog
+            context=None
+            if jobs and jobs[0].prepared_template and jobs[0].input_records:
+                context={"kind":"template","project":jobs[0].prepared_template,"records":jobs[0].input_records}
+            elif window.run.groups and window.run.source:
+                context={"kind":"workflow_pdf","source":window.run.source,"groups":window.run.groups,
+                         "data_set":window.run.data_set}
+            dialog=MediaDialog(node.params,context,window)
+        else:
+            dialog=StepDialog(node,fields,window)
         if dialog.exec():
             window.params(node,dialog.options)
     button=QPushButton("Configure step…")
@@ -239,6 +252,12 @@ def install(window,node):
     button.clicked.connect(configure)
     layout.addWidget(button)
     report_summary=jobs[0].data_summary if jobs else getattr(window.run,"data_summary",{})
+    if node.kind=="media_assignment" and report_summary.get("media"):
+        media=report_summary["media"]
+        text=QLabel(f"{media['pages']:,} final pages · {media['sheets']:,} sheets · {media['inserted_blanks']:,} blank backs\n"+
+                   " · ".join(f"{k}: {v:,}" for k,v in media["stock_sheets"].items()))
+        text.setWordWrap(True)
+        layout.addWidget(text)
     if summary and summary.get("scope")=="page":
         report_summary=summary
     if report_summary:

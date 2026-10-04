@@ -30,9 +30,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from composition.media.planner import preview_plan
 from composition.overlay.geometry import validate_changed_geometry
 from composition.overlay.model import EnvelopeSpec
-from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
+from composition.pdf_source.planner import SYSTEM_FIELDS, applies
 from composition.template.model import MM_TO_PT, Template
 from ui.icons import icon
 from ui.responsive import scroll_container
@@ -168,6 +169,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
             item = action(key, label, setter, "&View", symbol="settings")
             item.setCheckable(True)
         action("generate", "Generate overlay PDF…", self.generate_pdf, "&Production", "Ctrl+Shift+G", "printer", True)
+        action("media", "Print Media / Stocks…", self.edit_print_media, "&Production", symbol="printer")
         action("cancel", "Cancel current job", self.cancel_job, "&Production", symbol="x", bar=True)
         self.actions["generate"].setIconText("Generate PDF")
         toolbar.widgetForAction(self.actions["generate"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -402,7 +404,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def busy(self):
         locked = bool(self.active_worker or self.font_token or getattr(self,"batch_pending",False) or getattr(self,"workflow_binding",False))
         valid = self.spec is not None and not self.draft_error
-        for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate"):
+        for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate", "media"):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
         if self.spec and self.spec.needs_detection_review:
             self.actions["generate"].setEnabled(False)
@@ -413,6 +415,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.actions["generate"].setToolTip("Generate this overlay from Workflow using reviewed extraction data.")
         else:
             self.actions["generate"].setToolTip("Generate overlay PDF")
+        if getattr(self,"media_error",""):
+            self.actions["generate"].setEnabled(False)
+            self.actions["generate"].setToolTip(self.media_error)
         self.actions["cancel"].setEnabled(bool(self.active_worker))
         self.actions["cancel"].setVisible(bool(self.active_worker))
         self.canvas.set_editable(valid and not locked)
@@ -455,6 +460,20 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.statusBar().showMessage(message)
         self.statusBar().setToolTip(message)
 
+    def edit_print_media(self):
+        if not self.spec or self.active_worker or self.draft_error:
+            return
+        if hasattr(self,"batch_editor") and not self.batch_editor.resolve():
+            return
+        from .media_dialog import MediaDialog
+        dialog=MediaDialog(self.spec.media,{"kind":"overlay","project":self.spec.to_dict()},self)
+        if dialog.exec():
+            after=self.spec.to_dict()
+            after["media"]=dialog.options
+            if dialog.options["enabled"]:
+                after["settings"]["duplex"]=dialog.options["duplex"]
+            self.commit(after,"Change Print Media")
+
     def apply_spec(self, value, selected=None):
         self.spec = EnvelopeSpec.from_dict(value)
         self.fields.clear()
@@ -462,7 +481,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.filter_system_fields(self.field_filter.text())
         self.draft_error = ""
         self.properties.revert_content.hide()
-        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        plan = preview_plan(self.spec)
+        self.media_error=getattr(plan,"media_error","")
         for control, maximum in ((self.envelope, plan.envelopes), (self.print_page, plan.settings_for(self.envelope.value()).output_pages_per_envelope)):
             control.blockSignals(True)
             control.setRange(1, maximum)
@@ -474,6 +494,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
             f"{plan.envelopes:,} envelopes\n{plan.output_pages:,} output pages\n{plan.sheets:,} sheets · {plan.inserted_blanks:,} blank backs")
         if self.spec.needs_detection_review:
             self.source_summary.setText(f"{Path(self.spec.source.path).name}\n{plan.source_pages:,} source pages\nDetection pending: scan and review boundaries before generation.")
+        if self.media_error:
+            self.source_summary.setText("Media needs repair: open Production → Print Media / Stocks.\n"+self.media_error)
         self.source_summary.setToolTip(self.spec.source.path)
         self.refresh_canvas(selected=selected)
         self.busy()
@@ -509,7 +531,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
                 return
         if editor:
             editor.last_page = current_page
-        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        plan = preview_plan(self.spec)
         self.print_page.blockSignals(True)
         self.print_page.setMaximum(plan.settings_for(self.envelope.value()).output_pages_per_envelope)
         self.print_page.blockSignals(False)

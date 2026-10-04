@@ -12,6 +12,7 @@ from contextlib import closing, nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
+from composition.media.planner import PrintPlan, overlay_plan
 from composition.overlay.generator import generate
 from composition.overlay.model import EnvelopeSpec, OverlayJob
 from composition.overlay.serializer import load_project
@@ -166,6 +167,16 @@ def prepare_mailpieces(spec,run,directory,*,progress=None,is_cancelled=None,unti
     reports=root/"review-reports"
     export_audit(current,reports)
     run.data_summary.update(findings_report=str(reports/"findings.csv"),exclusions_report=str(reports/"exclusions.csv"))
+    media=spec.node("media_assignment")
+    if media and media.params.get("enabled") and current.count:
+        cfg_groups=[]
+        cursor=1
+        for _,_,original in current.rows():
+            start,end=run.groups[original-1]
+            cfg_groups.append([cursor,cursor+end-start])
+            cursor+=end-start+1
+        base=EnvelopePlan(cursor-1,EnvelopeSettings(pages_per_envelope=1,groups=cfg_groups,digits=18))
+        run.data_summary["media"]=asdict(PrintPlan(base,media.params,is_cancelled=is_cancelled).preflight())
     run.data_steps=[s for s in run.data_steps if s.get("scope")=="page"]+current.metadata.get("steps",[])
     assert_valid(current)
     return current
@@ -320,10 +331,12 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None):
         source=inspect_source(production_source,settings,uniform=True,is_cancelled=is_cancelled)
         composed=EnvelopeSpec(source,settings,objects=project.objects if project else [],
             required_scope=project.required_scope if project else "all_source",name=spec.name,external_fields=external_fields(spec))
+        media=spec.node("media_assignment")
+        composed.media=copy.deepcopy(media.params if media else project.media if project else {})
         # External computed names are checked against configured marks, not guessed.
         composed.detection_review=detection_audit(composed)
         composed.validate()
-        plan=EnvelopePlan(source.pages,settings)
+        plan=overlay_plan(composed,is_cancelled=is_cancelled)
         with closing(sqlite3.connect(data.path)) as db:
             db.executescript("DROP TABLE IF EXISTS page_spans; CREATE TABLE page_spans(ordinal INTEGER PRIMARY KEY,start INTEGER,end INTEGER);")
             for i,start in enumerate(plan.output_starts):
@@ -349,7 +362,7 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None):
                 context=tempfile.TemporaryDirectory(prefix="wf-overlay-") if partitions else nullcontext(folder)
                 with context as generation_root:
                     result=asdict(generate(OverlayJob(composed.to_dict(),str(generation_root)),progress=progress,is_cancelled=is_cancelled,
-                                           external_values=values,additional_reports=reports))
+                                           external_values=values,additional_reports=reports,_defer_media_ticket=bool(partitions)))
                     if result["status"]=="completed" and partitions:
                         result=split_composed(result,data,partitions,folder,0,is_cancelled=is_cancelled,progress=progress)
                     elif partitions and result.get("report_dir"):

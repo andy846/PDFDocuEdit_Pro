@@ -58,6 +58,10 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
     files=[]
     try:
         with closing(sqlite3.connect(source.path)) as db:
+            media_database=Path(result["report_dir"])/"media-plan.sqlite"
+            media= json.loads((Path(result["report_dir"])/"media-definition.json").read_text(encoding="utf-8")) if media_database.is_file() else None
+            if media:
+                db.execute("ATTACH DATABASE ? AS media_plan",(str(media_database),))
             for index,part in enumerate(partitions,1):
                 check_cancel(is_cancelled)
                 ranges=[]
@@ -75,22 +79,46 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
                 validate_pdf_file(pdf,expected_page_count=expected_pages)
                 files.append({"output_pdf":str(final/pdf.name),"output_sha256":file_hash(pdf),
                     "records":part["records"],"pages":expected_pages,"key":part["key"]})
+                if media:
+                    from composition.media.ticket import export_rows
+                    from composition.template.serializer import file_hash as digest
+                    package=staging/pdf.stem
+                    package.mkdir()
+                    def media_rows(part=part):
+                        file_page=0
+                        for (ordinal,) in db.execute("SELECT ordinal FROM partitions WHERE partition_key=? ORDER BY ordinal",(part["key"],)):
+                            start,end=((ordinal-1)*pages_per_record+1,ordinal*pages_per_record) if pages_per_record else db.execute("SELECT start,end FROM page_spans WHERE ordinal=?",(ordinal,)).fetchone()
+                            for row in db.execute("SELECT * FROM media_plan.pages WHERE file_page BETWEEN ? AND ? ORDER BY file_page",(start,end)):
+                                file_page+=1
+                                yield [file_page,*row[1:]]
+                    files[-1]["media_summary"]=export_rows(package,media,media_rows(),expected_pages,pdf.name,is_cancelled=is_cancelled)
+                    shutil.move(pdf,package/pdf.name)
+                    files[-1]["output_pdf"]=str(final/pdf.stem/pdf.name)
+                    files[-1]["output_sha256"]=digest(package/pdf.name)
+                    (package/"job.json").write_text(json.dumps({"job_version":2,"job_id":result["job_id"]+"-"+str(index),
+                        "status":"completed","global_job_id":result["job_id"],"records":part["records"],"pages":expected_pages,
+                        "output_pdf":pdf.name,"media_summary":files[-1]["media_summary"],"page_mapping":"media-plan.csv",
+                        "sequence_policy":"Global production sequence retained; File page rebased to 1"},indent=2),encoding="utf-8")
                 with (staging/(pdf.stem+"-source-map.csv")).open("w",encoding="utf-8-sig",newline="") as stream:
                     writer=csv.writer(stream)
-                    writer.writerow(["File page","Production record","Source record","Template page"])
+                    writer.writerow(["File page","Production record","Source record","Logical page" if media else "Template page"])
                     file_page=0
                     for ordinal,source_id in db.execute("SELECT records.ordinal,source_row FROM records JOIN partitions USING(ordinal) WHERE partition_key=? ORDER BY ordinal",(part["key"],)):
                         count=pages_per_record if pages_per_record else db.execute("SELECT end-start+1 FROM page_spans WHERE ordinal=?",(ordinal,)).fetchone()[0]
                         for page in range(1,count+1):
                             file_page+=1
-                            writer.writerow([file_page,ordinal,source_id,page])
+                            logical=page
+                            if media:
+                                global_page=(ordinal-1)*pages_per_record+page if pages_per_record else db.execute("SELECT start FROM page_spans WHERE ordinal=?",(ordinal,)).fetchone()[0]+page-1
+                                logical=db.execute("SELECT logical_page FROM media_plan.pages WHERE file_page=?",(global_page,)).fetchone()[0]
+                            writer.writerow([file_page,ordinal,source_id,logical])
                 if progress:
                     progress(index,len(partitions),f"Validating split PDF {index}/{len(partitions)}")
         if sum(f["records"] for f in files)!=source.count or sum(f["pages"] for f in files)!=result["generated_pages"]:
             raise CompositionError("Split reconciliation failed.")
         updated={**result,"job_id":job_id,"output_pdf":files[0]["output_pdf"] if files else "",
                  "generated_files":len(files),"output_files":files,"report_dir":str(final),
-                 "output_size":sum((staging/Path(f["output_pdf"]).name).stat().st_size for f in files)}
+                 "output_size":sum((staging/Path(f["output_pdf"]).relative_to(final)).stat().st_size for f in files)}
         if files:
             updated["output_sha256"]=files[0]["output_sha256"]
         updated.update(source_records=source.metadata.get("source_records",source.count),retained_records=source.count,

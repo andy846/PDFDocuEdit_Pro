@@ -8,8 +8,9 @@ from dataclasses import asdict
 
 from PyQt6.QtWidgets import QDialog, QInputDialog
 
+from composition.media.planner import preview_plan
 from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayObject
-from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan, applies
+from composition.pdf_source.planner import SYSTEM_FIELDS, applies
 from composition.template.model import CompositionError, Element
 
 from .overlay_dialogs import BarcodeProfileDialog
@@ -148,7 +149,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         if len(self.canvas.selected_ids()) != 1:
             return
         obj = next(obj for obj in self.spec.objects if obj.element.id == self.canvas.selected_ids()[0])
-        plan = EnvelopePlan(self.spec.source.pages, self.spec.settings)
+        plan = preview_plan(self.spec)
         fields = plan.page(self.envelope.value(), self.print_page.value()).fields("preview")
         first = next((page for page in plan.pages() if applies(obj.scope, page.fields("preview"), obj.letter_page)), None)
         last = next((plan.page(env, p) for env in range(plan.envelopes, 0, -1)

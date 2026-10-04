@@ -44,7 +44,7 @@ def context_fingerprint(spec, *, include_overlay=True):
 
 def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None):
     spec.chain()
-    if spec.workflow_version==3:
+    if spec.workflow_version>=3:
         from .registry import EXTRA_KINDS
         if any(n.kind in EXTRA_KINDS for n in spec.nodes):
             from .pdf_pipeline import execute_pdf

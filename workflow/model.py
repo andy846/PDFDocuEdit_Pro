@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 
 from composition.template.model import CompositionError
 
-from .registry import EXTRA_KINDS, REGISTRY, validate_chain
+from .registry import EXTRA_KINDS, MEDIA_KINDS, REGISTRY, validate_chain
 
 KINDS = ("input", "merge", "extract", "group", "review", "overlay", "output")
 MAIL_KINDS = ("data", "mapping", "template", "sequences", "mail_review", "compose", "reports")
@@ -58,15 +58,18 @@ class WorkflowSpec:
     @property
     def kinds(self):
         base=MAIL_KINDS if self.project_kind=="mail_merge_workflow" else KINDS
-        return base+EXTRA_KINDS if self.workflow_version==3 else base
+        if self.workflow_version<3:
+            return base
+        extra=EXTRA_KINDS if self.workflow_version>=4 else tuple(k for k in EXTRA_KINDS if k not in MEDIA_KINDS)
+        return base+extra
 
-    def upgraded(self):
+    def upgraded(self,version=3):
         result=copy.deepcopy(self)
-        result.workflow_version=3
+        result.workflow_version=max(self.workflow_version,version)
         return result
 
     def allowed_next(self, kind):
-        if self.workflow_version==3:
+        if self.workflow_version>=3:
             if kind in ("output","reports"):
                 return set()
             definition=REGISTRY[kind]
@@ -94,24 +97,24 @@ class WorkflowSpec:
             raise CompositionError("Invalid workflow structure") from exc
 
     def validate(self):
-        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3)
+        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3,4)
                 or self.project_kind not in ("pdf_workflow","mail_merge_workflow")
-                or (self.project_kind=="mail_merge_workflow" and self.workflow_version not in (2,3))
+                or (self.project_kind=="mail_merge_workflow" and self.workflow_version not in (2,3,4))
                 or not isinstance(self.name,str) or len(self.name)>200 or not isinstance(self.nodes,list)
-                or not 1<=len(self.nodes)<=(64 if self.workflow_version==3 else 7)
-                or not isinstance(self.edges,list) or len(self.edges)>(63 if self.workflow_version==3 else 6)):
+                or not 1<=len(self.nodes)<=(64 if self.workflow_version>=3 else 7)
+                or not isinstance(self.edges,list) or len(self.edges)>(63 if self.workflow_version>=3 else 6)):
             raise CompositionError("Unsupported workflow format or graph size.")
         ids=set()
         kinds=set()
         for n in self.nodes:
             if (not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",n.id) or n.id in ids or n.kind not in self.kinds
-                    or (n.kind in kinds and not (self.workflow_version==3 and REGISTRY[n.kind].repeatable))
+                    or (n.kind in kinds and not (self.workflow_version>=3 and REGISTRY[n.kind].repeatable))
                     or not isinstance(n.params,dict)
                     or any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>100000 for v in (n.x,n.y))):
                 raise CompositionError("Invalid/duplicate workflow node.")
             ids.add(n.id)
             kinds.add(n.kind)
-            if self.workflow_version==3:
+            if self.workflow_version>=3:
                 REGISTRY[n.kind].validate_options(n.params)
         for edge in self.edges:
             if not isinstance(edge,list) or len(edge)!=2 or any(v not in ids for v in edge):
@@ -137,7 +140,7 @@ class WorkflowSpec:
                     raise CompositionError("Workflow loops are not supported.")
                 visited.add(cursor)
                 cursor=outgoing[cursor]
-        if self.workflow_version==3:
+        if self.workflow_version>=3:
             root=self.node("data" if self.project_kind=="mail_merge_workflow" else "input")
             if root:
                 path=[]
@@ -165,7 +168,7 @@ class WorkflowSpec:
             current=next((n for n in self.nodes if n.id==following),None)
         if len(chain)!=len(self.nodes) or chain[-1].kind!=("reports" if self.project_kind=="mail_merge_workflow" else "output"):
             raise CompositionError("Connect every node into one complete input-to-output chain.")
-        if self.workflow_version==3:
+        if self.workflow_version>=3:
             validate_chain(chain,self.project_kind)
         return chain
 

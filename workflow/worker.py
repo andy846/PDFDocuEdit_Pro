@@ -149,7 +149,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
         external={}
         source_path=request["source"]
         groups=request["groups"]
-        if workflow.workflow_version==3 and any(n.kind in EXTRA_KINDS for n in workflow.nodes):
+        if workflow.workflow_version>=3 and any(n.kind in EXTRA_KINDS for n in workflow.nodes):
             import shutil
             import uuid
 
@@ -184,6 +184,8 @@ def dispatch(request, progress, cancelled, emit_state=None):
         spec=EnvelopeSpec(source,cfg,objects=project.objects if project else [],
                           required_scope=project.required_scope if project else "all_source",
                           name=project.name if project else workflow.name,external_fields=external_fields(workflow))
+        media=workflow.node("media_assignment")
+        spec.media=media.params.copy() if media else project.media.copy() if project else {}
         if project and project.source.sha256==source.sha256:
             spec.source_link=project.source_link
         report = None if external else workflow.node("group").params.get("detection_review")

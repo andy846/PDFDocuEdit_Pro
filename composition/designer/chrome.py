@@ -122,6 +122,7 @@ class DesignerChrome:
         action("page_next", "Next template page", lambda: self.select_template_page(self.page_index+1),
                "&Page", "Alt+PgDown")
         action("page_size", "Current page size…", self.page_size, "&Page", symbol="square")
+        action("media", "Print Media / Stocks…", self.edit_print_media, "&Page", symbol="printer")
         action("fit_page", "Fit page", lambda: self.canvas.fit_page(), "&View", "Ctrl+0", "monitor")
         action("zoom_in", "Zoom in", lambda: self.canvas.zoom_by(1.2), "&View", "Ctrl++", "plus")
         action("zoom_out", "Zoom out", lambda: self.canvas.zoom_by(1/1.2), "&View", "Ctrl+-", "minus")
@@ -256,7 +257,7 @@ class DesignerChrome:
         self.actions["repair_glyph"].setEnabled(len(selected) == 1 and text_selected and not busy and not self.canvas.mode_preview)
         self.actions["paste"].setEnabled(bool(self.clipboard) and not busy)
         for key in ("new", "open", "save", "save_as", "background", "remove_background",
-                    "rename", "import", "page_size", "select_all"):
+                    "rename", "import", "page_size", "media", "select_all"):
             self.actions[key].setEnabled(not busy)
         for key, value in self.actions.items():
             if key.startswith("rotate_"):

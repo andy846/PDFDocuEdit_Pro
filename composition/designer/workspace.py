@@ -874,6 +874,17 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             after["name"] = name.strip()
             self._commit(before, after, "Rename template")
 
+    def edit_print_media(self):
+        if self.import_worker or self.production_worker or self.content_invalid or self.properties.apply() is False:
+            return
+        from .media_dialog import MediaDialog
+        context={"kind":"template","project":self.template.to_dict(),"records":max(1,self.record_count)}
+        dialog=MediaDialog(self.template.media,context,self)
+        if dialog.exec():
+            before,after=self.template.to_dict(),self.template.to_dict()
+            after["media"]=dialog.options
+            self._commit(before,after,"Change Print Media")
+
     def page_size(self):
         size, ok = QInputDialog.getItem(self, "Page size", "Size", ["A4", "A5", "Letter", "Custom"], 0, False)
         if not ok:
@@ -1003,10 +1014,11 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         job = ProductionJob(self.template.to_dict(), info["store"], output, auto_repair=self.auto_repair.isChecked())
         self._output_template = copy.deepcopy(self.template.to_dict())
         self.tabs.setCurrentIndex(3)
+        page_summary=(f"Logical template pages per record: {len(self.template.pages)}\n"
+                      "Print Media: calculating final pages and sheets in the worker…\n" if self.template.media.get("enabled") else
+                      f"Pages per record: {len(self.template.pages)}\nExpected pages: {self.record_count * len(self.template.pages):,}\n")
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
-                                             f"Pages per record: {len(self.template.pages)}\n"
-                                             f"Expected pages: {self.record_count * len(self.template.pages):,}\n"
-                                             "Composing in an isolated process…")
+                                             +page_summary+"Composing in an isolated process…")
         self.last_output = ""
         self.open_output_button.setEnabled(False)
         self.last_font_report = ""
@@ -1044,6 +1056,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                           f"Rules check complete: {rules.get('complete', False)}",
                           f"Hidden object occurrences: {rules.get('hidden_occurrences', 0)}",
                           f"Alternative content occurrences: {rules.get('alternate_occurrences', 0)}"])
+        if result.get("media_summary"):
+            lines.append("Media: "+" · ".join(f"{k}: {v:,} sheets" for k,v in result["media_summary"].get("stock_sheets",{}).items()))
+            lines.append("Offline default_ticket.jdf · Canon device validation pending")
         self.production_summary.setPlainText("\n".join(lines))
         self.failed_record = result.get("error_record")
         self._record_font_error(result["error"], result.get("error_record"))
