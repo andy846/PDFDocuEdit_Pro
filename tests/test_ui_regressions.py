@@ -27,6 +27,7 @@ def _app() -> QApplication:
 
 def test_theme_changes_retain_qss_owned_proxy_style() -> None:
     from PyQt6 import sip
+
     from styles.components import global_style
     from styles.theme import apply_theme
 
