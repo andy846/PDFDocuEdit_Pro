@@ -97,6 +97,20 @@ def sample_settings():
     return EnvelopeSettings()
 
 
+def test_close_before_initial_fit_does_not_call_deleted_canvas(app):
+    from PyQt6 import sip
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    window = CompositionWindow()
+    window.undo.setClean()
+    window.close()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(window.canvas)
+    # Dispatch the initialization timer after deletion, as rapid project close
+    # or closing the host can do. An unhandled Qt callback would abort pytest.
+    app.processEvents()
+
+
 def test_invalid_last_sample_blocks_profile_acceptance(app):
     fields = EnvelopePlan(6, sample_settings()).page(1, 1).fields()
     last = {**fields, "EnvelopeSeq": "1000000"}

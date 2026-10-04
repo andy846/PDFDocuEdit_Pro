@@ -9,6 +9,7 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEventLoop, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import (
@@ -128,7 +129,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.menuBar().hide()
         self._apply_template(self.template.to_dict())
         self.undo.setClean()
-        QTimer.singleShot(0, lambda: self.canvas.fit_page() if self.canvas.transform().isIdentity() and not self.close_pending else None)
+        QTimer.singleShot(0, lambda: self.canvas.fit_page() if not self.close_pending
+                          and not sip.isdeleted(self.canvas) and self.canvas.transform().isIdentity() else None)
         QTimer.singleShot(0, self._load_windows_fonts)
         QTimer.singleShot(0, self._adjust_inspector)
 

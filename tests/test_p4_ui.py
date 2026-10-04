@@ -357,7 +357,8 @@ def test_notification_overlay_does_not_reflow_pdf_viewport(
     )
     app.processEvents()
 
-    assert window.info_bar.parentWidget() is window.centralWidget()
+    from ui.workspace_modes import WorkspaceMode
+    assert window.info_bar.parentWidget() is window._mode_controller.modes.pages[WorkspaceMode.PDF]
     assert window.info_bar.isVisible()
     assert window.info_bar.geometry().intersects(window.workspace.geometry())
     assert window.workspace.geometry() == workspace_geometry
