@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 9
+TEMPLATE_VERSION = 10
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
@@ -147,10 +147,11 @@ class Template:
     record_mode: str
     generated_count: int
     source_link: dict
+    media: dict
 
     def __init__(self, template_version=TEMPLATE_VERSION, name="Untitled document",
                  width_mm=210.0, height_mm=297.0, background="", elements=None, data=None,
-                 *, pages=None, sequences=None, record_mode="imported", generated_count=100, source_link=None):
+                 *, pages=None, sequences=None, record_mode="imported", generated_count=100, source_link=None, media=None):
         self.template_version = template_version
         self.name = name
         self.pages = pages if pages is not None else [
@@ -161,6 +162,7 @@ class Template:
         self.record_mode = record_mode
         self.generated_count = generated_count
         self.source_link = source_link if source_link is not None else {}
+        self.media = media if media is not None else {}
 
     # Existing headless callers can still construct/access a single-page template.
     # Designer code explicitly chooses a page; serialization never duplicates page data.
@@ -212,6 +214,8 @@ class Template:
                 f"Unsupported template version: {version!r}. This build reads version {TEMPLATE_VERSION}.")
         try:
             raw = dict(value)
+            if version<10 and raw.get("media"):
+                raise CompositionError("Print Media requires template version 10.")
             if version < 8 and raw.get("source_link"):
                 raise CompositionError("PDF source links require template version 8.")
             if version < 9 and isinstance(raw.get("source_link"), dict) and raw["source_link"].get("version") == 2:
@@ -326,6 +330,8 @@ def required_fields(template: Template) -> set[str]:
 
 
 def validate_template(template: Template, *, check_assets: bool = True) -> None:
+    from composition.media.model import MediaSpec
+    MediaSpec.from_dict(template.media)
     from composition.handoff import validate_link
     validate_link(template.source_link)
     if type(template.template_version) is not int or template.template_version != TEMPLATE_VERSION:

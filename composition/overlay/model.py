@@ -80,11 +80,12 @@ class EnvelopeSpec:
     objects: list[OverlayObject] = field(default_factory=list)
     required_scope: str = "all_source"
     name: str = "Envelope overlay"
-    overlay_version: int = 5
+    overlay_version: int = 6
     project_kind: str = "pdf_overlay"
     external_fields: list[str] = field(default_factory=list)
     detection_review: dict = field(default_factory=dict)
     source_link: dict = field(default_factory=dict)
+    media: dict = field(default_factory=dict)
 
     @property
     def requires_control_barcode(self) -> bool:
@@ -100,11 +101,13 @@ class EnvelopeSpec:
         return self.source_link.get("review_required", False)
 
     def validate(self):
+        from composition.media.model import MediaSpec
+        MediaSpec.from_dict(self.media)
         from composition.handoff import validate_link
         validate_link(self.source_link)
         if self.source_link and (len(self.source_link["page_map"]) != self.source.pages or self.source_link["sha256"] != self.source.sha256):
             raise CompositionError("PDF source provenance does not match the source snapshot.")
-        if type(self.overlay_version) is not int or self.overlay_version != 5 or self.project_kind != "pdf_overlay":
+        if type(self.overlay_version) is not int or self.overlay_version != 6 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if (not isinstance(self.external_fields,list) or len(self.external_fields)>400
                 or any(not isinstance(v,str) or not re.fullmatch(r"(?:Page_|Envelope_)?[A-Za-z_][A-Za-z0-9_]{0,63}",v)
@@ -196,8 +199,10 @@ class EnvelopeSpec:
         try:
             data = dict(raw)
             version = data.get("overlay_version", 1)
-            if type(version) is not int or version not in (1, 2, 3, 4, 5):
+            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6):
                 raise CompositionError("Unsupported envelope project version.")
+            if version<6 and data.get("media"):
+                raise CompositionError("Print Media requires overlay version 6.")
             if version < 5 and data.get("external_fields"):
                 raise CompositionError("Workflow extraction fields require envelope project version 5.")
             if version < 4 and data.get("source_link"):
@@ -207,7 +212,7 @@ class EnvelopeSpec:
             if version < 3 and (data.get("settings", {}).get("groups") or
                     data.get("settings", {}).get("excluded_pages") or data.get("source", {}).get("geometry_mode", "roles") != "roles"):
                 raise CompositionError("Dynamic detection requires envelope project version 3.")
-            data["overlay_version"] = 5
+            data["overlay_version"] = 6
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()
@@ -298,3 +303,4 @@ class OverlayResult:
     composer_peak_memory_bytes: int = 0
     assembler_peak_memory_bytes: int = 0
     output_size: int = 0
+    media_summary: dict = field(default_factory=dict)

@@ -65,6 +65,7 @@ class JobResult:
     rule_summary: dict = field(default_factory=dict)
     font_scan: dict = field(default_factory=dict)
     auto_repair: bool = False
+    media_summary: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)

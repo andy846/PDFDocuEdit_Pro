@@ -10,7 +10,7 @@ from .model import EnvelopeSettings
 
 SYSTEM_FIELDS = frozenset({"JobId", "EnvelopeSeq", "EnvelopeIndex", "EnvelopeCount", "SourcePage",
                           "LetterPage", "LetterPageCount", "OutputPage", "PrintPage", "PrintPageCount",
-                          "SheetNo", "SheetCount", "Side", "IsFirstSheet", "IsLastSheet", "IsInsertedBlank"})
+                          "SheetNo", "SheetCount", "Side", "IsFirstSheet", "IsLastSheet", "IsInsertedBlank", "PageRole", "MediaStock"})
 SCOPES = ("all_source", "all_output", "first", "last", "front", "letter_page")
 
 
@@ -40,7 +40,10 @@ class PagePlan:
                 "SheetNo": str(sheet), "SheetCount": str(cfg.sheets_per_envelope),
                 "Side": "Back" if cfg.duplex and self.print_page % 2 == 0 else "Front",
                 "IsFirstSheet": str(int(sheet == 1)), "IsLastSheet": str(int(sheet == cfg.sheets_per_envelope)),
-                "IsInsertedBlank": str(int(self.source_page is None))}
+                "IsInsertedBlank": str(int(self.source_page is None)),
+                "PageRole":("BLANK" if self.source_page is None else "SINGLE" if cfg.pages_per_envelope==1
+                            else "FIRST" if self.print_page==1 else "LAST" if self.print_page==cfg.pages_per_envelope else "CONTINUATION"),
+                "MediaStock":""}
 
 
 def applies(scope, fields, letter_page=1):

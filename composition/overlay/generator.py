@@ -14,7 +14,7 @@ from pathlib import Path
 import fitz
 
 from composition.engine.assets import qpdf_executable
-from composition.pdf_source.planner import EnvelopePlan
+from composition.media.planner import PrintPlan, overlay_plan
 from composition.pdf_source.source import inspect_source, snapshot_source
 from composition.production.generator import JobCancelled, _assemble, check_cancel
 from composition.production.model import now
@@ -47,7 +47,7 @@ def _error_page(result, page):
     result.error_output_page=page.output_page
 
 
-def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None):
+def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None,_defer_media_ticket=False):
     spec=EnvelopeSpec.from_dict(job.project)
     if spec.external_fields and external_values is None:
         raise CompositionError("This overlay requires reviewed Workflow extraction data. Generate it from Workflow.")
@@ -72,18 +72,25 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
     current=None
     renderer=None
     chunk=layers=None
-    plan=EnvelopePlan(spec.source.pages,spec.settings)
-    result.excluded_source_pages=plan.excluded_pages
-    result.source_pages=plan.source_pages
-    result.input_envelopes=plan.envelopes
-    result.expected_pages=plan.output_pages
-    result.inserted_blanks=plan.inserted_blanks
-    result.sheets=plan.sheets
+    plan=None
+    result.source_pages=spec.source.pages
     result.warnings.extend(spec.source.warnings)
     if any(obj.profile and obj.profile.validation=="pending" for obj in spec.objects):
         result.warnings.append("Generic barcode profile: machine validation pending. Software decoding does not certify inserter compatibility.")
     try:
         check_cancel(is_cancelled)
+        plan=overlay_plan(spec,is_cancelled=is_cancelled)
+        result.excluded_source_pages=plan.excluded_pages
+        result.source_pages=plan.source_pages
+        result.input_envelopes=plan.envelopes
+        result.expected_pages=plan.output_pages
+        result.inserted_blanks=plan.inserted_blanks
+        result.sheets=plan.sheets
+        if isinstance(plan,PrintPlan):
+            from composition.media.ticket import export_print_package
+            result.media_summary=export_print_package(staging,plan,"production.pdf",is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket)
+            result.media_summary["inserted_blanks"]=plan.inserted_blanks
+            result.warnings.append("Canon media profile: device validation pending. Inspect catalog mappings and proof print before production.")
         if progress:
             progress(0,plan.output_pages,"Creating hash-checked source snapshot")
         snapshot=snapshot_source(spec.source.path,staging/"source-snapshot.pdf",spec.source.sha256,is_cancelled=is_cancelled)
@@ -122,7 +129,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             row(env_writer,["Envelope index","Envelope sequence","Source start","Source end","Output start","Output end","Source pages","Output pages","Sheets","Status"])
             chunks=[]
             pending = iter(plan.pages())
-            per_envelope = spec.settings.output_pages_per_envelope
+            per_envelope = plan.settings_for(1).output_pages_per_envelope
             batch_size = job.chunk_size if spec.settings.groups else ((job.chunk_size + per_envelope-1)//per_envelope)*per_envelope
             while batch := list(islice(pending, batch_size)):
                 chunk, layers = fitz.open(), fitz.open()
@@ -240,7 +247,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             result.failed_envelopes=1
             result.processed_envelopes=max(result.processed_envelopes,current.envelope)
             result.successful_envelopes=min(result.successful_envelopes,result.processed_envelopes-1)
-        elif getattr(exc,"record_ordinal",None):
+        elif plan is not None and getattr(exc,"record_ordinal",None):
             index=exc.record_ordinal
             page=plan.output_page(index)
             _error_page(result,page)
@@ -253,6 +260,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         result.report_dir=str(failure)
         for path in staging.glob("*.pdf"):
             path.unlink(missing_ok=True)
+        (staging/"default_ticket.jdf").unlink(missing_ok=True)
         for directory in (staging/"fonts",staging/"fallback"):
             if directory.exists():
                 if not directory.resolve().is_relative_to(staging.resolve()):

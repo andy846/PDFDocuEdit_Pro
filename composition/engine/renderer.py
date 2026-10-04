@@ -64,6 +64,7 @@ class Renderer:
         self.resource_pages = template.pages if page_index is None else [template.pages[page_index]]
         self.preview_page_index = page_index
         self.template = template
+        self.media_plan = None
         self.design = design
         self.plans = {element.id: ElementPlan(element) for spec in self.resource_pages for element in spec.elements}
         self.tokens = {key: plan.tokens for key, plan in self.plans.items() if plan.tokens}
@@ -197,13 +198,22 @@ class Renderer:
             self.resource_document = document
             self.font_xrefs.clear()
         indices = range(len(self.template.pages)) if page_index is None else [page_index]
-        for index in indices:
+        media_plan=None
+        if page_index is None and self.template.media.get("enabled"):
+            from composition.media.planner import build_print_plan
+            if self.media_plan is None:
+                self.media_plan=build_print_plan(self.template,1,is_cancelled=is_cancelled)
+            media_plan=self.media_plan
+            indices=[p.role for p in media_plan.pages()]
+        for position,index in enumerate(indices):
             if is_cancelled and is_cancelled():
                 raise CompositionError("Production cancelled between template pages.")
             from composition.data.sequences import sequence_record
             values = sequence_record(self.template, record, ordinal, index, design=self.design)
             spec = self.template.pages[index]
             page = document.new_page(width=spec.width_mm * MM_TO_PT, height=spec.height_mm * MM_TO_PT)
+            if media_plan and media_plan.page(1,position+1).source_page is None:
+                continue
             background = self.backgrounds.get(spec.id)
             if background is not None:
                 page.show_pdf_page(page.rect, background, 0, overlay=False)

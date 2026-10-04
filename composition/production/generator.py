@@ -16,7 +16,7 @@ from pathlib import Path
 
 import fitz
 
-from composition.data.sequences import CompositionRecords, open_records, sequence_value
+from composition.data.sequences import CompositionRecords, open_records, sequence_record
 from composition.engine.assets import qpdf_executable
 from composition.engine.fonts import RecordFontError
 from composition.engine.renderer import Renderer
@@ -103,10 +103,21 @@ def _csv_value(value):
 
 
 def _write_reports(directory: Path, result: JobResult, template: Template, store: CompositionRecords | None) -> None:
+    def sequence_summary(seq):
+        values={**asdict(seq),"first":None,"last":None}
+        try:
+            if store and store.count:
+                values.update(first=sequence_record(template,{},1,0)[seq.name],
+                              last=sequence_record(template,{},store.count,len(template.pages)-1)[seq.name])
+        except CompositionError:
+            # Preserve the original media preflight error in failed-job diagnostics.
+            pass
+        return values
     log = {
         "job_version": 2,
         **result.to_dict(),
         "template_name": template.name,
+        "media":template.media,
         "font_policy": ("template_primary; imported data fonts ignored; automatic missing-glyph fallback enabled"
                         if result.auto_repair else "template_only; imported data fonts ignored; explicit missing-glyph repairs only"),
         "template_fonts": [
@@ -125,15 +136,10 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
                                   "source_sha256 + one-based imported record ordinal")),
         "import_configuration": store.metadata.get("config", {}) if store else None,
         "record_mode": template.record_mode,
-        "sequences": [
-            {**asdict(seq),
-             "first": sequence_value(seq, 1, 0, len(template.pages)),
-             "last": sequence_value(seq, store.count, len(template.pages)-1, len(template.pages)) if store else None}
-            for seq in template.sequences
-        ],
+        "sequences": [sequence_summary(seq) for seq in template.sequences],
         "page_mapping": {
-            "type": "fixed_pages", "pages_per_record": len(template.pages),
-            "formula": "output page = (record ordinal - 1) * pages_per_record + template page ordinal",
+            "type": "media_print_plan" if template.media.get("enabled") else "fixed_pages", "pages_per_record": result.pages_per_record,
+            "formula": "See media-plan.csv for logical/physical mapping" if template.media.get("enabled") else "output page = (record ordinal - 1) * pages_per_record + template page ordinal",
             "template_pages": [{"ordinal": i+1, "id": p.id, "name": p.name}
                                for i, p in enumerate(template.pages)],
         },
@@ -167,6 +173,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
 def generate(
     job: ProductionJob, *, progress: Callable | None = None, is_cancelled: Callable | None = None,
     additional_reports: Callable | None = None,
+    _defer_media_ticket: bool = False,
 ) -> JobResult:
     """Compose a disk-backed imported snapshot without loading all rendered pages."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job.job_id):
@@ -185,6 +192,7 @@ def generate(
     staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))
     result = JobResult(job.job_id, pages_per_record=len(template.pages), auto_repair=job.auto_repair)
     store = None
+    media_plan = None
     current_record = None
     chunk = None
     chunks = []
@@ -194,6 +202,15 @@ def generate(
         result.warnings.extend(store.metadata.get("warnings", []))
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)
+        if template.media.get("enabled"):
+            from composition.media.planner import build_print_plan
+            media_plan=build_print_plan(template,store.count,is_cancelled=is_cancelled)
+            result.pages_per_record=media_plan.settings_for(1).output_pages_per_envelope
+            result.expected_pages=media_plan.output_pages
+            result.media_summary=asdict(media_plan.preflight())
+            result.warnings.append("Canon media profile: device validation pending. Inspect ticket settings and proof print before production.")
+            from composition.media.ticket import export_print_package
+            result.media_summary.update(export_print_package(staging,media_plan,job.output_name,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket))
         missing = required_fields(template) - set(store.fields)
         if missing:
             raise CompositionError(f"Missing mapped fields: {', '.join(sorted(missing))}")
@@ -319,6 +336,7 @@ def generate(
         # Keep only diagnostics; incomplete PDFs are never published.
         for path in staging.glob("*.pdf"):
             path.unlink(missing_ok=True)
+        (staging/"default_ticket.jdf").unlink(missing_ok=True)
         failure_dir = output_root / f"{job.job_id}-failed"
         result.report_dir = str(failure_dir)
         audit = staging / "glyph-repairs-preflight.csv"

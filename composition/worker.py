@@ -37,6 +37,50 @@ def dispatch(request: dict) -> dict:
     if task == "workflow":
         from workflow.worker import dispatch as workflow_dispatch
         return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state))
+    if task == "media_preview":
+        from dataclasses import asdict
+
+        from composition.media.planner import PrintPlan, build_print_plan, overlay_plan
+        from composition.media.ticket import plan_rows
+        from composition.overlay.model import EnvelopeSpec
+        context=request["context"]
+        if context["kind"]=="template":
+            template=Template.from_dict(context["project"])
+            template.media=request["media"]
+            plan=build_print_plan(template,context.get("records",1),is_cancelled=cancelled)
+        elif context["kind"]=="workflow_pdf":
+            from composition.overlay.model import EnvelopeSpec
+            from composition.pdf_source.model import EnvelopeSettings
+            from composition.pdf_source.source import inspect_source
+            groups=context["groups"]
+            cfg=EnvelopeSettings(pages_per_envelope=1,groups=groups,digits=18)
+            source=inspect_source(context["source"],cfg,uniform=True,is_cancelled=cancelled)
+            if context.get("data_set"):
+                from workflow.transforms import DataSet
+                selected=DataSet(context["data_set"])
+                projected=[]
+                cursor=1
+                for _,_,original in selected.rows():
+                    first,last=groups[original-1]
+                    projected.append([cursor,cursor+last-first])
+                    cursor+=last-first+1
+                source.pages=cursor-1
+                cfg.groups=projected
+            spec=EnvelopeSpec(source,cfg,media=request["media"])
+            plan=overlay_plan(spec,is_cancelled=cancelled)
+        else:
+            spec=EnvelopeSpec.from_dict(context["project"])
+            spec.media=request["media"]
+            plan=overlay_plan(spec,is_cancelled=cancelled)
+        if not isinstance(plan,PrintPlan):
+            return {"disabled":True,"pages":plan.output_pages,"rows":[]}
+        start=max(1,int(request.get("start",1)))
+        stop=min(plan.output_pages,start+199)
+        # Read a bounded window, without walking preceding pages.
+        class Window:
+            def pages(self):
+                return (plan.output_page(i) for i in range(start,stop+1))
+        return {**asdict(plan.preflight()),"start":start,"rows":list(plan_rows(Window()))}
     if task == "mailpiece_preview":
         import fitz
 

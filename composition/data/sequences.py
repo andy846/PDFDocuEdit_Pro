@@ -55,11 +55,23 @@ def sequence_record(template, record, ordinal, page_index=0, *, design=False):
     if not template.sequences:
         return record
     values = dict(record)
+    physical_index=page_index
+    physical_count=len(template.pages)
+    if template.media.get("enabled"):
+        from composition.media.planner import build_print_plan
+        key=repr((template.media,[(p.id,p.width_mm,p.height_mm) for p in template.pages]))
+        if getattr(template,"_media_sequence_key",None)!=key:
+            plan=build_print_plan(template,1)
+            template._media_sequence_offsets={p.logical_page-1:p.print_page-1 for p in plan.pages() if p.logical_page}
+            template._media_sequence_count=plan.output_pages
+            template._media_sequence_key=key
+        physical_index=template._media_sequence_offsets[page_index]
+        physical_count=template._media_sequence_count
     for seq in template.sequences:
         if not design and seq.name in record:
             raise CompositionError(f"Sequence field conflicts with supplied record: {seq.name}")
         values[seq.name] = ("{{" + seq.name + "}}" if design else
-                            sequence_value(seq, ordinal, page_index, len(template.pages)))
+                            sequence_value(seq, ordinal, physical_index, physical_count))
     return values
 
 

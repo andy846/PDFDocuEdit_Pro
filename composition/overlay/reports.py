@@ -15,8 +15,11 @@ def row(writer, values):
 
 def write_summary(directory,result,spec):
     value=asdict(result)
+    settings=asdict(spec.settings)
+    if spec.media.get("enabled"):
+        settings["duplex"]=spec.media["duplex"]
     value.update(log_version=1,job_type="pdf_overlay",source={"path":spec.source.path,
-                 "sha256":spec.source.sha256,"pages":spec.source.pages},settings=asdict(spec.settings),
+                 "sha256":spec.source.sha256,"pages":spec.source.pages},settings=settings,media=spec.media,
                  detection_review=spec.detection_review,
                  source_link=spec.source_link,
                  control_barcode_required=spec.requires_control_barcode,
@@ -28,7 +31,7 @@ def write_summary(directory,result,spec):
         values=asdict(result)
         values.pop("warnings")
         values.pop("font_scan")
-        values.update(source_sha256=spec.source.sha256,duplex=spec.settings.duplex,
+        values.update(source_sha256=spec.source.sha256,duplex=settings["duplex"],
                       control_barcode_required=spec.requires_control_barcode)
         row(writer,values.keys())
         row(writer,values.values())

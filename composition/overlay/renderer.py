@@ -7,7 +7,8 @@ import fitz
 
 from composition.engine.renderer import Renderer
 from composition.engine.rules import ElementPlan, Selection
-from composition.pdf_source.planner import EnvelopePlan, applies
+from composition.media.planner import overlay_plan
+from composition.pdf_source.planner import applies
 from composition.pdf_source.source import _stat
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
@@ -131,7 +132,7 @@ def render_preview(spec, envelope, print_page, *, auto_repair=True, external_val
     source_path=Path(spec.source.path)
     if _stat(source_path) != (spec.source.size,spec.source.mtime_ns):
         raise CompositionError("Source PDF changed since inspection. Reinspect before previewing.")
-    plan=EnvelopePlan(spec.source.pages,spec.settings).page(envelope,print_page)
+    plan=overlay_plan(spec).page(envelope,print_page)
     fields=page_values(spec,plan,"preview",external_values)
     with fitz.open(source_path) as source, fitz.open() as output, fitz.open() as layers, OverlayRenderer(
         spec,auto_repair=auto_repair,
