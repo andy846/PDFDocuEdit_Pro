@@ -18,8 +18,8 @@ from tests.test_merge_workbench_core import source
 
 
 @pytest.fixture(scope="module")
-def app():
-    return mode_app.__wrapped__()
+def app(qt_application):
+    return mode_app.__wrapped__(qt_application)
 
 
 @pytest.fixture

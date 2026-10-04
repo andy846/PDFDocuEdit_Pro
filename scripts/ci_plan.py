@@ -69,10 +69,7 @@ UI_TESTS = (
     "tests/composition/test_workspace_handoff.py",
 )
 CROSS_PLATFORM_TESTS = (
-    "tests/test_workflow_data_steps.py",
-    "tests/test_mail_merge_workflow.py",
     "tests/composition/test_production.py",
-    "tests/test_workflow_core.py",
     "tests/test_annotation_transactions.py",
     "tests/test_annotations.py",
     "tests/test_bookmarks.py",
@@ -185,9 +182,9 @@ def run_tests(mode: str, tests: str = "") -> int:
             raise ValueError("Invalid focused test selection")
         command = [sys.executable, "-m", "pytest", *paths]
     elif mode == "core":
-        command = [sys.executable, "-m", "pytest", *(f"--ignore={path}" for path in UI_TESTS)]
+        command = [sys.executable, "scripts/regression_suite.py", "--group", "core", "--output", "build/ci-core"]
     elif mode == "ui":
-        command = [sys.executable, "-m", "pytest", *UI_TESTS]
+        command = [sys.executable, "scripts/regression_suite.py", "--group", "ui", "--output", "build/ci-ui"]
     elif mode == "cross":
         command = [sys.executable, "-m", "pytest", *CROSS_PLATFORM_TESTS]
     else:

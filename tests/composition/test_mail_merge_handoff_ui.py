@@ -28,8 +28,8 @@ from ui.designer_handoff_dialog import DesignerHandoffDialog
 
 
 @pytest.fixture(scope="module")
-def app():
-    return handoff_app.__wrapped__()
+def app(qt_application):
+    return handoff_app.__wrapped__(qt_application)
 
 
 @pytest.fixture

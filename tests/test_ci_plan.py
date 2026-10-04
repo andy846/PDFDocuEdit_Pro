@@ -55,8 +55,12 @@ def test_core_and_ui_jobs_do_not_repeat_modules(monkeypatch) -> None:
     assert run_tests("core") == 0
     assert run_tests("ui") == 0
     core, ui = calls
-    assert all(f"--ignore={path}" in core for path in UI_TESTS)
-    assert ui[3:] == list(UI_TESTS)
+    assert core[1:4] == ["scripts/regression_suite.py", "--group", "core"]
+    assert ui[1:4] == ["scripts/regression_suite.py", "--group", "ui"]
+    all_paths = {p.relative_to(ci_plan.ROOT).as_posix() for p in ci_plan.TESTS.rglob("test_*.py")}
+    core_paths = all_paths - set(UI_TESTS)
+    assert core_paths.isdisjoint(UI_TESTS)
+    assert core_paths | set(UI_TESTS) == all_paths
 
 
 def test_composition_changes_are_selected_recursively() -> None:

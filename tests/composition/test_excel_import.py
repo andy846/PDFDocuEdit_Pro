@@ -183,7 +183,7 @@ def test_excel_data_sequence_pdf_and_schema5_migration(tmp_path):
         raw["data"].pop(key)
     before = copy.deepcopy(raw)
     migrated = Template.from_dict(raw)
-    assert migrated.template_version == 9 and raw == before and migrated.sequences == template.sequences
+    assert migrated.template_version == 10 and raw == before and migrated.sequences == template.sequences
     assert migrated.data.sheet == "" and migrated.data.excel_formulas == "reject"
 
 

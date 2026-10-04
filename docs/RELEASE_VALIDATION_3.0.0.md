@@ -16,3 +16,9 @@
 ## 有意更新的測試契約
 
 `test_release_metadata_is_v3_0_0` 由歷史 v2.5.16 更新為 v3.0.0，檢查版本 metadata 一致；新增測試不取代既有回歸測試。
+
+- Media schema 已將模板升至 10、Overlay 升至 6；舊版輸入 fixture 保留，遷移輸出斷言改為目前版本。
+- 批次修改失敗保留草稿供修正，測試驗證 Revert 能恢復；主預覽 queue 測試與新增並排預覽 queue 分開驗證。
+- 修正三個共用 Qt fixture 的參數傳遞，保留所有交接與 Merge UI 案例。
+- Windows 完整測試按模組隔離 QApplication、樣式及原生資源；每個案例均執行並保留 JUnit，崩潰／逾時均失敗。
+- Workflow 的三組 production integration tests 需要已驗證的 Windows qpdf bundle，仍全部列入 Windows 完整測試；macOS／Linux 僅執行平台中立組，避免將 Windows binary 需求誤分類為跨平台驗收。

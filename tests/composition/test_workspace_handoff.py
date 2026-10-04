@@ -22,8 +22,8 @@ from tests.composition.test_workspace_modes import window as mode_window
 
 
 @pytest.fixture(scope="module")
-def app():
-    return mode_app.__wrapped__()
+def app(qt_application):
+    return mode_app.__wrapped__(qt_application)
 
 
 @pytest.fixture

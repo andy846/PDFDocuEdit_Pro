@@ -159,7 +159,7 @@ def test_schema3_migration_preserves_exact_font_repair_and_output_pixels():
         raw.pop(key)
     before = copy.deepcopy(raw)
     migrated = Template.from_dict(raw)
-    assert raw == before and migrated.template_version == 9
+    assert raw == before and migrated.template_version == 10
     assert migrated.elements[0].rules == ElementRules()
     assert asdict(migrated.elements[0].font) == asdict(model.elements[0].font)
     assert migrated.elements[0].glyph_repairs == model.elements[0].glyph_repairs

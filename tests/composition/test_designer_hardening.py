@@ -90,6 +90,9 @@ def test_preview_bounded_latest_only_unique_paths_and_stale_errors(app, tmp_path
             requests.append((request, ready, failed, instance))
             return instance
         monkeypatch.setattr(window, "worker", worker)
+        # This case exercises the main preview queue. The companion page has
+        # its own independently bounded queue, covered by the smart-review tests.
+        monkeypatch.setattr(MailpieceDialog, "refresh_pair", lambda self: None)
         dialog = MailpieceDialog(window)
         dialog.show()
         for page in range(2, 10):
@@ -114,6 +117,7 @@ def test_preview_bounded_latest_only_unique_paths_and_stale_errors(app, tmp_path
         app.processEvents()
         count = len(requests)
         assert count == 2
+        monkeypatch.setattr(MailpieceDialog, "refresh_pair", lambda self: None)
         other = MailpieceDialog(window)
         assert len(requests) == count+1
         assert requests[-1][0]["target"] not in (old["target"], latest["target"])
@@ -266,9 +270,13 @@ def test_rejected_batch_size_restores_controls_and_mixed_geometry(app):
         window.properties.numbers["width_mm"].setValue(100)
         window.properties.geometry_apply.click()
         assert window.template.to_dict() == before
+        # Invalid batch drafts are retained so the operator can correct them.
+        assert window.properties.numbers["width_mm"].value() == 100
+        assert window.properties.geometry_checks["width_mm"].isChecked()
+        assert "page width" in window.message.text()
+        window.batch_editor.revert()
         assert window.properties.numbers["width_mm"].value() == 30
         assert not window.properties.geometry_checks["width_mm"].isChecked()
-        assert "page width" in window.message.text()
     finally:
         close_window(window)
 

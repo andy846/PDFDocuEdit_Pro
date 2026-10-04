@@ -62,7 +62,7 @@ class Properties(QWidget):
         self.font_choice = {}
         layout = QVBoxLayout(self)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(6, 8, 6, 8)
         self.setStyleSheet("QDoubleSpinBox { min-height: 26px; padding: 2px 18px 2px 6px; } "
                           "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 16px; }")
         self.title = QLabel("Select an object")
@@ -178,6 +178,7 @@ class Properties(QWidget):
         form.addRow("Style", self.font_style)
         form.addRow(self.font_status)
         self.font_details_toggle = QToolButton()
+        self.font_details_toggle.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.font_details_toggle.setText("Font details / repairs")
         self.font_details_toggle.setCheckable(True)
         self.font_details_toggle.setArrowType(Qt.ArrowType.RightArrow)
