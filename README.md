@@ -26,6 +26,8 @@
 
 在 **Printer profile** 選擇 `PDF + PostScript (no separate job ticket)`，配置每個 Stock 的 **MediaType／Colour** 或 **MediaPosition**，保存環境 profile。先用 **Export paper-selection test PS…** 列印少量測試紙，再正式生成。
 
+**Profile library…** 可按設備篩選本機設定、預覽完整選紙規則或單獨 printer 對應表，並在背景匯入 JSON／資料夾。取消載入保留目前草稿；設備 profile 仍需實機選紙驗證。詳見 [使用指引](docs/POSTSCRIPT_USER_GUIDE.md#profile-library)。
+
 PS 模式保留核對 PDF，另產生 PS、逐頁選紙 CSV、機器可讀報告及 Job log；分檔後每個套件有自己的 PS。程式會解譯 PS 核對頁數及尺寸，失敗／取消不發布半成品。
 
 實際紙匣編號、紙張屬性及 DFE 佇列覆蓋行為需要實機確認；通用 profile 不包含未驗證的機型 preset。PS 透明效果可能平面化，提供 300／600／1200 dpi 設定。詳見 [PS / Profile 操作指南](docs/POSTSCRIPT_USER_GUIDE.md)。

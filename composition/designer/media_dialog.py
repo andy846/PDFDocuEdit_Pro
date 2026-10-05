@@ -57,7 +57,13 @@ class MediaDialog(QDialog):
             self.initial.update(mode="template",assignments={p["id"]:"LH_"+"ABC"[i] for i,p in enumerate(pages[:3])})
         root=QVBoxLayout(self)
         self.enabled=QCheckBox("Enable Media Assignment and selected production output")
-        root.addWidget(self.enabled)
+        entry=QHBoxLayout()
+        entry.addWidget(self.enabled,1)
+        self.library_button=QPushButton("Profile library…")
+        self.library_button.setToolTip("Browse saved setups by device, or import media / printer profile files.")
+        self.library_button.clicked.connect(self.open_library)
+        entry.addWidget(self.library_button)
+        root.addLayout(entry)
         note=QLabel("Assign logical Stocks to pages, then choose PDF + JDF or PDF + PostScript in Printer profile. Save a profile for each environment; verify paper selection with a test print.")
         note.setWordWrap(True)
         root.addWidget(note)
@@ -474,6 +480,8 @@ class MediaDialog(QDialog):
 
     def navigation(self):
         busy=self.worker is not None
+        self.library_button.setEnabled(not busy)
+        self.profile_actions.setEnabled(not busy)
         self.preview_button.setEnabled(not busy and self.context is not None)
         self.previous.setEnabled(not busy and self.checked is not None and self.start>1)
         self.next.setEnabled(not busy and self.checked is not None and self.start+199<self.total)
@@ -580,6 +588,39 @@ class MediaDialog(QDialog):
         path.mkdir(parents=True,exist_ok=True)
         return path
 
+    def open_library(self):
+        if self.worker:
+            return
+        from .profile_library_dialog import ProfileLibraryDialog
+        dialog=ProfileLibraryDialog(self.profile_directory(),self)
+        if dialog.exec()==QDialog.DialogCode.Accepted:
+            try:
+                self.apply_library_profile(dialog.selected_profile)
+            except (ValueError,TypeError,KeyError) as exc:
+                self.error.setText(str(exc))
+
+    def apply_library_profile(self,raw):
+        from composition.media.profile_library import validate_profile
+        if self.worker:
+            raise ValueError("Wait for the current media task before loading a profile.")
+        profile=validate_profile(raw)
+        settings=profile["settings"]
+        if profile["kind"]=="media":
+            if settings["mode"]=="template":
+                pages=self.context.get("project",{}).get("pages",[]) if self.context and self.context.get("kind")=="template" else []
+                ids={page["id"] for page in pages}
+                if not ids or set(settings["assignments"])-ids:
+                    raise ValueError("This profile uses other template page identities. Load it in the matching template, or save logical page rules for reuse.")
+                if self.mode.findData("template")<0:
+                    self.mode.addItem("Template page identity","template")
+            self.fill(settings)
+        else:
+            self.fill_printer(settings)
+            self.sync_stocks()
+        self.invalidate()
+        self.tabs.setCurrentIndex(1 if profile["kind"]=="media" else 2)
+        self.error.setText("Profile loaded as a draft. Review rules and mappings, then Check & Preview. Device validation: Pending.")
+
     def save_profile(self,printer):
         try:
             value=self.read_printer() if printer else self.value()
@@ -601,8 +642,7 @@ class MediaDialog(QDialog):
             raw=json.loads(Path(path).read_text(encoding="utf-8"))
             if raw.get("profile_version") not in (1,2) or raw.get("kind")!=("printer" if printer else "media"):
                 raise ValueError("Incorrect profile type / version.")
-            self.fill_printer(raw["settings"]) if printer else self.fill(raw["settings"])
-            self.invalidate()
+            self.apply_library_profile(raw)
         except (ValueError,OSError,KeyError,TypeError,AttributeError) as exc:
             self.error.setText(str(exc))
 

@@ -27,3 +27,10 @@ References: Ghostscript ps2write ProduceDSC documentation (`https://ghostscript.
 - Ruff and whitespace checks passed. Full application regression, installer packaging and hardware printer acceptance are deferred under the user's existing instructions.
 
 Usage: [PostScript / profile guide](POSTSCRIPT_USER_GUIDE.md).
+
+## Local profile library — 2026-10-05
+
+- Added a Qt-independent, schema-validated local library with bounded JSON reads, normalized identity, duplicate detection and atomic per-file imports. Existing version 1 JDF and version 2 PS profile formats remain unchanged.
+- Added a device/type-filtered library dialog with readable settings preview. Listing/import use the existing isolated worker; cancellation retains completed imports. Loading changes only the media draft, with explicit full-setup versus printer-only scope. Foreign template-page identities are blocked before any draft mutation.
+- Private reference profiles use neutral names and are stored only in the local settings directory. Customer presets and source documents are not bundled or published.
+- 40 targeted tests passed: library core/UI, existing Media/PS UI and CI selection. Light/dark layout checks passed at 760×520 (library), 960×640 (Media) and 100%/200% scaling. Two four-page/two-Stock duplex proofs passed Ghostscript interpretation. Hardware paper selection remains pending; this development change has not been re-packaged or released.

@@ -40,6 +40,12 @@ def dispatch(request: dict) -> dict:
     if task == "media_paper_test":
         from composition.media.postscript import export_paper_test
         return export_paper_test(request["target"],request["media"],is_cancelled=cancelled,progress=progress)
+    if task == "media_profile_library":
+        from composition.media.profile_library import import_profiles, list_profiles
+        if "sources" in request or "folder" in request:
+            return import_profiles(request["directory"],request.get("sources",()),folder=request.get("folder"),
+                                   is_cancelled=cancelled,progress=progress)
+        return list_profiles(request["directory"],is_cancelled=cancelled)
     if task == "media_preview":
         from dataclasses import asdict
 
