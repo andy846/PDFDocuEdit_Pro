@@ -17,9 +17,9 @@ from .registry import EXTRA_KINDS
 
 def dispatch(request, progress, cancelled, emit_state=None):
     operation=request["operation"]
-    if operation in ("inspect_step","inspection_rows","inspection_preview"):
+    if operation in ("inspect_step","inspection_rows","inspection_preview","inspection_value"):
         from .batch import BatchJob
-        from .inspection import inspect_step, inspection_preview, inspection_rows
+        from .inspection import inspect_step, inspection_preview, inspection_rows, inspection_value
         spec=WorkflowSpec.from_dict(request["spec"])
         job=BatchJob(**request["job"]) if request.get("job") else None
         if job:
@@ -28,9 +28,12 @@ def dispatch(request, progress, cancelled, emit_state=None):
             return inspect_step(spec,request["node_id"],request["directory"],job=job,progress=progress,
                                 is_cancelled=cancelled,emit_state=emit_state)
         options=dict(job=job)
+        if operation=="inspection_value":
+            return inspection_value(request["directory"],request["run_id"],request["node_id"],spec,
+                                    **options,view=request.get("view","output"),record=request.get("record",1),field_name=request.get("field_name",""))
         if operation=="inspection_rows":
             return inspection_rows(request["directory"],request["run_id"],request["node_id"],spec,
-                                   **options,view=request.get("view","output"),offset=request.get("offset",0),search=request.get("search",""))
+                                   **options,view=request.get("view","output"),offset=request.get("offset",0),search=request.get("search",""),source_id=request.get("source_id"))
         return inspection_preview(request["directory"],request["run_id"],request["node_id"],spec,request["target"],
                                   **options,record=request.get("record",1),page=request.get("page",1))
     if operation.startswith("batch_"):

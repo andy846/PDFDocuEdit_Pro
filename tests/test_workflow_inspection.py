@@ -7,7 +7,7 @@ import pytest
 
 from tests.test_mail_merge_workflow import pair, recipe
 from tests.test_workflow_core import configured, fixture_pdf
-from workflow.inspection import inspect_step, inspection_preview, inspection_rows
+from workflow.inspection import inspect_step, inspection_preview, inspection_rows, inspection_value
 from workflow.model import WorkflowNode, WorkflowSpec
 from workflow.registry import default_options
 from workflow.worker import dispatch
@@ -66,6 +66,8 @@ def test_full_sort_paged_before_after_and_stable_identity(tmp_path):
     assert page["rows"][0]["before"]["Name"] == "PERSON 99"
     third = inspection_rows(tmp_path / "checks", result["result"]["run_id"], sort.id, spec, job=job, offset=100)
     assert len(third["rows"]) == 25
+    clipped = inspection_rows(tmp_path / "checks", result["result"]["run_id"], sort.id, spec, job=job, offset=10000)
+    assert clipped["offset"] == 100 and len(clipped["rows"]) == 25
     clean_page = inspection_rows(tmp_path / "checks", result["result"]["run_id"], clean.id, spec, job=job)
     assert clean_page["rows"][0]["before"]["Name"] == "Person 0"
 
@@ -101,6 +103,68 @@ def test_source_change_and_configuration_change_invalidate_cached_rows(tmp_path)
     spec.node("mapping").params["profiles"][job.mapping_profile] = {"Customer": "OtherName"}
     with pytest.raises(ValueError, match="out of date"):
         inspection_rows(tmp_path / "checks", changed["result"]["run_id"], target, spec, job=job)
+
+
+def test_cache_for_upstream_step_does_not_restore_stale_downstream_results(tmp_path):
+    job=pair(tmp_path)
+    spec=recipe([job]).upgraded()
+    spec.node("reports").params={"directory":str(tmp_path/"out")}
+    complete=inspect_step(spec,spec.node("reports").id,tmp_path/"checks",job=job)
+    assert complete["result"]["status"]=="Checked"
+    spec.node("compose").params={"auto_repair":False}
+    prefix=inspect_step(spec,spec.node("mapping").id,tmp_path/"checks",job=job)
+    assert prefix["cached"]
+    assert set(prefix["steps"])=={spec.node("data").id,spec.node("mapping").id}
+
+
+def test_field_reader_covers_extra_columns_long_values_and_exact_source_lookup(tmp_path):
+    job = pair(tmp_path,records=125)
+    columns = ["Customer",*[f"Extra_{i}" for i in range(16)]]
+    value = "Long " + "x" * 900
+    Path(job.data_path).write_text(",".join(columns)+"\n"+"\n".join(",".join([f"Person {i}",*[value]*16]) for i in range(125))+"\n")
+    spec = recipe([job]).upgraded()
+    node=WorkflowNode("clean_fields",params={"operations":[{"field":"Extra_15","operation":"upper"}]})
+    spec=spec.insert_after(spec.node("mapping").id,node)
+    checked=inspect_step(spec,node.id,tmp_path/"checks",job=job)["result"]
+    assert checked["status"]=="Checked",checked["error"]
+    field=inspection_value(tmp_path/"checks",checked["run_id"],node.id,spec,job=job,record=125,field_name="Extra_15")
+    assert field["before"]==value and field["value"]==value.upper() and not field["truncated"]
+    exact=inspection_rows(tmp_path/"checks",checked["run_id"],node.id,spec,job=job,source_id=126)
+    assert exact["total"]==1 and exact["rows"][0]["ordinal"]==125
+
+
+def test_failure_after_sort_maps_record_ordinal_to_source_identity(tmp_path,monkeypatch):
+    from composition.template.model import CompositionError
+    job=pair(tmp_path,records=3)
+    spec=recipe([job]).upgraded()
+    node=WorkflowNode("sort_records",params={"keys":[{"field":"Name","type":"text","descending":True}]})
+    spec=spec.insert_after(spec.node("mapping").id,node)
+    def fail(*args,**kwargs):
+        raise CompositionError("Record 2, object sample_text, field Name: Missing glyph")
+    monkeypatch.setattr("composition.engine.renderer.Renderer.prepare_fonts",fail)
+    result=inspect_step(spec,spec.node("compose").id,tmp_path/"checks",job=job)
+    failed=result["result"]
+    assert failed["status"]=="Failed"
+    issues=inspection_rows(tmp_path/"checks",failed["run_id"],failed["node_id"],spec,job=job,view="issues")
+    assert issues["rows"][0]["source_id"]==3
+    assert issues["rows"][0]["field"]=="Name"
+    earlier=inspection_rows(tmp_path/"checks",failed["run_id"],node.id,spec,job=job,view="issues")
+    assert earlier["total"]==0
+
+
+def test_compose_inspection_checks_barcode_payload_beyond_first_page(tmp_path):
+    from composition.template.model import Element
+    from composition.template.serializer import load_project, save_project
+    job=pair(tmp_path,records=100)
+    Path(job.data_path).write_text("Customer\n"+"\n".join(["000000"]*99+["invalid"])+"\n")
+    template=load_project(job.template_path)
+    template.pages[0].elements.append(Element(type="i25",value="{{Name}}",width_mm=80,height_mm=20))
+    save_project(template,job.template_path)
+    spec=recipe([job]).upgraded()
+    result=inspect_step(spec,spec.node("compose").id,tmp_path/"checks",job=job)["result"]
+    assert result["status"]=="Failed" and "I25 accepts digits" in result["error"]
+    rows=inspection_rows(tmp_path/"checks",result["run_id"],result["node_id"],spec,job=job,view="issues")
+    assert rows["rows"][0]["source_id"]==101
 
 
 def test_pdf_group_output_keeps_original_source_trace_and_no_production(tmp_path, monkeypatch):
@@ -157,6 +221,29 @@ def test_worker_inspection_dispatch_and_cancel_preserve_completed_steps(tmp_path
     assert result["steps"][spec.node("data").id]["status"] == "Checked"
     assert result["result"]["status"] == "Cancelled"
     assert not job.approved
+
+
+def test_version_four_media_review_runs_shared_pipeline(tmp_path,monkeypatch):
+    from dataclasses import asdict
+
+    from composition.media.model import default_media
+    from workflow import pdf_pipeline
+    from workflow.engine import execute
+    from workflow.model import WorkflowRun
+    spec=configured(fixture_pdf(tmp_path/"source.pdf"),tmp_path/"output").upgraded(4)
+    spec=spec.insert_after(spec.node("review").id,WorkflowNode("media_assignment",params=default_media()))
+    run=execute(spec,WorkflowRun(),tmp_path/"scratch",until="review")
+    assert not run.error,run.error
+    called=[]
+    original=pdf_pipeline.prepare_mailpieces
+    def prepare(*args,**kwargs):
+        called.append(True)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(pdf_pipeline,"prepare_mailpieces",prepare)
+    result=dispatch({"operation":"review","action":"accept","workflow":spec.to_dict(),"workflow_run":asdict(run),
+                     "database":run.database,"groups":run.groups,"page":1,"directory":str(tmp_path/"scratch")},
+                    lambda *_:None,lambda:False)
+    assert called and result["accepted"] and result["data_set"]
 
 
 @pytest.mark.parametrize("run_id", ["../escape", "bad", "", 1])

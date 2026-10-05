@@ -105,6 +105,14 @@ class StepDialog(QDialog):
         root.addWidget(buttons)
         if embedded:
             buttons.hide()
+            description.hide()
+            root.setContentsMargins(0,0,0,0)
+            root.removeWidget(scroll)
+            scroll.takeWidget()
+            root.insertWidget(1,body)
+            scroll.deleteLater()
+            for form in body.findChildren(QFormLayout):
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
             self.connect_edits(self)
 
     def connect_edits(self,root):
@@ -124,6 +132,7 @@ class StepDialog(QDialog):
         control.addItems(self.fields)
         control.setCurrentText(value)
         control.setMinimumContentsLength(10)
+        control.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         return control
 
     def add_row(self,values=None):
@@ -132,6 +141,8 @@ class StepDialog(QDialog):
         values=dict(values or {"field":self.fields[0] if self.fields else "Name"})
         box=QWidget()
         form=QFormLayout(box)
+        if getattr(self,"embedded",False):
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         controls={"field":self.field_control(values["field"])}
         form.addRow("Field",controls["field"])
         specs={
@@ -218,7 +229,10 @@ def install(window,node):
     window.inspector=QWidget()
     layout=QVBoxLayout(window.inspector)
     heading=QLabel(REGISTRY[node.kind].label)
-    heading.setStyleSheet("font-size:16px;font-weight:600;")
+    font=heading.font()
+    font.setPointSizeF(12)
+    font.setBold(True)
+    heading.setFont(font)
     layout.addWidget(heading)
     description=QLabel(REGISTRY[node.kind].description)
     description.setWordWrap(True)
@@ -243,7 +257,7 @@ def install(window,node):
     details.setTextFormat(Qt.TextFormat.PlainText)
     layout.addWidget(details)
     summaries=[]
-    jobs=window.selected_jobs() if hasattr(window,"selected_jobs") else []
+    jobs=([window.inspections.job()] if window.inspections.job() else window.selected_jobs()) if hasattr(window,"selected_jobs") else []
     for job in jobs[:1]:
         summaries=job.data_summary.get("steps",[])
     if not jobs:
@@ -283,11 +297,19 @@ def install(window,node):
         def edited():
             from .drafts import update_error
             if window._draft_node==node.id:
+                try:
+                    REGISTRY[node.kind].validate_options(editor.value())
+                    editor.error.clear()
+                except (ValueError,TypeError) as exc:
+                    editor.error.setText("Invalid draft: "+str(exc))
                 window.node_drafts.pop(node.id,None)
                 update_error(window)
                 window.title()
                 window.properties.edited.emit()
         editor.edited.connect(edited)
+        apply=QPushButton("Apply settings")
+        apply.clicked.connect(window.flush_settings)
+        layout.addWidget(apply)
     else:
         layout.addWidget(button)
     report_summary=jobs[0].data_summary if jobs else getattr(window.run,"data_summary",{})
@@ -329,7 +351,7 @@ def install(window,node):
         preview.resizeRowsToContents()
         layout.addWidget(preview)
     else:
-        text=QLabel("Check & Preview once to inspect this step's source identities, counts and before/after examples.")
+        text=QLabel("Use Check to this step, then Input / Output to inspect source identities and before/after values.")
         text.setWordWrap(True)
         layout.addWidget(text)
     for label,callback in (("Duplicate step",lambda:window.duplicate_node(node)),("Move earlier",lambda:window.reorder_node(node,-1)),

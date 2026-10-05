@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .model import KINDS, LABELS
-from .registry import DATA_KINDS, EXTRA_KINDS
+from .node_presentation import category, description, settings_summary
+from .registry import EXTRA_KINDS
 
 SYMBOLS={"input":"folder-open","merge":"layers","extract":"scan","group":"table","review":"search",
          "overlay":"file-text","output":"printer","data":"table","mapping":"settings","template":"file-text",
@@ -27,6 +28,8 @@ SYMBOLS.update({k:"settings" for k in EXTRA_KINDS})
 class NodeToolbox(QListWidget):
     def __init__(self,parent=None):
         super().__init__(parent)
+        self.search_text=""
+        self.category_name=""
         self.configure(KINDS)
         self.setDragEnabled(True)
         self.setToolTip("Drag a step onto the canvas. Data preparation steps can be repeated.")
@@ -39,8 +42,9 @@ class NodeToolbox(QListWidget):
             item.setIcon(icon(SYMBOLS[kind]))
             item.setSizeHint(QSize(150,32))
             item.setData(Qt.ItemDataRole.UserRole,kind)
-            item.setToolTip("Add "+LABELS[kind]+(". Repeatable data step." if kind in DATA_KINDS else ". Production step."))
+            item.setToolTip(category(kind)+" · "+LABELS[kind]+"\n"+description(kind))
             self.addItem(item)
+        self.filter(self.search_text)
 
     def changeEvent(self,event):
         super().changeEvent(event)
@@ -51,9 +55,12 @@ class NodeToolbox(QListWidget):
                 item.setIcon(icon(SYMBOLS[item.data(Qt.ItemDataRole.UserRole)]))
 
     def filter(self,text):
+        self.search_text=text
         for index in range(self.count()):
             item=self.item(index)
-            item.setHidden(text.casefold() not in item.text().casefold())
+            kind=item.data(Qt.ItemDataRole.UserRole)
+            item.setHidden((text.casefold() not in (item.text()+" "+description(kind)).casefold()) or
+                           bool(self.category_name and category(kind)!=self.category_name))
 
     def startDrag(self, supported):
         if not self.currentItem():
@@ -75,7 +82,7 @@ class NodeItem(QGraphicsObject):
         self.setZValue(2)
 
     def boundingRect(self):
-        return QRectF(-8,-2,190,82)
+        return QRectF(-8,-2,190,102)
 
     def paint(self,painter,option,widget=None):
         palette=self.view.palette()
@@ -84,7 +91,7 @@ class NodeItem(QGraphicsObject):
             border.setAlpha(100)
         painter.setPen(QPen(border,2 if self.isSelected() else 1))
         painter.setBrush(palette.base())
-        painter.drawRoundedRect(QRectF(0,0,174,76),8,8)
+        painter.drawRoundedRect(QRectF(0,0,174,96),8,8)
         painter.setPen(palette.text().color())
         font=painter.font()
         font.setPointSizeF(9)
@@ -94,8 +101,9 @@ class NodeItem(QGraphicsObject):
         icon(SYMBOLS[self.node.kind],color=palette.text().color().name()).paint(painter,QRect(10,11,16,16))
         title=painter.fontMetrics().elidedText(LABELS[self.node.kind],Qt.TextElideMode.ElideRight,132)
         painter.drawText(QRectF(32,7,132,24),Qt.AlignmentFlag.AlignLeft,title)
-        color=palette.highlight().color() if self.status else palette.mid().color()
-        if not self.status:
+        checked=self.view.inspections.get(self.node.id,{})
+        color=palette.highlight().color() if self.status or checked else palette.mid().color()
+        if not self.status and not checked:
             color.setAlpha(75)
         painter.setPen(QPen(color,3))
         painter.drawLine(QPointF(10,33),QPointF(164,33))
@@ -111,12 +119,15 @@ class NodeItem(QGraphicsObject):
             detail={"fixed":f"{self.node.params.get('pages',1)} page(s) / envelope","field":"Field changes","pattern":"Page-number pattern"}.get(self.node.params.get("method"),"Configure grouping")
         else:
             detail=self.view.summaries.get(self.node.id,self.view.summaries.get(self.node.kind,"Configure step"))
-        marker={"Completed":"✓ ","Failed":"! ","Blocked":"! ","Needs review":"? ","Running":"▶ ","Ready":"✓ "}.get(self.status,"")
-        if self.status:
-            painter.drawText(QRectF(12,37,152,16),Qt.AlignmentFlag.AlignLeft,marker+self.status)
-            painter.drawText(QRectF(12,53,152,19),Qt.AlignmentFlag.AlignLeft,detail)
+        detail=settings_summary(self.node,detail)
+        status="Check: "+checked["status"] if checked else self.status
+        if status:
+            painter.drawText(QRectF(12,37,152,16),Qt.AlignmentFlag.AlignLeft,painter.fontMetrics().elidedText(status,Qt.TextElideMode.ElideRight,152))
+            painter.drawText(QRectF(12,53,152,19),Qt.AlignmentFlag.AlignLeft,painter.fontMetrics().elidedText(detail,Qt.TextElideMode.ElideRight,152))
         else:
             painter.drawText(QRectF(12,39,152,29),Qt.AlignmentFlag.AlignLeft|Qt.TextFlag.TextWordWrap,detail)
+        counts=(f"{checked['input_count']:,} → {checked['output_count']:,} {checked['output_scope']}s" if "output_count" in checked else "")
+        painter.drawText(QRectF(12,75,152,16),Qt.AlignmentFlag.AlignLeft,painter.fontMetrics().elidedText(counts,Qt.TextElideMode.ElideRight,152))
         for x in (0,174):
             if (x==0 and self.node.kind in ("input","data")) or (x==174 and self.node.kind in ("output","reports")):
                 continue
@@ -131,13 +142,13 @@ class NodeItem(QGraphicsObject):
 
     def mousePressEvent(self,event):
         self.before=QPointF(self.pos())
-        if abs(event.pos().x()-174)<10 and abs(event.pos().y()-38)<12:
+        if self.view.editable and abs(event.pos().x()-174)<10 and abs(event.pos().y()-38)<12:
             self.view.pending=self.node.id
             self.view.viewport().update()
             self.view.message.emit("Choose the next step's input port")
             event.accept()
             return
-        if abs(event.pos().x())<10 and abs(event.pos().y()-38)<12 and self.view.pending:
+        if self.view.editable and abs(event.pos().x())<10 and abs(event.pos().y()-38)<12 and self.view.pending:
             pending=self.view.pending
             self.view.pending=None
             self.view.viewport().update()
@@ -152,7 +163,7 @@ class NodeItem(QGraphicsObject):
 
     def mouseReleaseEvent(self,event):
         super().mouseReleaseEvent(event)
-        if hasattr(self,"before") and self.before!=self.pos():
+        if self.view.editable and hasattr(self,"before") and self.before!=self.pos():
             self.setPos(round(self.pos().x()/10)*10,round(self.pos().y()/10)*10)
             self.view.positionChanged.emit(self.node.id,self.pos().x(),self.pos().y())
 
@@ -166,7 +177,8 @@ class EdgeItem(QGraphicsPathItem):
 
     def mouseDoubleClickEvent(self,event):
         event.accept()
-        self.view.disconnectRequested.emit(self.a,self.b)
+        if self.view.editable:
+            self.view.disconnectRequested.emit(self.a,self.b)
 
 
 class WorkflowCanvas(QGraphicsView):
@@ -192,6 +204,8 @@ class WorkflowCanvas(QGraphicsView):
         self.pending=None
         self.spec=None
         self.summaries={}
+        self.inspections={}
+        self.editable=True
         self.scene().selectionChanged.connect(self.selection_changed)
 
     def selection_changed(self):
@@ -202,7 +216,7 @@ class WorkflowCanvas(QGraphicsView):
     def mousePressEvent(self,event):
         # Hit-test ports in view space: small circles must remain usable at Fit
         # zoom and when a neighbouring node partially overlaps the port.
-        if event.button()==Qt.MouseButton.LeftButton:
+        if self.editable and event.button()==Qt.MouseButton.LeftButton:
             point=event.position().toPoint()
             candidates=[]
             for item in self.nodes.values():
@@ -234,7 +248,7 @@ class WorkflowCanvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def keyPressEvent(self,event):
-        if event.key()==Qt.Key.Key_Delete:
+        if self.editable and event.key()==Qt.Key.Key_Delete:
             selected=[item for item in self.scene().selectedItems() if isinstance(item,NodeItem)]
             if len(selected)==1:
                 self.nodeCommand.emit(selected[0].node.id,"remove")
@@ -263,6 +277,9 @@ class WorkflowCanvas(QGraphicsView):
             return super().contextMenuEvent(event)
         self.scene().clearSelection()
         item.setSelected(True)
+        if not self.editable:
+            self.message.emit("Task running. You can inspect nodes, pan and zoom; edits are locked.")
+            return
         from .registry import REGISTRY
         menu=QMenu(self)
         if REGISTRY[item.node.kind].repeatable:
@@ -300,6 +317,9 @@ class WorkflowCanvas(QGraphicsView):
                     item.setPos(node.x,node.y)
                     item.update()
                 item.setSelected(node.id==selected)
+                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable,self.editable)
+                item.setToolTip(LABELS[node.kind]+"\n"+settings_summary(node,self.summaries.get(node.id,self.summaries.get(node.kind,description(node.kind))))+
+                                "\n"+description(node.kind)+("\nProduction: "+item.status if item.status else ""))
             existing={(edge.a,edge.b):edge for edge in self.edges}
             connections={tuple(pair) for pair in spec.edges}
             for pair,edge in existing.items():
@@ -326,6 +346,15 @@ class WorkflowCanvas(QGraphicsView):
             if not sip.isdeleted(item):
                 sip.delete(item)
         QTimer.singleShot(0,dispose)
+
+    def set_editable(self,editable):
+        self.editable=editable
+        if not editable:
+            self.pending=None
+        for item in self.nodes.values():
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable,editable)
+        self.setAcceptDrops(editable)
+        self.viewport().update()
 
     def redraw_edges(self):
         for edge in self.edges:
@@ -377,14 +406,15 @@ class WorkflowCanvas(QGraphicsView):
         self.zoomChanged.emit(self.transform().m11())
 
     def dragEnterEvent(self,event):
-        if event.mimeData().hasFormat("application/x-pdflow-node"):
+        if self.editable and event.mimeData().hasFormat("application/x-pdflow-node"):
             event.acceptProposedAction()
 
     def dragMoveEvent(self,event):
-        event.acceptProposedAction()
+        if self.editable:
+            event.acceptProposedAction()
 
     def dropEvent(self,event):
-        if event.mimeData().hasFormat("application/x-pdflow-node"):
+        if self.editable and event.mimeData().hasFormat("application/x-pdflow-node"):
             pos=self.mapToScene(event.position().toPoint())
             self.nodeDropped.emit(bytes(event.mimeData().data("application/x-pdflow-node")).decode(),pos.x(),pos.y())
             event.acceptProposedAction()

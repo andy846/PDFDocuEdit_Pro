@@ -453,6 +453,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         return [j for j in self.batch.jobs if j.id in ids]
 
     def refresh_jobs(self):
+        if self.inspections.pane:
+            self.inspections.pane.sync_jobs()
         selected=[j.id for j in self.selected_jobs()]
         self.jobs_model.update(self.batch.jobs)
         for row,job in enumerate(self.batch.jobs):
@@ -493,7 +495,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.tabs.setCurrentWidget(self.review_page)
 
     def edit_job(self):
-        jobs=self.selected_jobs()
+        jobs=([self.inspections.job()] if self.tabs.currentWidget() is self.flow_page and self.inspections.job()
+              else self.selected_jobs())
         if self.active_worker or not jobs:
             self.message("Select a batch job in Review first.")
             return
@@ -783,7 +786,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         if not self.project_host:
             self.message("Open this workflow in Document Designer to edit its templates.")
             return
-        jobs=self.selected_jobs() or self.batch.jobs
+        jobs=([self.inspections.job()] if self.tabs.currentWidget() is self.flow_page and self.inspections.job()
+              else self.selected_jobs() or self.batch.jobs)
         if not jobs:
             self.tabs.setCurrentWidget(self.review_page)
             self.message("Add a template + data pair before editing a letter template.")

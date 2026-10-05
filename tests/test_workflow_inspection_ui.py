@@ -112,3 +112,98 @@ def test_inline_numeric_draft_and_undo(window):
     assert next(n for n in window.spec.nodes if n.id == node.id).params["start"] == 42
     window.undo.undo()
     assert next(n for n in window.spec.nodes if n.id == node.id).params["start"] == 1
+
+
+def test_busy_canvas_browsing_keeps_items_and_blocks_edits(window):
+    from types import SimpleNamespace
+
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QSignalSpy, QTest
+    from PyQt6.QtWidgets import QGraphicsItem
+    canvas = window.canvas
+    item = canvas.nodes[window.spec.node("group").id]
+    before = window.spec.to_dict()
+    window.active_worker = SimpleNamespace()
+    window.inspections.active = True
+    try:
+        window.lock()
+        assert canvas.isEnabled() and not canvas.editable
+        assert not item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        canvas.scene().clearSelection()
+        item.setSelected(True)
+        assert window.selected == item.node.id
+        assert not window.inspector.isEnabled()
+        assert not window.inspections.pane.check.isEnabled()
+        connections = QSignalSpy(canvas.connectionRequested)
+        positions = QSignalSpy(canvas.positionChanged)
+        QTest.keyClick(canvas, Qt.Key.Key_Delete)
+        canvas.zoom(1.15)
+        window.update_progress(10, 100, "Workflow node: " + item.node.id + " | checking")
+        assert not connections and not positions
+        assert window.spec.to_dict() == before
+        assert canvas.nodes[item.node.id] is item and not window.run.statuses
+    finally:
+        window.active_worker = None
+        window.inspections.active = False
+        window.lock()
+
+
+def test_description_search_categories_and_compatible_next(window):
+    from PyQt6.QtCore import Qt
+
+    from workflow.chrome import populate_next
+    w = window
+    w.library_search.setText("padding")
+    visible = [w.toolbox.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w.toolbox.count())
+               if not w.toolbox.item(i).isHidden()]
+    assert "create_fields" in visible
+    w.library_search.clear()
+    w.library_category.setCurrentIndex(w.library_category.findData("Sources"))
+    visible = [w.toolbox.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w.toolbox.count())
+               if not w.toolbox.item(i).isHidden()]
+    assert set(visible) == {"input", "merge"}
+    node = WorkflowNode("running_sequence", params=default_options("running_sequence"))
+    w.apply_spec(w.spec.insert_after(w.spec.node("group").id, node).to_dict())
+    w.select_node(node.id)
+    populate_next(w)
+    assert "Insert Sort Records" not in [action.text() for action in w.next_menu.actions()]
+    explanations = w.next_menu.actions()[0].menu().actions()
+    assert any("Sort Records" in action.text() and "before" in action.toolTip() for action in explanations)
+
+
+def test_only_affected_inspection_results_are_invalidated(window):
+    w=window
+    first=w.spec.node("input").id
+    last=w.spec.node("output").id
+    for node_id in (first,last):
+        w.inspections.results[("",node_id)]={"node_id":node_id,"job_id":"","status":"Checked",
+                                              "ui_config":w.inspections.config_key(node_id,"")}
+    w.select_node(last)
+    assert w.params(w.spec.node("output"),{"directory":"changed-output-folder"})
+    assert w.inspections.current(first)["status"]=="Checked"
+    assert w.inspections.current(last)["status"]=="Out of date"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_single_panels_remember_visibility_and_fit_narrow_window(window, qt_application, theme):
+    from styles.theme import apply_theme
+    w = window
+    apply_theme(qt_application, theme)
+    w.resize(960, 640)
+    qt_application.processEvents()
+    assert w.width() == 960
+    w.settings_toggle.click()
+    assert not w.inspector_scroll.isVisible()
+    w.resize(1300, 800)
+    qt_application.processEvents()
+    w.resize(960, 640)
+    qt_application.processEvents()
+    assert not w.inspector_scroll.isVisible()
+    for mode, target in (("details", w.inspector_scroll), ("steps", w.library), ("canvas", w.canvas)):
+        w.panel_view.setCurrentIndex(w.panel_view.findData(mode))
+        qt_application.processEvents()
+        assert target.isVisible() and target.width() > 850
+        assert w.panel_view.parentWidget().geometry().bottom() < w.flow_page.height()
+    w.settings_toggle.click()
+    assert w.inspector_scroll.isVisible()

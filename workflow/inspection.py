@@ -158,11 +158,12 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
             cached = values.get(node_id)
             if cached and target_signature and cached["signature"] == target_signature and cached["status"] == "Checked":
                 root = manifest.parent
-                for item in values.values():
+                checked_prefix = {node.id: values[node.id] for node in prefix if node.id in values}
+                for item in checked_prefix.values():
                     for name in ("input_store", "output_store"):
                         if item[name]:
                             _store(item[name], root)
-                return {"result": cached, "steps": values, "cached": True}
+                return {"result": cached, "steps": checked_prefix, "cached": True}
         except (ValueError, OSError, KeyError, sqlite3.Error):
             continue
     run_id = uuid.uuid4().hex
@@ -247,9 +248,11 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
                 result.error = str(exc)
                 ordinal = getattr(exc, "record_ordinal", 0)
                 source_id = current.source_id(ordinal) if current and 1 <= ordinal <= current.count else 0
-                matched = re.search(r"(?:Source record|Record|Page)\s+(\d+)", str(exc), re.I)
+                matched = re.search(r"(Source record|Record|Page)\s+(\d+)", str(exc), re.I)
                 if not source_id and matched:
-                    source_id = int(matched[1])
+                    number=int(matched[2])
+                    source_id = (current.source_id(number) if current and matched[1].lower() != "source record"
+                                 and 1 <= number <= current.count else number)
                 obj = re.search(r"object ([A-Za-z0-9_-]+)", str(exc))
                 field_match = re.search(r"field ([A-Za-z0-9_, ]+):", str(exc))
                 _issue(evidence, node, scope, source_id, field_match[1] if field_match else "", str(exc),
@@ -351,6 +354,21 @@ def _mail_plan(template, current, node, root, progress, cancelled,*,auto_repair=
         with Renderer(template, auto_repair=auto_repair, fallback_directory=folder / "fallback", is_cancelled=cancelled) as renderer:
             renderer.prepare_fonts(((ordinal, values) for ordinal, values, _ in current.rows()), folder,
                                    progress, cancelled, audit_path=folder / "glyph-repairs.csv")
+            from composition.data.sequences import sequence_record
+            from composition.engine.barcodes import BARCODE_TYPES, validate_payload
+            barcodes=[(i,e) for i,p in enumerate(template.pages) for e in p.elements if e.type in BARCODE_TYPES]
+            if barcodes:
+                for ordinal,values,_source_id in current.rows():
+                    check_cancel(cancelled)
+                    for index,element in barcodes:
+                        plan=renderer.plans[element.id]
+                        selected=plan.resolve(sequence_record(template,values,ordinal,index))
+                        if selected.visible:
+                            try:
+                                validate_payload(element.type,selected.value)
+                            except ValueError as exc:
+                                names=", ".join(plan.selected_fields(selected.alternative))
+                                raise CompositionError(f"Record {ordinal}, object {element.id}, field {names}: {exc}") from exc
         summary["checked_records"] = current.count
     return summary
 
@@ -506,7 +524,13 @@ def _overlay_check(spec, run, current, root, progress, cancelled):
                                         progress, cancelled, audit_path=folder / "glyph-repairs.csv")
         for page in plan.pages():
             check_cancel(cancelled)
-            renderer.selections(page_values(composed, page, "inspection", values), source.page_geometry(page))
+            from composition.engine.barcodes import BARCODE_TYPES, validate_payload
+            for element,_object,selected in renderer.selections(page_values(composed, page, "inspection", values), source.page_geometry(page)):
+                if element.type in BARCODE_TYPES:
+                    try:
+                        validate_payload(element.type,selected.value)
+                    except ValueError as exc:
+                        raise CompositionError(f"Record {page.envelope}, object {element.id}: {exc}") from exc
     return composed
 
 
@@ -514,19 +538,26 @@ def load_result(directory, run_id, node_id, spec, job=None, *, failed_issues=Fal
     root = _folder(directory, run_id)
     values = json.loads((root / "results.json").read_text(encoding="utf-8"))
     result = values[node_id]
+    if result["node_id"] != node_id or result["job_id"] != (job.id if job else ""):
+        raise CompositionError("Inspection belongs to another node or batch job. Check this step again.")
     if failed_issues and result["status"] in ("Failed", "Cancelled"):
         # Historical error evidence can still be read if a missing source caused
         # the check to fail. It cannot be used as current data or preview evidence.
         return root, result
-    live, _ = signature(spec, node_id, job)
+    try:
+        live, _ = signature(spec, node_id, job)
+    except (ValueError, OSError) as exc:
+        raise CompositionError("Inspection is out of date. Source or template cannot be verified; check this step again.") from exc
     if live != result["signature"]:
         raise CompositionError("Inspection is out of date. Source or upstream settings changed; check this step again.")
     return root, result
 
 
-def inspection_rows(directory, run_id, node_id, spec, *, job=None, view="output", offset=0, search=""):
+def inspection_rows(directory, run_id, node_id, spec, *, job=None, view="output", offset=0, search="", source_id=None):
     if view not in ("input", "output", "issues") or type(offset) is not int or offset < 0 or not isinstance(search, str) or len(search) > 200:
         raise CompositionError("Invalid inspection page request.")
+    if source_id is not None and (type(source_id) is not int or source_id < 1):
+        raise CompositionError("Invalid source identity.")
     root, result = load_result(directory, run_id, node_id, spec, job, failed_issues=view == "issues")
     with closing(sqlite3.connect(root / "evidence.sqlite")) as evidence:
         if view == "issues":
@@ -537,6 +568,7 @@ def inspection_rows(directory, run_id, node_id, spec, *, job=None, view="output"
                 where += " AND (CAST(source_id AS TEXT) LIKE ? OR field LIKE ? OR reason LIKE ?)"
                 args += ["%" + search + "%"] * 3
             total = evidence.execute("SELECT COUNT(*) FROM issues" + where, args).fetchone()[0]
+            offset = min(offset, max(0, ((total - 1) // 50) * 50))
             rows = [{"node_id": n, "scope": scope, "source_id": sid, "field": name, "severity": severity, "reason": reason,
                      "object_id": obj, "trace": _trace(evidence, scope, sid)}
                     for n, scope, sid, name, severity, reason, obj in evidence.execute(
@@ -548,9 +580,13 @@ def inspection_rows(directory, run_id, node_id, spec, *, job=None, view="output"
             store = _store(path, root)
             where = " WHERE CAST(source_row AS TEXT) LIKE ? OR value LIKE ?" if search else ""
             args = ["%" + search + "%"] * 2 if search else []
+            if source_id is not None:
+                where = " WHERE source_row=?"
+                args = [source_id]
             with closing(sqlite3.connect(store.path)) as records:
                 records.execute("CREATE INDEX IF NOT EXISTS inspection_source ON records(source_row)")
                 total = records.execute("SELECT COUNT(*) FROM records" + where, args).fetchone()[0]
+                offset = min(offset, max(0, ((total - 1) // 50) * 50))
                 rows = []
                 before = _store(result["input_store"], root) if view == "output" and result["input_store"] and result["input_scope"] == result["output_scope"] else None
                 with closing(sqlite3.connect(before.path)) if before else closing(sqlite3.connect(":memory:")) as previous:
@@ -563,6 +599,27 @@ def inspection_rows(directory, run_id, node_id, spec, *, job=None, view="output"
                                      "trace": _trace(evidence, result[view + "_scope"], sid)})
             return {"rows": rows, "total": total, "offset": offset, "fields": store.fields, "truncated_values": True}
     return {"rows": rows, "total": total, "offset": offset}
+
+
+def inspection_value(directory, run_id, node_id, spec, *, job=None, view="output", record=1, field_name=""):
+    """Read one chosen field, including columns beyond the bounded table sample."""
+    if view not in ("input", "output") or type(record) is not int or record < 1 or not isinstance(field_name, str):
+        raise CompositionError("Invalid inspection field request.")
+    root, result = load_result(directory, run_id, node_id, spec, job)
+    store = _store(result[view + "_store"], root)
+    if field_name not in store.fields or record > store.count:
+        raise CompositionError("Choose an available field and record.")
+    with closing(sqlite3.connect(store.path)) as db:
+        raw, sid = db.execute("SELECT value,source_row FROM records WHERE ordinal=?", (record,)).fetchone()
+    value = json.loads(raw).get(field_name, "")
+    before = ""
+    if view == "output" and result["input_store"] and result["input_scope"] == result["output_scope"]:
+        previous = _store(result["input_store"], root)
+        with closing(sqlite3.connect(previous.path)) as db:
+            row = db.execute("SELECT value FROM records WHERE source_row=? LIMIT 1", (sid,)).fetchone()
+            before = json.loads(row[0]).get(field_name, "") if row else ""
+    return {"field": field_name, "source_id": sid, "before": str(before)[:64000], "value": str(value)[:64000],
+            "truncated": len(str(value)) > 64000 or len(str(before)) > 64000}
 
 
 def _trace(db, scope, sid):

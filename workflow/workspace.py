@@ -664,6 +664,9 @@ class WorkflowWindow(QMainWindow):
             fields=[r["name"] for r in self.spec.node("extract").params.get("regions",[])] if self.spec.node("extract") else []
             node=WorkflowNode(kind,x=source.x+230 if x is None else x,y=source.y if y is None else y,
                 params=copy.deepcopy(params if params is not None else default_options(kind,fields[0] if fields else "Name")))
+            if x is None and y is None:
+                while any(abs(node.x-other.x)<200 and abs(node.y-other.y)<115 for other in self.spec.nodes):
+                    node.y+=150
             after=self.spec.insert_after(source.id,node)
             if self.commit(after.to_dict(),"Insert "+LABELS[kind]):
                 self.select_node(node.id)
@@ -994,7 +997,8 @@ class WorkflowWindow(QMainWindow):
         if not hasattr(self,"toolbox"):
             return
         self.toolbox.setEnabled(not busy)
-        self.canvas.setEnabled(not busy)
+        self.canvas.setEnabled(True)
+        self.canvas.set_editable(not busy)
         self.inspector.setEnabled(not busy)
         if self.inspections.pane and not sip.isdeleted(self.inspections.pane):
             self.inspections.pane.check.setEnabled(not busy)
@@ -1004,6 +1008,7 @@ class WorkflowWindow(QMainWindow):
         self.activityChanged.emit()
         if hasattr(self,"next_step"):
             self.next_step.setEnabled(not busy)
+            self.auto_layout_action.setEnabled(not busy)
             from .chrome import context
             context(self)
 

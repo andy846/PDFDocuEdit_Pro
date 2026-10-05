@@ -198,7 +198,14 @@ class WorkflowSpec:
         result.edges.append([identity,node.id])
         if following:
             result.edges.append([node.id,following])
-        result.chain()
+        result.validate()
+        root=result.node("data" if result.project_kind=="mail_merge_workflow" else "input")
+        edges=dict(result.edges)
+        tail=root
+        while tail and tail.id in edges:
+            tail=next(n for n in result.nodes if n.id==edges[tail.id])
+        if tail:
+            result.execution_prefix(tail.id)
         return result
 
     def reorder(self, identities):

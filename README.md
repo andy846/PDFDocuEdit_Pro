@@ -22,6 +22,17 @@
 4. 已完成 PDF：Auto Detect Mailpieces → 查看規律與例外 → 接受邊界 → 加入套印物件 → 生成及核對。
 5. 選紙輸出：一般 Designer 的 **Page → Print Media / Stocks…**；Overlay 的 **Production → Print Media / Stocks…**；Workflow 則配置 **Media Assignment** 節點。
 
+### Visual Workflow 開發更新：節點核對
+
+選取節點後，用右側 **Settings｜Input｜Output｜Issues** 核對設定與資料。
+**Check to this step** 處理完整輸入並保存暫存結果；Mail Merge 須明確選擇一個 batch job。
+Input／Output 每頁 50 筆，Enter 搜尋、來源身分及修改前後對照；**Inspect field…** 可查看其他欄位與長內容。
+Compose／Output 的試跑只檢查及提供單筆預覽，不發布生產檔案或批准工作。
+
+任務進行中可選取節點、平移、縮放及查看已完成結果。窄窗可用底部 **Split view／Steps／Canvas／Details** 切換面板。
+來源或上游設定改變後須重新檢查。正式生產仍由既有 Review／Run 流程執行。
+詳見 [實作與針對性驗收](docs/VISUAL_WORKFLOW_INSPECTION.md)。本段描述開發更新，未另發佈安裝包。
+
 ### PostScript 與 Printer Profile
 
 在 **Printer profile** 選擇 `PDF + PostScript (no separate job ticket)`，配置每個 Stock 的 **MediaType／Colour** 或 **MediaPosition**，保存環境 profile。先用 **Export paper-selection test PS…** 列印少量測試紙，再正式生成。
