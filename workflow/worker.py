@@ -17,6 +17,22 @@ from .registry import EXTRA_KINDS
 
 def dispatch(request, progress, cancelled, emit_state=None):
     operation=request["operation"]
+    if operation in ("inspect_step","inspection_rows","inspection_preview"):
+        from .batch import BatchJob
+        from .inspection import inspect_step, inspection_preview, inspection_rows
+        spec=WorkflowSpec.from_dict(request["spec"])
+        job=BatchJob(**request["job"]) if request.get("job") else None
+        if job:
+            job.validate()
+        if operation=="inspect_step":
+            return inspect_step(spec,request["node_id"],request["directory"],job=job,progress=progress,
+                                is_cancelled=cancelled,emit_state=emit_state)
+        options=dict(job=job)
+        if operation=="inspection_rows":
+            return inspection_rows(request["directory"],request["run_id"],request["node_id"],spec,
+                                   **options,view=request.get("view","output"),offset=request.get("offset",0),search=request.get("search",""))
+        return inspection_preview(request["directory"],request["run_id"],request["node_id"],spec,request["target"],
+                                  **options,record=request.get("record",1),page=request.get("page",1))
     if operation.startswith("batch_"):
         from .batch import BatchRun, approve, execute_batch, load_record, prepare, save_record
         if operation=="batch_load":

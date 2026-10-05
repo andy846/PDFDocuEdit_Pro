@@ -344,6 +344,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         changed=previous and previous.fingerprint()!=spec.fingerprint()
         self.spec=spec
         if changed:
+            self.inspections.invalidate()
             self.run=WorkflowRun()
             for job in self.batch.jobs:
                 if job.status!="Completed":
@@ -472,6 +473,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         self.proxy.setFilterRegularExpression("Blocked|Failed|Needs review|Cancelled" if value=="attention" else value)
 
     def changed_jobs(self):
+        self.inspections.invalidate()
         self.batch_dirty=True
         self.batch_revision+=1
         self.preview_generation+=1

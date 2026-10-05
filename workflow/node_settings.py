@@ -1,7 +1,7 @@
 """Human-readable settings for executable data steps, with shared validation."""
 from dataclasses import asdict
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,8 +25,13 @@ from .registry import DATA_KINDS, REGISTRY
 
 
 class StepDialog(QDialog):
-    def __init__(self,node,fields,parent=None):
+    edited=pyqtSignal()
+
+    def __init__(self,node,fields,parent=None,*,embedded=False):
         super().__init__(parent)
+        self.embedded=embedded
+        if embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.node=node
         self.fields=fields
         self.setWindowTitle(REGISTRY[node.kind].label)
@@ -98,6 +103,20 @@ class StepDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        if embedded:
+            buttons.hide()
+            self.connect_edits(self)
+
+    def connect_edits(self,root):
+        for control in root.findChildren(QWidget):
+            if control.property("workflow_edit_connected"):
+                continue
+            signal=(control.textChanged if isinstance(control,QLineEdit) else control.currentTextChanged
+                    if isinstance(control,QComboBox) else control.toggled if isinstance(control,QCheckBox)
+                    else control.valueChanged if isinstance(control,QSpinBox) else None)
+            if signal is not None:
+                signal.connect(self.edited)
+                control.setProperty("workflow_edit_connected",True)
 
     def field_control(self,value):
         control=QComboBox()
@@ -144,10 +163,14 @@ class StepDialog(QDialog):
         def discard():
             self.rows.remove(controls)
             box.deleteLater()
+            self.edited.emit()
         remove.clicked.connect(discard)
         form.addRow(remove)
         self.rows.append(controls)
         self.content.insertWidget(max(0,self.content.count()-1),box)
+        if getattr(self,"embedded",False):
+            self.connect_edits(box)
+            self.edited.emit()
 
     def value(self):
         if self.node.kind=="filter_records":
@@ -227,7 +250,10 @@ def install(window,node):
         summaries=getattr(window.run,"data_steps",[])
     summary=next((s for s in reversed(summaries) if s.get("node_id")==node.id),None)
     fields=[]
-    if jobs and jobs[0].data_summary:
+    checked=window.inspections.current(node.id)
+    if checked:
+        fields=checked.get("fields",[])
+    if not fields and jobs and jobs[0].data_summary:
         fields=jobs[0].data_summary.get("fields",[])
     if not fields and window.spec.node("extract"):
         fields=[r["name"] for r in window.spec.node("extract").params.get("regions",[]) if "name" in r]
@@ -250,7 +276,20 @@ def install(window,node):
     button=QPushButton("Configure step…")
     button.setProperty("primary",True)
     button.clicked.connect(configure)
-    layout.addWidget(button)
+    if node.kind in DATA_KINDS or node.kind in ("running_sequence","split_output"):
+        editor=StepDialog(node,fields,window.inspector,embedded=True)
+        layout.addWidget(editor)
+        window.watch_settings(node,editor.value,[])
+        def edited():
+            from .drafts import update_error
+            if window._draft_node==node.id:
+                window.node_drafts.pop(node.id,None)
+                update_error(window)
+                window.title()
+                window.properties.edited.emit()
+        editor.edited.connect(edited)
+    else:
+        layout.addWidget(button)
     report_summary=jobs[0].data_summary if jobs else getattr(window.run,"data_summary",{})
     if node.kind=="media_assignment" and report_summary.get("media"):
         media=report_summary["media"]
