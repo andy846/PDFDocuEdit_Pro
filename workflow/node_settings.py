@@ -192,9 +192,6 @@ class StepDialog(QDialog):
 
 
 def install(window,node):
-    old=window.inspector_scroll.takeWidget()
-    if old:
-        old.deleteLater()
     window.inspector=QWidget()
     layout=QVBoxLayout(window.inspector)
     heading=QLabel(REGISTRY[node.kind].label)
@@ -205,8 +202,11 @@ def install(window,node):
     layout.addWidget(description)
     def settings_text():
         if node.kind=="media_assignment":
+            printer=node.params.get("printer_profile",{})
+            backend="PDF + PostScript" if printer.get("backend")=="postscript" else "PDF + JDF"
             return (f"{node.params.get('mode','page')} rules · {len(node.params.get('stocks',[]))} Stocks\n"
-                    f"{'Duplex' if node.params.get('duplex') else 'Simplex'} · blank policy: {node.params.get('blank_policy','block')}\nCanon device validation pending")
+                    f"{'Duplex' if node.params.get('duplex') else 'Simplex'} · blank policy: {node.params.get('blank_policy','block')}\n"
+                    f"{backend} · {printer.get('profile_name') or 'Unnamed profile'}\nDevice validation pending")
         if node.kind in DATA_KINDS:
             key={"clean_fields":"operations","create_fields":"fields","filter_records":"conditions",
                  "sort_records":"keys","validate_data":"checks"}[node.kind]

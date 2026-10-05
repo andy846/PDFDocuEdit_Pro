@@ -71,7 +71,7 @@ class NodeItem(QGraphicsObject):
         self.node,self.view,self.status=node,view,status
         self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable|QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setPos(node.x,node.y)
-        self.setToolTip("Click to configure. Drag to move. Click output port, then another input port to connect.")
+        self.setToolTip(LABELS[node.kind]+"\nClick to configure. Drag to move. Click output port, then another input port to connect.")
         self.setZValue(2)
 
     def boundingRect(self):
@@ -92,7 +92,8 @@ class NodeItem(QGraphicsObject):
         painter.setFont(font)
         from ui.icons import icon
         icon(SYMBOLS[self.node.kind],color=palette.text().color().name()).paint(painter,QRect(10,11,16,16))
-        painter.drawText(QRectF(32,7,132,24),Qt.AlignmentFlag.AlignLeft,LABELS[self.node.kind])
+        title=painter.fontMetrics().elidedText(LABELS[self.node.kind],Qt.TextElideMode.ElideRight,132)
+        painter.drawText(QRectF(32,7,132,24),Qt.AlignmentFlag.AlignLeft,title)
         color=palette.highlight().color() if self.status else palette.mid().color()
         if not self.status:
             color.setAlpha(75)
@@ -109,7 +110,7 @@ class NodeItem(QGraphicsObject):
         elif self.node.kind=="group":
             detail={"fixed":f"{self.node.params.get('pages',1)} page(s) / envelope","field":"Field changes","pattern":"Page-number pattern"}.get(self.node.params.get("method"),"Configure grouping")
         else:
-            detail=self.view.summaries.get(self.node.kind,"Configure step")
+            detail=self.view.summaries.get(self.node.id,self.view.summaries.get(self.node.kind,"Configure step"))
         marker={"Completed":"✓ ","Failed":"! ","Blocked":"! ","Needs review":"? ","Running":"▶ ","Ready":"✓ "}.get(self.status,"")
         if self.status:
             painter.drawText(QRectF(12,37,152,16),Qt.AlignmentFlag.AlignLeft,marker+self.status)

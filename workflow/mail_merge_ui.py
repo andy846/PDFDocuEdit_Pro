@@ -367,11 +367,9 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.refresh_jobs()
         self.title()
 
-    def select_node(self,identity):
+    def _build_node_settings(self,identity):
         if getattr(self,"spec",None) is None or self.spec.project_kind!="mail_merge_workflow":
-            return super().select_node(identity)
-        if not self.flush_settings():
-            return
+            return super()._build_node_settings(identity)
         self._draft_getter=None
         self.selected=identity
         node=next((n for n in self.spec.nodes if n.id==identity),None)
@@ -381,9 +379,6 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         if node.kind in EXTRA_KINDS:
             from .node_settings import install
             return install(self,node)
-        old=self.inspector_scroll.takeWidget()
-        if old:
-            old.deleteLater()
         self.inspector=QWidget()
         layout=QVBoxLayout(self.inspector)
         title=QLabel(LABELS[node.kind])

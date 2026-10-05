@@ -70,7 +70,7 @@ REGISTRY = {d.tool_id: d for d in (
     _definition("split_output", "Split Output", "Record Set|Mailpiece Set",
                 description="Partition output by a field or by whole records/envelopes."),
     _definition("media_assignment", "Media Assignment", "Record Set|Mailpiece Set",
-                description="Assign logical pages to Stock, inspect physical sheets and export an offline Canon JDF package."),
+                description="Assign logical pages to Stock, inspect physical sheets and configure PDF + PostScript or PDF + JDF output."),
 )}
 
 

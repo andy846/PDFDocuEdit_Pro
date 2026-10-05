@@ -91,7 +91,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
             groups=request["groups"]
             action=request.get("action","")
             checked=None
-            has_pipeline=request.get("workflow",{}).get("workflow_version")==3 and any(
+            has_pipeline=request.get("workflow",{}).get("workflow_version",1)>=3 and any(
                 n["kind"] in EXTRA_KINDS for n in request["workflow"]["nodes"])
             if action=="correct":
                 with store.db:

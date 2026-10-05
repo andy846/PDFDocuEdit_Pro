@@ -116,6 +116,7 @@ class WorkflowWindow(QMainWindow):
         self.draft_error=""
         self._draft_getter=None
         self._flushing_settings=False
+        self.node_drafts={}
         self.selected=self.spec.nodes[0].id
         self.capture_active=False
         self.review_generation=0
@@ -309,7 +310,9 @@ class WorkflowWindow(QMainWindow):
         self._draft_initial=copy.deepcopy(getter())
         def changed(*_):
             if self._draft_getter is getter:
-                self.draft_error="Unapplied workflow settings" if getter()!=self._draft_initial else ""
+                from .drafts import update_error
+                self.node_drafts.pop(node.id,None)
+                update_error(self)
                 self.title()
                 self.properties.edited.emit()
                 self.lock()
@@ -318,21 +321,9 @@ class WorkflowWindow(QMainWindow):
                     if isinstance(control,QComboBox) else control.toggled if hasattr(control,"toggled") else control.valueChanged)
             signal.connect(changed)
 
-    def flush_settings(self):
-        if self._flushing_settings or not self._draft_getter or not self.draft_error:
-            return True
-        if self.active_worker or self.capture_active:
-            self.message("Wait for the current task before applying settings.")
-            return False
-        node=next((n for n in self.spec.nodes if n.id==self._draft_node),None)
-        value=self._draft_getter()
-        if node is None:
-            return False
-        self._flushing_settings=True
-        try:
-            return self.params(node,value)
-        finally:
-            self._flushing_settings=False
+    def flush_settings(self,*,current_only=False):
+        from .drafts import flush
+        return flush(self,current_only=current_only)
 
     def commit(self,after,label):
         if self.active_worker or self.capture_active:
@@ -409,8 +400,10 @@ class WorkflowWindow(QMainWindow):
         self.title()
 
     def select_node(self,identity):
-        if not self.flush_settings():
-            return
+        from .drafts import select
+        select(self,identity)
+
+    def _build_node_settings(self,identity):
         self._draft_getter=None
         self.selected=identity
         node=next((n for n in self.spec.nodes if n.id==identity),None)
@@ -419,9 +412,6 @@ class WorkflowWindow(QMainWindow):
         if node.kind in EXTRA_KINDS:
             from .node_settings import install
             return install(self,node)
-        old=self.inspector_scroll.takeWidget()
-        if old:
-            old.deleteLater()
         self.inspector=QWidget()
         layout=QVBoxLayout(self.inspector)
         title=QLabel(LABELS[node.kind])
@@ -970,7 +960,14 @@ class WorkflowWindow(QMainWindow):
     def update_progress(self,current,total,message):
         self.progress.setRange(0,total)
         self.progress.setValue(current)
-        self.message(message)
+        if message.startswith("Workflow node: "):
+            identity,_,label=message.removeprefix("Workflow node: ").partition(" | ")
+            self.message(label)
+            if any(n.id==identity for n in self.spec.nodes):
+                self.run.statuses[identity]="Running"
+                self.canvas.display(self.spec,self.run.statuses,self.selected)
+        else:
+            self.message(message)
         if message.startswith("Workflow: "):
             node=self.spec.node(message.split(": ",1)[1])
             if node:
@@ -1300,6 +1297,10 @@ class WorkflowWindow(QMainWindow):
         if self.workers:
             event.ignore()
             return
+        for entry in self.node_drafts.values():
+            if entry["widget"] is not self.inspector and not sip.isdeleted(entry["widget"]):
+                entry["widget"].deleteLater()
+        self.node_drafts.clear()
         if self.project_host:
             for project in self.project_host.projects:
                 if getattr(project,"workflow_database",None)==self.run.database:
