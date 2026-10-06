@@ -188,7 +188,7 @@ def execution_plan(spec,target_id=None):
                 return BranchExecutionPlan(common,{route["id"]:path},cursor,n)
             edges=outgoing.get(n.id,[])
             n=lookup[edges[0]["target"]] if len(edges)==1 else None
-        if target_id is None and (not n or [v.kind for v in path if v.kind!="media_assignment"]!=["template","mail_review","compose","reports"]):
+        if (target_id is None or lookup[target_id].kind=="collect") and (not n or [v.kind for v in path if v.kind!="media_assignment"]!=["template","mail_review","compose","reports"]):
             raise CompositionError("Each route needs Template → Review → Compose → Reports → Collect Results.")
         if n:
             visited.add(n.id)
@@ -200,7 +200,7 @@ def execution_plan(spec,target_id=None):
     if not exc or not collector or not any(e["port"]=="exceptions" and e["target"]==exc.id for e in outgoing.get(cursor.id,[])) or not any(e["target"]==collector.id for e in outgoing.get(exc.id,[])):
         raise CompositionError("Connect the exception sink to Collect Results.")
     visited.update((exc.id,collector.id))
-    if target_id is None and visited!=set(lookup):
+    if (target_id is None or lookup[target_id].kind=="collect") and visited!=set(lookup):
         raise CompositionError("Connect every node to the production graph.")
     if target_id and target_id!=collector.id:
         raise CompositionError("Connect the selected step to its source before checking.")

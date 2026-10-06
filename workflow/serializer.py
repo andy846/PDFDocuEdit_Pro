@@ -20,6 +20,22 @@ def save_workflow(spec, path, *, is_cancelled=None):
     target=Path(path).resolve().with_suffix(".pdflow")
     assets=target.parent/(target.stem+".assets")
     value=WorkflowSpec.from_dict(spec.to_dict())
+    if value.workflow_version==5:
+        from composition.template.serializer import load_project, save_project
+        for node in value.nodes:
+            if node.kind=="template" and node.params.get("path"):
+                check_cancel(is_cancelled)
+                original=Path(node.params["path"]).resolve()
+                assets.mkdir(parents=True,exist_ok=True)
+                copied=save_project(load_project(original),assets/(file_hash(original)[:20]+".pdcx"))
+                node.params["path"]=Path(copied).relative_to(target.parent).as_posix()
+        # Source data stays external. Save paths relative when practical.
+        import os
+        for item in value.node("for_each").params.get("items",[]):
+            try:
+                item["path"]=os.path.relpath(item["path"],target.parent)
+            except ValueError:
+                pass  # A source on another Windows drive remains an absolute reference.
     source=value.node("input")
     old_paths=source.params.get("paths",[]) if source else []
     new_paths=[]
@@ -74,6 +90,12 @@ def load_workflow(path):
     if target.stat().st_size>16*1024*1024:
         raise CompositionError("Workflow exceeds 16 MB.")
     spec=WorkflowSpec.from_dict(json.loads(target.read_text(encoding="utf-8")))
+    if spec.workflow_version==5:
+        for item in spec.node("for_each").params.get("items",[]):
+            item["path"]=str((target.parent/item["path"]).resolve())
+        for node in spec.nodes:
+            if node.kind=="template" and node.params.get("path"):
+                node.params["path"]=str((target.parent/node.params["path"]).resolve())
     source=spec.node("input")
     if source:
         paths=source.params.get("paths",[])

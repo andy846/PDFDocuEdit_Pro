@@ -252,9 +252,10 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             was_approved=job.approved and job.signature==signature
             if job.snapshot_dir:
                 previous=Path(job.snapshot_dir).resolve()
-                if previous.parent==root and previous.name.startswith(job.id+"-") and previous.exists():
+                if previous.parent==root and previous.name.startswith((job.id+"-",job.id[:8]+"-")) and previous.exists():
                     shutil.rmtree(previous)
-            snapshot=root/(job.id+"-"+uuid.uuid4().hex)
+            # Leave room for bundled font asset names under Windows MAX_PATH.
+            snapshot=root/(job.id[:8]+"-"+uuid.uuid4().hex[:12])
             snapshot.mkdir()
             job.snapshot_dir=str(snapshot)
             if job.result:

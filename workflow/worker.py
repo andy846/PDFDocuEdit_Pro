@@ -17,6 +17,33 @@ from .registry import EXTRA_KINDS
 
 def dispatch(request, progress, cancelled, emit_state=None):
     operation=request["operation"]
+    if operation.startswith("branch_"):
+        from .branch_engine import approve_routes, execute_routes, prepare_routes, rows
+        spec=WorkflowSpec.from_dict(request["spec"])
+        if operation=="branch_check":
+            return {"run":prepare_routes(spec,request["directory"],previous=request.get("run"),target_id=request.get("node_id"),
+                                         progress=progress,is_cancelled=cancelled,on_state=emit_state)}
+        if operation=="branch_approve":
+            return {"run":approve_routes(spec,request["run"],request["identities"],acknowledge=request.get("acknowledge",False))}
+        if operation=="branch_run":
+            return {"run":execute_routes(spec,request["run"],request["directory"],request["output_dir"],
+                                         progress=progress,is_cancelled=cancelled,on_state=emit_state)}
+        if operation=="branch_rows":
+            return rows(spec,request["run"],request["directory"],source_id=request.get("source_id",""),
+                        branch_id=request.get("branch_id",""),view=request.get("view","output"),offset=request.get("offset",0),
+                        search=request.get("search",""),node_id=request.get("node_id",""))
+        if operation=="branch_preview":
+            from .branch_engine import _check_current, _location, branch_signature
+            _location(request["directory"],request["run"])
+            _check_current(spec,request["run"])
+            entry=next((e for e in request["run"]["jobs"] if e["id"]==request["job_id"]),None)
+            if not entry or not entry["batch"] or branch_signature(spec,request["run"]["signature"],entry["branch_id"])!=entry["signature"]:
+                raise CompositionError("Check this branch before previewing it.")
+            target=Path(request["target"]).resolve()
+            if not target.is_relative_to(Path(request["directory"]).resolve()):
+                raise CompositionError("Invalid preview destination.")
+            return dispatch({**request,"operation":"batch_preview","spec":entry["spec"],"batch":entry["batch"]},progress,cancelled,emit_state)
+        raise CompositionError("Unknown branch operation.")
     if operation in ("inspect_step","inspection_rows","inspection_preview","inspection_value"):
         from .batch import BatchJob
         from .inspection import inspect_step, inspection_preview, inspection_rows, inspection_value
