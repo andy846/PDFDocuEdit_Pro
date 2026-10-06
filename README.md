@@ -1,4 +1,4 @@
-# PDFDocuEdit Pro V3.0.0
+# PDFDocuEdit Pro V3.0.1
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
@@ -22,7 +22,7 @@
 4. 已完成 PDF：Auto Detect Mailpieces → 查看規律與例外 → 接受邊界 → 加入套印物件 → 生成及核對。
 5. 選紙輸出：一般 Designer 的 **Page → Print Media / Stocks…**；Overlay 的 **Production → Print Media / Stocks…**；Workflow 則配置 **Media Assignment** 節點。
 
-### Visual Workflow 開發更新：節點核對
+### V3.0.1 更新：Visual Workflow 節點核對
 
 選取節點後，用右側 **Settings｜Input｜Output｜Issues** 核對設定與資料。
 **Check to this step** 處理完整輸入並保存暫存結果；Mail Merge 須明確選擇一個 batch job。
@@ -31,7 +31,7 @@ Compose／Output 的試跑只檢查及提供單筆預覽，不發布生產檔案
 
 任務進行中可選取節點、平移、縮放及查看已完成結果。窄窗可用底部 **Split view／Steps／Canvas／Details** 切換面板。
 來源或上游設定改變後須重新檢查。正式生產仍由既有 Review／Run 流程執行。
-詳見 [實作與針對性驗收](docs/VISUAL_WORKFLOW_INSPECTION.md)。本段描述開發更新，未另發佈安裝包。
+詳見 [實作說明](docs/VISUAL_WORKFLOW_INSPECTION.md) 及 [v3.0.1 發佈說明](docs/RELEASE_NOTES_3.0.1.md)。本次亦更新程式內 **Help → README**，補齊 Designer、Workflow、分封及選紙操作入口。
 
 ### PostScript 與 Printer Profile
 
@@ -120,7 +120,7 @@ startup rollback. First deployment can use the Inno Setup installer or extract
 the Managed Portable ZIP; both launch through Launcher.exe.
 See [更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V3.0.0 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.0). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
+Download the [V3.0.1 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.1). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
 Existing legacy Setup installations need a one-time transition to the managed installer or portable package.
 
 ## V2.5.4 stability update
@@ -132,7 +132,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - CI runs affected tests and basic smoke checks on ordinary branch pushes. PRs and merges run the Windows automated suite; UI interaction and Linux/macOS core jobs run when relevant files change, and version tags run every test group. Pillow is pinned to 11.3.0.
 
-The current Windows x64 release is V3.0.0. Setup and Managed Portable downloads include SHA-256 files.
+The Windows x64 release target is V3.0.1. Setup and Managed Portable downloads include SHA-256 files.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 

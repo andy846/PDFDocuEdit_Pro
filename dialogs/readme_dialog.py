@@ -1,4 +1,4 @@
-"""Read-only README viewer carried over from the original application."""
+"""In-app feature overview and quick-start guide."""
 
 from __future__ import annotations
 
@@ -8,18 +8,140 @@ from .base import ToolDialog
 
 README_CONTENT = """# PDFDocuEdit Pro
 
+PDF Editing & Print Production Suite — v3.0.1
+
 **Program Developer:** Andy Leung (andy846@gmail.com)
 
 ---
 
 ## Overview
 
-PDFDocuEdit Pro is a comprehensive, feature-rich desktop application for
-viewing, editing and managing PDF documents on Windows and macOS. It offers
-an extensive suite of tools aimed at enhancing productivity and streamlining
-workflows involving PDF and other document formats — from fluid viewing and
-navigation to advanced batch processing, content extraction, annotation and
-security management.
+PDFDocuEdit Pro combines PDF editing and print-production tools in one main
+window. PDF Workspace handles document editing; Document Designer handles
+reusable templates, variable data, PDF overlays and Visual Workflow. Documents
+and customer data are processed locally. The current production distribution
+supports Windows x64.
+
+## Quick Start: Two Workspaces
+
+* Use the main-toolbar **PDF Workspace | Document Designer** switch to change
+  modes. Switching preserves open tabs, unsaved work and background jobs.
+* Use **Send to Designer** from PDF Workspace to turn an edited PDF into either
+  a multi-page Mail Merge template background or a PDF Overlay source.
+* Mail Merge: import data → place fields/sequences/barcodes → preview records
+  → save the `.pdcx` template → Generate Production PDF.
+* Finished PDF: Auto Detect Mailpieces → review and accept boundaries → add
+  overlay objects → generate and reconcile the result.
+* Use **Visual Workflow** to connect compatible steps and reuse settings
+  across customer datasets and letter templates.
+
+## Document Designer
+
+### Templates, Fields and Data
+* Start with a blank page or a multi-page PDF background. One customer record
+  can produce several fixed template pages; the background remains intact.
+* Import CSV, delimited/tab-delimited TXT and Excel data; select import options,
+  map source columns and drag fields onto the canvas.
+* Add static, variable or mixed text using `{{Field_Name}}`, images, lines,
+  rectangles, Code 128, QR Code and I25 (Interleaved 2 of 5) barcodes.
+* Generate running sequences and reference values without adding them to the
+  imported customer file. Configure sequence starts and increments as needed.
+* Use structured conditions for visibility and alternative content. Templates
+  and rules do not execute user-provided Python.
+* Edit position, size, rotation and text properties numerically; multi-select
+  objects to apply common settings. Rulers, snapping and alignment help place
+  objects accurately. Undo/Redo preserves editing continuity.
+* Select installed Windows fonts. Missing-glyph repairs or automatic fallback
+  replace unsupported characters while retaining the primary font, with a
+  report of affected pages and characters for review.
+* Save and reopen templates with field mappings, rules and page settings.
+  If a linked source file is missing, locate it before preview or generation.
+* Navigate individual records in Preview without generating the whole job.
+
+### PDF Overlay and Mailpiece Detection
+* Add text, sequences and inserter barcodes to an existing finished PDF.
+  Text-only overlays do not require a control barcode.
+* Group mailpieces by fixed page count or use **Auto Detect Mailpieces**.
+  Text-layer analysis suggests first-page, identifier and page-number rules.
+* Review the proposed boundaries and exceptions before accepting them. Use
+  teach-once profiles for recurring layouts and split/merge boundaries when
+  needed. Source changes require a new scan and acceptance.
+* Production keeps source-page mappings, reconciliation and barcode QC.
+  Inserter values and read positions must match the actual machine's spec.
+
+## Visual Workflow: Settings, Checks and Results
+
+### Build and Configure
+* The node library is grouped into **Sources**, **Data preparation**, **Design**
+  and **Production output**. Search matches names and function descriptions.
+* **Add next step** offers compatible steps and explains unavailable choices.
+  Workflows remain linear; branches and loops are not supported.
+* Data steps include field cleaning, field creation, sorting, validation,
+  filtering and running sequences. Other steps cover Visual Extraction Regions,
+  mailpiece grouping, mappings, letter templates, media and output splitting.
+* Select a node to use **Settings | Input | Output | Issues**. Common settings
+  can be edited directly; regions, complex rules and media use dedicated editors.
+* Draft settings stay with their node when navigating. Invalid drafts show a
+  reason and block saving/execution until fixed; applied changes use Undo/Redo.
+* Repeated node types retain separate settings, counts, statuses and evidence.
+
+### Check to This Step
+* Select the target node and click **Check to this step**. For Mail Merge,
+  explicitly choose one batch job. PDF checks use the current workflow sources.
+* Checks process the complete input, even when downstream steps are unfinished.
+  Missing input or an incompatible source-to-target path is reported clearly.
+* **Input / Output** display 50 rows per page. Press Enter to search, compare
+  before/after values and follow original record/envelope/page identities even
+  after sorting or filtering. Tables do not load the whole dataset into the UI.
+* **Inspect field…** reads any field, including columns outside the compact
+  table. Long values are bounded and show a notice when truncated.
+* **Issues** identifies the node, source record/page, field and cause. Use
+  **Locate source** to inspect the corresponding PDF, record or Designer object.
+* Compose/Overlay checks validate the template, data and output plan and can
+  preview one record. Output/Reports checks validate configuration. These checks
+  do not generate or publish production PDF/PS/JDF/report files or approve jobs.
+* Results are temporary and separate from production status. Changing sources
+  or upstream settings makes affected results stale; check again before relying
+  on them. Editing settings does not automatically rescan large files.
+* While a task runs, pan, zoom, select nodes and browse completed evidence.
+  Graph edits and repeated execution are locked. Cancellation retains completed
+  results. Narrow windows offer **Split view / Steps / Canvas / Details**;
+  panel choices and widths are retained during the current session.
+* Formal production remains a separate **Review / Run** operation with full
+  validation and operator acceptance.
+
+## Print Media, Printer Profiles and PostScript
+
+* Assign logical **Stocks**, rather than hard-coding tray numbers in templates.
+  Rules can use template pages, page-in-mailpiece or first/middle/last page roles.
+* Open **Page → Print Media / Stocks…** in a Mail Merge template, or
+  **Production → Print Media / Stocks…** in PDF Overlay. In Visual Workflow,
+  configure the **Media Assignment** node.
+* Choose PDF + PostScript (no separate job ticket), or PDF + Canon offline JDF.
+  Printer profiles map Stocks to MediaType/paper attributes or MediaPosition.
+  Save/load profiles for each environment without changing the logical Stocks.
+* Use **Profile library…** to browse device mappings and import profiles.
+  Use **Export paper-selection test PS…** for a small proof before production.
+* PS output retains a PDF proof, page-level media CSV and machine-readable logs.
+  Software checks PS page counts and dimensions before publication; failed or
+  cancelled jobs do not publish unfinished production files.
+* Tray mappings and DFE queue overrides require an actual printer proof. A
+  generic profile is not a verified device preset. PS needs a compatible
+  PostScript controller; transparency may be flattened at the chosen resolution.
+
+## Production Summary and Limits
+
+* Generation runs in the background with progress and cancellation at safe
+  checkpoints. Inspect input/processed/successful/failed records, expected and
+  generated pages, published files, CSV control reports and JSON job logs.
+* Reconciliation discrepancies and critical failures are reported explicitly.
+  Successful software validation does not replace printer or inserter testing.
+* Mailpiece detection uses text-layer evidence. Without reliable page/end
+  markers, it cannot prove completeness; uncertain boundaries need review.
+* Fixed multi-page templates are supported. Dynamic flowing tables/overflow,
+  AFP/IPDS and unattended production are outside the current feature scope.
+* v3.0.1 adds node inspection and the local printer-profile library. Use
+  Help → Check for Updates in a managed installation to check for releases.
 
 ## Key Features
 
@@ -77,7 +199,10 @@ security management.
 * **In-Document Search (`Ctrl+F`):** Live search panel listing every match
   with context; clicking a result jumps to the page and highlights it.
 * **Deep Content Search:** Search the text inside all PDF files in a folder
-  and its subfolders, with contextual previews and CSV export.
+  and its subfolders, with contextual previews, per-keyword/source filters,
+  CSV export and a printable HTML report. Open results at their source pages.
+* **Selected Search Pages:** Print or extract selected in-document search pages,
+  or send selected pages to Designer without re-entering page numbers.
 * **Barcode / QR Code:** Read barcodes and QR codes from one PDF or a whole
   folder at configurable DPI.
 * **Extract Text by Position:** Draw a rectangle on a page, then extract the
@@ -95,7 +220,13 @@ security management.
 * **PDF Overlay:** Batch overlay a template PDF onto all target files.
 
 ### 6. Utilities & Tools
-* **Merge PDFs:** Combine multiple PDF files into one document.
+* **Merge PDFs:** Use a dedicated workbench tab to arrange sources, select pages,
+  preview and combine them. Open the merged PDF or send it directly to Designer;
+  the PDF tool sidebar remains available.
+* **PDF Ruler:** Measure page distances in mm/cm with zoom-independent results,
+  calibrate page scale and save measurement lines as PDF annotations.
+* **Inspector / Preflight:** Check fonts, images, page boxes and production
+  warnings; jump to affected pages and export findings.
 * **Merge CSV/Excel:** Merge data from many spreadsheet files into one
   master file.
 * **PDF Compression:** Reduce file sizes with several compression levels.

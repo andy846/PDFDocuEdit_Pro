@@ -47,7 +47,9 @@ four tabs, explicit job choice, 50-row paging/search, separate approval state,
 inline numeric edits and Undo.
 
 Existing workflow UI and data-step tests are also run when shared code changes.
-Full application regression, installer and release packaging remain deferred.
+The development milestone used targeted tests. The v3.0.1 release additionally
+requires full CI regression and Windows packaging acceptance; evidence is recorded
+in RELEASE_VALIDATION_3.0.1.md.
 
 ## M3 — browsing, layout and continuity
 
