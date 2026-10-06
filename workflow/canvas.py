@@ -23,6 +23,7 @@ SYMBOLS={"input":"folder-open","merge":"layers","extract":"scan","group":"table"
          "overlay":"file-text","output":"printer","data":"table","mapping":"settings","template":"file-text",
          "sequences":"table","mail_review":"search","compose":"printer","reports":"file-text"}
 SYMBOLS.update({k:"settings" for k in EXTRA_KINDS})
+SYMBOLS.update(for_each="folder-open",batch_sequence="table",route="settings",exceptions="search",collect="file-text")
 
 
 class NodeToolbox(QListWidget):
@@ -308,7 +309,7 @@ class WorkflowCanvas(QGraphicsView):
             for node in spec.nodes:
                 item=self.nodes.get(node.id)
                 if item is None:
-                    item=NodeItem(node,self,statuses.get(node.id,""))
+                    item=self.node_item_class(node)(node,self,statuses.get(node.id,""))
                     self.nodes[node.id]=item
                     scene.addItem(item)
                 else:
@@ -321,12 +322,13 @@ class WorkflowCanvas(QGraphicsView):
                 item.setToolTip(LABELS[node.kind]+"\n"+settings_summary(node,self.summaries.get(node.id,self.summaries.get(node.kind,description(node.kind))))+
                                 "\n"+description(node.kind)+("\nProduction: "+item.status if item.status else ""))
             existing={(edge.a,edge.b):edge for edge in self.edges}
-            connections={tuple(pair) for pair in spec.edges}
+            pairs=[(e["source"],e["target"]) if isinstance(e,dict) else tuple(e) for e in spec.edges]
+            connections=set(pairs)
             for pair,edge in existing.items():
                 if pair not in connections:
                     self.retire_item(edge)
             self.edges=[]
-            for a,b in spec.edges:
+            for a,b in pairs:
                 edge=existing.get((a,b))
                 if edge is None:
                     edge=EdgeItem(a,b,self)
@@ -337,6 +339,9 @@ class WorkflowCanvas(QGraphicsView):
         finally:
             scene.blockSignals(blocked)
         self.centerOn(center)
+
+    def node_item_class(self,node):
+        return NodeItem
 
     def retire_item(self,item):
         self.scene().removeItem(item)

@@ -20,6 +20,21 @@ def dispatch(request, progress, cancelled, emit_state=None):
     if operation.startswith("branch_"):
         from .branch_engine import approve_routes, execute_routes, prepare_routes, rows
         spec=WorkflowSpec.from_dict(request["spec"])
+        if operation=="branch_folder":
+            check=Path(request["folder"])
+            paths=[]
+            for file in sorted(check.iterdir(),key=lambda p:p.name.casefold()):
+                if cancelled():
+                    from composition.production.generator import JobCancelled
+                    raise JobCancelled()
+                if file.suffix.lower() in (".csv",".txt",".tsv",".xlsx",".xlsm") and file.is_file():
+                    paths.append(str(file.resolve()))
+                if len(paths)>10000:
+                    raise CompositionError("A folder snapshot supports at most 10,000 data files.")
+            return {"paths":paths}
+        if operation=="branch_template":
+            from composition.template.serializer import load_project
+            return {"template":load_project(request["path"]).to_dict()}
         if operation=="branch_check":
             return {"run":prepare_routes(spec,request["directory"],previous=request.get("run"),target_id=request.get("node_id"),
                                          progress=progress,is_cancelled=cancelled,on_state=emit_state)}

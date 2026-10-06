@@ -107,7 +107,7 @@ class DesignerHome(QScrollArea):
         self.presets=QWidget()
         presets=QVBoxLayout(self.presets)
         presets.setContentsMargins(0,0,0,0)
-        for name,key in (("Data → Mail Merge","mail"),("PDF → Inserter Overlay","pdf"),("Clean → Validate → Output","clean")):
+        for name,key in (("For each file → Route by template","branch"),("Data → Mail Merge","mail"),("PDF → Inserter Overlay","pdf"),("Clean → Validate → Output","clean")):
             button=QPushButton(name)
             button.clicked.connect(lambda checked=False,k=key:self.preset(k))
             presets.addWidget(button)
@@ -177,6 +177,8 @@ class DesignerHome(QScrollArea):
             self.refresh()
 
     def preset(self, key):
+        if key=="branch":
+            return self.host.new_branch_workflow()
         if key=="pdf":
             return self.host.new_workflow()
         window=self.host.new_mail_merge_workflow()

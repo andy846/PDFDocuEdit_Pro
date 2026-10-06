@@ -128,9 +128,15 @@ class DesignerProjectHost(QWidget):
 
     def choose_workflow(self):
         label,ok=QInputDialog.getItem(self,"Create Visual Workflow","Production workflow",
-            ["Mail Merge Production · Letter templates + data","PDF Processing · Extract, group and overlay"],0,False)
+            ["Conditional Mail Merge · For each file + template routes","Mail Merge Production · Letter templates + data","PDF Processing · Extract, group and overlay"],0,False)
         if ok:
-            return self.new_mail_merge_workflow() if label.startswith("Mail Merge") else self.new_workflow()
+            return self.new_branch_workflow() if label.startswith("Conditional") else self.new_mail_merge_workflow() if label.startswith("Mail Merge") else self.new_workflow()
+
+    def new_branch_workflow(self):
+        if self.shutting_down:
+            return None
+        from workflow.branch_ui import BranchWorkflowWindow
+        return self._append(BranchWorkflowWindow(self.tabs,embedded=True,project_host=self))
 
     def new_mail_merge_workflow(self):
         if self.shutting_down:
@@ -184,7 +190,7 @@ class DesignerProjectHost(QWidget):
             if raw.get("project_kind") in ("pdf_workflow","mail_merge_workflow"):
                 from workflow.serializer import load_workflow
                 load_workflow(path)
-                project = self.new_mail_merge_workflow() if raw["project_kind"]=="mail_merge_workflow" else self.new_workflow()
+                project = self.new_branch_workflow() if raw.get("workflow_version")==5 else self.new_mail_merge_workflow() if raw["project_kind"]=="mail_merge_workflow" else self.new_workflow()
                 project.project_path=Path(path).resolve()
                 project.load_path(path)
             elif raw.get("project_kind") == "pdf_overlay":
