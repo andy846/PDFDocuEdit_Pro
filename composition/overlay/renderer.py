@@ -37,8 +37,12 @@ def page_values(spec, plan, job_id, external_values=None):
         fields.update(values)
     for obj in spec.objects:
         if obj.profile:
-            fields[barcode_field(obj)] = (obj.profile.payload(fields)
-                                          if applies(obj.scope, fields, obj.letter_page) else "")
+            try:
+                fields[barcode_field(obj)] = (obj.profile.payload(fields)
+                                              if applies(obj.scope, fields, obj.letter_page) else "")
+            except (ValueError, KeyError) as exc:
+                raise CompositionError(f"Envelope {plan.envelope}, source page {plan.source_page}, "
+                    f"output page {plan.output_page}, object {obj.element.id}: {exc}") from exc
     return fields
 
 

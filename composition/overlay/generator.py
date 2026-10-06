@@ -76,7 +76,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
     result.source_pages=spec.source.pages
     result.warnings.extend(spec.source.warnings)
     if any(obj.profile and obj.profile.validation=="pending" for obj in spec.objects):
-        result.warnings.append("Generic barcode profile: machine validation pending. Software decoding does not certify inserter compatibility.")
+        result.warnings.append("Barcode profile: machine validation pending. Software decoding does not certify inserter compatibility.")
     try:
         check_cancel(is_cancelled)
         plan=overlay_plan(spec,is_cancelled=is_cancelled)

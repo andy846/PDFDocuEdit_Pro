@@ -8,12 +8,13 @@ from dataclasses import asdict
 
 from PyQt6.QtWidgets import QDialog, QInputDialog
 
+from composition.engine.barcode_profiles import INSERTER_I25
 from composition.media.planner import preview_plan
 from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayObject
 from composition.pdf_source.planner import SYSTEM_FIELDS, applies
 from composition.template.model import CompositionError, Element
 
-from .overlay_dialogs import BarcodeProfileDialog
+from .barcode_setup import BarcodeSetupDialog
 from .overlay_files import OverlayFiles
 from .overlay_usability import OverlayUsability
 
@@ -48,6 +49,16 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         self.letter_page.setEnabled(bool(obj and obj.scope == "letter_page" and editable))
         self.control.setEnabled(bool(obj and obj.profile and editable))
         self.profile_button.setEnabled(bool(obj and obj.profile and editable))
+        if obj and obj.profile:
+            preset = obj.profile.preset
+            self.properties.barcode_preset.blockSignals(True)
+            self.properties.barcode_preset.setCurrentIndex(self.properties.barcode_preset.findData(preset))
+            self.properties.barcode_preset.blockSignals(False)
+            self.properties.barcode_profile_summary.setText(obj.profile.name)
+            self.properties.barcode_format.setEnabled(preset != INSERTER_I25 and editable)
+            if preset == INSERTER_I25:
+                self.scope.setEnabled(False)
+                self.control.setEnabled(False)
         if obj and obj.profile:
             self.properties.content_group.hide()
         for control in (self.scope, self.control, self.letter_page):
@@ -145,10 +156,15 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         if ok:
             self.properties.content.insertPlainText("{{"+name+"}}")
 
-    def edit_profile(self):
-        if len(self.canvas.selected_ids()) != 1:
+    def edit_profile(self, selected_preset=None):
+        if isinstance(selected_preset, bool):
+            selected_preset = None
+        if (self.active_worker or self.font_token or self.draft_error or self.preview_only.isChecked()
+                or getattr(self, "batch_pending", False) or len(self.canvas.selected_ids()) != 1):
             return
         obj = next(obj for obj in self.spec.objects if obj.element.id == self.canvas.selected_ids()[0])
+        if not obj.profile:
+            return
         plan = preview_plan(self.spec)
         fields = plan.page(self.envelope.value(), self.print_page.value()).fields("preview")
         first = next((page for page in plan.pages() if applies(obj.scope, page.fields("preview"), obj.letter_page)), None)
@@ -192,11 +208,38 @@ class OverlayActions(OverlayUsability, OverlayFiles):
                 except (OSError,ValueError,sqlite3.DatabaseError,KeyError) as exc:
                     self.error(str(exc))
                     return
-        dialog = BarcodeProfileDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples)
+        dialog = BarcodeSetupDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples,
+            duplex=plan.settings.duplex, printing_locked=bool(self.spec.media.get("enabled")),
+            selected_preset=selected_preset)
+        def preview_context(duplex):
+            raw = self.spec.to_dict()
+            raw["settings"]["duplex"] = duplex
+            from composition.overlay.model import EnvelopeSpec
+            planned = preview_plan(EnvelopeSpec.from_dict(raw))
+            scope = "front" if dialog.preset.currentData() == INSERTER_I25 else obj.scope
+            initial = next((p for p in planned.pages() if applies(scope, p.fields("preview"), obj.letter_page)), None)
+            final = next((planned.page(env, p) for env in range(planned.envelopes, 0, -1)
+                          for p in range(planned.settings_for(env).output_pages_per_envelope, 0, -1)
+                          if applies(scope, planned.page(env, p).fields("preview"), obj.letter_page)), None)
+            if initial and final:
+                dialog.samples = [("First applicable mark", {**samples[0][1], **initial.fields("preview")}),
+                                  ("Last applicable mark", {**samples[1][1], **final.fields("preview")})]
+            return {**fields, **planned.page(self.envelope.value(), min(self.print_page.value(),
+                     planned.settings_for(self.envelope.value()).output_pages_per_envelope)).fields("preview")}
+        dialog.preview_context = preview_context
+        dialog.refresh()
         if dialog.exec() == QDialog.DialogCode.Accepted:
             raw = self.spec.to_dict()
-            next(item for item in raw["objects"] if item["element"]["id"] == obj.element.id)["profile"] = asdict(dialog.profile)
-            self.commit(raw, "Edit barcode payload profile")
+            item = next(item for item in raw["objects"] if item["element"]["id"] == obj.element.id)
+            item["profile"] = dialog.profile.to_dict()
+            if dialog.profile.preset == INSERTER_I25:
+                item["element"]["type"] = "i25"
+                item.update(scope="front", control=True)
+                raw["required_scope"] = "front"
+                raw["settings"]["duplex"] = dialog.duplex
+            self.commit(raw, "Configure barcode preset")
+        self.selection_changed()
+        dialog.deleteLater()
 
     def object_command(self, command):
         if hasattr(self, "batch_editor") and not self.batch_editor.resolve():

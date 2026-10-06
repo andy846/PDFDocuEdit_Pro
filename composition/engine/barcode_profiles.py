@@ -203,6 +203,7 @@ def profile_record(template, record, ordinal, page_index):
         template._barcode_context_key = key
     context = dict(template._barcode_contexts[page_index])
     context.update(EnvelopeIndex=str(ordinal), EnvelopeSeq=str(ordinal).zfill(18),
+                   EnvelopeCount=str(getattr(template, "_barcode_record_count", template.generated_count if template.record_mode == "generated" else 1)),
                    OutputPage=str(int(context["OutputPage"])+(ordinal-1)*template._barcode_output_count))
     return {**record, **{"__Barcode"+k: v for k, v in context.items()}}
 

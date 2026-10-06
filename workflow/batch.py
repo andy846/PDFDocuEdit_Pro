@@ -309,7 +309,8 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             job.input_records=with_records.count
             job.pages_per_record=len(template.pages)
             job.expected_pages=job.input_records*job.pages_per_record
-            if template.media.get("enabled") and job.input_records:
+            from composition.engine.barcode_profiles import has_profiles
+            if (template.media.get("enabled") or has_profiles(template)) and job.input_records:
                 from composition.media.planner import build_print_plan
                 media_plan=build_print_plan(template,job.input_records,is_cancelled=is_cancelled)
                 job.pages_per_record=media_plan.settings_for(1).output_pages_per_envelope
@@ -317,7 +318,8 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                 if not job.data_summary:
                     job.data_summary={"input":job.input_records,"retained":job.input_records,"excluded":0,
                                       "errors":0,"warnings":0,"steps":[],"fields":list(with_records.fields)}
-                job.data_summary["media"]={**asdict(media_plan.preflight()),"profile":template.media["printer_profile"]}
+                if template.media.get("enabled"):
+                    job.data_summary["media"]={**asdict(media_plan.preflight()),"profile":template.media["printer_profile"]}
             job.warnings=list(with_records.metadata.get("warnings",[]))
             if job.data_summary.get("warnings"):
                 job.warnings.append(f"Data validation: {job.data_summary['warnings']} warning(s). Review findings.csv.")

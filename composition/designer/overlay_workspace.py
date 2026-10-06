@@ -35,6 +35,7 @@ from composition.overlay.geometry import validate_changed_geometry
 from composition.overlay.model import EnvelopeSpec
 from composition.pdf_source.planner import SYSTEM_FIELDS, applies
 from composition.template.model import MM_TO_PT, Template
+from ui.combo_popup import WideComboBox
 from ui.icons import icon
 from ui.responsive import scroll_container
 
@@ -303,7 +304,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         inspector_layout = QVBoxLayout(content)
         scope_form = QFormLayout()
         scope_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        self.scope, self.required_scope = QComboBox(), QComboBox()
+        self.scope, self.required_scope = WideComboBox(), WideComboBox()
         for control, labels in ((self.scope, SCOPE_LABELS), (self.required_scope, SCOPE_LABELS[:-1])):
             for label, value in labels:
                 control.addItem(label, value)
@@ -317,7 +318,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.control = QCheckBox("Machine control barcode")
         self.control.setToolTip("Enable required read-position checks for this barcode. Text-only overlays do not require a barcode.")
         self.control.toggled.connect(self.scope_edited)
-        self.profile_button = QPushButton("Edit barcode payload…")
+        self.profile_button = QPushButton("Configure barcode…")
         self.profile_button.clicked.connect(self.edit_profile)
         scope_form.addRow("Apply to", self.scope)
         scope_form.addRow("Letter page", self.letter_page)
@@ -332,6 +333,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         scope_form.addRow("Required read positions", self.required_scope)
         inspector_layout.addLayout(scope_form)
         self.properties = Properties()
+        self.properties.barcodeProfileRequested.connect(self.edit_profile)
         self.properties.edited.connect(self.property_edit)
         self.properties.fontRequested.connect(self.request_font)
         self.properties.revertRequested.connect(self.revert_draft)

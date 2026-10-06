@@ -156,6 +156,8 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
         "Pages Per Record": result.pages_per_record, "Expected Pages": result.expected_pages,
         "Page Count": result.generated_pages, "Output Files": result.generated_files,
+        "Expected Barcodes": result.expected_barcodes, "Rendered Barcodes": result.rendered_barcodes,
+        "Decoded Barcodes": result.decoded_barcodes,
         "Output File": result.output_pdf, "PostScript File": result.output_ps, "File Size": result.output_size,
         "Repaired Glyphs": result.repaired_glyphs, "Repaired Records": result.repaired_records,
         "Glyph Repair Report": result.glyph_repair_report,
@@ -213,6 +215,9 @@ def generate(
             result.pages_per_record = profile_plan.settings_for(1).output_pages_per_envelope
             result.expected_pages = profile_plan.output_pages
         if has_inserter(template):
+            if any(e.barcode_profile.get("preset") == "inserter_i25_18" and
+                   e.barcode_profile.get("validation", "pending") == "pending" for e in template.all_elements()):
+                result.warnings.append("Inserter I25 profile: machine validation pending. Confirm dimensions, direction and read position on the actual inserter.")
             from composition.engine.inserter_production import preflight
             result.expected_barcodes = preflight(template, store.records(), profile_plan, is_cancelled, progress)
             marks_stream = (staging/"inserter-marks.jsonl").open("w", encoding="utf-8")

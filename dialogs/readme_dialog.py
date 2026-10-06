@@ -78,6 +78,32 @@ production workflows.
 * Production keeps source-page mappings, reconciliation and barcode QC.
   Inserter values and read positions must match the actual machine's spec.
 
+### Inserter I25 — 18 digits
+* Select a barcode in Template Designer or PDF Overlay. In **Barcode properties**,
+  choose **Inserter I25 — 18 digits**, then **Configure…**. Workflow reuses the
+  same template/overlay profile and generation engine.
+* **Sequence:** group 01–99 → 00 → 01; sheet sequence starts at 01 per envelope.
+  Full envelope identity is retained separately from the cycling group digits.
+* **Inserts:** six Never / Always / Conditional controls; each group of three
+  uses weights 1, 2 and 4. VS1/VS2 output-bin diversion remains Off.
+* **Customer info:** nine zeros or an exact nine-digit ASCII data field; leading
+  zeros are preserved. Values are never truncated or padded.
+* **Placement:** choose Simplex/Duplex without creating Media, or follow active
+  Media settings. One mark per physical sheet front; odd duplex envelopes get
+  a blank back without a mark. Apply to required template pages at the same
+  position with a target-page summary and one Undo.
+* **Preview:** segmented payload, barcode image, automatic EOG and check digit.
+  Digit 8 is fixed zero. Digit 18 is the modulo-10 complement of the first 17
+  digits weighted 3,1 from the left. No extra checksum is appended.
+* Generation checks all records and front-side positions before composition,
+  then decodes final marks. **barcodes.csv** records full envelope, sheet,
+  output page, insert masks, EOG, check digit and decode result.
+* More than 99 sheets, invalid data, missing or duplicate controls block
+  production with record/page/object details. Dimensions, rotation and read
+  positions remain subject to actual inserter validation.
+* Old generic profiles keep their payloads; saved profile/template/overlay
+  schemas migrate to versions 2/11/7 respectively.
+
 ## Visual Workflow: Settings, Checks and Results
 
 ### Build and Configure

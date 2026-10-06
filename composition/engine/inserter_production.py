@@ -8,7 +8,7 @@ import fitz
 
 from composition.data.sequences import sequence_record
 from composition.overlay.qc import check_mark
-from composition.production.generator import check_cancel
+from composition.production.generator import _csv_value, check_cancel
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
 
@@ -86,7 +86,7 @@ def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, ex
             except ValueError as exc:
                 raise BarcodeRecordError(mark["envelope"], f"Output page {mark['output_page']}, object {mark['object']}: {exc}") from exc
             parts = mark["parts"]
-            writer.writerow([mark["envelope"], mark["sheet"], mark["output_page"], mark["object"], mark["profile"],
+            writer.writerow([mark["envelope"], mark["sheet"], mark["output_page"], _csv_value(mark["object"]), _csv_value(mark["profile"]),
                              mark["payload"], parts["group"], parts["inserts_1_3"], parts["inserts_4_6"], parts["eog"], parts["check_digit"], "Decoded: exact match"])
             count += 1
             if progress and count % 100 == 0:

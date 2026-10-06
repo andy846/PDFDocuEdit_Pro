@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from composition.engine.fonts import FAMILIES
+from ui.combo_popup import WideComboBox
 
 from .rule_controls import rules_summary
 
@@ -44,6 +45,7 @@ class Properties(QWidget):
     revertRequested = pyqtSignal()
     rulesRequested = pyqtSignal()
     rulesClearRequested = pyqtSignal()
+    barcodeProfileRequested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -287,7 +289,7 @@ class Properties(QWidget):
         groups.addWidget(self.image_group)
         self.barcode_group = QGroupBox("Barcode")
         form = QFormLayout(self.barcode_group)
-        self.barcode_format = QComboBox()
+        self.barcode_format = WideComboBox()
         self.barcode_format.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.barcode_format.setMinimumContentsLength(10)
         self.barcode_format.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -297,6 +299,18 @@ class Properties(QWidget):
         self.barcode_format.setToolTip("Change format while retaining the object's content, position and size.")
         self.barcode_format.currentIndexChanged.connect(self.apply)
         form.addRow("Format", self.barcode_format)
+        self.barcode_preset = WideComboBox()
+        self.barcode_preset.addItem("Generic — content / fields", "generic")
+        self.barcode_preset.addItem("Inserter I25 — 18 digits", "inserter_i25_18")
+        self.barcode_preset.setAccessibleName("Barcode payload preset")
+        self.barcode_preset.currentIndexChanged.connect(self._barcode_preset_changed)
+        form.addRow("Preset", self.barcode_preset)
+        self.barcode_configure = QPushButton("Configure…")
+        self.barcode_configure.clicked.connect(lambda: self.barcodeProfileRequested.emit(""))
+        form.addRow(self.barcode_configure)
+        self.barcode_profile_summary = QLabel()
+        self.barcode_profile_summary.setWordWrap(True)
+        form.addRow(self.barcode_profile_summary)
         self.ecc = QComboBox()
         self.ecc.addItems(["L", "M", "Q", "H"])
         self.human = QCheckBox("Show barcode text")
@@ -487,9 +501,16 @@ class Properties(QWidget):
             self.fill.setText(element.fill)
             self.image_path.setText(element.image)
             self.barcode_format.setCurrentIndex(self.barcode_format.findData(element.type))
+            preset = element.barcode_profile.get("preset", "generic")
+            self.barcode_preset.setCurrentIndex(self.barcode_preset.findData(preset))
+            self.barcode_profile_summary.setText(element.barcode_profile.get("name", "Generic — uses Content directly"))
+            self.barcode_preset.setEnabled(True)
+            self.barcode_configure.setEnabled(True)
+            self.barcode_format.setEnabled(preset != "inserter_i25_18")
+            self.content.setReadOnly(bool(element.barcode_profile))
             self.ecc.setCurrentText(element.qr_error)
             self.human.setChecked(element.show_barcode_text)
-            self.content_group.setVisible(element.type in {"text", "qr", "code128", "i25"})
+            self.content_group.setVisible(element.type in {"text", "qr", "code128", "i25"} and not element.barcode_profile)
             self.font_group.setVisible(element.type == "text" or element.show_barcode_text)
             self.text_layout_group.setVisible(element.type == "text" or element.show_barcode_text)
             self.appearance_group.setVisible(element.type in {"text", "line", "rectangle"})
@@ -498,11 +519,17 @@ class Properties(QWidget):
             self.image_group.setVisible(element.type == "image")
             self.barcode_group.setVisible(element.type in {"qr", "code128", "i25"})
             self.ecc.setEnabled(element.type == "qr")
-            self.barcode_hint.setText("I25: digits 0-9 only; an even number of digits. Leading zeros are preserved; no checksum is added." if element.type == "i25" else "")
+            self.barcode_hint.setText(("Inserter I25: 18 digits, physical sheet sequence, EOG and automatic check digit. VS1 / VS2 off."
+                                      if preset == "inserter_i25_18" else
+                                      "I25: digits 0-9 only; an even number of digits. Leading zeros are preserved; no checksum is added.") if element.type == "i25" else "")
             self.barcode_hint.setVisible(element.type == "i25")
             self.human.setEnabled(element.type in {"code128", "i25"})
         self.loading = False
         self._refresh_layout()
+
+    def _barcode_preset_changed(self, *_):
+        if not self.loading and not self.multi_selection and self.element:
+            self.barcodeProfileRequested.emit(self.barcode_preset.currentData())
 
     def show_selection(self, selected):
         if len(selected) <= 1:
@@ -512,6 +539,8 @@ class Properties(QWidget):
         text = [e for e in selected if e.type == "text" or (self.include_barcode.isChecked() and e.type in {"code128", "i25"} and e.show_barcode_text)]
         self.show_element(text[0] if text else selected[0])
         self.multi_selection = True
+        self.barcode_preset.setEnabled(False)
+        self.barcode_configure.setEnabled(False)
         self.include_barcode.setVisible(any(e.type in {"code128", "i25"} and e.show_barcode_text for e in selected))
         self.geometry_ids = [e.id for e in selected]
         self.restore_geometry(selected)

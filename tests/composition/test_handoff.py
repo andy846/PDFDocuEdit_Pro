@@ -56,7 +56,7 @@ def test_background_flattens_annotations_and_survives_save(engine, tmp_path):
     saved = save_template(template, tmp_path / "template.pdcx")
     shutil.rmtree(tmp_path / "handoff")
     reopened = load_template(saved)
-    assert reopened.template_version == 10
+    assert reopened.template_version == 11
     with fitz.open(reopened.background) as pdf:
         assert "Original Source Page 3" in pdf[0].get_text()
         assert not list(pdf[0].annots() or [])
@@ -73,7 +73,7 @@ def test_managed_overlay_saved_source_durable_and_headless_review_gate(engine, t
     saved = save_project(spec, tmp_path / "job.pdcx")
     shutil.rmtree(tmp_path / "handoff")
     reopened = load_project(saved)
-    assert reopened.overlay_version == 6
+    assert reopened.overlay_version == 7
     assert reopened.source.path.startswith(str(tmp_path / "job.assets"))
     result = generate(OverlayJob(reopened.to_dict(), str(tmp_path / "outputs")))
     assert result.status == "completed", result.error
@@ -100,11 +100,11 @@ def test_legacy_formats_migrate_and_invalid_metadata_rejected(engine, tmp_path):
     raw = EnvelopeSpec(source, EnvelopeSettings(pages_per_envelope=1)).to_dict()
     raw["overlay_version"] = 3
     raw.pop("source_link")
-    assert EnvelopeSpec.from_dict(raw).overlay_version == 6
+    assert EnvelopeSpec.from_dict(raw).overlay_version == 7
     value = Template().to_dict()
     value["template_version"] = 7
     value.pop("source_link")
-    assert Template.from_dict(value).template_version == 10
+    assert Template.from_dict(value).template_version == 11
     for mutation in ({"page_map": [0, 0]}, {"managed": "yes"}, {"page_map": [-1]}, {"version": 99}):
         broken = {**copy.deepcopy(link), **mutation}
         with pytest.raises(CompositionError):

@@ -337,9 +337,6 @@ def required_fields(template: Template) -> set[str]:
 
 
 def validate_template(template: Template, *, check_assets: bool = True) -> None:
-    template._has_barcode_profiles = any(e.barcode_profile for e in template.all_elements())
-    template._has_inserter_profiles = any(e.barcode_profile.get("preset") == "inserter_i25_18"
-                                        for e in template.all_elements() if isinstance(e.barcode_profile, dict))
     from composition.media.model import MediaSpec
     MediaSpec.from_dict(template.media)
     from composition.handoff import validate_link
@@ -463,3 +460,6 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             parse_value(element.value)
         if element.type == "image" and check_assets and not Path(element.image).is_file():
             raise CompositionError(f"Image not found: {element.image}")
+    template._has_barcode_profiles = any(e.barcode_profile for e in template.all_elements())
+    template._has_inserter_profiles = any(e.barcode_profile.get("preset") == "inserter_i25_18"
+                                        for e in template.all_elements() if isinstance(e.barcode_profile, dict))

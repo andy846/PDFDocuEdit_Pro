@@ -1,14 +1,14 @@
 """Grouping and declarative barcode profile editors for existing PDF overlays."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -22,6 +22,7 @@ from composition.engine.barcodes import validate_payload
 from composition.overlay.model import BarcodeProfile, BarcodeToken
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan
+from ui.combo_popup import WideComboBox as QComboBox
 
 SCOPE_LABELS = [("Every source page", "all_source"), ("Every output page (including blank backs)", "all_output"),
                 ("First source page of each envelope", "first"), ("Last source page of each envelope", "last"),
@@ -92,19 +93,20 @@ class GroupingDialog(QDialog):
             else:
                 text = "Grouping and sequence are checked against the selected PDF before design begins."
             self.summary.setText(text)
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             self.summary.setText(str(exc))
 
     def accept(self):
         try:
             self.settings = self.candidate()
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             QMessageBox.warning(self, "Check grouping", str(exc))
             return
         super().accept()
 
 
 class BarcodeProfileDialog(QDialog):
+    changed = pyqtSignal()
     def __init__(self, profile, fields, parent=None, *, symbology=None, samples=None):
         super().__init__(parent)
         self.setWindowTitle("Barcode payload profile")
@@ -130,7 +132,10 @@ class BarcodeProfileDialog(QDialog):
         layout.addWidget(hint)
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Kind", "Field / literal", "Digits"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table, 1)
         buttons = QHBoxLayout()
         add = QPushButton("Add token")
@@ -168,6 +173,7 @@ class BarcodeProfileDialog(QDialog):
         row = self.table.rowCount()
         self.table.insertRow(row)
         kind = QComboBox()
+        kind.setMinimumContentsLength(5)
         kind.addItems(["field", "literal"])
         kind.setCurrentText(token.kind)
         value = QComboBox()
@@ -179,6 +185,7 @@ class BarcodeProfileDialog(QDialog):
         width.setValue(token.width)
         for col, control in enumerate((kind, value, width)):
             self.table.setCellWidget(row, col, control)
+        self.table.setRowHeight(row, 36)
         width.setEnabled(token.kind == "field")
         kind.currentTextChanged.connect(lambda text: width.setEnabled(text == "field"))
         for col, control in enumerate((kind, value, width)):
@@ -247,11 +254,12 @@ class BarcodeProfileDialog(QDialog):
                     validate_payload(self.symbology, payload)
                 lines.append(f"{label}: {payload} ({len(payload)} characters)")
             self.sample.setText("\n".join(lines))
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             error = str(exc)
             self.sample.setText(error)
         if hasattr(self, "footer"):
             self.footer.button(QDialogButtonBox.StandardButton.Ok).setEnabled(not error)
+        self.changed.emit()
 
     def accept(self):
         try:
@@ -262,7 +270,7 @@ class BarcodeProfileDialog(QDialog):
                 payload = self.profile.payload(fields)
                 if self.symbology:
                     validate_payload(self.symbology, payload)
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             QMessageBox.warning(self, "Check barcode profile", str(exc))
             return
         super().accept()

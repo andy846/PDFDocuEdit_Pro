@@ -223,6 +223,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
         self.properties.glyphRepairRequested.connect(self.edit_glyph_repairs)
+        from .barcode_operations import edit_template_barcode
+        self.properties.barcodeProfileRequested.connect(lambda preset: edit_template_barcode(self, preset or None))
         self.properties.rulesRequested.connect(self.edit_object_rules)
         self.properties.rulesClearRequested.connect(self.clear_object_rules)
         self.properties.revertRequested.connect(self.revert_content_draft)
@@ -1087,6 +1089,11 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                  f"Generated pages: {result['generated_pages']:,}",
                  f"Published files: {result['generated_files']}",
                  "PDF: " + result["output_pdf"], "Reports: " + result["report_dir"]]
+        if result.get("expected_barcodes"):
+            lines.extend([f"Expected control barcodes: {result['expected_barcodes']:,}",
+                          f"Rendered control barcodes: {result.get('rendered_barcodes', 0):,}",
+                          f"Decoded control barcodes: {result.get('decoded_barcodes', 0):,}",
+                          "Barcode audit: " + str(Path(result["report_dir"]) / "barcodes.csv")])
         if result.get("output_ps"):
             lines.append("PostScript: "+result["output_ps"])
         if result["error"]:

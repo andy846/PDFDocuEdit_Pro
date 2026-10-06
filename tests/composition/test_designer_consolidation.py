@@ -180,7 +180,8 @@ def test_duplex_profile_samples_use_applicable_source_pages(app, tmp_path, monke
         seen.extend(dialog.samples)
         assert dialog.footer.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
         return 0
-    monkeypatch.setattr(BarcodeProfileDialog, "exec", check)
+    from composition.designer.barcode_setup import BarcodeSetupDialog
+    monkeypatch.setattr(BarcodeSetupDialog, "exec", check)
     try:
         window.apply_spec(spec.to_dict())
         window.canvas.select_ids([spec.objects[1].element.id])

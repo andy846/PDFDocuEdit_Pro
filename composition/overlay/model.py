@@ -4,7 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 
-from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile, BarcodeToken as BarcodeToken
+from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile
+from composition.engine.barcode_profiles import BarcodeToken as BarcodeToken
 from composition.pdf_source.model import EnvelopeSettings, SourceInfo
 from composition.pdf_source.planner import SCOPES, SYSTEM_FIELDS, EnvelopePlan
 from composition.production.model import new_job_id, now

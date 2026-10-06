@@ -86,12 +86,12 @@ def test_format_migration_roundtrip_and_rotated_bounds(tmp_path):
     template = Template(elements=[Element(value="Saved", x_mm=60, y_mm=80, rotation_deg=37)])
     path = save_project(template, tmp_path / "rotated.pdcx")
     assert load_project(path).elements[0].rotation_deg == 37
-    assert load_project(path).template_version == 10
+    assert load_project(path).template_version == 11
     legacy = Template(elements=[Element()]).to_dict()
     legacy["template_version"] = 6
     del legacy["pages"][0]["elements"][0]["rotation_deg"]
     migrated = Template.from_dict(legacy)
-    assert migrated.template_version == 10 and migrated.elements[0].rotation_deg == 0
+    assert migrated.template_version == 11 and migrated.elements[0].rotation_deg == 0
     assert "rotation_deg" not in legacy["pages"][0]["elements"][0]
     legacy["pages"][0]["elements"][0]["rotation_deg"] = 37
     with pytest.raises(CompositionError, match="version 7"):
@@ -111,7 +111,7 @@ def test_overlay_legacy_migration_requires_new_version_for_rotation(tmp_path):
         obj["element"].pop("rotation_deg")
     original = copy.deepcopy(raw)
     migrated = EnvelopeSpec.from_dict(raw)
-    assert migrated.overlay_version == 6
+    assert migrated.overlay_version == 7
     assert raw == original
     assert all(obj.element.rotation_deg == 0 for obj in migrated.objects)
     raw["objects"][0]["element"]["rotation_deg"] = 90

@@ -11,7 +11,7 @@ from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
 from composition.production.generator import generate
 from composition.production.model import ProductionJob
-from composition.template.model import Element, PageSpec, Template
+from composition.template.model import Element, PageSpec, SequenceSpec, Template
 from tests.composition.test_pdf_overlay_models import make_source
 
 
@@ -82,3 +82,69 @@ def test_1000_envelopes_real_decode_and_rollover(tmp_path):
         rows = list(csv.DictReader(stream))
     assert [row["Group sequence"] for row in rows[97:101]] == ["98", "99", "00", "01"]
     assert rows[-1]["Envelope"] == "1000" and rows[-1]["Group sequence"] == "00"
+
+
+def test_media_inserted_backs_share_the_same_barcode_sheet_plan(tmp_path):
+    from tests.composition.test_media_duplex_sheets import four_page_template
+    model = four_page_template()
+    model.media["assignments"].update({"2": "LH_B", "3": "LH_A"})
+    model.media["blank_policy"] = "insert"
+    model.generated_count = 1
+    for page in model.pages:
+        page.elements.append(Element(type="i25", y_mm=50, width_mm=100, height_mm=14,
+                                     barcode_profile=BarcodeProfile.inserter().to_dict()))
+    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
+    assert result.status == "completed", result.error
+    assert result.generated_pages == 8 and result.decoded_barcodes == 4
+    with Path(result.report_dir, "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [r["Output page"] for r in rows] == ["1", "3", "5", "7"]
+    assert [r["Sheet"] for r in rows] == ["1", "2", "3", "4"]
+    assert [r["EOG"] for r in rows] == ["0", "0", "0", "1"]
+
+
+def test_variable_envelope_sizes_and_odd_blank_backs(tmp_path):
+    from tests.composition.test_mailpiece_detection import variable_spec
+    spec = variable_spec(tmp_path, lengths=(1, 3, 5), duplex=True)
+    spec.objects = [OverlayObject(Element(type="i25", width_mm=100, height_mm=14), scope="front", control=True,
+                                 profile=BarcodeProfile.inserter())]
+    spec.required_scope = "front"
+    result = generate_overlay(OverlayJob(spec.to_dict(), str(tmp_path/"output")))
+    assert result.status == "completed", result.error
+    assert result.generated_pages == 12 and result.decoded_barcodes == 6
+    with Path(result.report_dir, "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [r["Envelope"] for r in rows] == ["1", "2", "2", "3", "3", "3"]
+    assert [r["EOG"] for r in rows] == ["1", "0", "1", "0", "0", "1"]
+
+
+def test_workflow_reuses_profile_and_physical_counts_without_media(tmp_path):
+    from composition.template.serializer import save_project
+    from workflow.batch import BatchJob, BatchRun, approve, execute_batch, prepare
+    from workflow.model import WorkflowSpec
+    model = template_for(pages=3)
+    model.record_mode = "imported"
+    path = save_project(model, tmp_path/"template.pdcx")
+    data = tmp_path/"data.csv"
+    data.write_text("Name\nOne\nTwo\n", encoding="utf-8")
+    job = BatchJob(template_path=str(path), data_path=str(data), output_name="letters.pdf")
+    spec = WorkflowSpec.mail_merge()
+    run = prepare(spec, BatchRun(jobs=[job]), tmp_path/"scratch")
+    assert job.status == "Needs review", job.error
+    assert job.pages_per_record == 4 and job.expected_pages == 8
+    approve(run, [job.id])
+    execute_batch(spec, run, tmp_path/"production")
+    assert job.status == "Completed", job.error
+    assert job.result["generated_pages"] == 8 and job.result["decoded_barcodes"] == 4
+
+
+def test_system_count_and_page_sequence_follow_duplex_blanks():
+    from composition.data.sequences import open_records, sequence_record
+    from composition.engine.barcode_profiles import profile_values
+    model = template_for(pages=3, count=27)
+    model.sequences = [SequenceSpec(name="PageSeq", scope="page", padding=0)]
+    records = open_records(model)
+    value = sequence_record(model, records.record(2), 2, 0)
+    assert value["PageSeq"] == "5"
+    assert profile_values(value)["EnvelopeCount"] == "27"
+    assert profile_values(value)["OutputPage"] == "5"
