@@ -344,6 +344,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         changed=previous and previous.fingerprint()!=spec.fingerprint()
         self.spec=spec
         if changed:
+            self.inspections.invalidate()
             self.run=WorkflowRun()
             for job in self.batch.jobs:
                 if job.status!="Completed":
@@ -367,11 +368,9 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.refresh_jobs()
         self.title()
 
-    def select_node(self,identity):
+    def _build_node_settings(self,identity):
         if getattr(self,"spec",None) is None or self.spec.project_kind!="mail_merge_workflow":
-            return super().select_node(identity)
-        if not self.flush_settings():
-            return
+            return super()._build_node_settings(identity)
         self._draft_getter=None
         self.selected=identity
         node=next((n for n in self.spec.nodes if n.id==identity),None)
@@ -381,9 +380,6 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         if node.kind in EXTRA_KINDS:
             from .node_settings import install
             return install(self,node)
-        old=self.inspector_scroll.takeWidget()
-        if old:
-            old.deleteLater()
         self.inspector=QWidget()
         layout=QVBoxLayout(self.inspector)
         title=QLabel(LABELS[node.kind])
@@ -457,6 +453,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         return [j for j in self.batch.jobs if j.id in ids]
 
     def refresh_jobs(self):
+        if self.inspections.pane:
+            self.inspections.pane.sync_jobs()
         selected=[j.id for j in self.selected_jobs()]
         self.jobs_model.update(self.batch.jobs)
         for row,job in enumerate(self.batch.jobs):
@@ -477,6 +475,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         self.proxy.setFilterRegularExpression("Blocked|Failed|Needs review|Cancelled" if value=="attention" else value)
 
     def changed_jobs(self):
+        self.inspections.invalidate()
         self.batch_dirty=True
         self.batch_revision+=1
         self.preview_generation+=1
@@ -496,7 +495,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.tabs.setCurrentWidget(self.review_page)
 
     def edit_job(self):
-        jobs=self.selected_jobs()
+        jobs=([self.inspections.job()] if self.tabs.currentWidget() is self.flow_page and self.inspections.job()
+              else self.selected_jobs())
         if self.active_worker or not jobs:
             self.message("Select a batch job in Review first.")
             return
@@ -786,7 +786,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         if not self.project_host:
             self.message("Open this workflow in Document Designer to edit its templates.")
             return
-        jobs=self.selected_jobs() or self.batch.jobs
+        jobs=([self.inspections.job()] if self.tabs.currentWidget() is self.flow_page and self.inspections.job()
+              else self.selected_jobs() or self.batch.jobs)
         if not jobs:
             self.tabs.setCurrentWidget(self.review_page)
             self.message("Add a template + data pair before editing a letter template.")

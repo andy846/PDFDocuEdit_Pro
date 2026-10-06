@@ -209,24 +209,29 @@ def _prepare_pages(spec,run,root,*,progress=None,is_cancelled=None,until_id=None
         export_audit(current,reports)
         for finding in current.metadata.get("steps",[]):
             run.data_steps.append({**finding,"scope":"page","findings_report":str(reports/"findings.csv")})
-        # Original raw text and provenance remain untouched. Computed fields have no text rectangle.
-        known={r.name:r for r in cfg.regions}
-        for name in current.fields:
-            if name not in known:
-                region=Region(name=name,required=False,max_length=100000)
-                cfg.regions.append(region)
-                known[name]=region
-        cfg.validate()
-        with store.db:
-            for _,values,page in current.rows():
-                check_cancel(is_cancelled)
-                for name,value in values.items():
-                    issue=known[name].problem(value)
-                    store.db.execute("INSERT INTO cells VALUES(?,?,?,?,?,1) ON CONFLICT(page,field) DO UPDATE SET value=excluded.value,issue=excluded.issue",
-                        (page,name,"",value,issue))
-            store.db.execute("UPDATE meta SET value=? WHERE key='spec'",(json.dumps(cfg.to_dict()),))
-            store.db.execute("UPDATE meta SET value='false' WHERE key='accepted'")
+        apply_page_data(store,current,is_cancelled=is_cancelled)
         assert_valid(current)
+
+
+def apply_page_data(store,current,*,is_cancelled=None):
+    """Share page-field updates between production preparation and inspection."""
+    cfg=ExtractionSpec.from_dict(json.loads(store.metadata()["spec"]))
+    known={r.name:r for r in cfg.regions}
+    for name in current.fields:
+        if name not in known:
+            region=Region(name=name,required=False,max_length=100000)
+            cfg.regions.append(region)
+            known[name]=region
+    cfg.validate()
+    with store.db:
+        for ordinal,values,_source_id in current.rows():
+            check_cancel(is_cancelled)
+            for name,value in values.items():
+                issue=known[name].problem(value)
+                store.db.execute("INSERT INTO cells VALUES(?,?,?,?,?,1) ON CONFLICT(page,field) DO UPDATE SET value=excluded.value,issue=excluded.issue",
+                    (ordinal,name,"",value,issue))
+        store.db.execute("UPDATE meta SET value=? WHERE key='spec'",(json.dumps(cfg.to_dict()),))
+        store.db.execute("UPDATE meta SET value='false' WHERE key='accepted'")
 
 
 def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=None):

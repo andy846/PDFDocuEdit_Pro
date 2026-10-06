@@ -40,6 +40,13 @@ def test_version_tag_runs_all_test_groups() -> None:
     assert result["full"] == result["ui"] == result["cross_platform"] == "true"
 
 
+def test_workflow_inspector_changes_enable_windows_ui_gate() -> None:
+    for path in ("workflow/inspection_ui.py", "workflow/drafts.py", "workflow/node_presentation.py"):
+        result = plan("push", "refs/heads/feature/workflow", [path])
+        assert result["ui"] == "true"
+        assert "tests/test_ui_smoke.py" in result["focused_tests"]
+
+
 def test_test_groups_exist_and_do_not_overlap() -> None:
     from scripts.ci_plan import TESTS
 

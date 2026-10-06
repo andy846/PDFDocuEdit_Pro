@@ -58,6 +58,14 @@ class DesignerProjectHost(QWidget):
             return self.handoff.open_production_output(project, result)
         return self.open_pdf(result["output_pdf"])
 
+    def open_source_pdf(self, path, page=0):
+        """Navigate to a checked source page through the existing PDF open service."""
+        if self.handoff:
+            window = self.handoff.window
+            self.handoff.controller.request_mode("pdf")
+            return window.open_in_new_tab(str(path), on_open=lambda session: window._session_goto(session, page))
+        return self.open_pdf(path)
+
     @property
     def current_project(self):
         return self.tabs.currentWidget()

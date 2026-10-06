@@ -116,6 +116,9 @@ class WorkflowWindow(QMainWindow):
         self.draft_error=""
         self._draft_getter=None
         self._flushing_settings=False
+        self.node_drafts={}
+        from .inspection_ui import InspectionController
+        self.inspections=InspectionController(self)
         self.selected=self.spec.nodes[0].id
         self.capture_active=False
         self.review_generation=0
@@ -157,7 +160,7 @@ class WorkflowWindow(QMainWindow):
             edit.addAction(act)
             toolbar.addAction(act)
         action("fit","Fit flow",lambda:self.canvas.fit(),symbol="monitor")
-        action("step","Run to selected step",self.run_selected,symbol="chevron-right")
+        action("step","Check to this step",self.run_selected,symbol="chevron-right")
         action("scan","Run to review",lambda:self.execute("review"),symbol="scan")
         action("generate","Generate production PDF",lambda:self.execute("output"),"Ctrl+Shift+G","printer")
         self.actions["scan"].setIconText("Scan and review")
@@ -309,30 +312,20 @@ class WorkflowWindow(QMainWindow):
         self._draft_initial=copy.deepcopy(getter())
         def changed(*_):
             if self._draft_getter is getter:
-                self.draft_error="Unapplied workflow settings" if getter()!=self._draft_initial else ""
+                from .drafts import update_error
+                self.node_drafts.pop(node.id,None)
+                update_error(self)
                 self.title()
                 self.properties.edited.emit()
                 self.lock()
         for control in controls:
-            signal=(control.textChanged if isinstance(control,QLineEdit) else control.currentIndexChanged
+            signal=(control.textChanged if isinstance(control,QLineEdit) else control.currentTextChanged
                     if isinstance(control,QComboBox) else control.toggled if hasattr(control,"toggled") else control.valueChanged)
             signal.connect(changed)
 
-    def flush_settings(self):
-        if self._flushing_settings or not self._draft_getter or not self.draft_error:
-            return True
-        if self.active_worker or self.capture_active:
-            self.message("Wait for the current task before applying settings.")
-            return False
-        node=next((n for n in self.spec.nodes if n.id==self._draft_node),None)
-        value=self._draft_getter()
-        if node is None:
-            return False
-        self._flushing_settings=True
-        try:
-            return self.params(node,value)
-        finally:
-            self._flushing_settings=False
+    def flush_settings(self,*,current_only=False):
+        from .drafts import flush
+        return flush(self,current_only=current_only)
 
     def commit(self,after,label):
         if self.active_worker or self.capture_active:
@@ -352,6 +345,7 @@ class WorkflowWindow(QMainWindow):
         previous=self.spec if hasattr(self,"spec") else None
         self.spec=WorkflowSpec.from_dict(raw)
         if previous and previous.fingerprint()!=self.spec.fingerprint():
+            self.inspections.invalidate()
             if self.spec.workflow_version>=3:
                 try:
                     old_chain=previous.chain()
@@ -409,8 +403,11 @@ class WorkflowWindow(QMainWindow):
         self.title()
 
     def select_node(self,identity):
-        if not self.flush_settings():
-            return
+        from .drafts import select
+        select(self,identity)
+        self.inspections.wrap()
+
+    def _build_node_settings(self,identity):
         self._draft_getter=None
         self.selected=identity
         node=next((n for n in self.spec.nodes if n.id==identity),None)
@@ -419,9 +416,6 @@ class WorkflowWindow(QMainWindow):
         if node.kind in EXTRA_KINDS:
             from .node_settings import install
             return install(self,node)
-        old=self.inspector_scroll.takeWidget()
-        if old:
-            old.deleteLater()
         self.inspector=QWidget()
         layout=QVBoxLayout(self.inspector)
         title=QLabel(LABELS[node.kind])
@@ -670,6 +664,9 @@ class WorkflowWindow(QMainWindow):
             fields=[r["name"] for r in self.spec.node("extract").params.get("regions",[])] if self.spec.node("extract") else []
             node=WorkflowNode(kind,x=source.x+230 if x is None else x,y=source.y if y is None else y,
                 params=copy.deepcopy(params if params is not None else default_options(kind,fields[0] if fields else "Name")))
+            if x is None and y is None:
+                while any(abs(node.x-other.x)<200 and abs(node.y-other.y)<115 for other in self.spec.nodes):
+                    node.y+=150
             after=self.spec.insert_after(source.id,node)
             if self.commit(after.to_dict(),"Insert "+LABELS[kind]):
                 self.select_node(node.id)
@@ -856,8 +853,7 @@ class WorkflowWindow(QMainWindow):
         self.region_dialog=None
 
     def run_selected(self):
-        node=next(n for n in self.spec.nodes if n.id==self.selected)
-        self.execute(node.id if node.kind in EXTRA_KINDS else node.kind)
+        self.inspections.check()
 
     def execute(self,until):
         if self.active_worker or self.capture_active or not self.flush_settings():
@@ -910,7 +906,7 @@ class WorkflowWindow(QMainWindow):
         self.request({"operation":"run","spec":self.spec.to_dict(),"run":asdict(self.run),
                       "directory":str(self.directory),"until":until},ready)
 
-    def request(self,request,callback,*,preview=False):
+    def request(self,request,callback,*,preview=False,on_error=None):
         if self.close_pending or (self.active_worker and not preview):
             return None
         worker=Worker(self.directory,{"task":"workflow",**request},self)
@@ -933,6 +929,7 @@ class WorkflowWindow(QMainWindow):
         worker.failed.connect(failures.append)
         if not preview:
             worker.progress.connect(self.update_progress)
+            worker.stateChanged.connect(self.inspections.state)
             if hasattr(self,"batch_state"):
                 worker.stateChanged.connect(self.batch_state)
         def ended():
@@ -956,7 +953,9 @@ class WorkflowWindow(QMainWindow):
                         self.canvas.display(self.spec,self.run.statuses,self.selected)
                         self.production_summary.setPlainText("Workflow failed: "+failures[0])
                     self.error(failures[0])
-            if preview and request.get("operation")=="preview":
+                    if on_error:
+                        on_error(failures[0])
+            if preview and request.get("operation") in ("preview","inspection_preview"):
                 target=Path(request["target"]).resolve()
                 if target.is_relative_to(self.directory.resolve()):
                     target.unlink(missing_ok=True)
@@ -970,7 +969,14 @@ class WorkflowWindow(QMainWindow):
     def update_progress(self,current,total,message):
         self.progress.setRange(0,total)
         self.progress.setValue(current)
-        self.message(message)
+        if message.startswith("Workflow node: "):
+            identity,_,label=message.removeprefix("Workflow node: ").partition(" | ")
+            self.message(label)
+            if not self.inspections.active and any(n.id==identity for n in self.spec.nodes):
+                self.run.statuses[identity]="Running"
+                self.canvas.display(self.spec,self.run.statuses,self.selected)
+        else:
+            self.message(message)
         if message.startswith("Workflow: "):
             node=self.spec.node(message.split(": ",1)[1])
             if node:
@@ -991,14 +997,18 @@ class WorkflowWindow(QMainWindow):
         if not hasattr(self,"toolbox"):
             return
         self.toolbox.setEnabled(not busy)
-        self.canvas.setEnabled(not busy)
+        self.canvas.setEnabled(True)
+        self.canvas.set_editable(not busy)
         self.inspector.setEnabled(not busy)
+        if self.inspections.pane and not sip.isdeleted(self.inspections.pane):
+            self.inspections.pane.check.setEnabled(not busy)
         self.review_page.setEnabled(not busy)
         self.progress.setVisible(busy)
         self.actions["cancel"].setVisible(bool(self.active_worker))
         self.activityChanged.emit()
         if hasattr(self,"next_step"):
             self.next_step.setEnabled(not busy)
+            self.auto_layout_action.setEnabled(not busy)
             from .chrome import context
             context(self)
 
@@ -1300,6 +1310,10 @@ class WorkflowWindow(QMainWindow):
         if self.workers:
             event.ignore()
             return
+        for entry in self.node_drafts.values():
+            if entry["widget"] is not self.inspector and not sip.isdeleted(entry["widget"]):
+                entry["widget"].deleteLater()
+        self.node_drafts.clear()
         if self.project_host:
             for project in self.project_host.projects:
                 if getattr(project,"workflow_database",None)==self.run.database:

@@ -167,6 +167,9 @@ def _schema(db):
 def transform(source, target, kind, options, *, node_id="", progress=None, is_cancelled=None):
     validate_options(kind, options)
     source = source if isinstance(source, RecordStore) else DataSet(source)
+    progress_label = "Workflow node: " + node_id + " | " + kind.replace("_", " ") if node_id else kind.replace("_", " ")
+    if progress:
+        progress(0, source.count, progress_label)
     fields = list(source.fields)
     requested = [x["field"] for x in options.get({"clean_fields":"operations", "sort_records":"keys",
                                                  "validate_data":"checks"}.get(kind, "unused"), [])]
@@ -284,7 +287,7 @@ def transform(source, target, kind, options, *, node_id="", progress=None, is_ca
             if len(summary["samples"]) < 8:
                 summary["samples"].append({"source_id":source_id,"before":_sample(before),"after":_sample(values),"retained":keep,"reason":reason})
             if ordinal%250==0 and progress:
-                progress(ordinal,source.count,kind.replace("_"," "))
+                progress(ordinal,source.count,progress_label)
         if kind=="sort_records":
             db.create_collation("DECIMAL_TEXT", lambda a,b: (decimal_value(a,"sort")>decimal_value(b,"sort")) -
                                 (decimal_value(a,"sort")<decimal_value(b,"sort")))

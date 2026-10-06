@@ -22,6 +22,21 @@
 
 首次使用 PS 時預設設備類別為 Generic PostScript 3。Canon、Xerox 等類別是 profile 的識別資料，沒有內置未驗證的機型紙匣編號。換設備時需更新對應表。
 
+## Profile library
+
+Print Media 對話框頂部的 **Profile library…** 可集中查看本機保存的設定，按設備（6300 / 6000、i300、iX 等）及 profile 類型篩選。
+
+- **Import profiles…**：匯入一個或多個 profile JSON。
+- **Import folder…**：連同子資料夾匯入，最多一次 100 份；解壓 profile 套件後可直接選其資料夾。
+- **Complete media setup**：包含紙種、頁面規則、雙面及 printer 對應表。
+- **Printer mappings only**：只換設備對應表，保留目前紙種及頁面規則；Stock ID 須吻合。
+
+選取後先查看右側設定摘要，再按 **Use selected profile**。設定載入為草稿；檢查 Page rules，輸出小量選紙測試，最後執行 Check & Preview。取消選擇保留現有草稿。模板頁面 ID 不吻合的設定會阻止載入；跨模板重用宜採用 Logical page 或 Page role 規則。
+
+Logical page 規則在每封信／每筆 record 內重複，並不是整個 PDF 的絕對頁碼。原本按全檔頁碼指定的選紙樣本，必須按實際信件結構覆核後才能生產。
+
+Profile 匯入與清單讀取在背景執行，重複設定不重複建立。無效檔案會列出錯誤；取消匯入保留已完成項目。設定保存在本機應用程式設定目錄的 `composition/media_profiles`，不包含來源 PDF 或客戶資料，也不隨軟件發布。內置程式只提供通用設定能力，不宣稱某設備已通過實機驗收。
+
 ## 雙面
 
 在 **Page rules** 勾選 Duplex。正背面使用同一張實體紙，不能要求不同 Stock。可選擇阻止衝突，或在 Stock 改變時插入空白背頁；空白背頁會改變輸出頁數及相關頁碼／barcode，套用前會要求確認。

@@ -172,6 +172,24 @@ class WorkflowSpec:
             validate_chain(chain,self.project_kind)
         return chain
 
+    def execution_prefix(self, node_id):
+        """A connected, typed source-to-target path; no terminal node required."""
+        self.validate()
+        root=self.node("data" if self.project_kind=="mail_merge_workflow" else "input")
+        if root is None:
+            raise CompositionError("Add the workflow's source step before checking.")
+        lookup={node.id:node for node in self.nodes}
+        edges=dict(self.edges)
+        path=[]
+        cursor=root
+        while cursor:
+            path.append(cursor)
+            if cursor.id==node_id:
+                validate_chain(path,self.project_kind)
+                return path
+            cursor=lookup.get(edges.get(cursor.id))
+        raise CompositionError("Connect the selected step to the source before checking.")
+
     def insert_after(self, identity, node):
         result=copy.deepcopy(self)
         following=next((b for a,b in result.edges if a==identity),None)
@@ -180,7 +198,14 @@ class WorkflowSpec:
         result.edges.append([identity,node.id])
         if following:
             result.edges.append([node.id,following])
-        result.chain()
+        result.validate()
+        root=result.node("data" if result.project_kind=="mail_merge_workflow" else "input")
+        edges=dict(result.edges)
+        tail=root
+        while tail and tail.id in edges:
+            tail=next(n for n in result.nodes if n.id==edges[tail.id])
+        if tail:
+            result.execution_prefix(tail.id)
         return result
 
     def reorder(self, identities):

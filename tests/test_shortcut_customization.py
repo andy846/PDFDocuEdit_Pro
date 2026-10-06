@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
+import pytest
+from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QApplication
 
@@ -10,7 +13,25 @@ from core.commands import Command
 from core.settings import SettingsManager
 from ui.diagnostics_dialog import PreferencesDialog
 
+# Install the shared application/theme before constructing Preferences widgets.
+# Applying a proxy style for the first time after native widgets have existed
+# can crash during Windows Qt teardown even when every assertion has passed.
+pytestmark = pytest.mark.usefixtures("qt_application")
+
 _app_instance: QApplication | None = None
+
+
+@pytest.fixture(autouse=True)
+def release_shortcut_widgets(qt_application):
+    """Destroy native widgets while QApplication and Python slots are alive."""
+    yield
+    for widget in qt_application.topLevelWidgets():
+        if isinstance(widget, (PreferencesDialog, viewer_module.PDFViewer)):
+            widget.close()
+            widget.deleteLater()
+    qt_application.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
 
 
 def _app() -> QApplication:

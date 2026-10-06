@@ -1,7 +1,7 @@
 """Human-readable settings for executable data steps, with shared validation."""
 from dataclasses import asdict
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,8 +25,13 @@ from .registry import DATA_KINDS, REGISTRY
 
 
 class StepDialog(QDialog):
-    def __init__(self,node,fields,parent=None):
+    edited=pyqtSignal()
+
+    def __init__(self,node,fields,parent=None,*,embedded=False):
         super().__init__(parent)
+        self.embedded=embedded
+        if embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.node=node
         self.fields=fields
         self.setWindowTitle(REGISTRY[node.kind].label)
@@ -98,6 +103,28 @@ class StepDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        if embedded:
+            buttons.hide()
+            description.hide()
+            root.setContentsMargins(0,0,0,0)
+            root.removeWidget(scroll)
+            scroll.takeWidget()
+            root.insertWidget(1,body)
+            scroll.deleteLater()
+            for form in body.findChildren(QFormLayout):
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+            self.connect_edits(self)
+
+    def connect_edits(self,root):
+        for control in root.findChildren(QWidget):
+            if control.property("workflow_edit_connected"):
+                continue
+            signal=(control.textChanged if isinstance(control,QLineEdit) else control.currentTextChanged
+                    if isinstance(control,QComboBox) else control.toggled if isinstance(control,QCheckBox)
+                    else control.valueChanged if isinstance(control,QSpinBox) else None)
+            if signal is not None:
+                signal.connect(self.edited)
+                control.setProperty("workflow_edit_connected",True)
 
     def field_control(self,value):
         control=QComboBox()
@@ -105,6 +132,7 @@ class StepDialog(QDialog):
         control.addItems(self.fields)
         control.setCurrentText(value)
         control.setMinimumContentsLength(10)
+        control.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         return control
 
     def add_row(self,values=None):
@@ -113,6 +141,8 @@ class StepDialog(QDialog):
         values=dict(values or {"field":self.fields[0] if self.fields else "Name"})
         box=QWidget()
         form=QFormLayout(box)
+        if getattr(self,"embedded",False):
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         controls={"field":self.field_control(values["field"])}
         form.addRow("Field",controls["field"])
         specs={
@@ -144,10 +174,14 @@ class StepDialog(QDialog):
         def discard():
             self.rows.remove(controls)
             box.deleteLater()
+            self.edited.emit()
         remove.clicked.connect(discard)
         form.addRow(remove)
         self.rows.append(controls)
         self.content.insertWidget(max(0,self.content.count()-1),box)
+        if getattr(self,"embedded",False):
+            self.connect_edits(box)
+            self.edited.emit()
 
     def value(self):
         if self.node.kind=="filter_records":
@@ -192,21 +226,24 @@ class StepDialog(QDialog):
 
 
 def install(window,node):
-    old=window.inspector_scroll.takeWidget()
-    if old:
-        old.deleteLater()
     window.inspector=QWidget()
     layout=QVBoxLayout(window.inspector)
     heading=QLabel(REGISTRY[node.kind].label)
-    heading.setStyleSheet("font-size:16px;font-weight:600;")
+    font=heading.font()
+    font.setPointSizeF(12)
+    font.setBold(True)
+    heading.setFont(font)
     layout.addWidget(heading)
     description=QLabel(REGISTRY[node.kind].description)
     description.setWordWrap(True)
     layout.addWidget(description)
     def settings_text():
         if node.kind=="media_assignment":
+            printer=node.params.get("printer_profile",{})
+            backend="PDF + PostScript" if printer.get("backend")=="postscript" else "PDF + JDF"
             return (f"{node.params.get('mode','page')} rules · {len(node.params.get('stocks',[]))} Stocks\n"
-                    f"{'Duplex' if node.params.get('duplex') else 'Simplex'} · blank policy: {node.params.get('blank_policy','block')}\nCanon device validation pending")
+                    f"{'Duplex' if node.params.get('duplex') else 'Simplex'} · blank policy: {node.params.get('blank_policy','block')}\n"
+                    f"{backend} · {printer.get('profile_name') or 'Unnamed profile'}\nDevice validation pending")
         if node.kind in DATA_KINDS:
             key={"clean_fields":"operations","create_fields":"fields","filter_records":"conditions",
                  "sort_records":"keys","validate_data":"checks"}[node.kind]
@@ -220,14 +257,17 @@ def install(window,node):
     details.setTextFormat(Qt.TextFormat.PlainText)
     layout.addWidget(details)
     summaries=[]
-    jobs=window.selected_jobs() if hasattr(window,"selected_jobs") else []
+    jobs=([window.inspections.job()] if window.inspections.job() else window.selected_jobs()) if hasattr(window,"selected_jobs") else []
     for job in jobs[:1]:
         summaries=job.data_summary.get("steps",[])
     if not jobs:
         summaries=getattr(window.run,"data_steps",[])
     summary=next((s for s in reversed(summaries) if s.get("node_id")==node.id),None)
     fields=[]
-    if jobs and jobs[0].data_summary:
+    checked=window.inspections.current(node.id)
+    if checked:
+        fields=checked.get("fields",[])
+    if not fields and jobs and jobs[0].data_summary:
         fields=jobs[0].data_summary.get("fields",[])
     if not fields and window.spec.node("extract"):
         fields=[r["name"] for r in window.spec.node("extract").params.get("regions",[]) if "name" in r]
@@ -250,7 +290,28 @@ def install(window,node):
     button=QPushButton("Configure step…")
     button.setProperty("primary",True)
     button.clicked.connect(configure)
-    layout.addWidget(button)
+    if node.kind in DATA_KINDS or node.kind in ("running_sequence","split_output"):
+        editor=StepDialog(node,fields,window.inspector,embedded=True)
+        layout.addWidget(editor)
+        window.watch_settings(node,editor.value,[])
+        def edited():
+            from .drafts import update_error
+            if window._draft_node==node.id:
+                try:
+                    REGISTRY[node.kind].validate_options(editor.value())
+                    editor.error.clear()
+                except (ValueError,TypeError) as exc:
+                    editor.error.setText("Invalid draft: "+str(exc))
+                window.node_drafts.pop(node.id,None)
+                update_error(window)
+                window.title()
+                window.properties.edited.emit()
+        editor.edited.connect(edited)
+        apply=QPushButton("Apply settings")
+        apply.clicked.connect(window.flush_settings)
+        layout.addWidget(apply)
+    else:
+        layout.addWidget(button)
     report_summary=jobs[0].data_summary if jobs else getattr(window.run,"data_summary",{})
     if node.kind=="media_assignment" and report_summary.get("media"):
         media=report_summary["media"]
@@ -290,7 +351,7 @@ def install(window,node):
         preview.resizeRowsToContents()
         layout.addWidget(preview)
     else:
-        text=QLabel("Check & Preview once to inspect this step's source identities, counts and before/after examples.")
+        text=QLabel("Use Check to this step, then Input / Output to inspect source identities and before/after values.")
         text.setWordWrap(True)
         layout.addWidget(text)
     for label,callback in (("Duplicate step",lambda:window.duplicate_node(node)),("Move earlier",lambda:window.reorder_node(node,-1)),
