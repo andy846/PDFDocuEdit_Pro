@@ -51,6 +51,11 @@ supports Windows x64.
 * Edit position, size, rotation and text properties numerically; multi-select
   objects to apply common settings. Rulers, snapping and alignment help place
   objects accurately. Undo/Redo preserves editing continuity.
+* Select a footer or group of fields, then use **Edit / right-click → Repeat on
+  template pages…** to copy to chosen pages at the same coordinates or distance
+  from the page bottom. Copies are independent and the entire operation has one
+  Undo. **Ctrl+Shift+V (Paste in place)** preserves exact coordinates; objects
+  that would extend outside the destination page are rejected without shifting.
 * Select installed Windows fonts. Missing-glyph repairs or automatic fallback
   replace unsupported characters while retaining the primary font, with a
   report of affected pages and characters for review.

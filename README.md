@@ -18,6 +18,7 @@
 
 1. 在主工具列切換 **PDF Workspace｜Document Designer**。切換保留當次工作、未保存修改與背景任務。
 2. 已加工的 PDF 可用 **Send to Designer** 建立一般多頁 Mail Merge 專案或 PDF Overlay 專案。
+   多頁 Mail Merge 的共用頁腳：選取一組欄位，用 **Edit／右鍵 → Repeat on template pages…** 一次複製到指定頁，保留座標、尺寸及設定；可選相同頁底距離。**Ctrl+Shift+V（Paste in place）** 跨頁貼上保留原位。副本獨立，整次複製可一次 Undo；放不落目標頁時會提示並阻止。
 3. 一般模板：匯入資料 → 放置 Fields／Sequences／Barcode → 逐筆預覽 → 保存 `.pdcx` → Generate Production PDF。
 4. 已完成 PDF：Auto Detect Mailpieces → 查看規律與例外 → 接受邊界 → 加入套印物件 → 生成及核對。
 5. 選紙輸出：一般 Designer 的 **Page → Print Media / Stocks…**；Overlay 的 **Production → Print Media / Stocks…**；Workflow 則配置 **Media Assignment** 節點。

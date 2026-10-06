@@ -505,6 +505,12 @@ class Canvas(QGraphicsView):
 
     def keyPressEvent(self, event):
         key = event.key()
+        if (key == Qt.Key.Key_V and event.modifiers()
+                == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
+            if self.editable and not self.mode_preview:
+                self.command.emit("paste_in_place")
+            event.accept()
+            return
         if key == Qt.Key.Key_Space:
             self.space = True
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)

@@ -19,6 +19,34 @@ from composition.template.model import MAX_TEMPLATE_PAGES, PageSpec
 
 
 class PageOperations:
+    def repeat_selected_objects(self):
+        if (self.canvas.mode_preview or not self.canvas.editable
+                or getattr(self, "batch_pending", False)):
+            return
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
+        if not self._page_editable():
+            return
+        if self.font_requests or getattr(self, "batch_pending", False):
+            return
+        selected = self.canvas.selected_ids()
+        if not selected or len(self.template.pages) < 2:
+            self._error("Select objects and add another template page before repeating them.")
+            return
+        from .repeat_objects import RepeatObjectsDialog
+        before = self.template.to_dict()
+        dialog = RepeatObjectsDialog(before, self.active_page_id, selected, self)
+        try:
+            if dialog.exec() != dialog.DialogCode.Accepted:
+                return
+            self._commit(before, dialog.result_value, "Repeat objects on template pages", selected)
+            self.message.setText(
+                f"Repeated {len(selected)} object(s) on {len(dialog.target_ids())} page(s). "
+                "Copies are independent; Ctrl+Z undoes all copies."
+            )
+        finally:
+            dialog.deleteLater()
+
     @property
     def page_index(self):
         return next((i for i, page in enumerate(self.template.pages)

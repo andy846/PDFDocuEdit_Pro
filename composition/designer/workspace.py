@@ -729,19 +729,41 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         if command != "copy" and (self.import_worker or self.production_worker or self.content_invalid or self.canvas.mode_preview):
             return
+        if command == "paste_in_place" and (not self.canvas.editable or self.font_requests
+                or getattr(self, "batch_pending", False) or self.properties.apply() is False):
+            return
         selected = set(self.canvas.selected_ids())
         if command == "cut":
             self.object_command("copy")
             self.object_command("delete")
             return
         if command == "copy":
+            if self.properties.apply() is False:
+                return
             self.clipboard = [asdict(e) for e in self.page.elements if e.id in selected]
+            self.clipboard_page_size = (self.page.width_mm, self.page.height_mm)
             self._update_actions()
             return
         before, after = self.template.to_dict(), self.template.to_dict()
         if command == "delete":
             self._page_dict(after)["elements"] = [e for e in self._page_dict(after)["elements"] if e["id"] not in selected]
-        elif command in {"paste", "duplicate"}:
+        elif command in {"paste", "paste_in_place", "duplicate"}:
+            if command == "paste_in_place":
+                if self.font_requests or getattr(self, "batch_pending", False):
+                    return
+                from .repeat_objects import append_exact_copies
+                try:
+                    pasted = append_exact_copies(self.clipboard, self._page_dict(after))
+                except CompositionError as exc:
+                    self._error(str(exc))
+                    return
+                self._commit(before, after, "Paste in place", pasted)
+                if pasted:
+                    notice = f"Pasted {len(pasted)} object(s) at their original coordinates."
+                    if getattr(self, "clipboard_page_size", None) != (self.page.width_mm, self.page.height_mm):
+                        notice += " Page sizes differ; X / Y were kept unchanged."
+                    self.message.setText(notice)
+                return
             source = (self.clipboard if command == "paste" else
                       [asdict(e) for e in self.page.elements if e.id in selected])
             for element in copy.deepcopy(source):

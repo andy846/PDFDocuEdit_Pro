@@ -74,12 +74,16 @@ class DesignerChrome:
         menus["&Edit"].addSeparator()
         for key, text, shortcut, symbol in [
             ("cut", "Cut", "Ctrl+X", "scissors"), ("copy", "Copy", "Ctrl+C", "files"),
-            ("paste", "Paste", "Ctrl+V", "files"), ("duplicate", "Duplicate", "Ctrl+D", "files"),
+            ("paste", "Paste", "Ctrl+V", "files"),
+            ("paste_in_place", "Paste in place", "Ctrl+Shift+V", "files"),
+            ("duplicate", "Duplicate", "Ctrl+D", "files"),
             ("delete", "Delete", "Delete", "trash"),
         ]:
             action(key, text, lambda checked=False, name=key: self.object_command(name),
                    "&Edit", shortcut, symbol)
         action("select_all", "Select all objects", self.select_all_objects, "&Edit", "Ctrl+A", "layers")
+        action("repeat_pages", "Repeat on template pages…", self.repeat_selected_objects,
+               "&Edit", symbol="files")
         for text, kind, symbol in [("Text", "text", "text-cursor-input"), ("Image", "image", "image"),
                                    ("Line", "line", "line-tool"), ("Box", "rectangle", "square"),
                                    ("Code 128", "code128", "scan"), ("I25 (Interleaved 2 of 5)", "i25", "scan"), ("QR code", "qr", "scan")]:
@@ -158,7 +162,7 @@ class DesignerChrome:
         for key in ("undo", "redo"):
             button = self.project_toolbar.widgetForAction(self.actions[key])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        for key in ("cut", "copy", "paste", "duplicate", "delete", "select_all"):
+        for key in ("cut", "copy", "paste", "paste_in_place", "duplicate", "delete", "select_all"):
             value = self.actions[key]
             value.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self.canvas.addAction(value)
@@ -256,6 +260,9 @@ class DesignerChrome:
             self.actions[key].setEnabled(bool(selected) and not busy and not self.canvas.mode_preview)
         self.actions["repair_glyph"].setEnabled(len(selected) == 1 and text_selected and not busy and not self.canvas.mode_preview)
         self.actions["paste"].setEnabled(bool(self.clipboard) and not busy)
+        exact_editable = not (busy or self.canvas.mode_preview or self.font_requests or self.content_invalid)
+        self.actions["paste_in_place"].setEnabled(bool(self.clipboard) and exact_editable)
+        self.actions["repeat_pages"].setEnabled(bool(selected) and len(self.template.pages) > 1 and exact_editable)
         for key in ("new", "open", "save", "save_as", "background", "remove_background",
                     "rename", "import", "page_size", "media", "select_all"):
             self.actions[key].setEnabled(not busy)
@@ -428,6 +435,8 @@ class DesignerChrome:
         QMessageBox.information(self, "Document Designer shortcuts",
             "Ctrl+N / O / S: New / Open / Save\nCtrl+Shift+S: Save as\n"
             "Ctrl+Z / Y: Undo / Redo\nCtrl+C / V / X / D: Copy / Paste / Cut / Duplicate\n"
+            "Ctrl+Shift+V: Paste in place (exact coordinates)\n"
+            "Edit / right-click: Repeat on template pages (independent copies)\n"
             "Ctrl+A: Select all objects (canvas)\nArrow keys: move 0.5 mm; Shift: 5 mm\n"
             "Ctrl+mouse wheel: zoom; Space+drag: pan\nCtrl+0: fit page\n"
             "Alt+PgUp / PgDown: previous / next template page\n"
@@ -452,7 +461,7 @@ class DesignerChrome:
 
     def _canvas_context_menu(self, position):
         menu = QMenu(self.canvas)
-        for key in ("cut", "copy", "paste", "duplicate", "delete"):
+        for key in ("cut", "copy", "paste", "paste_in_place", "duplicate", "repeat_pages", "delete"):
             menu.addAction(self.actions[key])
         menu.addSeparator()
         menu.addAction(self.actions["copy_format"])
