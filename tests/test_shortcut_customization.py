@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QApplication
 
@@ -9,6 +10,11 @@ import core.viewer as viewer_module
 from core.commands import Command
 from core.settings import SettingsManager
 from ui.diagnostics_dialog import PreferencesDialog
+
+# Install the shared application/theme before constructing Preferences widgets.
+# Applying a proxy style for the first time after native widgets have existed
+# can crash during Windows Qt teardown even when every assertion has passed.
+pytestmark = pytest.mark.usefixtures("qt_application")
 
 _app_instance: QApplication | None = None
 
