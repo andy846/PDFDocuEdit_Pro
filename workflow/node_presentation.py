@@ -27,11 +27,11 @@ def description(kind):
 
 
 def category(kind):
-    if kind in ("input", "data", "merge"):
+    if kind in ("input", "data", "merge", "for_each"):
         return CATEGORIES[0]
     if kind in ("template", "overlay"):
         return CATEGORIES[2]
-    if kind in ("review", "mail_review", "compose", "output", "reports", "media_assignment", "split_output"):
+    if kind in ("review", "mail_review", "compose", "output", "reports", "media_assignment", "split_output","exceptions","collect"):
         return CATEGORIES[3]
     return CATEGORIES[1]
 

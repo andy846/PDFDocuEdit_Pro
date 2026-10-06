@@ -21,6 +21,7 @@ LABELS = {"input":"PDF Input", "merge":"Merge PDFs", "extract":"Extract Regions"
           "sequences":"Fields & Sequences", "mail_review":"Preview & Review", "compose":"Compose",
           "reports":"Validate & Reports"}
 LABELS.update({k: REGISTRY[k].label for k in EXTRA_KINDS})
+LABELS.update({k: REGISTRY[k].label for k in ("for_each","batch_sequence","route","exceptions","collect")})
 
 
 @dataclass
@@ -57,6 +58,9 @@ class WorkflowSpec:
 
     @property
     def kinds(self):
+        if self.workflow_version==5:
+            from .branch_graph import BRANCH_KINDS
+            return BRANCH_KINDS
         base=MAIL_KINDS if self.project_kind=="mail_merge_workflow" else KINDS
         if self.workflow_version<3:
             return base
@@ -69,6 +73,12 @@ class WorkflowSpec:
         return result
 
     def allowed_next(self, kind):
+        if self.workflow_version==5:
+            from .branch_graph import COMMON
+            return {"for_each":set(COMMON),"route":{"template","exceptions"},
+                    "template":{"media_assignment","mail_review"},"media_assignment":{"mail_review"},
+                    "mail_review":{"compose"},"compose":{"reports"},"reports":{"collect"},
+                    "exceptions":{"collect"},"collect":set()}.get(kind,set(COMMON)|{"route"})
         if self.workflow_version>=3:
             if kind in ("output","reports"):
                 return set()
@@ -97,6 +107,10 @@ class WorkflowSpec:
             raise CompositionError("Invalid workflow structure") from exc
 
     def validate(self):
+        if self.workflow_version==5:
+            from .branch_graph import validate
+            validate(self)
+            return
         if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3,4)
                 or self.project_kind not in ("pdf_workflow","mail_merge_workflow")
                 or (self.project_kind=="mail_merge_workflow" and self.workflow_version not in (2,3,4))
@@ -152,6 +166,8 @@ class WorkflowSpec:
                 validate_chain(path,self.project_kind)
 
     def chain(self):
+        if self.workflow_version==5:
+            raise CompositionError("Use the branched execution plan for a v5 workflow.")
         self.validate()
         kinds={n.kind:n for n in self.nodes}
         required=set(MAIL_KINDS) if self.project_kind=="mail_merge_workflow" else {"input","extract","group","review","output"}
@@ -174,6 +190,8 @@ class WorkflowSpec:
 
     def execution_prefix(self, node_id):
         """A connected, typed source-to-target path; no terminal node required."""
+        if self.workflow_version==5:
+            return self.execution_plan(node_id)
         self.validate()
         root=self.node("data" if self.project_kind=="mail_merge_workflow" else "input")
         if root is None:
@@ -218,6 +236,15 @@ class WorkflowSpec:
 
     def node(self, kind):
         return next((n for n in self.nodes if n.kind==kind),None)
+
+    def execution_plan(self,node_id=None):
+        from .branch_graph import execution_plan
+        return execution_plan(self,node_id)
+
+    @classmethod
+    def branched_mail_merge(cls):
+        from .branch_graph import default
+        return default()
 
     def to_dict(self):
         return asdict(self)
