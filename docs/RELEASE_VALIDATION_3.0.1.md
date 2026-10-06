@@ -41,9 +41,12 @@ CI benchmarks) and `build/composition-install-qa/result.json`.
 checks application, project, build and installer metadata consistently at 3.0.1.
 No existing Windows regression cases are removed or disabled.
 
-The shortcut-customization module uses the shared QApplication/theme fixture
-before constructing native widgets. This addresses a historical Windows access
-violation at module teardown without changing assertions or suppressing failures.
+The shortcut-customization module uses the shared QApplication/theme fixture and
+explicitly closes/releases its native widgets before application teardown.
+Initial CI showed an intermittent post-assertion Windows access violation, even
+though all three assertions passed; its failure remains in the CI history. New
+runs retain raw UI logs/JUnit and enable native faulthandler diagnostics. No
+assertions are changed and crashes remain failures.
 
 Real printer paper selection and inserter acceptance remain outside automated
 software validation and require device tests by the operator.

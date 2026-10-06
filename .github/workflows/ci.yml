@@ -139,6 +139,7 @@ jobs:
     timeout-minutes: 30
     env:
       QT_QPA_PLATFORM: offscreen
+      PYTHONFAULTHANDLER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -159,8 +160,22 @@ jobs:
         run: python scripts/prepare_composition_assets.py
       - name: Prepare pinned Ghostscript
         uses: ./.github/actions/setup-postscript
+      - name: Verify shortcut teardown in fresh processes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/ci-ui/shortcut-teardown | Out-Null
+          for ($attempt = 1; $attempt -le 10; $attempt++) {
+            python -X faulthandler -m pytest tests/test_shortcut_customization.py -q "--junitxml=build/ci-ui/shortcut-teardown/$attempt.xml"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Execute UI interaction tests
         run: python scripts/ci_plan.py run ui
+      - name: Retain Windows UI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ui-diagnostics
+          path: build/ci-ui/
 
   cross-platform-core:
     name: Core tests on ${{ matrix.os }}
