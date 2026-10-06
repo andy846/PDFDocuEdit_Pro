@@ -21,10 +21,14 @@ def values(envelope=1, sheet=1, total=2):
 
 def test_golden_payloads_and_zero_checksum():
     profile = BarcodeProfile.inserter()
-    assert profile.payload(values()) == "010100000000000008"
-    assert profile.payload(values(sheet=2)) == "010200100000000004"
+    assert profile.payload(values()) == "000000000000000000"
+    assert profile.payload(values(sheet=2)) == "000100100000000006"
     assert check_digit("0"*17) == "0"
     assert len(profile.payload(values())) == 18
+    assert profile.group_start == 0
+    assert profile.inserter_parts(values())["group"] == "00"
+    assert profile.inserter_parts(values())["sheet"] == "00"
+    assert profile.inserter_parts(values(envelope=2))["group"] == "01"
 
 
 @pytest.mark.parametrize("mask", range(8))
@@ -40,7 +44,7 @@ def test_all_insert_combinations(mask, offset):
 
 def test_rollover_leading_zeros_conditional_and_overflow():
     profile = BarcodeProfile.inserter()
-    assert [profile.payload(values(index))[:2] for index in (98, 99, 100, 101)] == ["98", "99", "00", "01"]
+    assert [profile.payload(values(index))[:2] for index in (98, 99, 100, 101)] == ["97", "98", "99", "00"]
     profile.customer_field = "Customer"
     profile.inserts[4] = InsertSpec("conditional", ConditionGroup(conditions=[RuleCondition("Scheme", value="A")]))
     profile.validate({"Customer", "Scheme"})
@@ -72,5 +76,5 @@ def test_duplex_sheet_context_has_same_payload_both_sides():
     profile = BarcodeProfile.inserter()
     plan = EnvelopePlan(4, EnvelopeSettings(pages_per_envelope=4, duplex=True))
     payloads = [profile.payload(page.fields()) for page in plan.pages()]
-    assert payloads[0] == payloads[1] == "010100000000000008"
-    assert payloads[2] == payloads[3] == "010200100000000004"
+    assert payloads[0] == payloads[1] == "000000000000000000"
+    assert payloads[2] == payloads[3] == "000100100000000006"

@@ -74,7 +74,7 @@ def preflight(template, records, plan, is_cancelled=None, progress=None):
 def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, expected=None):
     count = 0
     columns = ["Envelope", "Sheet", "Output page", "Object", "Profile", "Payload", "Group sequence",
-               "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC"]
+               "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC", "Sheet sequence"]
     with fitz.open(pdf) as document, marks_path.open(encoding="utf-8") as stream, csv_path.open("w", encoding="utf-8-sig", newline="") as output:
         writer = csv.writer(output)
         writer.writerow(columns)
@@ -87,7 +87,7 @@ def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, ex
                 raise BarcodeRecordError(mark["envelope"], f"Output page {mark['output_page']}, object {mark['object']}: {exc}") from exc
             parts = mark["parts"]
             writer.writerow([mark["envelope"], mark["sheet"], mark["output_page"], _csv_value(mark["object"]), _csv_value(mark["profile"]),
-                             mark["payload"], parts["group"], parts["inserts_1_3"], parts["inserts_4_6"], parts["eog"], parts["check_digit"], "Decoded: exact match"])
+                             mark["payload"], parts["group"], parts["inserts_1_3"], parts["inserts_4_6"], parts["eog"], parts["check_digit"], "Decoded: exact match", parts["sheet"]])
             count += 1
             if progress and count % 100 == 0:
                 progress(count, expected or count, "Decoding final inserter barcodes")

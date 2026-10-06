@@ -82,7 +82,7 @@ production workflows.
 * Select a barcode in Template Designer or PDF Overlay. In **Barcode properties**,
   choose **Inserter I25 — 18 digits**, then **Configure…**. Workflow reuses the
   same template/overlay profile and generation engine.
-* **Sequence:** group 01–99 → 00 → 01; sheet sequence starts at 01 per envelope.
+* **Sequence:** group starts at 00 and cycles through 99 → 00; sheet sequence starts at 00 per envelope.
   Full envelope identity is retained separately from the cycling group digits.
 * **Inserts:** six Never / Always / Conditional controls; each group of three
   uses weights 1, 2 and 4. VS1/VS2 output-bin diversion remains Off.
@@ -97,7 +97,7 @@ production workflows.
   digits weighted 3,1 from the left. No extra checksum is appended.
 * Generation checks all records and front-side positions before composition,
   then decodes final marks. **barcodes.csv** records full envelope, sheet,
-  output page, insert masks, EOG, check digit and decode result.
+  output page, zero-based barcode sheet sequence, insert masks, EOG, check digit and decode result.
 * More than 99 sheets, invalid data, missing or duplicate controls block
   production with record/page/object details. Dimensions, rotation and read
   positions remain subject to actual inserter validation.

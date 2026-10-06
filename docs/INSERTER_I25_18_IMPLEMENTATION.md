@@ -14,13 +14,13 @@ The shared engine has no Qt dependency. Template Designer and PDF Overlay config
 
 `Group(2) + Sheet(2) + Inserts1–3(1) + Inserts4–6(1) + EOG(1) + Location(1) + Customer(9) + Check(1)`.
 
-Group start defaults to 01 and wraps through 99, 00, 01. Full envelope identity is retained in the audit. Sheet numbers follow the actual physical-sheet plan, including media-induced blank backs. EOG is 1 only on the final sheet. VS1/VS2 diversion is off; Location is zero. Customer information is exactly nine ASCII digits, or nine fixed zeros. No truncation, implicit padding or extra checksum is performed.
+Group start defaults to 00 and wraps through 99, 00, 01. Full envelope identity is retained in the audit. Barcode sheet sequence starts at 00 per envelope and follows the actual physical-sheet plan, including media-induced blank backs. EOG is 1 only on the final sheet. VS1/VS2 diversion is off; Location is zero. Customer information is exactly nine ASCII digits, or nine fixed zeros. No truncation, implicit padding or extra checksum is performed.
 
 Checksum is `(-sum(digit * alternating 3,1 weights from the left)) % 10`.
-The original plan's two example checksum digits were inconsistent with its formula. Correct examples are:
+Current examples use the corrected 00 group and sheet starts; the checksum formula remains unchanged:
 
-- First envelope, first of two sheets: `010100000000000008`.
-- First envelope, second/final sheet: `010200100000000004`.
+- First envelope, first of two sheets: `000000000000000000`.
+- First envelope, second/final sheet: `000100100000000006`.
 - A zero weighted remainder gives check digit `0`.
 
 ## Use
@@ -45,3 +45,9 @@ Profile/template/overlay formats save as versions **2/11/7**, while retaining le
 - Changed Python files passed Ruff; `git diff --check` passed.
 
 Machine-specific dimensions, orientation and reading position remain **validation pending**. Software decode does not constitute a physical inserter test. Full regression, packaging and release remain part of the user's later combined acceptance.
+
+## Zero-start correction
+
+Both new preset sequences start at 00. Sheet context remains one-based for physical planning and EOG; only encoded sheet digits use `physical sheet - 1`. The CSV adds **Sheet sequence** alongside the physical **Sheet** number. Explicit saved group starts remain configurable; existing projects can select Group start 00 in Configure. Generic profiles retain their payload logic.
+
+Correction verification: **37 profile, production and UI tests passed**, including the 1,000-envelope generation/decode case. Ruff and diff checks passed; the wider milestone suite above was not rerun for this targeted correction.

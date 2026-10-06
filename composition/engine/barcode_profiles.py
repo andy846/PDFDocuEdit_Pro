@@ -53,7 +53,7 @@ class BarcodeProfile:
     tokens: list[BarcodeToken] = field(default_factory=lambda: [BarcodeToken(),
                    BarcodeToken(value="LetterPage", width=2), BarcodeToken(value="LetterPageCount", width=2)])
     preset: str = "generic"
-    group_start: int = 1
+    group_start: int = 0
     inserts: list[InsertSpec] = field(default_factory=lambda: [InsertSpec() for _ in range(6)])
     customer_field: str = ""
 
@@ -171,7 +171,7 @@ class BarcodeProfile:
         if not isinstance(customer, str) or len(customer) != 9 or not customer.isascii() or not customer.isdigit():
             raise RuleValueError(self.customer_field or "CustomerInformation", "Expected exactly nine ASCII digits; leading zeros are preserved.")
         group = f"{(self.group_start+envelope-1) % 100:02d}"
-        page = f"{sheet:02d}"
+        page = f"{sheet-1:02d}"
         eog = str(int(sheet == count))
         body = group+page+str(masks[0])+str(masks[1])+eog+"0"+customer
         digit = check_digit(body)

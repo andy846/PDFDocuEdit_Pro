@@ -66,7 +66,8 @@ def test_invalid_insert_and_customer_drafts_stay_editable(qt_application):
         {"EnvelopeIndex": "1", "SheetNo": "1", "SheetCount": "2", "Customer": "000000123"}, symbology="i25")
     try:
         ok = dialog.footer.button(QDialogButtonBox.StandardButton.Ok)
-        assert ok.isEnabled() and "010100000000000008" in dialog.payload.text()
+        assert dialog.start.text() == "00"
+        assert ok.isEnabled() and "000000000000000000" in dialog.payload.text()
         dialog.insert_modes[0].setCurrentIndex(2)
         assert not ok.isEnabled() and dialog.insert_modes[0].currentData() == "conditional"
         dialog.insert_modes[0].setCurrentIndex(1)

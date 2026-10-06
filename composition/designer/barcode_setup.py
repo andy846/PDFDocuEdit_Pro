@@ -30,6 +30,11 @@ from .overlay_dialogs import BarcodeProfileDialog
 from .rules_dialog import ConditionEditor
 
 
+class SequenceStartSpin(QSpinBox):
+    def textFromValue(self, value):
+        return f"{value:02d}"
+
+
 class BarcodeSetupDialog(QDialog):
     def __init__(self, profile, fields, parent=None, *, symbology=None, samples=None,
                  duplex=False, printing_locked=False, template=False, selected_preset=None):
@@ -85,14 +90,14 @@ class BarcodeSetupDialog(QDialog):
         self.footer.rejected.connect(self.reject)
         root.addWidget(self.footer)
         sequence, form = self.section("Sequence")
-        self.start = QSpinBox()
+        self.start = SequenceStartSpin()
         self.start.setRange(0, 99)
         self.start.setValue(self.inserter.group_start)
         self.start.setDisplayIntegerBase(10)
         self.start.setAccessibleName("Group sequence start")
         form.addRow("Group start (00–99)", self.start)
         form.addRow(self.label("Every envelope adds one; 98 → 99 → 00 → 01.\n"
-                               "Sheet sequence restarts at 01. EOG = 1 on the last physical sheet.\n"
+                               "Sheet sequence restarts at 00 (00, 01, 02…). EOG = 1 on the last physical sheet.\n"
                                "Output bin diversion: Off (VS1 / VS2 = 0).\n"
                                "ColourMark / Location = 0. Check digit is automatic."))
         form.addRow(self.label("Machine validation: " +

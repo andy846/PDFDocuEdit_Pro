@@ -68,9 +68,10 @@ def test_overlay_preset_uses_exact_physical_sheet_codes(tmp_path):
     assert result.expected_barcodes == result.decoded_barcodes == 4
     with Path(result.report_dir, "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
-    assert rows[0]["Payload"] == "010100000000000008"
-    assert rows[1]["Payload"] == "010200100000000004"
+    assert rows[0]["Payload"] == "000000000000000000"
+    assert rows[1]["Payload"] == "000100100000000006"
     assert [row["Sheet"] for row in rows] == ["1", "2", "1", "2"]
+    assert [row["Sheet sequence"] for row in rows] == ["00", "01", "00", "01"]
 
 
 def test_1000_envelopes_real_decode_and_rollover(tmp_path):
@@ -80,8 +81,9 @@ def test_1000_envelopes_real_decode_and_rollover(tmp_path):
     assert result.generated_pages == result.decoded_barcodes == result.expected_barcodes == 1000
     with Path(result.report_dir, "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
-    assert [row["Group sequence"] for row in rows[97:101]] == ["98", "99", "00", "01"]
-    assert rows[-1]["Envelope"] == "1000" and rows[-1]["Group sequence"] == "00"
+    assert [row["Group sequence"] for row in rows[97:101]] == ["97", "98", "99", "00"]
+    assert rows[-1]["Envelope"] == "1000" and rows[-1]["Group sequence"] == "99"
+    assert all(row["Sheet sequence"] == "00" for row in rows)
 
 
 def test_media_inserted_backs_share_the_same_barcode_sheet_plan(tmp_path):
