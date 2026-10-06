@@ -4,64 +4,11 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 
+from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile, BarcodeToken as BarcodeToken
 from composition.pdf_source.model import EnvelopeSettings, SourceInfo
 from composition.pdf_source.planner import SCOPES, SYSTEM_FIELDS, EnvelopePlan
 from composition.production.model import new_job_id, now
 from composition.template.model import CompositionError, Element, Template, required_fields
-
-
-@dataclass
-class BarcodeToken:
-    kind: str = "field"
-    value: str = "EnvelopeSeq"
-    width: int = 0
-
-
-@dataclass
-class BarcodeProfile:
-    name: str = "Generic envelope identifier"
-    version: int = 1
-    machine: str = ""
-    validation: str = "pending"
-    tokens: list[BarcodeToken] = field(default_factory=lambda: [BarcodeToken(),
-                   BarcodeToken(value="LetterPage", width=2), BarcodeToken(value="LetterPageCount", width=2)])
-
-    def validate(self, allowed_fields=()):
-        if type(self.version) is not int or self.version != 1 or self.validation not in ("pending", "user_verified"):
-            raise CompositionError("Unsupported barcode profile version/validation state.")
-        if not isinstance(self.name, str) or not self.name or len(self.name) > 200:
-            raise CompositionError("Give the barcode profile a name of at most 200 characters.")
-        if not isinstance(self.machine, str) or len(self.machine) > 200:
-            raise CompositionError("Invalid machine profile name.")
-        if self.validation == "user_verified" and not self.machine:
-            raise CompositionError("A user-verified profile must identify the machine.")
-        if not isinstance(self.tokens, list) or not 1 <= len(self.tokens) <= 30:
-            raise CompositionError("A barcode profile needs 1 to 30 tokens.")
-        for token in self.tokens:
-            if not isinstance(token, BarcodeToken) or token.kind not in ("field", "literal"):
-                raise CompositionError("Barcode tokens are fields or literals.")
-            if not isinstance(token.value, str) or len(token.value) > 1024:
-                raise CompositionError("Invalid barcode token text.")
-            if type(token.width) is not int or not 0 <= token.width <= 18:
-                raise CompositionError("Barcode field width must be 0 to 18 digits.")
-            if token.kind == "field" and token.value not in SYSTEM_FIELDS and token.value not in allowed_fields:
-                raise CompositionError(f"Unknown barcode field: {token.value}")
-            if token.kind == "literal" and (token.width or any(ord(c) < 32 for c in token.value)):
-                raise CompositionError("Barcode literals must be printable and cannot have a numeric width.")
-
-    def payload(self, fields):
-        parts = []
-        for token in self.tokens:
-            value = token.value if token.kind == "literal" else fields[token.value]
-            if token.width:
-                if not value or not value.isascii() or not value.isdigit() or len(value) > token.width:
-                    raise CompositionError(f"Barcode field {token.value} cannot fit {token.width} numeric digits.")
-                value = value.zfill(token.width)
-            parts.append(value)
-        result = "".join(parts)
-        if not result or len(result) > 4096:
-            raise CompositionError("Barcode payload is empty or exceeds 4,096 characters.")
-        return result
 
 
 @dataclass
@@ -80,7 +27,7 @@ class EnvelopeSpec:
     objects: list[OverlayObject] = field(default_factory=list)
     required_scope: str = "all_source"
     name: str = "Envelope overlay"
-    overlay_version: int = 6
+    overlay_version: int = 7
     project_kind: str = "pdf_overlay"
     external_fields: list[str] = field(default_factory=list)
     detection_review: dict = field(default_factory=dict)
@@ -107,7 +54,7 @@ class EnvelopeSpec:
         validate_link(self.source_link)
         if self.source_link and (len(self.source_link["page_map"]) != self.source.pages or self.source_link["sha256"] != self.source.sha256):
             raise CompositionError("PDF source provenance does not match the source snapshot.")
-        if type(self.overlay_version) is not int or self.overlay_version != 6 or self.project_kind != "pdf_overlay":
+        if type(self.overlay_version) is not int or self.overlay_version != 7 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if (not isinstance(self.external_fields,list) or len(self.external_fields)>400
                 or any(not isinstance(v,str) or not re.fullmatch(r"(?:Page_|Envelope_)?[A-Za-z_][A-Za-z0-9_]{0,63}",v)
@@ -188,6 +135,9 @@ class EnvelopeSpec:
                 if obj.profile is None:
                     raise CompositionError("Barcode objects need a declarative profile.")
                 obj.profile.validate(self.external_fields)
+                if obj.profile.preset == INSERTER_I25 and (
+                        obj.element.type != "i25" or not obj.control or obj.scope != "front"):
+                    raise CompositionError("Inserter I25 must be an I25 control barcode on sheet fronts.")
             elif obj.profile is not None:
                 raise CompositionError("Only barcode objects use barcode profiles.")
 
@@ -199,7 +149,7 @@ class EnvelopeSpec:
         try:
             data = dict(raw)
             version = data.get("overlay_version", 1)
-            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6):
+            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7):
                 raise CompositionError("Unsupported envelope project version.")
             if version<6 and data.get("media"):
                 raise CompositionError("Print Media requires overlay version 6.")
@@ -212,7 +162,10 @@ class EnvelopeSpec:
             if version < 3 and (data.get("settings", {}).get("groups") or
                     data.get("settings", {}).get("excluded_pages") or data.get("source", {}).get("geometry_mode", "roles") != "roles"):
                 raise CompositionError("Dynamic detection requires envelope project version 3.")
-            data["overlay_version"] = 6
+            if version < 7 and any(obj.get("profile", {}).get("preset") == INSERTER_I25
+                                   for obj in data.get("objects", []) if obj.get("profile")):
+                raise CompositionError("Inserter I25 requires overlay version 7.")
+            data["overlay_version"] = 7
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()
@@ -223,9 +176,7 @@ class EnvelopeSpec:
                 item = dict(item)
                 profile = item.get("profile")
                 if profile is not None:
-                    profile = dict(profile)
-                    profile["tokens"] = [BarcodeToken(**token) for token in profile["tokens"]]
-                    item["profile"] = BarcodeProfile(**profile)
+                    item["profile"] = BarcodeProfile.from_dict(profile)
                 item["element"] = element
                 objects.append(OverlayObject(**item))
             data["objects"] = objects
@@ -251,6 +202,7 @@ def render_template(spec):
     elements = []
     for obj in spec.objects:
         element = copy.deepcopy(obj.element)
+        element.barcode_profile = {}
         if obj.profile:
             element.value = "{{" + barcode_field(obj) + "}}"
         elements.append(element)
