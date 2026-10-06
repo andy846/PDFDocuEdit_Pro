@@ -49,19 +49,22 @@ class ElementItem(QGraphicsRectItem):
         self.setPen(pen)
         self.setToolTip(element.type + ": " + element.value)
         self.resizing = False
+        self.layout_issue = ""
 
     def paint(self, painter, option, widget=None):
         plain = QStyleOptionGraphicsItem(option)
         plain.state &= ~QStyle.StateFlag.State_Selected
         super().paint(painter, plain, widget)
-        if self.isSelected():
+        if self.isSelected() or self.layout_issue:
             painter.save()
-            pen = QPen(QColor(get_colors()["primary"]), 1.5)
+            colour = get_colors().get("warning", "#e6a23c") if self.layout_issue else get_colors()["primary"]
+            pen = QPen(QColor(colour), 1.5)
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(self.rect())
-            painter.fillRect(QRectF(self.rect().width()-2, self.rect().height()-2, 2, 2), QColor(get_colors()["primary"]))
+            if self.isSelected():
+                painter.fillRect(QRectF(self.rect().width()-2, self.rect().height()-2, 2, 2), QColor(get_colors()["primary"]))
             painter.restore()
 
     def mousePressEvent(self, event):
@@ -240,6 +243,7 @@ class Canvas(QGraphicsView):
 
     def set_preview(self, image):
         if not image:
+            self.set_layout_issues([])
             if self.preview_item is not None:
                 self.scene_model.removeItem(self.preview_item)
                 self.preview_item = None
@@ -255,6 +259,14 @@ class Canvas(QGraphicsView):
             self.scene_model.addItem(self.preview_item)
         self.preview_item.setPixmap(pixmap)
         self.preview_item.setScale(self.page_width / pixmap.width())
+
+    def set_layout_issues(self, issues):
+        reasons = {issue["object"]:issue["reason"] for issue in issues}
+        for item in self.element_items:
+            item.layout_issue = reasons.get(item.element.id, "")
+            item.setToolTip(item.element.type + ": " + item.element.value +
+                            ("\n" + item.layout_issue if item.layout_issue else ""))
+            item.update()
 
     def event(self, event):
         result = super().event(event)

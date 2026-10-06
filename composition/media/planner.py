@@ -110,7 +110,7 @@ class PrintPlan:
                             raise CompositionError(f"Logical page {logical}: size differs from Stock {stock}.")
                     if self.media.duplex and len(pattern)%2 and last_stock!=stock:
                         if self.media.blank_policy=="block":
-                            raise CompositionError(f"Media conflict: envelope / record {envelope}, logical pages {logical-1} and {logical} require {last_stock} / {stock} on the same sheet. Correct the stocks or explicitly select blank-back insertion.")
+                            raise CompositionError(f"Media conflict: envelope / record {envelope}, logical pages {logical-1} and {logical} require {last_stock} / {stock} on the same sheet. Front and back must use the same Stock. For four duplex pages, assign pages 1/2 to Stock A and pages 3/4 to Stock B, or explicitly select blank-back insertion (adds pages).")
                         pattern.append((None,logical-2,last_stock,"Confirmed media-change blank back"))
                     pattern.append((logical,logical-1,stock,"Rule "+key if key in self.media.assignments else "Explicit fallback"))
                     last_stock=stock

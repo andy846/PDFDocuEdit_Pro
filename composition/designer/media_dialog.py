@@ -53,8 +53,8 @@ class MediaDialog(QDialog):
         self.directory=Path(tempfile.mkdtemp(prefix="media-preview-"))
         self.initial=copy.deepcopy(media or default_media())
         if not media and context and context.get("kind")=="template":
-            pages=context["project"]["pages"]
-            self.initial.update(mode="template",assignments={p["id"]:"LH_"+"ABC"[i] for i,p in enumerate(pages[:3])})
+            # Paper choices belong to the operator, not the first three page numbers.
+            self.initial.update(mode="template",assignments={})
         root=QVBoxLayout(self)
         self.enabled=QCheckBox("Enable Media Assignment and selected production output")
         entry=QHBoxLayout()
@@ -99,6 +99,7 @@ class MediaDialog(QDialog):
         form.addRow("Fallback Stock",self.fallback)
         self.fallback.setToolTip("Leave empty to block pages without a matching rule.")
         self.duplex=QCheckBox("Duplex: two sides of the same physical sheet")
+        self.duplex.setToolTip("A sheet has one Stock: pages 1/2 share it, then pages 3/4. The number of Stocks is unrestricted.")
         form.addRow(self.duplex)
         self.policy=QComboBox()
         self.policy.addItem("Block different Stocks on one sheet","block")
@@ -122,7 +123,11 @@ class MediaDialog(QDialog):
         assign.clicked.connect(self.assign_selected)
         rule_buttons.addWidget(assign)
         rules.addLayout(rule_buttons)
-        role_note=QLabel("SINGLE is a one-page letter; FIRST / LAST apply to longer letters. Duplex pads odd letter endings. Blank backs inherit the front's Stock; logical template pages keep their identity.")
+        self.sheet_button=QPushButton("Assign Stocks by duplex sheet…")
+        self.sheet_button.setToolTip("For a fixed template, assign one Stock to each front/back pair without editing both pages separately.")
+        self.sheet_button.clicked.connect(self.assign_sheets)
+        rules.addWidget(self.sheet_button)
+        role_note=QLabel("One or more Stocks can be used. Duplex example: pages 1/2 → Stock A, pages 3/4 → Stock B. SINGLE is a one-page letter; FIRST / LAST apply to longer letters. Blank backs inherit the front's Stock.")
         role_note.setWordWrap(True)
         rules.addWidget(role_note)
         printer=page("Printer profile")
@@ -334,7 +339,13 @@ class MediaDialog(QDialog):
         for s in spec.stocks:
             self.append(self.stocks,[s["id"],s["name"],s["width_mm"],s["height_mm"],s["weight_gsm"],str(s.get("preprinted",False)).lower()])
         self.assignments.setRowCount(0)
-        for key,value in spec.assignments.items():
+        rows=dict(spec.assignments)
+        if self.context and self.context.get("kind")=="template" and spec.mode in ("template","page"):
+            pages=self.context["project"]["pages"]
+            keys=[p["id"] if spec.mode=="template" else str(i+1) for i,p in enumerate(pages)]
+            rows={**{key:spec.assignments.get(key,"") for key in keys},
+                  **{key:value for key,value in spec.assignments.items() if key not in keys}}
+        for key,value in rows.items():
             self.append(self.assignments,[key,value])
         self.label_template_pages()
         self.fill_printer(spec.printer_profile)
@@ -438,6 +449,37 @@ class MediaDialog(QDialog):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             item.setToolTip("Stable template page ID: "+key)
 
+    def create_sheet_dialog(self):
+        from .media_sheet_dialog import DuplexSheetDialog
+        if (not self.context or self.context.get("kind")!="template" or
+                self.mode.currentData() not in ("template","page") or not self.duplex.isChecked()):
+            raise ValueError("Choose Duplex and template / logical page rules for a fixed template first.")
+        return DuplexSheetDialog(self.context["project"]["pages"],self.rows(self.stocks),
+                                 dict(self.rows(self.assignments)),self.fallback.currentText().strip(),
+                                 self.mode.currentData(),self)
+
+    def assign_sheets(self):
+        if self.worker:
+            return
+        try:
+            dialog=self.create_sheet_dialog()
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
+        try:
+            if dialog.exec()!=QDialog.DialogCode.Accepted:
+                return
+            rows=dict(self.rows(self.assignments))
+            rows.update(dialog.assignments)
+            self.assignments.setRowCount(0)
+            for key,stock in rows.items():
+                self.append(self.assignments,[key,stock])
+            self.label_template_pages()
+            self.invalidate()
+            self.error.setText("Front/back Stock pairs updated. Check & Preview before applying.")
+        finally:
+            dialog.deleteLater()
+
     def read_printer(self):
         rows=self.rows(self.mappings)
         if len({r[0] for r in rows})!=len(rows):
@@ -477,12 +519,16 @@ class MediaDialog(QDialog):
         self.checked=None
         self.error.setText("Settings changed. Check & Preview before applying." if self.context else
                            "Rules can be saved; check against a selected job before production.")
+        self.navigation()
 
     def navigation(self):
         busy=self.worker is not None
         self.library_button.setEnabled(not busy)
         self.profile_actions.setEnabled(not busy)
         self.preview_button.setEnabled(not busy and self.context is not None)
+        self.sheet_button.setEnabled(not busy and self.duplex.isChecked() and bool(self.context)
+                                     and self.context.get("kind")=="template"
+                                     and self.mode.currentData() in ("template","page"))
         self.previous.setEnabled(not busy and self.checked is not None and self.start>1)
         self.next.setEnabled(not busy and self.checked is not None and self.start+199<self.total)
         self.cancel.setEnabled(busy)

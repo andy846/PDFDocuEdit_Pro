@@ -275,16 +275,16 @@ def dispatch(request: dict) -> dict:
             record = open_records(template, request.get("store", "")).record(index)
         else:
             record = {name: "{{" + name + "}}" for name in required_fields(template)}
-        repairs, rules = [], []
+        repairs, rules, layout = [], [], []
         page_index = request.get("page", 0)
         raw = render_preview(template, record, index, repair_details=repairs, page_index=page_index,
-                             design=design, rule_details=rules, auto_repair=request.get("auto_repair", False))
+                             design=design, rule_details=rules, auto_repair=request.get("auto_repair", False),layout_details=layout)
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")
         with fitz.open(stream=raw, filetype="pdf") as document:
             raster = save_preview(document[0], image, request.get("raster_scale", 2))
-        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs, "rules": rules, **raster}
+        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs, "rules": rules, "layout_issues":layout, **raster}
     if task == "save":
         from composition.template.serializer import load_project, save_project
         target = save_project(Template.from_dict(request["template"]), request["target"])

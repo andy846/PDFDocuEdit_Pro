@@ -241,7 +241,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         preview_row.addWidget(self.preview_state, 1)
         self.preview_review = QPushButton("Review object")
         self.preview_review.hide()
-        self.preview_review.clicked.connect(self.review_failed_object)
+        self.preview_review.clicked.connect(self.review_preview_object)
+        self.preview_layout_issues = []
         preview_row.addWidget(self.preview_review)
         self.preview_retry = QPushButton("Refresh")
         self.preview_retry.setToolTip("Render the current template page again")
@@ -546,6 +547,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
     def _schedule_preview(self, *args):
         self.preview_generation += 1
+        self.preview_layout_issues = []
+        self.preview_review.hide()
+        self.canvas.set_layout_issues([])
         self.preview_state.setText("Updating preview…" if self.tabs.currentIndex() in (1, 2) else "")
         context = (self.font_epoch, self.active_page_id, self.page.background,
                    self.page.width_mm, self.page.height_mm,
@@ -587,6 +591,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if generation == self.preview_generation and not self.close_pending and not self.content_invalid:
             self.preview_review.hide()
             self.canvas.set_preview(result["image"])
+            self.preview_layout_issues = result.get("layout_issues", [])
+            self.canvas.set_layout_issues(self.preview_layout_issues)
             self.preview_state.setText(
                 f"Record {result['record']:,} · template page {result.get('page', 0)+1}"
                 if self.tabs.currentIndex() == 2 else "Design layout · field placeholders")
@@ -598,8 +604,21 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             repairs = result.get("glyph_repairs", [])
             count = sum(item["occurrences"] for item in repairs)
             self.message.setText(f"Preview uses {count} glyph font substitution(s); primary fonts retained." if count else "")
+            if self.preview_layout_issues:
+                self.preview_state.setText(self.preview_state.text() + f" · {len(self.preview_layout_issues)} clipped text box(es)")
+                self.preview_review.show()
+                self.message.setText("Some design labels do not fit. The canvas remains editable; use Record Preview to check actual values.")
         Path(result["pdf"]).unlink(missing_ok=True)
         Path(result["image"]).unlink(missing_ok=True)
+
+    def review_preview_object(self):
+        if not self.preview_layout_issues:
+            self.review_failed_object()
+            return
+        issue = self.preview_layout_issues[0]
+        self.canvas.select_ids([issue["object"]])
+        self.focus_properties()
+        self.message.setText(issue["reason"])
 
     def _preview_error(self, error, generation):
         if generation == self.preview_generation:
