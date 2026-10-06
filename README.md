@@ -33,6 +33,19 @@ Compose／Output 的試跑只檢查及提供單筆預覽，不發布生產檔案
 來源或上游設定改變後須重新檢查。正式生產仍由既有 Review／Run 流程執行。
 詳見 [實作說明](docs/VISUAL_WORKFLOW_INSPECTION.md) 及 [v3.0.1 發佈說明](docs/RELEASE_NOTES_3.0.1.md)。本次亦更新程式內 **Help → README**，補齊 Designer、Workflow、分封及選紙操作入口。
 
+### 最新開發功能：Conditional Mail Merge
+
+在 Document Designer 的 **Create Visual Workflow → Conditional Mail Merge**，或首頁 **For each file → Route by template** 開啟。
+
+- **For each Data File**：加入多個 CSV/TXT/Excel 檔案，或擷取資料夾的一次性清單；按清單次序使用相同資料整理流程。
+- **Batch Sequence**：跨整批資料編號。排序／篩選先於編號；例外記錄保留號碼，正常記錄不重新補號。模板用 `{{WorkflowSeq}}` 引用預設序號欄位。
+- **Route by Condition**：以 All／Any 條件分到不同信件模板；只接受唯一匹配。無匹配且沒有明確 fallback、重複匹配或無效資料，進入 Exceptions。
+- 每個資料檔 × 模板分支有獨立核對、批准、PDF／選紙輸出及結果。Collect Results 整合紀錄與報告，不合併 PDF。
+- **Check to step** 與 **Check & Preview** 不發布生產檔案；Input／Output／Issues 每頁 50 筆，保留來源記錄及序號。先覆核並批准，再 **Run approved**。
+- 部分生產須確認已覆核例外／被阻擋項目。生成記錄對照 CSV、例外 CSV、批次摘要及 JSON；已完成且未改動的有效輸出在重新檢查時保留。
+
+這是有界的資料檔迭代及單層條件分支，不支援自由回接、巢狀迴圈或 PDF 分封分支。原有 v1–v4 工作流保持可讀；新功能使用 v5 `.pdflow`。詳細操作及驗證見 [分支工作流說明](docs/VISUAL_WORKFLOW_BRANCHING.md)。本段描述工作區開發版本，未另行發布安裝包。
+
 ### PostScript 與 Printer Profile
 
 在 **Printer profile** 選擇 `PDF + PostScript (no separate job ticket)`，配置每個 Stock 的 **MediaType／Colour** 或 **MediaPosition**，保存環境 profile。先用 **Export paper-selection test PS…** 列印少量測試紙，再正式生成。

@@ -1,0 +1,26 @@
+[
+  {
+    "records": 1000,
+    "source_files": 3,
+    "branches": 2,
+    "check_seconds": 1.3563305001007393,
+    "check_records_per_second": 737.283427546403,
+    "generation_seconds": 3.66266569995787,
+    "generated_pages": 1000,
+    "output_bytes": 520020,
+    "peak_memory_bytes": 104480768,
+    "fixture": "Synthetic local CSV; two template branches sharing a one-page text layout; full routing, snapshots and font/rule preflight; no network, CJK, image-heavy or printer guarantee"
+  },
+  {
+    "records": 10000,
+    "source_files": 3,
+    "branches": 2,
+    "check_seconds": 2.0422656000591815,
+    "check_records_per_second": 4896.522763596575,
+    "generation_seconds": 20.559257100103423,
+    "generated_pages": 10000,
+    "output_bytes": 5022108,
+    "peak_memory_bytes": 105095168,
+    "fixture": "Synthetic local CSV; two template branches sharing a one-page text layout; full routing, snapshots and font/rule preflight; no network, CJK, image-heavy or printer guarantee"
+  }
+]

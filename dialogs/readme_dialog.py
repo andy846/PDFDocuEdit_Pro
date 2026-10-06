@@ -75,7 +75,10 @@ supports Windows x64.
 * The node library is grouped into **Sources**, **Data preparation**, **Design**
   and **Production output**. Search matches names and function descriptions.
 * **Add next step** offers compatible steps and explains unavailable choices.
-  Workflows remain linear; branches and loops are not supported.
+  Existing PDF/linear Mail Merge recipes retain their current behavior.
+* **Create Visual Workflow → Conditional Mail Merge** creates a v5 recipe with
+  **For each Data File**, a shared preparation chain, **Batch Sequence** and
+  exclusive named template routes. Free cycles and nested loops are not allowed.
 * Data steps include field cleaning, field creation, sorting, validation,
   filtering and running sequences. Other steps cover Visual Extraction Regions,
   mailpiece grouping, mappings, letter templates, media and output splitting.
@@ -86,6 +89,21 @@ supports Windows x64.
 * Repeated node types retain separate settings, counts, statuses and evidence.
 
 ### Check to This Step
+* Conditional Mail Merge checks all configured source files. Its shared
+  sequence follows file order and each file's filtered/sorted records; exceptions
+  reserve their numbers. Refer to the default field as `{{WorkflowSeq}}` in the
+  letter template. A conflicting imported/template sequence field is blocked.
+* Add named routes with All/Any conditions and choose a saved template per
+  route. Exactly one condition must match. An explicit fallback applies only
+  when none match; multiple matches always go to **Exceptions**.
+* On **Review & approve**, preview a branch record, review exceptions and
+  approve selected/all checked branches. Partial production requires explicit
+  acknowledgement. **Run approved** produces independent outputs per source
+  file and template, with reconciliation CSV, exceptions CSV and a JSON log.
+  **Collect Results** collects results and reports; it does not merge PDFs.
+* Recheck after data or rules change. Valid completed branches are retained;
+  reopening a saved recipe requires a new check and approval, and never resumes
+  production automatically. Folder inputs are a fixed snapshot, not a hot folder.
 * Select the target node and click **Check to this step**. For Mail Merge,
   explicitly choose one batch job. PDF checks use the current workflow sources.
 * Checks process the complete input, even when downstream steps are unfinished.
