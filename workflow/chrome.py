@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -124,6 +125,8 @@ def install(window):
     row.addStretch()
     button("−",lambda:w.canvas.zoom(1/1.15))
     w.zoom_label=QLabel("100%")
+    w.zoom_label.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
+    w.zoom_label.setMinimumWidth(0)
     row.addWidget(w.zoom_label)
     w.canvas.zoomChanged.connect(lambda value:w.zoom_label.setText(f"{value:.0%}"))
     button("+",lambda:w.canvas.zoom(1.15))

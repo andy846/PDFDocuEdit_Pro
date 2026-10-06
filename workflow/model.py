@@ -1,4 +1,4 @@
-"""Strict linear graphs: canvas positions are separate from executable settings."""
+"""Declarative workflow graphs; canvas positions are separate from execution."""
 from __future__ import annotations
 
 import copy
@@ -37,7 +37,7 @@ class WorkflowNode:
 class WorkflowSpec:
     name: str = "Untitled workflow"
     nodes: list[WorkflowNode] = field(default_factory=list)
-    edges: list[list[str]] = field(default_factory=list)
+    edges: list[list[str] | dict[str,str]] = field(default_factory=list)
     workflow_version: int = 1
     project_kind: str = "pdf_workflow"
 

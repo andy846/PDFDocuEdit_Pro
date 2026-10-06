@@ -65,6 +65,13 @@ def validate(spec):
             if n.params.get("scope","record")!="record" or n.params.get("step",1)<1:
                 raise CompositionError("Batch Sequence needs record scope and a positive increment.")
         if n.kind=="for_each":
+            from dataclasses import fields
+
+            from composition.template.model import DataConfig
+            allowed={f.name for f in fields(DataConfig)}-{"path"}
+            options=n.params.get("options",{})
+            if not isinstance(options,dict) or set(options)-allowed:
+                raise CompositionError("Invalid shared data import options.")
             items=n.params.get("items",[])
             if not isinstance(items,list) or len(items)>10000:
                 raise CompositionError("Use at most 10,000 source items.")
@@ -75,6 +82,21 @@ def validate(spec):
                         or not 1<=len(item["path"])<=4096 or not isinstance(item.get("options",{}),dict)):
                     raise CompositionError("Source items need stable unique IDs, paths and import options.")
                 seen.add(item["id"])
+                if set(item.get("options",{}))-allowed:
+                    raise CompositionError("Invalid source data import options.")
+        if n.kind=="mapping":
+            from .transforms import _field
+            aliases=n.params.get("aliases",{})
+            if not isinstance(aliases,dict) or len(aliases)>100 or any(not isinstance(k,str) or not 1<=len(k)<=4096 for k in aliases):
+                raise CompositionError("Invalid shared field aliases.")
+            for value in aliases.values():
+                _field(value)
+            if len(set(aliases.values()))!=len(aliases):
+                raise CompositionError("Shared merge-field aliases must be distinct.")
+        if n.kind=="template" and (not isinstance(n.params.get("path",""),str) or len(n.params.get("path",""))>4096):
+            raise CompositionError("Invalid template path.")
+        if n.kind=="compose" and type(n.params.get("auto_repair",True)) is not bool:
+            raise CompositionError("Automatic glyph repair must be explicitly enabled or disabled.")
         if n.kind=="route":
             routes=n.params.get("routes",[])
             if not isinstance(routes,list) or not 1<=len(routes)<=12:
@@ -98,8 +120,11 @@ def validate(spec):
             if fallback>1:
                 raise CompositionError("Only one explicit fallback route is allowed.")
     for kind in ("for_each","mapping","batch_sequence","route","exceptions","collect"):
-        if sum(n.kind==kind for n in spec.nodes)>1:
+        count=sum(n.kind==kind for n in spec.nodes)
+        if count>1:
             raise CompositionError("Nested loops/routing and duplicate shared steps are not supported.")
+        if kind!="mapping" and count!=1:
+            raise CompositionError("v5 needs one "+kind.replace("_"," ")+" step.")
     incoming={k:[] for k in lookup}
     outgoing={k:[] for k in lookup}
     seen=set()
@@ -183,6 +208,8 @@ def execution_plan(spec,target_id=None):
         n=lookup[edge_list[0]["target"]] if edge_list else None
         while n and n.kind!="collect":
             path.append(n)
+            if sum(node.kind=="media_assignment" for node in path)>1:
+                raise CompositionError("Use one Media Assignment per template branch.")
             visited.add(n.id)
             if n.id==target_id:
                 return BranchExecutionPlan(common,{route["id"]:path},cursor,n)

@@ -215,6 +215,9 @@ class WorkflowWindow(QMainWindow):
         self.page.setRange(1,1)
         self.page.valueChanged.connect(lambda *_:self.review())
         navigation.addWidget(self.page)
+        navigation.addStretch()
+        review_layout.addLayout(navigation)
+        navigation=QHBoxLayout()
         for label,handler in (("View PDF region",self.edit_regions),("Correct value",self.correct),
                               ("Export CSV",self.export_csv),("Accept review",self.accept_review)):
             button=QPushButton(label)

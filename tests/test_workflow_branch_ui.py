@@ -117,3 +117,47 @@ def test_template_draft_survives_switch_and_busy_browsing(window,tmp_path):
     finally:
         window.active_worker=None
         window.lock()
+
+
+def test_host_embeds_v5_reopens_without_duplicate_tabs(qt_application,tmp_path):
+    from composition.designer.project_host import DesignerProjectHost
+    from workflow.serializer import save_workflow
+    host=DesignerProjectHost()
+    host.resize(960,640)
+    host.show()
+    path=save_workflow(fixture(tmp_path),tmp_path/"conditional.pdflow")
+    project=host.open_project(path)
+    try:
+        assert isinstance(project,BranchWorkflowWindow)
+        wait_until(lambda:not project.workers,timeout=40)
+        assert host.current_project is project and not project.menuBar().isVisible()
+        assert host.open_project(path) is project and len(host.projects)==1
+        project.undo.setClean()
+        host.close_project(project)
+        wait_until(lambda:not host.projects)
+        assert host.stack.currentWidget() is host.start
+    finally:
+        for project in host.projects[:]:
+            project._close_approved=True
+            project.close()
+            wait_until(lambda p=project:not p.workers)
+        host.close()
+
+
+def test_unsaved_open_designer_template_blocks_check_and_production(window,tmp_path):
+    from types import SimpleNamespace
+
+    from PyQt6.QtGui import QUndoStack
+    window.apply_spec(fixture(tmp_path).to_dict())
+    dirty=QUndoStack(window)
+    dirty.resetClean()
+    project=SimpleNamespace(project_path=Path(window.spec.node("template").params["path"]),
+                            undo=dirty,properties=SimpleNamespace(apply=lambda:True))
+    window.project_host=SimpleNamespace(projects=[project],identity=lambda path:str(Path(path).resolve()).casefold(),
+                                       is_busy=lambda project:False)
+    assert not window.templates_saved()
+    window.check_all()
+    assert not window.active_worker and "Save the open letter template" in window.statusBar().currentMessage()
+    dirty.setClean()
+    assert window.templates_saved()
+    window.project_host=None

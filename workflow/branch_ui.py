@@ -189,7 +189,7 @@ class BranchWorkflowWindow(QMainWindow):
         self.select_node(self.selected)
         self.undo.setClean()
         self.resize(1280,800)
-        QTimer.singleShot(0,self.canvas.fit)
+        QTimer.singleShot(0,self.start_view)
 
     def setup_chrome(self):
         toolbar=QToolBar("Visual Workflow")
@@ -225,7 +225,10 @@ class BranchWorkflowWindow(QMainWindow):
         action("generate","Run approved",self.generate,"Ctrl+Shift+G","printer")
         action("cancel","Cancel",self.cancel_job,symbol="x")
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        for key in ("scan","generate"):
+            toolbar.widgetForAction(self.actions[key]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.tabs=QTabWidget()
+        self.tabs.setObjectName("designerPanelTabs")
         self.tabs.setDocumentMode(True)
         self.setCentralWidget(self.tabs)
 
@@ -343,8 +346,11 @@ class BranchWorkflowWindow(QMainWindow):
         self.jobs_view,self.jobs_model=table(self.review_page)
         layout.addWidget(self.jobs_view,1)
         self.jobs_view.doubleClicked.connect(lambda *_:self.preview_job())
-        self.acknowledge=QCheckBox("I reviewed exceptions / blocked sources and accept producing normal records only")
+        self.acknowledge=QCheckBox("Accept partial production")
         layout.addWidget(self.acknowledge)
+        explanation=QLabel("Confirm only after reviewing exceptions and blocked items. Normal records may print; exceptions retain their sequence numbers and are listed in the report.")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
         self.preview_record=QSpinBox()
         self.preview_record.setRange(1,100000000)
         self.preview_page=QSpinBox()
@@ -362,7 +368,7 @@ class BranchWorkflowWindow(QMainWindow):
             button.clicked.connect(callback)
             row.addWidget(button)
         layout.addLayout(row)
-        self.tabs.addTab(self.review_page,"Review & approve")
+        self.tabs.addTab(self.review_page,"Review && approve")
 
     def setup_production(self):
         self.production_page=QWidget()
@@ -429,13 +435,19 @@ class BranchWorkflowWindow(QMainWindow):
     def refresh_graph(self):
         self.steps.blockSignals(True)
         self.steps.clear()
-        plan=self.spec.execution_plan(self.spec.node("route").id)
-        ordered=[*plan.common,plan.route]
-        for route in self.spec.node("route").params["routes"]:
-            ordered.extend(plan.branches.get(route["id"],[]))
-        ordered.extend(n for n in self.spec.nodes if n.kind in ("exceptions","collect"))
+        try:
+            plan=self.spec.execution_plan(self.spec.node("route").id)
+        except ValueError:
+            plan=None
+        ordered=[*plan.common,plan.route] if plan else self.spec.nodes[:]
+        if plan:
+            for route in self.spec.node("route").params["routes"]:
+                ordered.extend(plan.branches.get(route["id"],[]))
+            ordered.extend(n for n in self.spec.nodes if n.kind in ("exceptions","collect"))
+        route_names={n.id:r["name"] for r in self.spec.node("route").params["routes"]
+                     for n in (plan.branches.get(r["id"],[]) if plan else [])}
         for node in ordered:
-            self.steps.addItem(LABELS[node.kind])
+            self.steps.addItem((route_names[node.id]+" · " if node.id in route_names else "")+LABELS[node.kind])
             item=self.steps.item(self.steps.count()-1)
             item.setData(Qt.ItemDataRole.UserRole,node.id)
             item.setToolTip(description(node.kind))
@@ -447,7 +459,7 @@ class BranchWorkflowWindow(QMainWindow):
         summaries[self.spec.node("for_each").id]=f"{len(self.spec.node('for_each').params.get('items',[]))} data file(s)"
         summaries[route.id]=f"{len(route.params['routes'])} exclusive route(s)"
         summaries[self.spec.node("batch_sequence").id]="Across all files · reserves exceptions"
-        for identity,path in plan.branches.items():
+        for identity,path in plan.branches.items() if plan else []:
             name=next(r["name"] for r in route.params["routes"] if r["id"]==identity)
             for node in path:
                 summaries[node.id]=name+(" · "+Path(node.params.get("path","")).name if node.kind=="template" else "")
@@ -457,7 +469,9 @@ class BranchWorkflowWindow(QMainWindow):
     def step_selected(self,index):
         item=self.steps.item(index)
         if item:
-            self.select_node(item.data(Qt.ItemDataRole.UserRole))
+            identity=item.data(Qt.ItemDataRole.UserRole)
+            self.select_node(identity)
+            self.canvas.ensureVisible(self.canvas.nodes[identity])
 
     def fields(self):
         return list(dict.fromkeys([self.spec.node("batch_sequence").params.get("name","WorkflowSeq"),
@@ -497,7 +511,10 @@ class BranchWorkflowWindow(QMainWindow):
         widget=QWidget()
         layout=QVBoxLayout(widget)
         heading=QLabel(LABELS[node.kind])
-        heading.setStyleSheet("font-weight:600; font-size:15px")
+        font=heading.font()
+        font.setBold(True)
+        font.setPointSizeF(11)
+        heading.setFont(font)
         layout.addWidget(heading)
         text=QLabel(description(node.kind))
         text.setWordWrap(True)
@@ -506,7 +523,7 @@ class BranchWorkflowWindow(QMainWindow):
             return copy.deepcopy(node.params)
         if node.kind=="for_each":
             self.source_table,self.source_model=table(widget)
-            self.source_model.update(node.params.get("items",[]),["id","path"])
+            self.source_model.update([{**item,"file":Path(item["path"]).name} for item in node.params.get("items",[])],["file","path"])
             self.source_table.setMinimumHeight(160)
             layout.addWidget(self.source_table)
             for label,callback in (("Add data files…",self.add_sources),("Add folder snapshot…",self.add_folder),
@@ -605,7 +622,7 @@ class BranchWorkflowWindow(QMainWindow):
             button.clicked.connect(lambda:self.configure_media(node.id))
             layout.addWidget(button)
         elif node.kind=="compose":
-            repair=QCheckBox("Repair missing glyphs and report substitutions")
+            repair=QCheckBox("Automatic glyph repair")
             repair.setChecked(node.params.get("auto_repair",True))
             layout.addWidget(repair)
             def getter():
@@ -747,7 +764,8 @@ class BranchWorkflowWindow(QMainWindow):
         from composition.designer.data_dialog import DataDialog
         new=copy.deepcopy(self.spec)
         item=new.node("for_each").params["items"][selected[0]]
-        dialog=DataDialog(item["path"],self.directory,self,DataConfig(path=item["path"],**item.get("options",{})))
+        dialog=DataDialog(item["path"],self.directory,self,
+                          DataConfig(path=item["path"],**item["options"]) if item.get("options") else None)
         if dialog.exec():
             item["options"]=asdict(dialog.config())
             item["options"].pop("path",None)
@@ -835,7 +853,12 @@ class BranchWorkflowWindow(QMainWindow):
         new.node("collect").x=x+1150
         new.node("collect").y=150
         self.edit(new,"Arrange branch graph")
-        self.canvas.fit()
+
+    def start_view(self):
+        from PyQt6.QtCore import QPointF
+        self.canvas.resetTransform()
+        self.canvas.scale(.75,.75)
+        self.canvas.centerOn(self.canvas.nodes[self.spec.nodes[0].id].pos()+QPointF(350,120))
 
     def move_node(self,identity,x,y):
         if not self.flush_settings():
@@ -847,7 +870,10 @@ class BranchWorkflowWindow(QMainWindow):
 
     def branch_id(self,node_id=None):
         identity=node_id or self.selected
-        plan=self.spec.execution_plan(self.spec.node("route").id)
+        try:
+            plan=self.spec.execution_plan(self.spec.node("route").id)
+        except ValueError:
+            return ""
         return next((key for key,path in plan.branches.items() if any(n.id==identity for n in path)),
                     "exceptions" if self.spec.node("exceptions").id==identity else "")
 
@@ -882,7 +908,7 @@ class BranchWorkflowWindow(QMainWindow):
         self.check(None)
 
     def check(self,target):
-        if not self.flush_settings():
+        if not self.flush_settings() or not self.templates_saved():
             return
         try:
             self.spec.execution_plan(target)
@@ -910,7 +936,8 @@ class BranchWorkflowWindow(QMainWindow):
                              f"Input {self.run.get('input',0):,} = excluded {self.run.get('excluded',0):,} + candidates {self.run.get('candidates',0):,}\n"
                              f"Candidates = routed {self.run.get('routed',0):,} + exceptions {self.run.get('exceptions',0):,}"+
                              "\n"+"\n".join(f"Blocked source: {Path(s['path']).name} · {s['error']}" for s in self.run.get("sources",[]) if s["status"]=="Blocked"))
-        self.production_summary.setText(self.summary.text()+"\n"+self.run.get("report_dir",""))
+        self.production_summary.setText(self.summary.text()+f"\nPublished {self.run.get('published_records',0):,} · "
+                                       f"Unpublished {self.run.get('unpublished_records',self.run.get('routed',0)):,}\n"+self.run.get("report_dir",""))
         for page in (self.input_page,self.output_page,self.issue_page):
             combo=page.controls["source"]
             previous=combo.currentData()
@@ -1015,6 +1042,8 @@ class BranchWorkflowWindow(QMainWindow):
             self.compact.setCurrentWidget(self.details)
 
     def approve(self,all_checked):
+        if not self.templates_saved():
+            return
         if self.draft_error or self.run.get("stale"):
             self.error("Apply edits and check the entire workflow before approval.")
             return
@@ -1030,6 +1059,8 @@ class BranchWorkflowWindow(QMainWindow):
         self.refresh_results()
 
     def generate(self):
+        if not self.templates_saved():
+            return
         if self.draft_error or self.run.get("stale") or not any(j["approved"] and j["status"]=="Ready" for j in self.run.get("jobs",[])):
             self.error("Check, review and explicitly approve the branches before production.")
             return
@@ -1039,6 +1070,9 @@ class BranchWorkflowWindow(QMainWindow):
             self.request({"operation":"branch_run","output_dir":output},self.receive_run)
 
     def preview_job(self):
+        if self.run.get("stale") or self.draft_error or not self.templates_saved():
+            self.message("Apply edits, save open templates and recheck before previewing.")
+            return
         jobs=self.selected_jobs()
         if len(jobs)!=1 or not jobs[0].get("batch"):
             self.message("Select one checked source/template branch to preview.")
@@ -1061,6 +1095,19 @@ class BranchWorkflowWindow(QMainWindow):
             dialog.exec()
         self.request({"operation":"branch_preview","job_id":jobs[0]["id"],"record":self.preview_record.value(),
                       "page":self.preview_page.value(),"target":str(target)},ready)
+
+    def templates_saved(self):
+        if not self.project_host:
+            return True
+        paths={self.project_host.identity(n.params["path"]) for n in self.spec.nodes if n.kind=="template" and n.params.get("path")}
+        for project in self.project_host.projects:
+            if project is self or not project.project_path or self.project_host.identity(project.project_path) not in paths:
+                continue
+            if (self.project_host.is_busy(project) or project.properties.apply() is False or not project.undo.isClean()
+                    or getattr(project,"content_invalid",False)):
+                self.message("Save the open letter template and finish its tasks before checking/running this workflow.")
+                return False
+        return True
 
     def open_output(self):
         jobs=self.selected_jobs(self.production_view)
@@ -1172,7 +1219,7 @@ class BranchWorkflowWindow(QMainWindow):
             self.undo.clear()
             self.undo.setClean()
             self.title()
-            self.canvas.fit()
+            self.start_view()
         self.request({"operation":"load","path":str(path)},ready)
 
     def save_project(self,checked=False,*,save_as=False,path=None,after=None):
@@ -1220,16 +1267,17 @@ class BranchWorkflowWindow(QMainWindow):
         if not hasattr(self,"compact"):
             return
         narrow=self.width()<1100
-        if narrow and not self.compact.isVisible():
+        if narrow and self.compact.isHidden():
+            self.wide_sizes=self.splitter.sizes()
             for title,widget in (("Steps",self.steps),("Canvas",self.canvas),("Details",self.details)):
                 self.compact.addTab(widget,title)
             self.compact.setCurrentWidget(self.canvas)
             self.splitter.hide()
             self.compact.show()
-        elif not narrow and self.compact.isVisible():
+        elif not narrow and not self.compact.isHidden():
             for widget in (self.steps,self.canvas,self.details):
                 self.splitter.addWidget(widget)
-            self.splitter.setSizes([170,650,360])
+            self.splitter.setSizes(getattr(self,"wide_sizes",[170,650,360]))
             self.compact.hide()
             self.splitter.show()
 

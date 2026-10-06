@@ -1,4 +1,5 @@
 import copy
+import csv
 import json
 from pathlib import Path
 
@@ -51,7 +52,12 @@ def test_three_files_two_templates_sequence_reconciliation_and_real_generation(t
             pages+=len(pdf)
             assert "Customer" in pdf[0].get_text()
     assert pages==18
+    assert completed["published_records"]==12 and completed["unpublished_records"]==0
     assert Path(completed["report_dir"],"record-reconciliation.csv").is_file()
+    with Path(completed["report_dir"],"record-reconciliation.csv").open(encoding="utf-8-sig",newline="") as stream:
+        mapping=list(csv.DictReader(stream))
+    assert len(mapping)==12 and all(Path(r["output_pdf"]).is_file() for r in mapping)
+    assert set(int(r["last_output_page"])-int(r["first_output_page"])+1 for r in mapping)=={1,2}
     rerun=prepare_routes(model,tmp_path/"workspace",previous=completed)
     assert all(j["status"]=="Completed" for j in rerun["jobs"])
 
@@ -75,7 +81,7 @@ def test_unmatched_ambiguous_and_invalid_rows_require_acknowledgement(tmp_path):
     assert completed["status"]=="Completed with exceptions"
     exception_rows=rows(model,run,tmp_path/"workspace",branch_id="exceptions")
     assert [r["sequence"] for r in exception_rows["rows"]]==["000002","000003"]
-    assert "printed" in Path(completed["report_dir"],"record-reconciliation.csv").read_text(encoding="utf-8-sig")
+    assert "published" in Path(completed["report_dir"],"record-reconciliation.csv").read_text(encoding="utf-8-sig")
     model=copy.deepcopy(model)
     model=add_route(model,"Duplicate A",{"conditions":[{"field":"Scheme","operator":"eq","value":"A"}]})
     run=prepare_routes(model,tmp_path/"workspace")
@@ -128,3 +134,108 @@ def test_results_are_paged_without_loading_all_records(tmp_path):
     assert result["total"]==375 and len(result["rows"])==50
     assert result["rows"][0]["source_record"]==51
     assert json.loads(Path(run["directory"],"run.json").read_text())["routed"]==375
+
+
+def test_cross_file_unique_validation_and_attributed_step_issues(tmp_path):
+    model=fixture(tmp_path)
+    source=Path(model.node("for_each").params["items"][1]["path"])
+    source.write_text(source.read_text().replace("Customer 1-0","Customer 0-0"),encoding="utf-8")
+    seq=model.node("batch_sequence")
+    route=model.node("route")
+    first=WorkflowNode("validate_data",params={"checks":[{"field":"Scheme","check":"required"}]})
+    second=WorkflowNode("validate_data",params={"checks":[{"field":"Name","check":"unique"}]})
+    model.nodes.extend((first,second))
+    model.edges=[e for e in model.edges if e["source"]!=seq.id]+[edge(seq.id,first.id),edge(first.id,second.id),edge(second.id,route.id)]
+    run=prepare_routes(model,tmp_path/"work")
+    assert run["exceptions"]==2 and run["routed"]==10
+    assert rows(model,run,tmp_path/"work",view="issues",node_id=first.id)["total"]==0
+    issues=rows(model,run,tmp_path/"work",view="issues",node_id=second.id)
+    assert issues["total"]==2 and all(r["node_id"]==second.id for r in issues["rows"])
+    partial=prepare_routes(model,tmp_path/"work",target_id=second.id)
+    assert rows(model,partial,tmp_path/"work",view="issues",node_id=second.id)["total"]==2
+
+
+def test_mapping_sort_filter_sequence_evidence_preserves_source_identity(tmp_path):
+    model=fixture(tmp_path)
+    model.node("mapping").params={"aliases":{"Name":"Customer"}}
+    # Templates reference aliases; data import remains unchanged.
+    for path in model.execution_plan().branches.values():
+        file=Path(path[0].params["path"])
+        file.write_text(file.read_text().replace("{{Name}}","{{Customer}}"),encoding="utf-8")
+    mapping=model.node("mapping")
+    seq=model.node("batch_sequence")
+    sort=WorkflowNode("sort_records",params={"keys":[{"field":"Customer","descending":True}]})
+    filtered=WorkflowNode("filter_records",params={"conditions":[{"field":"Scheme","operator":"eq","value":"B"}]})
+    model.nodes.extend((sort,filtered))
+    model.edges=[e for e in model.edges if e["source"]!=mapping.id]+[edge(mapping.id,sort.id),edge(sort.id,filtered.id),edge(filtered.id,seq.id)]
+    model.node("for_each").params["items"][0]["id"]="z_first"
+    run=prepare_routes(model,tmp_path/"work")
+    assert (run["input"],run["excluded"],run["candidates"],run["routed"])==(12,6,6,6)
+    before=rows(model,run,tmp_path/"work",node_id=mapping.id,view="input")
+    after=rows(model,run,tmp_path/"work",node_id=mapping.id,view="output")
+    assert "Name" in before["fields"] and "Customer" in after["fields"]
+    evidence=rows(model,run,tmp_path/"work")
+    assert evidence["rows"][0]["source_id"]=="z_first" and evidence["rows"][0]["source_record"]==4
+    assert [r["sequence"] for r in evidence["rows"]]==[f"{i:06d}" for i in range(1,7)]
+    result=rows(model,run,tmp_path/"work",node_id=sort.id,search="Customer 0-3")
+    assert result["total"]==1 and result["rows"][0]["source_record"]==4
+
+
+def test_check_source_with_disconnected_downstream_and_blocked_file(tmp_path):
+    model=fixture(tmp_path)
+    root=model.node("for_each")
+    model.edges=[e for e in model.edges if e["source"]!=root.id]
+    run=prepare_routes(model,tmp_path/"work",target_id=root.id)
+    assert run["input"]==12 and not run["jobs"]
+    assert rows(model,run,tmp_path/"work",node_id=root.id)["total"]==12
+    model=fixture(tmp_path)
+    Path(model.node("for_each").params["items"][1]["path"]).unlink()
+    run=prepare_routes(model,tmp_path/"work")
+    assert run["sources"][1]["status"]=="Blocked"
+    with pytest.raises(CompositionError,match="Acknowledge"):
+        approve_routes(model,run,[j["id"] for j in run["jobs"]])
+
+
+def test_completed_branches_retained_after_other_branch_template_edit(tmp_path):
+    model=fixture(tmp_path)
+    run=prepare_routes(model,tmp_path/"work")
+    approve_routes(model,run,[j["id"] for j in run["jobs"]])
+    run=execute_routes(model,run,tmp_path/"work",tmp_path/"output")
+    branches=model.execution_plan().branches
+    second=list(branches)[1]
+    template_file=Path(branches[second][0].params["path"])
+    template_file.write_text(template_file.read_text().replace("Second page","Edited page"),encoding="utf-8")
+    checked=prepare_routes(model,tmp_path/"work",previous=run)
+    assert all(j["status"]==("Needs review" if j["branch_id"]==second else "Completed") for j in checked["jobs"])
+
+
+def test_critical_font_error_blocks_only_affected_child_and_locates_record(tmp_path):
+    model=fixture(tmp_path)
+    first=Path(model.node("for_each").params["items"][0]["path"])
+    first.write_text(first.read_text().replace("Customer 0-0","田"),encoding="utf-8")
+    model.node("compose").params["auto_repair"]=False
+    run=prepare_routes(model,tmp_path/"work")
+    assert run["jobs"][0]["status"]=="Blocked" and "U+7530" in run["jobs"][0]["error"]
+    assert all(j["status"]=="Needs review" for j in run["jobs"][1:])
+    issues=rows(model,run,tmp_path/"work",view="issues",branch_id="letters")
+    assert issues["rows"][0]["source_record"]==1
+    assert issues["rows"][0]["node_id"]==model.node("compose").id
+    with pytest.raises(CompositionError,match="Acknowledge"):
+        approve_routes(model,run,[j["id"] for j in run["jobs"]])
+
+
+def test_cancel_production_retains_first_output_and_manually_continues(tmp_path):
+    model=fixture(tmp_path)
+    run=prepare_routes(model,tmp_path/"work")
+    approve_routes(model,run,[j["id"] for j in run["jobs"]])
+    stopped=False
+    def state(value):
+        nonlocal stopped
+        if value.get("branch_job"):
+            stopped=True
+    cancelled=execute_routes(model,run,tmp_path/"work",tmp_path/"output",is_cancelled=lambda:stopped,on_state=state)
+    assert cancelled["status"]=="Cancelled" and cancelled["jobs"][0]["status"]=="Completed"
+    first_pdf=Path(cancelled["jobs"][0]["batch"]["jobs"][0]["result"]["output_pdf"])
+    first_content=first_pdf.read_bytes()
+    completed=execute_routes(model,cancelled,tmp_path/"work",tmp_path/"output")
+    assert completed["status"]=="Completed" and first_pdf.read_bytes()==first_content
