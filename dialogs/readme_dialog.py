@@ -258,6 +258,14 @@ production workflows.
   follow zoom, scrolling and page rotation, and disappear when leaving the tool.
   Ruler coordinates start at the displayed page's top-left. They show paper size;
   calibrated distances remain on measurement lines. Rulers are not saved to PDF.
+  Drag from the top/left ruler to add horizontal/vertical reference guides.
+  Alt+drag moves an existing guide; drop outside the page to remove it, or press
+  Esc to cancel. Right-click a guide to set its exact position or remove it.
+  Click the ruler corner or right-click a ruler to show/hide guides, clear the
+  page, or toggle snapping. Measurement endpoints snap within 8 screen pixels
+  to guides/page edges; hold Alt to bypass snapping and Shift to constrain axes.
+  Guides remain in the current workspace and are cleared on document reload;
+  they are never written to PDF or added to PDF Undo/Redo history.
   Calibrate page scale and save measurement lines as PDF annotations.
 * **Inspector / Preflight:** Check fonts, images, page boxes and production
   warnings; jump to affected pages and export findings.

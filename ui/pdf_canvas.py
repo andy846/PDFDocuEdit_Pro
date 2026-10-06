@@ -338,6 +338,7 @@ class PdfCanvas(QScrollArea):
 
     # --- document lifecycle ----------------------------------------------
     def load_doc(self, doc: fitz.Document, zoom: float = 1.0) -> None:
+        self.rulers.clear_guides()
         self._doc = doc
         self._measurements.clear()
         self._selected_measurement = None
@@ -388,6 +389,7 @@ class PdfCanvas(QScrollArea):
         self._font_inspection = None
         self._teardown_views()
         self._pager.setFixedSize(QSize(0, 0))
+        self.rulers.clear_guides()
         self.rulers.reset_pointer()
 
     def wait_for_renders(self, timeout_ms: int = 3000) -> None:
@@ -1143,6 +1145,7 @@ class PdfCanvas(QScrollArea):
 
     # --- layout engine ---------------------------------------------------
     def _teardown_views(self) -> None:
+        self.rulers.cancel_guide()
         for view in self._page_views.values():
             view.setParent(None)
             view.deleteLater()
@@ -1284,6 +1287,8 @@ class PdfCanvas(QScrollArea):
         focused = set(self._visible_pages(buffer_pages=0))
         for page_num in list(self._page_views):
             if page_num not in needed:
+                if self.rulers.guide_drag is not None and self.rulers.guide_drag["page"] == page_num:
+                    self.rulers.cancel_guide()
                 view = self._page_views.pop(page_num)
                 view.setParent(None)
                 view.deleteLater()

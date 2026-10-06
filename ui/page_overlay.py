@@ -193,6 +193,8 @@ class PageOverlay(QWidget):
         self._measure_endpoint: fitz.Point | None = None
         self._measure_press_pos: QPointF | None = None
         self._measure_press_dragged = False
+        self._reference_guides = ()
+        self._measure_snapper = None
         self._measurements: list[tuple[tuple[float, float], tuple[float, float]]] = []
         self._selected_measurement: int | None = None
         self._measure_unit = "mm"
@@ -588,6 +590,14 @@ class PageOverlay(QWidget):
                     painter.setBrush(handle)
                     painter.drawEllipse(start, handle_radius, handle_radius)
                     painter.drawEllipse(end, handle_radius, handle_radius)
+        if self._reference_guides:
+            painter.save()
+            pen = QPen(QColor(colors["accent_cyan"]), 1, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            for first, last in self._reference_guides:
+                painter.drawLine(self.pdf_point_to_widget(first), self.pdf_point_to_widget(last))
+            painter.restore()
         self._paint_measurements(painter, colors)
         self._paint_selected_annotation(painter, colors)
         painter.end()
@@ -692,12 +702,17 @@ class PageOverlay(QWidget):
 
     def _measure_point(self, position, modifiers, anchor=None):
         position = QPointF(position)
+        fixed_axis = None
         if anchor is not None and modifiers & Qt.KeyboardModifier.ShiftModifier:
             fixed = self.pdf_point_to_widget(anchor)
             if abs(position.x()-fixed.x()) >= abs(position.y()-fixed.y()):
                 position.setY(fixed.y())
+                fixed_axis = "y"
             else:
                 position.setX(fixed.x())
+                fixed_axis = "x"
+        if self._measure_snapper is not None:
+            position = self._measure_snapper(self, position, modifiers, fixed_axis)
         return self._bounded_pdf_point(position)
 
     def _move_measure_endpoint(self, position, modifiers):
