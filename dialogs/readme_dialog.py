@@ -251,7 +251,9 @@ production workflows.
   preview and combine them. Open the merged PDF or send it directly to Designer;
   the PDF tool sidebar remains available.
 * **PDF Ruler:** Measure page distances in mm/cm with zoom-independent results,
-  fine crosshair endpoints and a generous endpoint drag area. Activating Measure
+  short dimension ticks and a generous endpoint drag area. Drag and release to
+  measure, or click two points. Endpoint drags preserve the grab offset;
+  hold Shift for horizontal/vertical alignment. Activating Measure
   shows top/left paper rulers with cursor markers and a reference page; rulers
   follow zoom, scrolling and page rotation, and disappear when leaving the tool.
   Ruler coordinates start at the displayed page's top-left. They show paper size;

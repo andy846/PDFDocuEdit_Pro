@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSizeF, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSizeF, Qt, QTimer
 from PyQt6.QtGui import QFontMetricsF, QPainter, QPen
 from PyQt6.QtWidgets import QLabel, QWidget
 
@@ -36,6 +36,15 @@ class PaperRuler(QWidget):
     def position_mm(self, position):
         axis = self.axis()
         return None if axis is None else (position-axis[0])/axis[1]
+
+    def update_marker(self, before, after):
+        for point in (before, after):
+            if point is not None:
+                position = round(point.x() if self.horizontal else point.y())
+                if self.horizontal:
+                    self.update(position-2, 0, 5, self.height())
+                else:
+                    self.update(0, position-2, self.width(), 5)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -97,6 +106,11 @@ class PdfRulers(QObject):
         self.pointer = None
         self.reference_page = None
         self.state = None
+        self._pending_pointer = None
+        self.pointer_timer = QTimer(self)
+        self.pointer_timer.setSingleShot(True)
+        self.pointer_timer.setInterval(16)
+        self.pointer_timer.timeout.connect(self.flush_pointer)
         self.horizontal = PaperRuler(self, True)
         self.vertical = PaperRuler(self, False)
         self.corner = QLabel(canvas)
@@ -116,14 +130,31 @@ class PdfRulers(QObject):
         overlay.installEventFilter(self)
 
     def reset_pointer(self, *_):
+        self.pointer_timer.stop()
+        self._pending_pointer = None
         self.pointer = None
         self.refresh()
+
+    def flush_pointer(self):
+        if not self.enabled:
+            return
+        before = self.pointer
+        self.pointer = self._pending_pointer
+        if (self.state is not None and self.pointer is not None
+                and self.state[0].contains(QPointF(self.pointer))):
+            # Same page: paint only old/new cursor strips. No geometry or labels.
+            self.horizontal.update_marker(before, self.pointer)
+            self.vertical.update_marker(before, self.pointer)
+        else:
+            self.refresh()
 
     def set_enabled(self, enabled):
         if self.enabled == enabled:
             return
         anchor = self.canvas._view_anchor()
         self.enabled = enabled
+        self.pointer_timer.stop()
+        self._pending_pointer = None
         self.pointer = None
         self.canvas._ruler_view_anchor = anchor if self.canvas._doc is not None else None
         self.canvas.setViewportMargins(self.LEFT if enabled else 0, self.TOP if enabled else 0, 0, 0)
@@ -179,8 +210,9 @@ class PdfRulers(QObject):
     def eventFilter(self, obj, event):
         if self.enabled:
             if event.type() == QEvent.Type.MouseMove:
-                self.pointer = obj.mapTo(self.canvas.viewport(), event.position().toPoint())
-                self.refresh()
+                self._pending_pointer = obj.mapTo(self.canvas.viewport(), event.position().toPoint())
+                if not self.pointer_timer.isActive():
+                    self.pointer_timer.start()
             elif event.type() == QEvent.Type.Leave:
                 self.reset_pointer()
             elif event.type() == QEvent.Type.Resize:

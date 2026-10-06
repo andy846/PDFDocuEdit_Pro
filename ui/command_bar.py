@@ -120,7 +120,7 @@ class CommandBar(QWidget):
             ("hand", "hand", "Hand tool — drag to pan"),
             ("select", "text-cursor", "Select text"),
             ("magnifier", "search", "Magnifier"),
-            ("measure", "line-tool", "Measure PDF paper distance (mm/cm): click two points"),
+            ("measure", "line-tool", "Measure PDF paper distance (mm/cm): drag or click two points; Shift keeps horizontal/vertical"),
         ):
             button = self._button(
                 icon_name,

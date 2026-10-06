@@ -2280,7 +2280,7 @@ class PDFViewer(QMainWindow):
         self._set_canvas_tool("measure")
         canvas.begin_calibration(canvas.current_page)
         self.info_bar.show_message(
-            "Click two points of a known length on this page.", "info"
+            "Drag a reference line or click two points of a known length on this page.", "info"
         )
 
     def _calibrate_from_reference(self, session: DocumentSession, canvas,

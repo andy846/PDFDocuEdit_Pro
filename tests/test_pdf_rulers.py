@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import fitz
 import pytest
-from PyQt6.QtCore import QPoint, QPointF
-from PyQt6.QtGui import QColor, QImage, QPainter
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication
 
 from core.measurement import set_page_scale
 from ui.page_overlay import PageOverlay
@@ -75,7 +76,10 @@ def test_hover_reference_scroll_and_exit_fallback(canvas, layout):
     try:
         target = 1 if layout == LayoutMode.FACING else 0
         overlay = canvas._page_views[target].overlay
-        QTest.mouseMove(overlay, QPoint(80, 80))
+        QApplication.sendEvent(overlay, QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(80, 80), QPointF(overlay.mapToGlobal(QPoint(80, 80))),
+            Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+        QTest.qWait(50)
         assert canvas.rulers.reference_page == target
         assert canvas.rulers.pointer is not None
         rect = canvas.rulers.state[0]
@@ -134,13 +138,17 @@ def test_empty_clear_reload_and_mouse_do_not_request_pdf_renders(canvas, monkeyp
     canvas.load_doc(doc)
     settle()
     try:
-        def no_render(*_):
-            pytest.fail("A ruler-only update requested PDF rendering")
-        monkeypatch.setattr(canvas, "_request_render", no_render)
+        # Drain initial layout before isolating cursor/unit-only updates.
+        canvas._resize_timer.stop()
+        canvas._apply_pending_relayout()
+        requests = []
+        monkeypatch.setattr(canvas, "_request_render", lambda *args: requests.append(args))
         for point in (QPoint(30, 40), QPoint(50, 60), QPoint(100, 80)):
             QTest.mouseMove(canvas._page_views[0].overlay, point)
             canvas.rulers.horizontal.grab()
         canvas.set_measure_unit("cm")
+        QTest.qWait(50)
+        assert requests == []
         canvas.clear()
         assert canvas.rulers.state is None and canvas.rulers.reference_page is None
         canvas.set_tool_mode(ToolMode.BROWSE)
@@ -149,7 +157,7 @@ def test_empty_clear_reload_and_mouse_do_not_request_pdf_renders(canvas, monkeyp
         doc.close()
 
 
-def test_endpoint_crosshair_is_fine_and_hit_radius_is_unchanged(qt_application):
+def test_endpoint_tick_is_fine_and_hit_radius_is_unchanged(qt_application):
     image = QImage(80, 80, QImage.Format.Format_ARGB32)
     image.fill(QColor("white"))
     painter = QPainter(image)
@@ -165,7 +173,7 @@ def test_endpoint_crosshair_is_fine_and_hit_radius_is_unchanged(qt_application):
 
 
 @pytest.mark.parametrize("subject,count", [("Measurement", 2), ("", 0)])
-def test_saved_measurement_annotation_uses_crosshairs_only(qt_application, monkeypatch, subject, count):
+def test_saved_measurement_annotation_uses_precision_ticks_only(qt_application, monkeypatch, subject, count):
     overlay = PageOverlay(0)
     overlay.set_geometry_info(fitz.Rect(0, 0, 100, 100), 1)
     overlay.set_annotations([{"kind": "Line", "subject": subject, "xref": 10,
