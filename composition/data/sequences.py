@@ -52,6 +52,8 @@ def sequence_value(seq, ordinal, page_index=0, pages_per_record=1):
 
 
 def sequence_record(template, record, ordinal, page_index=0, *, design=False):
+    from composition.engine.barcode_profiles import profile_record
+    record = profile_record(template, record, ordinal, page_index)
     if not template.sequences:
         return record
     values = dict(record)

@@ -74,6 +74,9 @@ class OverlayRenderer:
             if not selected.visible:
                 continue
             check_object_bounds(element, geometry)
+            if obj.profile and obj.profile.preset == "inserter_i25_18":
+                from composition.engine.inserter_production import validate_size
+                validate_size(element, selected.value)
             visible.append((element,obj,selected))
             if obj.control:
                 controls.append(element)
@@ -98,6 +101,9 @@ class OverlayRenderer:
                               "profile": obj.profile.name, "payload": value.value,
                               "rotation_deg": element.rotation_deg,
                               "rect": [value*MM_TO_PT for value in element_bounds(element)]})
+                if obj.profile.preset == "inserter_i25_18":
+                    marks[-1]["parts"] = obj.profile.inserter_parts(fields)
+                    marks[-1]["sheet"] = int(fields["SheetNo"])
         return layer.number, marks
 
     @staticmethod

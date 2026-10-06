@@ -67,6 +67,9 @@ class JobResult:
     font_scan: dict = field(default_factory=dict)
     auto_repair: bool = False
     media_summary: dict = field(default_factory=dict)
+    expected_barcodes: int = 0
+    rendered_barcodes: int = 0
+    decoded_barcodes: int = 0
 
     def to_dict(self):
         return asdict(self)

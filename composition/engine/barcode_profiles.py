@@ -180,10 +180,35 @@ class BarcodeProfile:
 
 
 def has_profiles(template):
-    return any(element.barcode_profile for element in template.all_elements())
+    cached = getattr(template, "_has_barcode_profiles", None)
+    return cached if cached is not None else any(element.barcode_profile for element in template.all_elements())
 
 
 def has_inserter(template):
-    return any(element.barcode_profile.get("preset") == INSERTER_I25 for element in template.all_elements())
+    cached = getattr(template, "_has_inserter_profiles", None)
+    return cached if cached is not None else any(element.barcode_profile.get("preset") == INSERTER_I25 for element in template.all_elements())
+
+
+def profile_record(template, record, ordinal, page_index):
+    """Attach physical context to a copy; never overwrite imported field values."""
+    if not has_profiles(template):
+        return record
+    from composition.media.planner import build_print_plan
+    key = repr((template.media, [(p.id, p.width_mm, p.height_mm) for p in template.pages]))
+    if getattr(template, "_barcode_context_key", None) != key:
+        plan = build_print_plan(template, 1)
+        contexts = {p.role: p.fields() for p in plan.pages() if p.source_page is not None}
+        template._barcode_contexts = contexts
+        template._barcode_output_count = plan.output_pages
+        template._barcode_context_key = key
+    context = dict(template._barcode_contexts[page_index])
+    context.update(EnvelopeIndex=str(ordinal), EnvelopeSeq=str(ordinal).zfill(18),
+                   OutputPage=str(int(context["OutputPage"])+(ordinal-1)*template._barcode_output_count))
+    return {**record, **{"__Barcode"+k: v for k, v in context.items()}}
+
+
+def profile_values(record):
+    return {**record, **{key[len("__Barcode"):]: value for key, value in record.items()
+                        if key.startswith("__Barcode")}}
 
 

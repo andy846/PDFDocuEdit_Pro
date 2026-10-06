@@ -186,7 +186,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             with (staging/"barcodes.csv").open("w",encoding="utf-8-sig",newline="") as stream, (staging/"barcodes.jsonl").open("w",encoding="utf-8") as audit:
                 qc_envelope=None
                 writer=csv.writer(stream)
-                row(writer,["Output page","Source page","Envelope","Object","Symbology","Profile","Payload","QC"])
+                row(writer,["Output page","Source page","Envelope","Object","Symbology","Profile","Payload","QC",
+                            "Sheet", "Group sequence", "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit"])
                 for raw in marks:
                     check_cancel(is_cancelled)
                     mark=json.loads(raw)
@@ -197,8 +198,10 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                     check_mark(document[mark["output_page"]-1],mark)
                     result.decoded_barcodes+=1
                     audit.write(json.dumps({**mark,"qc":"decoded_exact"},ensure_ascii=False)+"\n")
+                    parts = mark.get("parts", {})
                     row(writer,[mark["output_page"],mark["source_page"] or "",mark["envelope"],mark["object"],
-                                mark["symbology"],mark["profile"],mark["payload"],"Decoded: exact match"])
+                                mark["symbology"],mark["profile"],mark["payload"],"Decoded: exact match", mark.get("sheet", ""),
+                                parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", "")])
                     if progress and result.decoded_barcodes%100==0:
                         progress(result.decoded_barcodes,result.expected_barcodes,f"Barcode QC {result.decoded_barcodes:,}/{result.expected_barcodes:,}")
                 # The assembled PDF has passed output validation and all existing marks

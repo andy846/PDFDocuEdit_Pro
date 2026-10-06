@@ -39,6 +39,8 @@ def check_cancel(is_cancelled):
 
 
 def reconcile(result: JobResult) -> None:
+    if not result.expected_barcodes == result.rendered_barcodes == result.decoded_barcodes:
+        raise CompositionError("RECONCILIATION FAILED: barcode counts do not agree.")
     if not (
         result.input_records == result.processed_records == result.successful_records
         and result.failed_records == 0
@@ -193,6 +195,7 @@ def generate(
     result = JobResult(job.job_id, pages_per_record=len(template.pages), auto_repair=job.auto_repair)
     store = None
     media_plan = None
+    marks_stream = None
     current_record = None
     chunk = None
     chunks = []
@@ -202,6 +205,17 @@ def generate(
         result.warnings.extend(store.metadata.get("warnings", []))
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)
+        from composition.engine.barcode_profiles import has_inserter, has_profiles
+        profile_plan = None
+        if has_profiles(template):
+            from composition.media.planner import build_print_plan
+            profile_plan = build_print_plan(template, store.count, is_cancelled=is_cancelled)
+            result.pages_per_record = profile_plan.settings_for(1).output_pages_per_envelope
+            result.expected_pages = profile_plan.output_pages
+        if has_inserter(template):
+            from composition.engine.inserter_production import preflight
+            result.expected_barcodes = preflight(template, store.records(), profile_plan, is_cancelled, progress)
+            marks_stream = (staging/"inserter-marks.jsonl").open("w", encoding="utf-8")
         if template.media.get("enabled"):
             from composition.media.planner import build_print_plan
             media_plan=build_print_plan(template,store.count,is_cancelled=is_cancelled)
@@ -241,6 +255,10 @@ def generate(
                 current_record = ordinal
                 try:
                     renderer.render(chunk, record, ordinal, is_cancelled=is_cancelled)
+                    if marks_stream is not None:
+                        for mark in renderer.barcode_marks:
+                            marks_stream.write(json.dumps(mark, ensure_ascii=False)+"\n")
+                            result.rendered_barcodes += 1
                 except Exception:
                     if is_cancelled and is_cancelled():
                         raise JobCancelled("Production cancelled between template pages.") from None
@@ -275,6 +293,14 @@ def generate(
             path.unlink()
         check_cancel(is_cancelled)
         validate_pdf_file(pdf, expected_page_count=result.expected_pages)
+        if marks_stream is not None:
+            marks_stream.close()
+            marks_stream = None
+            from composition.engine.inserter_production import audit_pdf
+            result.decoded_barcodes = audit_pdf(pdf, staging/"inserter-marks.jsonl", staging/"barcodes.csv",
+                is_cancelled=is_cancelled, progress=progress, expected=result.expected_barcodes)
+            if result.rendered_barcodes != result.expected_barcodes:
+                raise CompositionError("RECONCILIATION FAILED: rendered inserter barcode count differs.")
         with fitz.open(pdf) as checked:
             result.generated_pages = checked.page_count
         result.generated_files = 1
@@ -313,6 +339,13 @@ def generate(
         os.rename(staging, final)
         return result
     except Exception as exc:
+        from composition.engine.inserter_production import BarcodeRecordError
+        if marks_stream is not None:
+            marks_stream.close()
+            marks_stream = None
+        if isinstance(exc, BarcodeRecordError):
+            result.error_record = exc.record_ordinal
+            result.failed_records = 1
         if chunk is not None:
             chunk.close()
             chunk = None
@@ -363,6 +396,8 @@ def generate(
             result.warnings.append(f"Unable to publish diagnostic reports: {report_error}")
         return result
     finally:
+        if marks_stream is not None:
+            marks_stream.close()
         if staging.exists():
             resolved = staging.resolve()
             if resolved.parent != output_root or not resolved.name.startswith(f".{job.job_id}-"):

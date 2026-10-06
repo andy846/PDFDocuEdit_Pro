@@ -169,7 +169,9 @@ class ElementPlan:
     def __init__(self, element):
         validate_rules(element)
         self.element = element
-        self.tokens = parse_value(element.value) if element.type in ("text", "qr", "code128", "i25") else ()
+        from .barcode_profiles import BarcodeProfile
+        self.profile = BarcodeProfile.from_dict(element.barcode_profile) if element.barcode_profile else None
+        self.tokens = parse_value(element.value) if element.type in ("text", "qr", "code128", "i25") and not self.profile else ()
         self.alternative_tokens = (
             parse_value(element.rules.alternative.value)
             if element.rules.alternative and element.type != "image"
@@ -182,9 +184,16 @@ class ElementPlan:
         self.fields = rule_fields(element.rules) | {
             value for kind, value in self.tokens + self.alternative_tokens if kind == "field"
         }
+        if self.profile:
+            from composition.pdf_source.planner import SYSTEM_FIELDS
+            self.fields.update(self.profile.fields()-SYSTEM_FIELDS)
         self.has_rules = self.visibility is not None or self.alternative is not None
 
     def resolve(self, record, *, design=False):
+        from .barcode_profiles import INSERTER_I25, profile_values
+        values = profile_values(record) if self.profile else record
+        if self.profile and self.profile.preset == INSERTER_I25 and values.get("Side") == "Back":
+            return Selection(False)
         if not design:
             for field in self.fields:
                 if field not in record:
@@ -194,6 +203,19 @@ class ElementPlan:
         alternate = bool(not design and self.alternative and self.alternative.matches(record))
         image = self.element.rules.alternative.image if alternate else self.element.image
         tokens = self.alternative_tokens if alternate else self.tokens
+        if self.profile:
+            if design:
+                import copy
+                profile = copy.deepcopy(self.profile)
+                profile.customer_field = ""
+                for insert in profile.inserts:
+                    if insert.mode == "conditional":
+                        insert.mode, insert.when = "never", None
+                values = {**values, "EnvelopeIndex": values.get("EnvelopeIndex", "1"),
+                          "SheetNo": values.get("SheetNo", "1"), "SheetCount": values.get("SheetCount", "1")}
+            else:
+                profile = self.profile
+            return Selection(True, False, profile.payload(values), image)
         return Selection(True, alternate, resolve_value(tokens, record) if tokens else "", image)
 
     def selected_fields(self, alternate):

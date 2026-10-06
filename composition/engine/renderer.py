@@ -65,6 +65,7 @@ class Renderer:
         self.preview_page_index = page_index
         self.template = template
         self.media_plan = None
+        self.barcode_marks = []
         self.design = design
         self.layout_issues = []
         self.plans = {element.id: ElementPlan(element) for spec in self.resource_pages for element in spec.elements}
@@ -198,9 +199,11 @@ class Renderer:
         if self.resource_document is not document:
             self.resource_document = document
             self.font_xrefs.clear()
+        self.barcode_marks = []
         indices = range(len(self.template.pages)) if page_index is None else [page_index]
         media_plan=None
-        if page_index is None and self.template.media.get("enabled"):
+        from .barcode_profiles import has_profiles
+        if page_index is None and (self.template.media.get("enabled") or has_profiles(self.template)):
             from composition.media.planner import build_print_plan
             if self.media_plan is None:
                 self.media_plan=build_print_plan(self.template,1,is_cancelled=is_cancelled)
@@ -228,6 +231,11 @@ class Renderer:
         for element in elements:
             try:
                 self._render_element(page, element, values)
+                plan = self.plans[element.id]
+                if plan.profile and plan.profile.preset == "inserter_i25_18" and plan.resolve(values, design=self.design).visible:
+                    from .barcode_profiles import profile_values
+                    from .inserter_production import mark_for
+                    self.barcode_marks.append(mark_for(element, plan.profile, profile_values(values)))
             except Exception as exc:
                 fields = sorted(self.plans[element.id].fields)
                 raise CompositionError(
