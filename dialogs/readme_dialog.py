@@ -251,7 +251,12 @@ production workflows.
   preview and combine them. Open the merged PDF or send it directly to Designer;
   the PDF tool sidebar remains available.
 * **PDF Ruler:** Measure page distances in mm/cm with zoom-independent results,
-  calibrate page scale and save measurement lines as PDF annotations.
+  fine crosshair endpoints and a generous endpoint drag area. Activating Measure
+  shows top/left paper rulers with cursor markers and a reference page; rulers
+  follow zoom, scrolling and page rotation, and disappear when leaving the tool.
+  Ruler coordinates start at the displayed page's top-left. They show paper size;
+  calibrated distances remain on measurement lines. Rulers are not saved to PDF.
+  Calibrate page scale and save measurement lines as PDF annotations.
 * **Inspector / Preflight:** Check fonts, images, page boxes and production
   warnings; jump to affected pages and export findings.
 * **Merge CSV/Excel:** Merge data from many spreadsheet files into one

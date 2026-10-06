@@ -619,8 +619,8 @@ class PageOverlay(QWidget):
             painter.setPen(pen)
             painter.setBrush(QColor(colors["primary"]))
             painter.drawLine(start, end)
-            painter.drawEllipse(start, 3.5, 3.5)
-            painter.drawEllipse(end, 3.5, 3.5)
+            self._paint_measure_endpoint(painter, start, colors["primary"])
+            self._paint_measure_endpoint(painter, end, colors["primary"])
             label = format_distance(
                 distance_mm(start_pdf, end_pdf) * self._measure_factor,
                 self._measure_unit,
@@ -652,8 +652,22 @@ class PageOverlay(QWidget):
                                         record.unit)
                 painter.drawText(QPointF((start.x() + end.x()) / 2,
                                           (start.y() + end.y()) / 2 - 10), label)
-            painter.drawEllipse(start, 5.0, 5.0)
-            painter.drawEllipse(end, 5.0, 5.0)
+            self._paint_measure_endpoint(painter, start, colors["primary"])
+            self._paint_measure_endpoint(painter, end, colors["primary"])
+
+    @staticmethod
+    def _paint_measure_endpoint(painter, point, color):
+        """A fine intersection, with an outline for contrast; hit areas stay large."""
+        painter.save()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for stroke, width in (("#ffffff", 2.5), (color, 1.0)):
+            pen = QPen(QColor(stroke), width)
+            pen.setCosmetic(True)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(point.x()-6, point.y()), QPointF(point.x()+6, point.y()))
+            painter.drawLine(QPointF(point.x(), point.y()-6), QPointF(point.x(), point.y()+6))
+        painter.restore()
 
     def _measure_target(self, pos: QPointF):
         candidates = [("temporary", index, points)
@@ -718,7 +732,10 @@ class PageOverlay(QWidget):
             if len(points) == 2:
                 painter.drawLine(points[0], points[1])
                 for point in points:
-                    painter.drawEllipse(point, 5.0, 5.0)
+                    if entry.get("subject") == "Measurement":
+                        self._paint_measure_endpoint(painter, point, colors["primary"])
+                    else:
+                        painter.drawEllipse(point, 5.0, 5.0)
             return
         rect = self.pdf_rect_to_widget(fitz.Rect(entry["rect"]))
         if self._geometry_drag and self._geometry_drag.get("rect") is not None:

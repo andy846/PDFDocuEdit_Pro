@@ -332,6 +332,8 @@ class PdfCanvas(QScrollArea):
         self.viewport().setMouseTracking(True)
         self.viewport().installEventFilter(self)
         self.viewport().setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        from .pdf_rulers import PdfRulers
+        self.rulers = PdfRulers(self)
         self.update_theme()
 
     # --- document lifecycle ----------------------------------------------
@@ -386,6 +388,7 @@ class PdfCanvas(QScrollArea):
         self._font_inspection = None
         self._teardown_views()
         self._pager.setFixedSize(QSize(0, 0))
+        self.rulers.reset_pointer()
 
     def wait_for_renders(self, timeout_ms: int = 3000) -> None:
         """Drain readers for explicit mutations while Qt continues dispatching.
@@ -516,6 +519,7 @@ class PdfCanvas(QScrollArea):
     # --- tool modes ------------------------------------------------------
     def set_tool_mode(self, mode: ToolMode | str) -> None:
         self._tool_mode = mode if isinstance(mode, ToolMode) else ToolMode(str(mode))
+        self.rulers.set_enabled(self._tool_mode == ToolMode.MEASURE)
         if self._tool_mode != ToolMode.FONT_INSPECT:
             self.clear_font_inspection()
         if self._magnifier_popup:
@@ -532,6 +536,7 @@ class PdfCanvas(QScrollArea):
         self._measure_unit = unit
         for page_num in self._page_views:
             self._sync_page_measurements(page_num)
+        self.rulers.refresh()
 
     def selected_measurement(self):
         selection = self._selected_measurement
@@ -1383,10 +1388,12 @@ class PdfCanvas(QScrollArea):
                 selected[1] if selected is not None and selected[0] == page_num else None
             )
             self._page_views[page_num] = view
+            self.rulers.register(view.overlay)
             self._sync_page_measurements(page_num)
         self._fill_render_queue(focused)
         self._apply_search_hits()
         self._apply_font_inspection()
+        self.rulers.refresh()
 
     @_document_locked
     def _fill_render_queue(self, focused: set[int] | None = None) -> None:
@@ -1499,6 +1506,8 @@ class PdfCanvas(QScrollArea):
         )
         for view in self._page_views.values():
             view.update_theme()
+        if hasattr(self, "rulers"):
+            self.rulers.refresh()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -1511,7 +1520,8 @@ class PdfCanvas(QScrollArea):
         if not self._doc:
             return
         scroll_pending = self._scroll_timer.isActive()
-        anchor = self._view_anchor()
+        anchor = getattr(self, "_ruler_view_anchor", None) or self._view_anchor()
+        self._ruler_view_anchor = None
         self._relayout()
         self._restore_view_anchor(anchor)
         self._scroll_timer.stop()
