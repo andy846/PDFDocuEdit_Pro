@@ -605,7 +605,7 @@ class BranchWorkflowWindow(QMainWindow):
             browse=QPushButton("Choose template…")
             browse.clicked.connect(lambda:self.choose_template(path))
             layout.addWidget(browse)
-            edit=QPushButton("Edit template in Designer")
+            edit=QPushButton("Edit in Template Designer")
             edit.clicked.connect(lambda:self.edit_template(path.text()))
             layout.addWidget(edit)
             media=QPushButton("Configure print media…")
@@ -639,7 +639,7 @@ class BranchWorkflowWindow(QMainWindow):
         return {"widget":widget,"getter":getter,"original":copy.deepcopy(node.params)}
 
     def choose_template(self,edit):
-        path,_=QFileDialog.getOpenFileName(self,"Choose letter template","","Designer template (*.pdcx)")
+        path,_=QFileDialog.getOpenFileName(self,"Choose letter template","","Template Designer project (*.pdcx)")
         if path:
             edit.setText(path)
 

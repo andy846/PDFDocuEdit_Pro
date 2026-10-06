@@ -237,7 +237,7 @@ class DesignerProjectHost(QWidget):
             remember(project.project_path,"Workflow" if getattr(project,"is_workflow",False) else
                      "Template" if hasattr(project,"template") else "Overlay")
             project._recent_path=str(project.project_path)
-        kind = "Workflow" if getattr(project,"is_workflow",False) else "Template" if hasattr(project, "template") else "Overlay"
+        kind = "Workflow" if getattr(project,"is_workflow",False) else "Template Designer" if hasattr(project, "template") else "Overlay"
         model = project.template if hasattr(project, "template") else project.spec
         name = project.project_path.name if project.project_path else model.name if model and (getattr(model,"source_link",None) or getattr(project,"is_workflow",False)) else "Untitled"
         dirty = not project.undo.isClean() or bool(getattr(project,"batch_dirty",False) or getattr(project, "content_invalid", False) or getattr(project, "draft_error", "") or (getattr(project, "batch_editor", None) and project.properties.has_batch_draft()))

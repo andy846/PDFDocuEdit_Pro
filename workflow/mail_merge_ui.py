@@ -144,7 +144,7 @@ class JobDialog(QDialog):
         return "Import: "+("Template/detected defaults" if not values else ", ".join(f"{k}: {v}" for k,v in values.items() if k!="mapping"))
 
     def browse(self,key):
-        filter="Designer template (*.pdcx)" if key=="template_path" else "Data (*.csv *.txt *.tsv *.xlsx *.xls)"
+        filter="Template Designer project (*.pdcx)" if key=="template_path" else "Data (*.csv *.txt *.tsv *.xlsx *.xls)"
         path,_=QFileDialog.getOpenFileName(self,"Choose "+key,"",filter)
         if path:
             self.controls[key].setText(path)
@@ -390,7 +390,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         layout.addWidget(title)
         descriptions={"data":"INPUT\nCSV / TXT / Excel, or template-generated records. Each batch row explicitly pairs a template with its data.",
             "mapping":"SETTINGS\nMap original column names to template fields. Missing required fields block that job. Unused columns are allowed.",
-            "template":"SETTINGS\nLayouts, fonts, multi-page backgrounds and barcode definitions are edited in Document Designer.",
+            "template":"SETTINGS\nLayouts, fonts, multi-page backgrounds and barcode definitions are edited in Template Designer.",
             "sequences":"SETTINGS\nEach job uses its template's sequence definitions. Override existing sequence starts in Edit Job; imported fields are never overwritten.",
             "mail_review":"OUTPUT\nCheck all pairs, inspect representative records and approve the jobs to run. Changes require checking again.",
             "compose":"SETTINGS\nGenerate one job at a time in an isolated background process. A failed job does not discard other jobs.",
@@ -416,7 +416,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.watch_settings(node,lambda:{**node.params,"default_profile":selected.currentData()},[selected])
             button("Create / update from selected job…",self.create_mapping)
         elif node.kind=="template":
-            button("Edit template in Designer…",self.edit_template)
+            button("Edit in Template Designer…",self.edit_template)
             button("Choose template per job…",self.edit_job)
         elif node.kind=="sequences":
             button("Set selected job sequence starts…",self.edit_job)

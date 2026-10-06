@@ -9,7 +9,7 @@
 | 工作區 | 能力 |
 | --- | --- |
 | PDF Workspace | 保留閱覽、編輯、標註、Organizer、Preflight、OCR、搜尋、列印及間尺；Merge PDFs 使用獨立分頁，可調整來源、選頁與預覽。 |
-| Document Designer | 多頁 PDF 背景或空白模板、CSV/TXT/Excel 資料、Merge Fields、流水號、Code 128／QR／I25、條件規則、批次文字與幾何設定、間尺與磁吸對齊。 |
+| Template Designer（Document Designer 模式內） | 多頁 PDF 背景或空白模板、CSV/TXT/Excel 資料、Merge Fields、流水號、Code 128／QR／I25、條件規則、批次文字與幾何設定、間尺與磁吸對齊。 |
 | PDF 套印 | 固定或覆核後的可變頁數分封；加入序號、文字及入信 Barcode，保留來源頁對照及 QC 紀錄。 |
 | Visual Workflow | 可視節點設定 Visual Extraction Region、資料映射／處理、不同信件模板、預覽覆核、生成、選紙及分檔；批次工作各自記錄狀態與結果。 |
 | 生產輸出 | PDF、PDF + Canon offline JDF 或 **PDF + PostScript**；以 Stock 指定各頁用紙，Printer Profile 保存各環境的 MediaType／MediaPosition 對應。 |
@@ -17,6 +17,7 @@
 ### 快速開始
 
 1. 在主工具列切換 **PDF Workspace｜Document Designer**。切換保留當次工作、未保存修改與背景任務。
+   **Document Designer** 是模式名稱；內含 **Template Designer**（模板設計）、**PDF Overlay**（現有 PDF 套印）及 **Visual Workflow**（生產流程）。
 2. 已加工的 PDF 可用 **Send to Designer** 建立一般多頁 Mail Merge 專案或 PDF Overlay 專案。
    多頁 Mail Merge 的共用頁腳：選取一組欄位，用 **Edit／右鍵 → Repeat on template pages…** 一次複製到指定頁，保留座標、尺寸及設定；可選相同頁底距離。**Ctrl+Shift+V（Paste in place）** 跨頁貼上保留原位。副本獨立，整次複製可一次 Undo；放不落目標頁時會提示並阻止。
 3. 一般模板：匯入資料 → 放置 Fields／Sequences／Barcode → 逐筆預覽 → 保存 `.pdcx` → Generate Production PDF。

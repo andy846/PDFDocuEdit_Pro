@@ -37,7 +37,11 @@ supports Windows x64.
 
 ## Document Designer
 
-### Templates, Fields and Data
+Document Designer is the workspace mode. It contains **Template Designer** for
+template layout, **PDF Overlay** for finished PDFs, and **Visual Workflow** for
+production workflows.
+
+### Template Designer: Templates, Fields and Data
 * Start with a blank page or a multi-page PDF background. One customer record
   can produce several fixed template pages; the background remains intact.
 * Import CSV, delimited/tab-delimited TXT and Excel data; select import options,

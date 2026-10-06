@@ -52,7 +52,7 @@ commits. Full packaging/public release is deferred until the user requests it.
    template. The starter Letters route is an **explicit fallback**; replace it
    with conditions when required. At most one fallback is permitted. A record
    must match exactly one conditional route, or the fallback when none match.
-6. Templates may have different fixed page counts. Edit layout in Designer;
+6. Templates may have different fixed page counts. Edit layout in Template Designer;
    select **Configure print media…** on the template to add a media node for
    that branch. Existing stock/profile, PDF+PS and PDF+JDF services are reused.
 7. **Check to step** inspects the reachable prefix without publishing.

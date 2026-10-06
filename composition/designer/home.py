@@ -75,7 +75,7 @@ class DesignerHome(QScrollArea):
         layout.addLayout(self.grid)
         self.cards=[]
         for name,description,symbol,handler in (
-            ("Letter Template","Design variable fields, sequences and barcodes on one or more template pages.","file-text",host.new_template),
+            ("Template Designer","Design variable fields, sequences and barcodes on one or more template pages.","file-text",host.new_template),
             ("PDF Overlay","Add envelope sequences and inserter marks to finished customer PDFs.","layers",host.new_overlay),
             ("Visual Workflow","Connect data preparation, quality checks and production for reusable batch jobs.","settings",host.choose_workflow)):
             card=QFrame()
@@ -89,7 +89,7 @@ class DesignerHome(QScrollArea):
             text.setWordWrap(True)
             content.addWidget(text)
             content.addStretch()
-            action=QPushButton(icon(symbol),"Create "+name)
+            action=QPushButton(icon(symbol),"Create template" if name == "Template Designer" else "Create "+name)
             action.setProperty("primary",True)
             action.setProperty("home_icon",symbol)
             action.clicked.connect(lambda checked=False,fn=handler:fn())
@@ -149,7 +149,8 @@ class DesignerHome(QScrollArea):
         self.recent.clear()
         rows=recents.entries()
         for row in rows:
-            item=QListWidgetItem(f"{row['kind']}  ·  {Path(row['path']).name}\n{row['path']}")
+            kind = "Template Designer" if row["kind"] == "Template" else row["kind"]
+            item=QListWidgetItem(f"{kind}  ·  {Path(row['path']).name}\n{row['path']}")
             item.setData(Qt.ItemDataRole.UserRole,row["path"])
             item.setToolTip(row["path"])
             self.recent.addItem(item)

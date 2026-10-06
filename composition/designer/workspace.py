@@ -343,7 +343,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
     def _title(self, *args):
         name = self.project_path.name if self.project_path else self.template.name
-        self.setWindowTitle(f"{'* ' if not self.undo.isClean() else ''}{name} — Document Designer")
+        self.setWindowTitle(f"{'* ' if not self.undo.isClean() else ''}{name} — Template Designer")
 
     def _worker(self, request, result, failure=None):
         worker = Worker(self.directory, request, self)
@@ -787,7 +787,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return False
         if self.undo.isClean() and not self.content_invalid:
             return True
-        answer = QMessageBox.question(self, "Unsaved document design", "Save changes to this project?",
+        answer = QMessageBox.question(self, "Unsaved template", "Save changes to this project?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
             QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
         if answer == QMessageBox.StandardButton.Save:
@@ -833,7 +833,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self._error("Finish or cancel the active job before replacing the project.")
             return
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Document Designer projects (*.pdcx)")
+            path, _ = QFileDialog.getOpenFileName(self, "Open Template Designer project", "", "Template Designer projects (*.pdcx)")
         if not path:
             return
         try:
@@ -881,7 +881,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return False
         path = str(self.project_path) if self.project_path and not save_as else ""
         if not path:
-            path, _ = QFileDialog.getSaveFileName(self, "Save Document Designer project", "", "Document Designer projects (*.pdcx)")
+            path, _ = QFileDialog.getSaveFileName(self, "Save Template Designer project", "", "Template Designer projects (*.pdcx)")
         if not path:
             return False
         if self.project_host and not self.project_host.allow_save_path(self, path):

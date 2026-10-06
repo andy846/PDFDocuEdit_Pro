@@ -20,7 +20,7 @@ def test_document_designer_layers_arrange_and_type_properties(app):
     window.add_element("text", "First", x=20, y=20)
     window.add_element("text", "Second", x=100, y=70)
     first, second = [e.id for e in window.template.elements]
-    assert "Document Designer" in window.windowTitle()
+    assert "Template Designer" in window.windowTitle()
     window.canvas.select_ids([first, second])
     window.arrange_objects("left")
     assert [e.x_mm for e in window.template.elements] == [20, 20]

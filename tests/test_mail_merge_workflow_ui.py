@@ -206,7 +206,7 @@ def test_edit_template_button_opens_only_job_without_review_selection(window,tmp
     assert not window.selected_jobs()
     opened=template_opener(window,monkeypatch)
     window.select_node(window.spec.node("template").id)
-    button=next(b for b in window.inspector.findChildren(QPushButton) if b.text()=="Edit template in Designer…")
+    button=next(b for b in window.inspector.findChildren(QPushButton) if b.text()=="Edit in Template Designer…")
     button.click()
     assert opened==[job.template_path]
     assert window.batch.jobs==[job]

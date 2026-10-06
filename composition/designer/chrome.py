@@ -46,9 +46,9 @@ class DesignerChrome:
             if toolbar:
                 toolbar.addAction(value)
             return value
-        action("new", "New project", self.new_project, "&File", QKeySequence.StandardKey.New,
+        action("new", "New template project", self.new_project, "&File", QKeySequence.StandardKey.New,
                "file-text", self.project_toolbar)
-        action("open", "Open project…", self.open_project, "&File", QKeySequence.StandardKey.Open,
+        action("open", "Open template project…", self.open_project, "&File", QKeySequence.StandardKey.Open,
                "folder-open", self.project_toolbar)
         action("save", "Save", self.save_project, "&File", QKeySequence.StandardKey.Save,
                "save", self.project_toolbar)
@@ -61,7 +61,7 @@ class DesignerChrome:
         action("remove_background", "Remove PDF background", self.remove_background, "&File")
         action("rename", "Rename project…", self.rename_template, "&File")
         menus["&File"].addSeparator()
-        action("close", "Close designer", self.close, "&File", "Ctrl+W", "x")
+        action("close", "Close template project", self.close, "&File", "Ctrl+W", "x")
         self.project_toolbar.addSeparator()
         for key, value in (("undo", self.undo.createUndoAction(self, "Undo")),
                            ("redo", self.undo.createRedoAction(self, "Redo"))):
@@ -152,7 +152,7 @@ class DesignerChrome:
                lambda:self.project_host.workflow_from_project(self) if self.project_host else None,
                "&Production", symbol="layers")
         action("cancel", "Cancel job", self.cancel_job, "&Production", symbol="x")
-        action("help", "Designer shortcuts", self.show_shortcuts, "&Help", "F1", "keyboard")
+        action("help", "Template Designer shortcuts", self.show_shortcuts, "&Help", "F1", "keyboard")
         self.layout_menu = menus["&View"]
         self._refresh_recent()
 
@@ -432,7 +432,7 @@ class DesignerChrome:
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_report_dir))
 
     def show_shortcuts(self):
-        QMessageBox.information(self, "Document Designer shortcuts",
+        QMessageBox.information(self, "Template Designer shortcuts",
             "Ctrl+N / O / S: New / Open / Save\nCtrl+Shift+S: Save as\n"
             "Ctrl+Z / Y: Undo / Redo\nCtrl+C / V / X / D: Copy / Paste / Cut / Duplicate\n"
             "Ctrl+Shift+V: Paste in place (exact coordinates)\n"

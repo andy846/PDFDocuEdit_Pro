@@ -205,8 +205,9 @@ class WorkspaceModeController(QObject):
                 if key in {"new", "open", "close"}:
                     continue
                 sequences = bindings.get(action, [])
+                category = "Template Designer" if hasattr(project, "template") else "Visual Workflow" if getattr(project, "is_workflow", False) else "PDF Overlay"
                 commands.append(Command("designer." + key, action.text().replace("&", ""),
-                                        sequences[0].toString() if sequences else "", "Document Designer", action.trigger, action.isEnabled))
+                                        sequences[0].toString() if sequences else "", category, action.trigger, action.isEnabled))
         return commands
 
     def set_animations_enabled(self, enabled):

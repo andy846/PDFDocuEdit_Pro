@@ -606,7 +606,7 @@ class MediaDialog(QDialog):
         elif host and hasattr(host,"select_template_page"):
             host.select_template_page(int(logical)-1)
             host.tabs.setCurrentIndex(0)
-            self.error.setText("Template page selected in Designer. Move this dialog aside to inspect it; settings remain a draft.")
+            self.error.setText("Template page selected in Template Designer. Move this dialog aside to inspect it; settings remain a draft.")
         elif host and hasattr(host,"print_page") and host.spec:
             from composition.media.planner import preview_plan
             plan=preview_plan(host.spec)

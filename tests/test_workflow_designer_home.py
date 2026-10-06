@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QApplication, QFileDialog, QInputDialog, QPushButton
+from PyQt6.QtWidgets import QApplication, QFileDialog, QInputDialog, QLabel, QPushButton
 
 from composition.designer import recents
 from composition.designer.home import RecentProbe
@@ -52,7 +52,8 @@ def test_home_cards_narrow_and_recent_cache_merges_without_filesystem_queries(ho
     assert host.start.recent.count()==2
     assert [host.start.grid.getItemPosition(i)[:2] for i in range(3)]==[(0,0),(1,0),(2,0)]
     names=[button.text() for button in host.start.findChildren(QPushButton)]
-    assert "Create Letter Template" in names and "Create PDF Overlay" in names and "Create Visual Workflow" in names
+    assert "Create template" in names and "Create PDF Overlay" in names and "Create Visual Workflow" in names
+    assert host.start.cards[0].findChildren(QLabel)[0].text() == "Template Designer"
     recents.remove("C:/missing/old.pdcx")
     assert len(recents.entries())==1
 
