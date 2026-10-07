@@ -4,12 +4,21 @@ import time
 from pathlib import Path
 
 import fitz
+import pytest
 from PyQt6.QtCore import QPoint, QRectF
 from PyQt6.QtWidgets import QApplication
 
 import core.viewer as viewer_module
 from core.settings import SettingsManager
 from ui.pdf_canvas import LayoutMode, ToolMode
+
+
+@pytest.fixture(autouse=True)
+def _keep_qt_alive(qt_application):
+    """Retain the application/style across native window teardown in this module."""
+    # QApplication must not be destroyed and recreated between these tests.
+    # The shared fixture also mirrors the theme setup done by the entry point.
+    return qt_application
 
 
 def make_pdf(path: Path, pages: int = 6) -> Path:

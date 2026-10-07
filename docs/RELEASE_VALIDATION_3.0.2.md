@@ -47,6 +47,12 @@ callbacks now tolerate that partial state. A deterministic lifecycle test and
 large-document open/ruler/guide checks exercise the correction. Qt tests retain
 a shared application/theme for native widget teardown.
 
+The first version-tag UI run exposed a separate native access violation in
+the legacy layout/magnifier test module. It previously created and released
+QApplication between tests. The module now retains the shared session
+application/theme, matching the entry point's lifecycle; all seven assertions
+remain. Five independent local processes check this lifecycle correction.
+
 CI retains per-module logs/JUnit for both core and UI jobs, prints failure
 details and enables native faulthandler diagnostics. Original failed runs remain
 in the Actions history; no failed regression case is removed or disabled.
