@@ -388,11 +388,13 @@ def _reports(run, root):
             writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in values])
 
 
-def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on_state=None):
+def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on_state=None, _direct_root=False):
     spec.chain()
     if not output_dir:
         raise CompositionError("Choose a batch output folder.")
-    root=Path(output_dir).resolve()/("batch-"+run.batch_id)
+    root=Path(output_dir).resolve()
+    if not _direct_root:
+        root=root/("batch-"+run.batch_id)
     root.mkdir(parents=True,exist_ok=True)
     run.report_dir=str(root)
     run.status="Running"

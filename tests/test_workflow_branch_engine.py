@@ -62,6 +62,31 @@ def test_three_files_two_templates_sequence_reconciliation_and_real_generation(t
     assert all(j["status"]=="Completed" for j in rerun["jobs"])
 
 
+def test_routed_generation_keeps_font_scratch_short_and_child_roots_direct(tmp_path, monkeypatch):
+    import tempfile
+
+    from composition.production import generator
+
+    model=fixture(tmp_path)
+    run=prepare_routes(model,tmp_path/"workspace")
+    approve_routes(model,run,[j["id"] for j in run["jobs"]])
+    real_directory=tempfile.TemporaryDirectory
+    scratch=[]
+    def directory(*args,**kwargs):
+        if kwargs.get("prefix")=="font-subsets-":
+            assert kwargs.get("dir") is None, "Native font scratch must not inherit deep production paths"
+            scratch.append(True)
+        return real_directory(*args,**kwargs)
+    monkeypatch.setattr(generator.tempfile,"TemporaryDirectory",directory)
+    completed=execute_routes(model,run,tmp_path/"workspace",tmp_path/"output")
+    assert completed["status"]=="Completed" and len(scratch)==6
+    root=Path(completed["report_dir"])
+    for entry in completed["jobs"]:
+        result=entry["batch"]["jobs"][0]["result"]
+        assert Path(result["report_dir"]).parent==root/entry["id"]
+        assert Path(result["output_pdf"]).is_file()
+
+
 def test_unmatched_ambiguous_and_invalid_rows_require_acknowledgement(tmp_path):
     model=fixture(tmp_path)
     first=Path(model.node("for_each").params["items"][0]["path"])

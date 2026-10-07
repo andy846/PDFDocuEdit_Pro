@@ -26,3 +26,27 @@ page identity, deleted-rule restoration and per-mode draft assertions remain.
 
 Printer stock selection and inserter barcode read acceptance require physical
 device tests and are not established by software validation.
+
+## Failures found during release acceptance
+
+The initial local run covered 132 modules / 1,832 tests. Two media fixture
+assumptions were corrected and rechecked without dropping their assertions.
+Additional regression cases raise the current total to 1,834 tests; final
+module evidence combines the full run with targeted checks of changed modules.
+
+Windows CI exposed routed production failures and an intermittent native
+open-test crash. Long output-path reproduction identified Windows/native qpdf
+path limits. Routed output no longer adds a duplicate batch directory or a
+full 32-character route ID to generated filenames; native font scratch uses an
+owned short-lived system temporary directory. A six-child long-path production
+proof checks that all outputs complete.
+
+Direct Qt/Python diagnostics identified `PdfRulers.eventFilter` reading an
+unavailable `enabled` attribute during native widget lifecycle events. Ruler
+callbacks now tolerate that partial state. A deterministic lifecycle test and
+large-document open/ruler/guide checks exercise the correction. Qt tests retain
+a shared application/theme for native widget teardown.
+
+CI retains per-module logs/JUnit for both core and UI jobs, prints failure
+details and enables native faulthandler diagnostics. Original failed runs remain
+in the Actions history; no failed regression case is removed or disabled.

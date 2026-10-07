@@ -383,7 +383,7 @@ class PdfRulers(QObject):
         self.refresh()
 
     def flush_pointer(self):
-        if not self.enabled:
+        if not getattr(self, "enabled", False):
             return
         before = self.pointer
         self.pointer = self._pending_pointer
@@ -415,7 +415,7 @@ class PdfRulers(QObject):
         self.sync_guides()
 
     def refresh(self, *_):
-        if not self.enabled:
+        if not getattr(self, "enabled", False):
             return
         canvas = self.canvas
         viewport = canvas.viewport()
@@ -459,7 +459,10 @@ class PdfRulers(QObject):
         self.vertical.update()
 
     def eventFilter(self, obj, event):
-        if self.enabled:
+        # Qt can dispatch child/widget events during native construction or
+        # teardown while this Python wrapper's attributes are not available.
+        # An exception escaping an event filter causes PyQt to abort the app.
+        if getattr(self, "enabled", False):
             kind = event.type()
             if (self.guide_drag is not None and kind in {QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress}
                     and event.key() == Qt.Key.Key_Escape):

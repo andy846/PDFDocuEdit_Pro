@@ -293,7 +293,7 @@ def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,i
                             linear=child_spec(plan,r["id"])
                             job=BatchJob(id=job_id,name=f"{item_index:04d} · {r['name']}",template_path=str(prepared),
                                 data_path=str(folder/(r["id"]+".csv")),data_options=asdict(DataConfig()),
-                                output_name=f"{item_index:04d}-{r['id']}.pdf")
+                                output_name=f"{item_index:04d}-{r['id'][:8]}.pdf")
                             job.data_options.pop("path",None)
                             batch=prepare(linear,BatchRun(jobs=[job],batch_id=run["batch_id"]),root/f"j{len(run['jobs']):04d}",
                                           progress=progress,is_cancelled=is_cancelled)
@@ -439,7 +439,7 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
             _check_current(spec,run)
             batch=BatchRun.from_dict(entry["batch"])
             batch=execute_batch(WorkflowSpec_from(entry["spec"]),batch,root/entry["id"],
-                                progress=progress,is_cancelled=is_cancelled,on_state=on_state)
+                                progress=progress,is_cancelled=is_cancelled,on_state=on_state,_direct_root=True)
             job=batch.jobs[0]
             entry.update(batch=batch.to_dict(),approved=False,status=job.status,error=job.error)
             if job.status=="Failed":

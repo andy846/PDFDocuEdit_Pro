@@ -31,6 +31,17 @@ def settle():
     QTest.qWait(100)
 
 
+def test_ruler_callbacks_ignore_partial_native_lifecycle(canvas):
+    rulers = canvas.rulers
+    enabled = rulers.__dict__.pop("enabled")
+    try:
+        assert rulers.eventFilter(canvas.viewport(), QEvent(QEvent.Type.ChildRemoved)) is False
+        rulers.refresh()
+        rulers.flush_pointer()
+    finally:
+        rulers.enabled = enabled
+
+
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 @pytest.mark.parametrize("zoom", [.25, 1, 4])
 def test_paper_coordinates_crop_rotation_zoom_and_units(canvas, rotation, zoom):

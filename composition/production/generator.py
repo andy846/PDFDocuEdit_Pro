@@ -239,7 +239,9 @@ def generate(
                           *(spec.file for spec in element.glyph_repairs.values())) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
-        with tempfile.TemporaryDirectory(prefix="font-subsets-", dir=staging) as font_folder, Renderer(
+        # Native font tools may not support Windows extended-length paths.
+        # Deep routed output folders must not become the font scratch root.
+        with tempfile.TemporaryDirectory(prefix="font-subsets-") as font_folder, Renderer(
             template, auto_repair=job.auto_repair, fallback_directory=Path(font_folder)/"fallback", is_cancelled=is_cancelled,
         ) as renderer:
             if progress:
