@@ -10,6 +10,10 @@ import sys
 from pathlib import Path
 
 # Worker dispatch must precede Qt/editor imports in frozen development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--pdf-operations-worker":
+    from core.pdf_operations.worker import main as pdf_operations_worker_main
+    raise SystemExit(pdf_operations_worker_main(sys.argv[2:]))
+
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-worker":
     from composition.worker import main as composition_worker_main
     raise SystemExit(composition_worker_main(sys.argv[2:]))

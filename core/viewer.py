@@ -70,7 +70,6 @@ from core.analysis import (
 from core.annotation_io import (
     export_annotation_summary,
     export_annotations_json,
-    flatten_annotations,
     import_annotations_json,
 )
 from core.annotations import (
@@ -523,6 +522,8 @@ class PDFViewer(QMainWindow):
         for label, key in (
             ("Merge PDFs…", "merge"),
             ("Compress PDF…", "compress"),
+            ("Flatten PDF…", "flatten"),
+            ("PDF Repair / Production Normalise…", "pdf_repair"),
             ("Deep Search…", "deep_search"),
             ("Page Count Report…", "page_report"),
             ("External Tools & Diagnostics…", "diagnostics"),
@@ -3791,6 +3792,8 @@ class PDFViewer(QMainWindow):
             "merge": self._merge_pdfs,
             "overlay": self._overlay_pdf,
             "compress": self._compress_pdf,
+            "flatten": self._flatten_annotations,
+            "pdf_repair": lambda: self._open_pdf_operation("repair"),
             "deep_search": self._deep_search,
             "ocr": self._ocr,
             "merge_sheet": self._merge_sheets,
@@ -4453,21 +4456,53 @@ class PDFViewer(QMainWindow):
             self.info_bar.show_message(f"Summary export failed: {exc}", "error", 0)
 
     def _flatten_annotations(self) -> None:
+        self._open_pdf_operation("flatten")
+
+    def _open_pdf_operation(self, operation: str) -> None:
         if not self.engine.is_loaded():
+            if operation == "repair":
+                source, _ = QFileDialog.getOpenFileName(self, "Analyze a PDF for Repair", "", "PDF (*.pdf)")
+                if source:
+                    from dialogs.pdf_operations import PdfOperationDialog
+                    dialog = PdfOperationDialog(source, operation, parent=self)
+                    if not hasattr(self, "_pdf_operation_dialogs"):
+                        self._pdf_operation_dialogs = []
+                    self._pdf_operation_dialogs.append(dialog)
+                    dialog.finished.connect(lambda _: self._pdf_operation_dialogs.remove(dialog))
+                    dialog.outputReady.connect(self.load_file)
+                    dialog.show()
+            else:
+                self.info_bar.show_message("Open a PDF before using this tool.", "warning")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save flattened copy", "flattened.pdf", "PDF (*.pdf)"
-        )
-        if not path:
+        if any(dialog.worker for dialog in getattr(self, "_pdf_operation_dialogs", [])):
+            self.info_bar.show_message("Wait for the current PDF production operation to finish.", "warning")
             return
+        session = self._session
+        if session.form_draft is not None and session.form_draft.changed:
+            self.info_bar.show_message("Apply or discard pending form edits before creating a production copy.", "warning", 0)
+            return
+        from dialogs.pdf_operations import PdfOperationDialog
         try:
-            target = flatten_annotations(self.engine.document, path)
-            self.info_bar.show_message(
-                f"Flattened copy created: {target.name}", "success", 5000
-            )
+            source = self.engine.original_path or Path("document.pdf")
+            directory, snapshot = self._working_snapshot(source)
+            identity = (session.engine.document_id, session.engine.revision)
+            dialog = PdfOperationDialog(snapshot, operation, page_count=session.engine.page_count,
+                current_page=session.page, parent=self, **session.engine.copy_security_context(),
+                source_current=lambda: session in self._sessions and session.engine.is_loaded()
+                    and identity == (session.engine.document_id, session.engine.revision))
+            if not hasattr(self, "_pdf_operation_dialogs"):
+                self._pdf_operation_dialogs = []
+            self._pdf_operation_dialogs.append(dialog)
+            dialog.outputReady.connect(self.load_file)
+            def finished(_):
+                directory.cleanup()
+                if dialog in self._pdf_operation_dialogs:
+                    self._pdf_operation_dialogs.remove(dialog)
+                dialog.deleteLater()
+            dialog.finished.connect(finished)
+            dialog.show()
         except Exception as exc:
-            log_failure('viewer._flatten_annotations: fallback after failure', 10)
-            self.info_bar.show_message(f"Flatten failed: {exc}", "error", 0)
+            self.info_bar.show_message(f"Cannot open PDF production tool: {exc}", "error", 0)
 
     def _show_watermark_dialog(self) -> None:
         if not self.engine.is_loaded():
@@ -6974,6 +7009,14 @@ class PDFViewer(QMainWindow):
                 self._closing = False
                 self._session = self.workspace.current_session()
                 return
+        pdf_operations = list(getattr(self, "_pdf_operation_dialogs", []))
+        for operation in pdf_operations:
+            operation.reject()
+        if any(operation.worker for operation in pdf_operations):
+            self._closing = False
+            event.ignore()
+            QTimer.singleShot(150, self.close)
+            return
         self.settings.update(
             {
                 "window_size": [self.width(), self.height()],

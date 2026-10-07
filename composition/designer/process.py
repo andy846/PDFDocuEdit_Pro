@@ -16,14 +16,16 @@ class Worker(QObject):
     stateChanged = pyqtSignal(dict)
     ended = pyqtSignal()
 
-    def __init__(self, directory: Path, request: dict, parent=None):
+    def __init__(self, directory: Path, request: dict, parent=None, *, worker_module="composition.worker", secrets=None):
         super().__init__(parent)
         token = uuid.uuid4().hex
         self.cancel_file = directory / (token + ".cancel")
         self.events_file = directory / (token + ".events.jsonl")
         self.events_offset = 0
         self.request_file = directory / (token + ".request.json")
-        self.request_file.write_text(json.dumps({**request, "cancel_file": str(self.cancel_file), "events_file": str(self.events_file)},
+        directory.mkdir(parents=True, exist_ok=True)
+        self.request_file.write_text(json.dumps({**request, "cancel_file": str(self.cancel_file), "events_file": str(self.events_file),
+                                                **({"stdin_secrets": True} if secrets is not None else {})},
                                                ensure_ascii=True), encoding="utf-8")
         self.process = QProcess(self)
         self.process.setWorkingDirectory(str(Path(__file__).resolve().parents[2]))
@@ -34,8 +36,15 @@ class Worker(QObject):
         self.process.readyReadStandardError.connect(self._stderr)
         self.process.finished.connect(self._finished)
         self.process.errorOccurred.connect(self._error)
-        args = (["--composition-worker"] if getattr(sys, "frozen", False)
-                else ["-m", "composition.worker"]) + [str(self.request_file)]
+        frozen_flag = "--pdf-operations-worker" if worker_module == "core.pdf_operations.worker" else "--composition-worker"
+        args = ([frozen_flag] if getattr(sys, "frozen", False)
+                else ["-m", worker_module]) + [str(self.request_file)]
+        if secrets is not None:
+            secret_bytes = json.dumps(secrets, ensure_ascii=True).encode("utf-8") + b"\n"
+            def send_secrets():
+                self.process.write(secret_bytes)
+                self.process.closeWriteChannel()
+            self.process.started.connect(send_secrets)
         self.poll = QTimer(self)
         self.poll.setInterval(50)
         self.poll.timeout.connect(self._read_events)

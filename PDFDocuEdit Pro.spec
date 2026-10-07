@@ -120,6 +120,21 @@ if _composition_enabled:
     for _package in ("segno", "python-barcode"):
         datas.extend(copy_metadata(_package))
 
+# PDF Workspace repair also uses the same runtime when Designer is disabled.
+if not _composition_enabled:
+    import json as _json
+    import hashlib as _hashlib
+    _composition_root = ROOT / "build_assets" / "composition"
+    _manifest = _json.loads((_composition_root / "BUNDLE_INFO.json").read_text(encoding="utf-8"))
+    for _entry in _manifest["assets"]:
+        if not _entry["path"].startswith("qpdf/"):
+            continue
+        _asset = _composition_root / _entry["path"]
+        if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
+            raise RuntimeError("Invalid qpdf runtime. Run scripts/prepare_composition_assets.py.")
+        datas.append((str(_asset), str(Path("build_assets/composition") / Path(_entry["path"]).parent)))
+    datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
+
 # pyzbar ships the zbar native library as DLLs inside its package on Windows.
 binaries = []
 try:
@@ -145,6 +160,8 @@ _hiddenimports = [
     "numpy",
     "fontTools",
     "composition.worker",
+    "core.pdf_operations.worker",
+    "dialogs.pdf_operations",
     "workflow.workspace",
     "workflow.worker",
     "composition.designer.workspace",

@@ -461,6 +461,12 @@ class PdfEngine:
     def password(self) -> str | None:
         return self._password
 
+    @_locked
+    def copy_security_context(self) -> dict:
+        """Memory-only copy settings; never persist passwords in job records."""
+        return {"output_password": self._password if self._reencrypt_on_save else "",
+                "output_permissions": self._saved_permissions}
+
     # Compatibility accessors used by older modular callers.
     def get_document(self) -> fitz.Document | None:
         return self._doc
