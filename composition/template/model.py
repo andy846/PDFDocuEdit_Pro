@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 11
+TEMPLATE_VERSION = 12
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
@@ -248,6 +248,8 @@ class Template:
                     raise CompositionError("A template can contain at most 5,000 elements.")
                 if version < 11 and any(e.get("barcode_profile") for e in elements):
                     raise CompositionError("Barcode profiles require template version 11.")
+                if version < 12 and any(e.get("barcode_profile", {}).get("layout_mode") == "fixed" for e in elements):
+                    raise CompositionError("Fixed-length barcode layouts require template version 12.")
                 if version < 7 and any(e.get("rotation_deg", 0) != 0 for e in elements):
                     raise CompositionError("Object rotation requires template version 7.")
                 if version < 4 and any(e.get("rules", {}).get("visible_when") is not None or
@@ -328,8 +330,7 @@ def required_fields(template: Template) -> set[str]:
     for element in template.all_elements():
         if element.barcode_profile:
             from composition.engine.barcode_profiles import BarcodeProfile
-            from composition.pdf_source.planner import SYSTEM_FIELDS
-            fields.update(BarcodeProfile.from_dict(element.barcode_profile).fields()-SYSTEM_FIELDS)
+            fields.update(BarcodeProfile.from_dict(element.barcode_profile).required_fields())
         fields.update(rule_fields(element.rules))
         if element.rules.alternative and element.type != "image":
             fields.update(text for kind, text in parse_value(element.rules.alternative.value) if kind == "field")

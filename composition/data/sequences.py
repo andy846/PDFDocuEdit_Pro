@@ -74,6 +74,9 @@ def sequence_record(template, record, ordinal, page_index=0, *, design=False):
             raise CompositionError(f"Sequence field conflicts with supplied record: {seq.name}")
         values[seq.name] = ("{{" + seq.name + "}}" if design else
                             sequence_value(seq, ordinal, physical_index, physical_count))
+    from composition.engine.generic_layout import CONTEXT_KEY
+    if CONTEXT_KEY in values:
+        values[CONTEXT_KEY].sequences = {s.name: values[s.name] for s in template.sequences}
     return values
 
 

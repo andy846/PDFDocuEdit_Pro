@@ -28,7 +28,7 @@ class EnvelopeSpec:
     objects: list[OverlayObject] = field(default_factory=list)
     required_scope: str = "all_source"
     name: str = "Envelope overlay"
-    overlay_version: int = 7
+    overlay_version: int = 8
     project_kind: str = "pdf_overlay"
     external_fields: list[str] = field(default_factory=list)
     detection_review: dict = field(default_factory=dict)
@@ -55,7 +55,7 @@ class EnvelopeSpec:
         validate_link(self.source_link)
         if self.source_link and (len(self.source_link["page_map"]) != self.source.pages or self.source_link["sha256"] != self.source.sha256):
             raise CompositionError("PDF source provenance does not match the source snapshot.")
-        if type(self.overlay_version) is not int or self.overlay_version != 7 or self.project_kind != "pdf_overlay":
+        if type(self.overlay_version) is not int or self.overlay_version != 8 or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if (not isinstance(self.external_fields,list) or len(self.external_fields)>400
                 or any(not isinstance(v,str) or not re.fullmatch(r"(?:Page_|Envelope_)?[A-Za-z_][A-Za-z0-9_]{0,63}",v)
@@ -150,7 +150,7 @@ class EnvelopeSpec:
         try:
             data = dict(raw)
             version = data.get("overlay_version", 1)
-            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7):
+            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7, 8):
                 raise CompositionError("Unsupported envelope project version.")
             if version<6 and data.get("media"):
                 raise CompositionError("Print Media requires overlay version 6.")
@@ -166,7 +166,10 @@ class EnvelopeSpec:
             if version < 7 and any(obj.get("profile", {}).get("preset") == INSERTER_I25
                                    for obj in data.get("objects", []) if obj.get("profile")):
                 raise CompositionError("Inserter I25 requires overlay version 7.")
-            data["overlay_version"] = 7
+            if version < 8 and any(obj.get("profile", {}).get("layout_mode") == "fixed"
+                                   for obj in data.get("objects", []) if obj.get("profile")):
+                raise CompositionError("Fixed-length barcode layouts require overlay version 8.")
+            data["overlay_version"] = 8
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()

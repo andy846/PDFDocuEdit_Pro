@@ -185,8 +185,7 @@ class ElementPlan:
             value for kind, value in self.tokens + self.alternative_tokens if kind == "field"
         }
         if self.profile:
-            from composition.pdf_source.planner import SYSTEM_FIELDS
-            self.fields.update(self.profile.fields()-SYSTEM_FIELDS)
+            self.fields.update(self.profile.required_fields())
         self.has_rules = self.visibility is not None or self.alternative is not None
 
     def resolve(self, record, *, design=False):
@@ -205,6 +204,8 @@ class ElementPlan:
         tokens = self.alternative_tokens if alternate else self.tokens
         if self.profile:
             if design:
+                if self.profile.preset == "generic" and self.profile.layout_mode == "fixed":
+                    return Selection(True, False, "0"*self.profile.total_length, image)
                 import copy
                 profile = copy.deepcopy(self.profile)
                 profile.customer_field = ""

@@ -122,7 +122,7 @@ def test_selected_pages_roundtrip_asset_move_and_page_id_mapping(engine, tmp_pat
     Path(tmp_path / "word-template.pdf").unlink()
     shutil.move(str(saved.parent), str(tmp_path / "relocated"))
     reopened = load_project(tmp_path / "relocated" / "customer.pdcx")
-    assert reopened.template_version == 11
+    assert reopened.template_version == 12
     first = reopened.pages[0]
     assert reopened.source_link["template_page_map"][first.id] == 2
     with fitz.open(stream=render_preview(reopened, {}), filetype="pdf") as pdf:
@@ -149,7 +149,7 @@ def test_invalid_mapping_and_v8_migration(engine, tmp_path, mutation):
         Template.from_dict(raw)
     old = Template().to_dict()
     old["template_version"] = 8
-    assert Template.from_dict(old).template_version == 11
+    assert Template.from_dict(old).template_version == 12
 
 
 def test_detaching_one_background_preserves_other_page_mappings(engine, tmp_path):

@@ -64,7 +64,7 @@ def test_versioned_migration_and_template_profile_roundtrip():
     element = Element(type="i25", width_mm=100, barcode_profile=asdict(BarcodeProfile.inserter()))
     template = Template(elements=[element])
     reopened = Template.from_dict(template.to_dict())
-    assert reopened.template_version == 11 and reopened.elements[0].barcode_profile == element.barcode_profile
+    assert reopened.template_version == 12 and reopened.elements[0].barcode_profile == element.barcode_profile
     assert required_fields(reopened) == set()
     legacy = template.to_dict()
     legacy["template_version"] = 10
