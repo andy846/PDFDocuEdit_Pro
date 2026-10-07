@@ -15,6 +15,7 @@ class BarcodeContext:
     data: dict = field(default_factory=dict)
     system: dict = field(default_factory=dict)
     sequences: dict = field(default_factory=dict)
+    data_loaded: bool = True
 
     @classmethod
     def from_values(cls, values):

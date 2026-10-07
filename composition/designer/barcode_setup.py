@@ -26,7 +26,7 @@ from composition.engine.barcodes import validate_payload
 from composition.engine.rules import validate_group
 from ui.combo_popup import WideComboBox
 
-from .overlay_dialogs import BarcodeProfileDialog
+from .generic_builder import GenericBarcodeEditor
 from .rules_dialog import ConditionEditor
 
 
@@ -54,7 +54,7 @@ class BarcodeSetupDialog(QDialog):
         root = QVBoxLayout(self)
         self.preset = WideComboBox()
         self.preset.setAccessibleName("Barcode preset")
-        self.preset.addItem("Generic — fields and fixed text", "generic")
+        self.preset.addItem("Generic — custom barcode layout", "generic")
         self.preset.addItem("Inserter I25 — 18 digits", INSERTER_I25)
         root.addWidget(self.preset)
         self.preset_description = QLabel()
@@ -68,10 +68,8 @@ class BarcodeSetupDialog(QDialog):
         body_layout = QVBoxLayout(self.body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
-        generic = profile if profile.preset == "generic" else BarcodeProfile(machine=profile.machine)
-        self.generic = BarcodeProfileDialog(generic, fields, self, symbology=symbology, samples=samples)
-        self.generic.setWindowFlags(Qt.WindowType.Widget)
-        self.generic.footer.hide()
+        generic = profile if profile.preset == "generic" else BarcodeProfile.fixed_layout(machine=profile.machine)
+        self.generic = GenericBarcodeEditor(generic, fields, self, symbology=symbology, samples=samples)
         self.stack.addWidget(self.generic)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -238,7 +236,7 @@ class BarcodeSetupDialog(QDialog):
         inserter = self.preset.currentData() == INSERTER_I25
         self.stack.setCurrentIndex(int(inserter))
         self.preset_description.setText("Inserter I25 — 18 digits: physical sheets, inserts, automatic EOG and check digit."
-                                       if inserter else "Generic barcode: join fields and fixed text in order.")
+                                       if inserter else "Generic barcode: define total length, segments, sources and formatting.")
         self.customer_name.setText("Customer information: " + self.customer.currentText())
         for index, control in enumerate(self.insert_modes):
             conditional = control.currentData() == "conditional"
@@ -255,6 +253,9 @@ class BarcodeSetupDialog(QDialog):
             lines = []
             payload = ""
             preview_fields = self.preview_context(bool(self.printing.currentData())) if self.preview_context else self.fields
+            if not inserter:
+                self.refresh_generic(profile, preview_fields)
+                return
             for label, fields in [("Current record / sheet", preview_fields), *self.samples]:
                 needed = profile.fields()-set(fields)
                 if needed:
@@ -280,6 +281,70 @@ class BarcodeSetupDialog(QDialog):
             self.payload.setText(str(exc))
             self.barcode_image.clear()
             self.footer.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+            if not inserter:
+                self.generic.preview.clear()
+                self.generic.builder.show_result(self.fields)
+
+    def refresh_generic(self, profile, preview_fields):
+        from composition.engine.generic_layout import BarcodeContext
+        pending = False
+        lines = []
+        first_result = None
+        for label, fields in [("Current record / page", preview_fields), *self.samples]:
+            context = BarcodeContext.from_values(fields)
+            if profile.layout_mode == "fixed":
+                if not context.data_loaded and any(s.source == "data" for s in profile.segments):
+                    pending = True
+                    lines.append(label + ": data not loaded; all records must be checked before production.")
+                    continue
+                result = profile.evaluate(context)
+                payload = result.payload
+                if first_result is None:
+                    first_result = result
+            else:
+                if any(t.kind == "field" and t.value not in context.system and not fields.get(t.value) for t in profile.tokens):
+                    pending = True
+                    lines.append(label + ": data not loaded; production validation required.")
+                    continue
+                payload = profile.payload(fields)
+            validate_payload(self.symbology or "code128", payload)
+            lines.append(f"{label}: {payload} ({len(payload)} characters)")
+        if profile.layout_mode == "fixed":
+            self.generic.builder.show_result(preview_fields, first_result, pending)
+            if first_result:
+                self.draw_generic_preview(first_result.payload)
+        else:
+            self.generic.preview.setText("\n".join(lines))
+        self.status.setText("Data pending — layout can be saved; full source validation is required before production." if pending else
+                            "Layout and sample values checked. All applicable records/pages are checked before production.")
+        self.footer.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+
+    def draw_generic_preview(self, payload):
+        from barcode import ITF, Code128
+        from PIL import Image
+        kind = self.symbology or "code128"
+        if kind == "qr":
+            import segno
+            matrix = list(segno.make(payload).matrix)
+            size = len(matrix)+8
+            image = Image.new("RGB", (size, size), "white")
+            for y, row in enumerate(matrix):
+                for x, bit in enumerate(row):
+                    if bit:
+                        image.putpixel((x+4, y+4), (0, 0, 0))
+            image = image.resize((size*4, size*4), Image.Resampling.NEAREST)
+        else:
+            pattern = (ITF(payload, narrow=1, wide=3) if kind == "i25" else Code128(payload)).build()[0]
+            image = Image.new("RGB", (len(pattern)+20, 72), "white")
+            for x, bit in enumerate(pattern):
+                if bit == "1":
+                    for y in range(8, 64):
+                        image.putpixel((x+10, y), (0, 0, 0))
+        raw = image.tobytes()
+        qimage = QImage(raw, image.width, image.height, image.width*3, QImage.Format.Format_RGB888).copy()
+        target = self.generic.builder.image
+        target.setPixmap(QPixmap.fromImage(qimage).scaled(max(100, min(520, self.width()-80)), 140 if kind == "qr" else 72,
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation))
 
     def draw_preview(self, payload):
         from barcode import ITF

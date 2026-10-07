@@ -175,6 +175,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             self.error("This barcode has no applicable page in the reviewed mailpieces.")
             return
         samples = [("First applicable mark", first.fields("preview")), ("Last applicable mark", last.fields("preview"))]
+        data_loaded = False
         if self.spec.external_fields:
             fields.update(dict.fromkeys(self.spec.external_fields,""))
             for _label, sample in samples:
@@ -192,6 +193,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
                         fields.update(values(plan.page(self.envelope.value(),self.print_page.value())))
                         samples[0][1].update(values(first))
                         samples[1][1].update(values(last))
+                        data_loaded = True
                 except (OSError,ValueError,sqlite3.DatabaseError,KeyError) as exc:
                     self.error(str(exc))
                     return
@@ -205,9 +207,18 @@ class OverlayActions(OverlayUsability, OverlayFiles):
                         fields.update(store.production_values(plan.page(self.envelope.value(), self.print_page.value())))
                         samples[0][1].update(store.production_values(first))
                         samples[1][1].update(store.production_values(last))
+                        data_loaded = True
                 except (OSError,ValueError,sqlite3.DatabaseError,KeyError) as exc:
                     self.error(str(exc))
                     return
+        from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
+        def context(sample, system):
+            return {**sample, **system, CONTEXT_KEY: BarcodeContext(
+                data={name: sample.get(name, "") for name in self.spec.external_fields},
+                system=system, data_loaded=data_loaded)}
+        fields = context(fields, plan.page(self.envelope.value(), self.print_page.value()).fields("preview"))
+        samples = [(label, context(sample, page.fields("preview")))
+                   for (label, sample), page in zip(samples, (first, last), strict=True)]
         dialog = BarcodeSetupDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples,
             duplex=plan.settings.duplex, printing_locked=bool(self.spec.media.get("enabled")),
             selected_preset=selected_preset)
@@ -222,10 +233,10 @@ class OverlayActions(OverlayUsability, OverlayFiles):
                           for p in range(planned.settings_for(env).output_pages_per_envelope, 0, -1)
                           if applies(scope, planned.page(env, p).fields("preview"), obj.letter_page)), None)
             if initial and final:
-                dialog.samples = [("First applicable mark", {**samples[0][1], **initial.fields("preview")}),
-                                  ("Last applicable mark", {**samples[1][1], **final.fields("preview")})]
-            return {**fields, **planned.page(self.envelope.value(), min(self.print_page.value(),
-                     planned.settings_for(self.envelope.value()).output_pages_per_envelope)).fields("preview")}
+                dialog.samples = [("First applicable mark", context(samples[0][1], initial.fields("preview"))),
+                                  ("Last applicable mark", context(samples[1][1], final.fields("preview")))]
+            return context(fields, planned.page(self.envelope.value(), min(self.print_page.value(),
+                     planned.settings_for(self.envelope.value()).output_pages_per_envelope)).fields("preview"))
         dialog.preview_context = preview_context
         dialog.refresh()
         if dialog.exec() == QDialog.DialogCode.Accepted:

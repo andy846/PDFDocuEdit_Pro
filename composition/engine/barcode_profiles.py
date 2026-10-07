@@ -257,6 +257,6 @@ def profile_record(template, record, ordinal, page_index):
 
 def profile_values(record):
     return {**record, **{key[len("__Barcode"):]: value for key, value in record.items()
-                        if key.startswith("__Barcode")}}
+                        if key.startswith("__Barcode") and key != CONTEXT_KEY}}
 
 

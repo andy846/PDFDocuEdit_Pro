@@ -4,10 +4,10 @@ from __future__ import annotations
 import copy
 import sqlite3
 
-from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile, BarcodeToken, profile_values
+from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile, profile_values
 from composition.engine.inserter_production import validate_size
 from composition.media.planner import build_print_plan
-from composition.template.model import CompositionError, Template, parse_value
+from composition.template.model import CompositionError, Template
 
 from .repeat_objects import append_exact_copies
 
@@ -73,12 +73,13 @@ def _edit_template_barcode(window, selected_preset=None):
         return
     from .barcode_setup import BarcodeSetupDialog
     info = window._store() or {}
-    fields = {name: "" for name in info.get("metadata", {}).get("fields", [])}
+    sequence_names = {seq.name for seq in window.template.sequences}
+    fields = {name: "" for name in info.get("metadata", {}).get("fields", []) if name not in sequence_names}
     if info.get("store"):
         from composition.data.source import RecordStore
         fields.update(RecordStore(info["store"]).record(window.record.value()))
+    data = dict(fields)
     from composition.data.sequences import sequence_record
-    fields.update(sequence_record(window.template, fields, window.record.value(), window.page_index))
     def preview_context(duplex):
         value = window.template.to_dict()
         value["media"]["duplex"] = duplex
@@ -87,12 +88,16 @@ def _edit_template_barcode(window, selected_preset=None):
         page = next(plan.page(1, index) for index in range(1, plan.settings_for(1).output_pages_per_envelope+1)
                     if plan.page(1, index).source_page is not None and plan.page(1, index).role == window.page_index)
         page = plan.page(window.record.value(), page.print_page)
-        return {**profile_values(fields), **page.fields()}
+        from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
+        seq_values = sequence_record(Template.from_dict(value), data, window.record.value(), window.page_index)
+        return {**profile_values(seq_values), **page.fields(), CONTEXT_KEY: BarcodeContext(
+            data=data, system=page.fields(), sequences={s.name: seq_values[s.name] for s in window.template.sequences},
+            data_loaded=bool(info.get("store")))}
     fields = preview_context(bool(window.template.media.get("duplex")))
     if element.barcode_profile:
         profile = BarcodeProfile.from_dict(element.barcode_profile)
     else:
-        profile = BarcodeProfile(tokens=[BarcodeToken(kind, text) for kind, text in parse_value(element.value)])
+        profile = BarcodeProfile.fixed_layout()
     before = window.template.to_dict()
     dialog = BarcodeSetupDialog(profile, fields, window, symbology=element.type,
         duplex=bool(window.template.media.get("duplex")), printing_locked=bool(window.template.media.get("enabled")),
