@@ -130,6 +130,12 @@ jobs:
         with:
           name: composition-performance-smoke
           path: build/composition-benchmark/**/benchmark.json
+      - name: Retain Windows core diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-core-diagnostics
+          path: build/ci-core/
 
   ui-interaction:
     name: UI interaction tests on Windows
