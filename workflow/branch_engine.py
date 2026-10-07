@@ -349,6 +349,9 @@ def _preflight(job,spec,directory,progress,cancelled):
     directory.mkdir(parents=True,exist_ok=True)
     template=Template.from_dict(job.prepared_template)
     records=open_records(template,job.record_store)
+    from composition.engine.generic_production import preflight as generic_preflight
+    generic_preflight(template, records.records(), is_cancelled=cancelled, progress=progress,
+                      audit_path=directory/"barcode-cycles.csv", record_store=job.record_store)
     with Renderer(template,auto_repair=spec.node("compose").params.get("auto_repair",True),
                   fallback_directory=directory/"fallback",is_cancelled=cancelled) as renderer:
         renderer.prepare_fonts(records.records(),directory,progress,cancelled,audit_path=directory/"glyph-repairs.csv")

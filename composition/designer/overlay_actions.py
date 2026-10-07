@@ -213,13 +213,14 @@ class OverlayActions(OverlayUsability, OverlayFiles):
                     return
         from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
         def context(sample, system):
+            typed = {**system, "JobId": "00000000-000000-00000000"}
             return {**sample, **system, CONTEXT_KEY: BarcodeContext(
                 data={name: sample.get(name, "") for name in self.spec.external_fields},
-                system=system, data_loaded=data_loaded)}
+                system=typed, data_loaded=data_loaded)}
         fields = context(fields, plan.page(self.envelope.value(), self.print_page.value()).fields("preview"))
         samples = [(label, context(sample, page.fields("preview")))
                    for (label, sample), page in zip(samples, (first, last), strict=True)]
-        dialog = BarcodeSetupDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples,
+        dialog = BarcodeSetupDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples, qr_error=obj.element.qr_error,
             duplex=plan.settings.duplex, printing_locked=bool(self.spec.media.get("enabled")),
             selected_preset=selected_preset)
         def preview_context(duplex):

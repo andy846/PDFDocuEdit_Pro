@@ -166,6 +166,87 @@ def test_template_existing_sequence_configure_undo_and_cancel(qt_application, mo
         close_window(window)
 
 
+def test_legacy_conversion_preserves_literal_and_non_numeric_system(qt_application):
+    original = BarcodeProfile(tokens=[BarcodeToken(kind="literal", value="AB", width=2), BarcodeToken(value="Side")])
+    dialog = BarcodeSetupDialog(original, {**fields(), "Side": "Front"}, symbology="code128")
+    try:
+        dialog.generic.convert.click()
+        b = dialog.generic.builder
+        assert b.draft.segments[0].format == b.draft.segments[1].format == "text"
+        assert b.draft.segments[1].length == 0
+        b.total.setValue(7)
+        b.table.setCurrentCell(1, 0)
+        b.length.setValue(5)
+        assert dialog.candidate().payload({**fields(), "Side": "Front"}) == "ABFront"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_overlay_shared_fixed_profile_apply_and_undo(qt_application, monkeypatch, tmp_path):
+    from composition.designer.overlay_workspace import OverlayWindow
+    from tests.composition.test_pdf_overlay_models import sample_spec
+    from tests.composition.test_pdf_overlay_ui import finish
+    monkeypatch.setattr(OverlayWindow, "load_fonts", lambda self: None)
+    monkeypatch.setattr(OverlayWindow, "render_preview", lambda self: None)
+    window = OverlayWindow()
+    try:
+        spec = sample_spec(tmp_path)
+        spec.objects[1].profile = valid_profile()
+        window.apply_spec(spec.to_dict())
+        window.canvas.select_ids([spec.objects[1].element.id])
+        before = window.spec.to_dict()
+        def apply(dialog):
+            assert dialog.generic.builder.context.system["OutputPage"] == "1"
+            assert not dialog.generic.builder.context.data
+            dialog.generic.builder.table.setCurrentCell(1, 0)
+            dialog.generic.builder.value.setCurrentText("99")
+            dialog.accept()
+            assert dialog.result() == dialog.DialogCode.Accepted, dialog.status.text()
+            return dialog.result()
+        monkeypatch.setattr(BarcodeSetupDialog, "exec", apply)
+        window.edit_profile()
+        assert window.spec.objects[1].profile.segments[1].value == "99"
+        window.undo.undo()
+        assert window.spec.to_dict() == before
+        monkeypatch.setattr(BarcodeSetupDialog, "exec", lambda dialog: 0)
+        window.edit_profile()
+        assert window.spec.to_dict() == before
+    finally:
+        finish(window)
+
+
+def test_full_desktop_layout_and_long_field_popup(qt_application, tmp_path):
+    context = BarcodeContext(data={"Customer_" + "A" * 55: "0001"}, system=fields())
+    dialog = BarcodeSetupDialog(valid_profile(), {**fields(), CONTEXT_KEY: context}, symbology="i25")
+    try:
+        dialog.resize(960, 640)
+        dialog.show()
+        qt_application.processEvents()
+        b = dialog.generic.builder
+        b.source.setCurrentIndex(b.source.findData("data"))
+        b.value.setCurrentIndex(0)
+        b.length.setValue(4)
+        b.total.setValue(6)
+        dialog.scroll.ensureWidgetVisible(b.value)
+        b.value.showPopup()
+        qt_application.processEvents()
+        available = dialog.screen().availableGeometry().width() - 24
+        assert b.value.view().minimumWidth() >= min(available, b.value.fontMetrics().horizontalAdvance(next(iter(context.data))))
+        assert b.value.toolTip() == next(iter(context.data))
+        assert b.value.view().maximumWidth() <= dialog.screen().availableGeometry().width()
+        b.value.hidePopup()
+        assert dialog.footer.button(QDialogButtonBox.StandardButton.Ok).isEnabled(), dialog.status.text()
+        assert dialog.body.width() <= dialog.scroll.viewport().width()
+        assert dialog.grab().save(str(tmp_path / "generic-960.png"))
+        dialog.scroll.verticalScrollBar().setValue(dialog.scroll.verticalScrollBar().maximum())
+        qt_application.processEvents()
+        assert dialog.grab().save(str(tmp_path / "generic-preview.png"))
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_compact_layout_footer_and_popup(qt_application, theme, tmp_path):
     from styles.theme import apply_theme

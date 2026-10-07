@@ -302,6 +302,9 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             missing=required_fields(template)-set(with_records.fields)
             if missing:
                 raise CompositionError("Missing mapped fields: "+", ".join(sorted(missing)))
+            from composition.engine.generic_production import preflight as generic_preflight
+            generic_preflight(template, with_records.records(), is_cancelled=is_cancelled, progress=progress,
+                              audit_path=snapshot/"barcode-cycles.csv", record_store=job.record_store)
             if any(file_hash(Path(p))!=digest for p,digest in before.items()):
                 raise CompositionError("Input changed during checking. Check this job again.")
             job.prepared_template=template.to_dict()

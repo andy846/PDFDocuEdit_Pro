@@ -77,6 +77,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
     result.warnings.extend(spec.source.warnings)
     if any(obj.profile and obj.profile.validation=="pending" for obj in spec.objects):
         result.warnings.append("Barcode profile: machine validation pending. Software decoding does not certify inserter compatibility.")
+    if any(segment.overflow == "cycle" for obj in spec.objects if obj.profile for segment in obj.profile.segments):
+        result.warnings.append("Generic sequence cycling enabled: review barcode-cycles.csv for full and encoded values.")
     try:
         check_cancel(is_cancelled)
         plan=overlay_plan(spec,is_cancelled=is_cancelled)
@@ -115,11 +117,19 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                 result.font_scan=dict(renderer.renderer.repair_summary)
             # Validate scopes, all payloads, required read positions and page boundaries before composition.
             marks_file=resources.enter_context((staging/"marks.jsonl").open("w",encoding="utf-8"))
+            from composition.engine.generic_production import CycleAudit
+            cycle_audit = (CycleAudit(resources.enter_context((staging/"barcode-cycles.csv").open(
+                "w", encoding="utf-8-sig", newline="")))
+                if any(o.profile and o.profile.layout_mode == "fixed" for o in spec.objects) else None)
             for page in plan.pages():
                 check_cancel(is_cancelled)
                 current=page
                 fields=page_values(spec,page,job.job_id,external_values)
                 selected=renderer.selections(fields,verified.page_geometry(page))
+                if cycle_audit:
+                    for element, obj, _value in selected:
+                        if obj.profile and obj.profile.layout_mode == "fixed":
+                            cycle_audit.write(element, obj.profile, fields, page.envelope)
                 result.expected_barcodes+=sum(element.type in ("qr","code128","i25") for element,_obj,_value in selected)
             current=None
             pages_file=resources.enter_context((staging/"pages.csv").open("w",encoding="utf-8-sig",newline=""))

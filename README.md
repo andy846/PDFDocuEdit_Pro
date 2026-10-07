@@ -47,7 +47,24 @@
 - 生產前逐封檢查資料、尺寸與正面條碼數量，超過 99 張紙或資料錯誤會阻止生成。生產後解碼成品並輸出 `barcodes.csv`，包含完整封號、紙序、輸出頁、由 00 起嘅條碼紙序（Sheet sequence）、插頁碼、EOG、校驗碼及核對結果。
 
 依校驗公式，首封第一張非結尾、無插頁、客戶資訊全零為 `000000000000000000`；第二張結尾為 `000100100000000006`。
-設定仍需配合實際入信機尺寸、方向與讀取位置驗證。舊 generic profile 保留原有 payload；新版保存使用 profile v2、模板 v11、套印 v7。既有明確保存的 Group 起始值保持原設定；要使用零起始請在 Configure 選 `00`。
+設定仍需配合實際入信機尺寸、方向與讀取位置驗證。既有明確保存的 Group 起始值保持原設定；要使用零起始請在 Configure 選 `00`。
+
+### Generic Barcode：自訂長度及資料來源（開發更新）
+
+Template Designer／PDF Overlay 選取 Barcode → **Configure… → Generic — custom barcode layout**。
+Visual Workflow 使用同一模板／套印設定，並在檢查及正式生成時核對。
+
+1. 設定 **Total length**，加入及排序各個 Segment。每段自行定義長度；表格顯示起止位置、來源及編碼預覽，長度總和必須等於 Total。
+2. **Source** 可選固定文字、匯入／映射資料欄（CSV/TXT/Excel）、系統值，或 Running sequence。系統的 EnvelopeSeq 與資料中同名欄位分開；PDF 擷取值由 Workflow 的資料欄傳入。
+3. **Numeric** 只接受非負 ASCII 數字，按設定長度補零；已有零 padding 會先正規化，例如 `000001` 配兩位輸出 `01`。**Text** 完整保留內容及前導零，必須恰好符合長度，不裁切、不補字、不移除空白。I25 最終仍要求偶數位 ASCII 數字；Code 128 要求可列印 ASCII，Unicode 可用 QR。
+4. **Running sequence** 可選模板已有的流水號，或建立僅用於條碼的流水號，設定 Start（預設 0）、Increment（預設 1）及每筆／封、整份輸出頁或每封實體紙序範圍。双面正反面共用紙序。
+5. 長度溢位預設停止；只有 Numeric 流水號可明確選 **Cycle**，例如兩位 `98 → 99 → 00`。資料欄永不循環或截短。`barcode-cycles.csv` 記錄每次循環的完整原值、編碼值、封號、輸出頁、物件與來源列；以工作紀錄／Workflow 來源對照追查原始資料。
+
+預覽只核對目前與可用樣本；未載入資料時可先保存結構有效的設定，但不能代替生產驗證。生成前在背景檢查全量可見條碼的值、格式和尺寸；完成後解碼最終 PDF，`barcodes.csv` 記錄 payload、頁面及核對結果，數量或內容不符不發布 PDF。可取消，失敗保留診斷報告。
+
+舊 Generic profile 保留原有 payload；按 **Convert to fixed-length layout…** 才轉換。不明長度及 Total 必須自行確認，不會猜測或自動變更舊結果。新固定 layout 使用 profile v3；模板保存為 v12、套印 v8，保留舊檔讀取；18 位 Inserter preset 的編碼不變。此開發更新未變更公開版本號或發布安裝包。
+
+詳細架構與針對性驗收見 [Generic Barcode Layout 說明](docs/GENERIC_BARCODE_LAYOUT.md)。
 
 ### V3.0.1 更新：Visual Workflow 節點核對
 

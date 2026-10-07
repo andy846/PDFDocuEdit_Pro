@@ -54,6 +54,10 @@ def sequence_value(seq, ordinal, page_index=0, pages_per_record=1):
 def sequence_record(template, record, ordinal, page_index=0, *, design=False):
     from composition.engine.barcode_profiles import has_profiles, profile_record
     record = profile_record(template, record, ordinal, page_index)
+    from composition.engine.generic_layout import CONTEXT_KEY
+    materialized = getattr(template, "_barcode_materialized_sequences", set())
+    if CONTEXT_KEY in record and materialized:
+        record[CONTEXT_KEY].sequences = {name: record[name] for name in materialized if name in record}
     if not template.sequences:
         return record
     values = dict(record)
@@ -74,9 +78,8 @@ def sequence_record(template, record, ordinal, page_index=0, *, design=False):
             raise CompositionError(f"Sequence field conflicts with supplied record: {seq.name}")
         values[seq.name] = ("{{" + seq.name + "}}" if design else
                             sequence_value(seq, ordinal, physical_index, physical_count))
-    from composition.engine.generic_layout import CONTEXT_KEY
     if CONTEXT_KEY in values:
-        values[CONTEXT_KEY].sequences = {s.name: values[s.name] for s in template.sequences}
+        values[CONTEXT_KEY].sequences.update({s.name: values[s.name] for s in template.sequences})
     return values
 
 

@@ -37,8 +37,9 @@ class SequenceStartSpin(QSpinBox):
 
 class BarcodeSetupDialog(QDialog):
     def __init__(self, profile, fields, parent=None, *, symbology=None, samples=None,
-                 duplex=False, printing_locked=False, template=False, selected_preset=None):
+                 duplex=False, printing_locked=False, template=False, selected_preset=None, qr_error="M"):
         super().__init__(parent)
+        self.qr_error = qr_error
         self.setWindowTitle("Barcode configuration")
         available = self.screen().availableGeometry()
         self.resize(min(760, available.width()-24), min(580, available.height()-24))
@@ -325,7 +326,7 @@ class BarcodeSetupDialog(QDialog):
         kind = self.symbology or "code128"
         if kind == "qr":
             import segno
-            matrix = list(segno.make(payload).matrix)
+            matrix = list(segno.make_qr(payload, error=self.qr_error, boost_error=False, encoding="utf-8", eci=not payload.isascii()).matrix)
             size = len(matrix)+8
             image = Image.new("RGB", (size, size), "white")
             for y, row in enumerate(matrix):

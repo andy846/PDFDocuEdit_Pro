@@ -51,6 +51,7 @@ class StepInspectionResult:
     template: dict = field(default_factory=dict)
     overlay: dict = field(default_factory=dict)
     source_hashes: dict = field(default_factory=dict)
+    materialized_sequences: list = field(default_factory=list)
 
 
 class PrefixSpec:
@@ -228,6 +229,7 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
                     result.output_store, result.output_scope = str(current.path), scope
                 if template and node.kind in ("mail_review", "compose", "reports", "media_assignment", "split_output"):
                     result.template = template.to_dict()
+                    result.materialized_sequences = sorted(getattr(template, "_barcode_materialized_sequences", set()))
                     compose=spec.node("compose")
                     result.plan = _mail_plan(template, current, node, root, report, is_cancelled,
                                              auto_repair=compose.params.get("auto_repair",True) if compose else True)
@@ -255,7 +257,7 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
                                  and 1 <= number <= current.count else number)
                 obj = re.search(r"object ([A-Za-z0-9_-]+)", str(exc))
                 field_match = re.search(r"field ([A-Za-z0-9_, ]+):", str(exc))
-                _issue(evidence, node, scope, source_id, field_match[1] if field_match else "", str(exc),
+                _issue(evidence, node, scope, source_id, getattr(exc, "field", "") or (field_match[1] if field_match else ""), str(exc),
                        "warning" if result.status == "Cancelled" else "error", obj[1] if obj else "")
                 if prior:
                     result.output_store, result.output_count, result.fields = str(prior.path), prior.count, prior.fields
@@ -328,6 +330,8 @@ def _mail_node(spec, node, job, current, template, config, root, progress, cance
             current = transform(current, root / (node.id + "-" + seq.name + ".sqlite"), "running_sequence", asdict(seq),
                                 node_id=node.id, progress=progress, is_cancelled=cancelled)
         # These values are already materialised for inspection and later preview.
+        materialized = {seq.name for seq in template.sequences if seq.scope == "record"}
+        template._barcode_materialized_sequences = materialized
         template.sequences = [seq for seq in template.sequences if seq.scope == "page"]
     elif node.kind in ("mail_review", "compose", "reports"):
         missing = required_fields(template) - set(current.fields) - {seq.name for seq in template.sequences}
@@ -345,12 +349,16 @@ def _mail_plan(template, current, node, root, progress, cancelled,*,auto_repair=
     from .pipeline import split_names
     if not current.count:
         return {"pages": 0, "records": 0, "outputs": []}
+    template._barcode_record_count = current.count
     plan = build_print_plan(template, current.count, is_cancelled=cancelled)
     summary = asdict(plan.preflight()) if isinstance(plan, PrintPlan) else {"pages": plan.output_pages}
     summary.update(records=current.count, outputs=split_names(current, "inspection.pdf"))
     if node.kind in ("mail_review", "compose", "reports"):
         folder = root / (node.id + "-fonts")
         folder.mkdir(exist_ok=True)
+        from composition.engine.generic_production import preflight as generic_preflight
+        generic_preflight(template, ((ordinal, values) for ordinal, values, _ in current.rows()), plan,
+                          cancelled, progress, audit_path=folder / "barcode-cycles.csv", record_store=str(current.path))
         with Renderer(template, auto_repair=auto_repair, fallback_directory=folder / "fallback", is_cancelled=cancelled) as renderer:
             renderer.prepare_fonts(((ordinal, values) for ordinal, values, _ in current.rows()), folder,
                                    progress, cancelled, audit_path=folder / "glyph-repairs.csv")
@@ -642,6 +650,8 @@ def inspection_preview(directory, run_id, node_id, spec, target, *, job=None, re
         raise CompositionError("Choose a valid record and page to preview.")
     if result["template"]:
         template = Template.from_dict(result["template"])
+        template._barcode_materialized_sequences = set(result.get("materialized_sequences", []))
+        template._barcode_record_count = store.count
         if page > len(template.pages):
             raise CompositionError("Template page is out of range.")
         raw = render_preview(template, store.record(record), ordinal=record, page_index=page - 1,

@@ -30,16 +30,24 @@ class ScopedPlan(ElementPlan):
 
 def page_values(spec, plan, job_id, external_values=None):
     fields = plan.fields(job_id)
+    system = dict(fields)
+    if job_id == "preview":
+        system["JobId"] = "00000000-000000-00000000"
+    values = {}
     if spec.external_fields:
         values=external_values(plan) if external_values else dict.fromkeys(spec.external_fields, "")
         if set(values)!=set(spec.external_fields) or any(not isinstance(v,str) for v in values.values()):
             raise CompositionError("Workflow values do not match the declared extraction fields.")
         fields.update(values)
+    from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
+    fields[CONTEXT_KEY] = BarcodeContext(data=values, system=system)
     for obj in spec.objects:
         if obj.profile:
             try:
+                from composition.engine.rules import CompiledGroup
+                visible = (not obj.element.rules.visible_when or CompiledGroup(obj.element.rules.visible_when).matches(fields))
                 fields[barcode_field(obj)] = (obj.profile.payload(fields)
-                                              if applies(obj.scope, fields, obj.letter_page) else "")
+                                              if applies(obj.scope, fields, obj.letter_page) and visible else "")
             except (ValueError, KeyError) as exc:
                 raise CompositionError(f"Envelope {plan.envelope}, source page {plan.source_page}, "
                     f"output page {plan.output_page}, object {obj.element.id}: {exc}") from exc
@@ -78,8 +86,8 @@ class OverlayRenderer:
             if not selected.visible:
                 continue
             check_object_bounds(element, geometry)
-            if obj.profile and obj.profile.preset == "inserter_i25_18":
-                from composition.engine.inserter_production import validate_size
+            if obj.profile:
+                from composition.engine.barcodes import validate_size
                 validate_size(element, selected.value)
             visible.append((element,obj,selected))
             if obj.control:
@@ -151,4 +159,5 @@ def render_preview(spec, envelope, print_page, *, auto_repair=True, external_val
             raise CompositionError("Source page count changed since inspection.")
         renderer.paint(output,layers,source,plan,fields,spec.source.page_geometry(plan), enforce_control=False)
         # Fonts belong to the separate layer; never subset the copied source document.
-        return output.tobytes(deflate=True,garbage=1),fields
+        from composition.engine.generic_layout import CONTEXT_KEY
+        return output.tobytes(deflate=True,garbage=1), {key: value for key, value in fields.items() if key != CONTEXT_KEY}

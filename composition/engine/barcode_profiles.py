@@ -251,8 +251,11 @@ def profile_record(template, record, ordinal, page_index):
     context.update(EnvelopeIndex=str(ordinal), EnvelopeSeq=str(ordinal).zfill(18),
                    EnvelopeCount=str(getattr(template, "_barcode_record_count", template.generated_count if template.record_mode == "generated" else 1)),
                    OutputPage=str(int(context["OutputPage"])+(ordinal-1)*template._barcode_output_count))
+    # Legacy concatenation retains its historical values. New layouts have an
+    # explicit runtime-job identity; preview uses a clearly provisional ID.
+    typed = {**context, "JobId": getattr(template, "_barcode_job_id", "00000000-000000-00000000")}
     return {**record, **{"__Barcode"+k: v for k, v in context.items()},
-            CONTEXT_KEY: BarcodeContext(dict(record), context)}
+            CONTEXT_KEY: BarcodeContext(dict(record), typed)}
 
 
 def profile_values(record):

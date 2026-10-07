@@ -188,6 +188,7 @@ def generate(
         raise CompositionError("Automatic glyph repair must be a boolean.")
     validate_output_name(job.output_name)
     template = Template.from_dict(job.template)
+    template._barcode_job_id = job.job_id
     output_root = Path(job.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     final = output_root / job.job_id
@@ -220,6 +221,16 @@ def generate(
                 result.warnings.append("Inserter I25 profile: machine validation pending. Confirm dimensions, direction and read position on the actual inserter.")
             from composition.engine.inserter_production import preflight
             result.expected_barcodes = preflight(template, store.records(), profile_plan, is_cancelled, progress)
+        from composition.engine.generic_production import has_fixed_layout
+        from composition.engine.generic_production import preflight as generic_preflight
+        if has_fixed_layout(template):
+            if any(segment.get("overflow") == "cycle" for element in template.all_elements()
+                   for segment in element.barcode_profile.get("segments", [])):
+                result.warnings.append("Generic sequence cycling enabled: review barcode-cycles.csv for full and encoded values.")
+            result.expected_barcodes += generic_preflight(template, store.records(), profile_plan, is_cancelled, progress,
+                                                         audit_path=staging/"barcode-cycles.csv",
+                                                         record_store=job.record_store if template.record_mode == "imported" else None)
+        if has_inserter(template) or has_fixed_layout(template):
             marks_stream = (staging/"inserter-marks.jsonl").open("w", encoding="utf-8")
         if template.media.get("enabled"):
             from composition.media.planner import build_print_plan
@@ -307,7 +318,7 @@ def generate(
             result.decoded_barcodes = audit_pdf(pdf, staging/"inserter-marks.jsonl", staging/"barcodes.csv",
                 is_cancelled=is_cancelled, progress=progress, expected=result.expected_barcodes)
             if result.rendered_barcodes != result.expected_barcodes:
-                raise CompositionError("RECONCILIATION FAILED: rendered inserter barcode count differs.")
+                raise CompositionError("RECONCILIATION FAILED: rendered production barcode count differs.")
         with fitz.open(pdf) as checked:
             result.generated_pages = checked.page_count
         result.generated_files = 1

@@ -74,7 +74,7 @@ def preflight(template, records, plan, is_cancelled=None, progress=None):
 def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, expected=None):
     count = 0
     columns = ["Envelope", "Sheet", "Output page", "Object", "Profile", "Payload", "Group sequence",
-               "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC", "Sheet sequence"]
+               "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC", "Sheet sequence", "Symbology", "Source page"]
     with fitz.open(pdf) as document, marks_path.open(encoding="utf-8") as stream, csv_path.open("w", encoding="utf-8-sig", newline="") as output:
         writer = csv.writer(output)
         writer.writerow(columns)
@@ -85,12 +85,12 @@ def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, ex
                 check_mark(document[mark["output_page"]-1], mark)
             except ValueError as exc:
                 raise BarcodeRecordError(mark["envelope"], f"Output page {mark['output_page']}, object {mark['object']}: {exc}") from exc
-            parts = mark["parts"]
+            parts = mark.get("parts", {})
             writer.writerow([mark["envelope"], mark["sheet"], mark["output_page"], _csv_value(mark["object"]), _csv_value(mark["profile"]),
-                             mark["payload"], parts["group"], parts["inserts_1_3"], parts["inserts_4_6"], parts["eog"], parts["check_digit"], "Decoded: exact match", parts["sheet"]])
+                             mark["payload"], parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", ""), "Decoded: exact match", parts.get("sheet", ""), mark["symbology"], mark.get("source_page", "")])
             count += 1
             if progress and count % 100 == 0:
-                progress(count, expected or count, "Decoding final inserter barcodes")
+                progress(count, expected or count, "Decoding final production barcodes")
     if expected is not None and count != expected:
         raise CompositionError("RECONCILIATION FAILED: expected/rendered/decoded inserter barcodes do not agree.")
     return count

@@ -115,8 +115,36 @@ production workflows.
 * More than 99 sheets, invalid data, missing or duplicate controls block
   production with record/page/object details. Dimensions, rotation and read
   positions remain subject to actual inserter validation.
-* Old generic profiles keep their payloads; saved profile/template/overlay
-  schemas migrate to versions 2/11/7 respectively.
+* Existing Generic profiles keep their payloads. Current template/overlay
+  saves use versions 12/8; fixed Generic layouts use profile v3, while the
+  Inserter I25 encoding remains unchanged.
+
+### Generic — Custom Barcode Layout
+* Select a barcode → **Configure… → Generic — custom barcode layout**.
+  Set **Total length** and add/reorder named segments. Every segment has its
+  own Length; the positions and sum are shown and must match Total.
+* Choose **Fixed**, **Data field** (imported/mapped CSV, TXT, Excel or Workflow
+  extraction values), **System field**, or **Running sequence**. Imported
+  fields and system values with the same name stay separate.
+* **Numeric:** nonnegative ASCII digits, normalized then zero-padded to Length.
+  `000001` becomes `01` in two digits. **Text:** preserve the exact value and
+  leading zeros; exact length is required, with no trimming or truncation.
+* Running sequences can reference a template sequence or use a barcode-only
+  counter: Start 0, Increment 1 by default; per record/envelope, output page,
+  or physical sheet within envelope. Duplex faces share a sheet number.
+* Overflow stops by default. Explicit **Cycle** is available only for Numeric
+  sequences. **barcode-cycles.csv** records full/raw and encoded values with
+  record, envelope, page, object, segment and source-row identity. Data fields
+  are never cycled or shortened.
+* The preview checks available samples, not the entire job. Missing data allows
+  saving a structurally valid layout for later configuration; production still
+  validates all visible marks in the background before composing any pages.
+  Final-PDF decoding and **barcodes.csv** reconcile exact payloads/counts.
+* I25 needs an even number of ASCII digits; Code 128 uses printable ASCII;
+  use QR for Unicode. Barcode dimensions must support the chosen length.
+* Old token profiles require **Convert to fixed-length layout…**. Confirm any
+  unknown segment lengths and Total; conversion does not silently rewrite the
+  saved profile. Invalid drafts stay available for correction or cancellation.
 
 ## Visual Workflow: Settings, Checks and Results
 

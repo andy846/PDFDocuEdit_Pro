@@ -236,6 +236,11 @@ class Renderer:
                     from .barcode_profiles import profile_values
                     from .inserter_production import mark_for
                     self.barcode_marks.append(mark_for(element, plan.profile, profile_values(values)))
+                elif plan.profile and plan.profile.layout_mode == "fixed" and not self.design:
+                    selected = plan.resolve(values)
+                    if selected.visible:
+                        from .generic_production import mark_for
+                        self.barcode_marks.append(mark_for(element, plan.profile, values, selected.value))
             except Exception as exc:
                 fields = sorted(self.plans[element.id].fields)
                 raise CompositionError(
@@ -413,7 +418,7 @@ class Renderer:
                 ))
                 start = end
         else:
-            qr = segno.make_qr(value, error=element.qr_error, boost_error=False, encoding="utf-8")
+            qr = segno.make_qr(value, error=element.qr_error, boost_error=False, encoding="utf-8", eci=not value.isascii())
             matrix = list(qr.matrix)
             count = len(matrix) + 8
             module = min(rect.width, rect.height) / count

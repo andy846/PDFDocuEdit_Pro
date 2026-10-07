@@ -28,6 +28,7 @@ from composition.pdf_source.planner import SYSTEM_FIELDS
 from ui.combo_popup import WideComboBox
 
 SYSTEM_HELP = {
+    "JobId": "Production job ID · provisional zeros in preview, actual ID during generation",
     "EnvelopeIndex": "Envelope / record index · starts at 1",
     "EnvelopeSeq": "Configured envelope sequence · may include existing zero padding",
     "LetterPage": "PDF page within the envelope · starts at 1",
@@ -344,7 +345,8 @@ class GenericBarcodeEditor(QWidget):
         self.stack.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         root.addWidget(self.stack)
         legacy = profile if profile.layout_mode == "legacy" else BarcodeProfile()
-        self.legacy = BarcodeProfileDialog(legacy, fields, self, symbology=symbology, samples=samples)
+        public = {key: value for key, value in fields.items() if isinstance(value, str) and not key.startswith("__Barcode")}
+        self.legacy = BarcodeProfileDialog(legacy, public, self, symbology=symbology, samples=samples)
         self.legacy.setWindowFlags(Qt.WindowType.Widget)
         self.legacy.footer.hide()
         self.legacy.sample.hide()  # Errors have one owner: the outer fixed footer.
@@ -370,11 +372,14 @@ class GenericBarcodeEditor(QWidget):
         context = BarcodeContext.from_values(self.fields)
         segments = []
         for index, token in enumerate(self.legacy.tokens()):
-            source = ("fixed" if token.kind == "literal" else "sequence" if token.value in context.sequences else
-                      "system" if token.value in SYSTEM_FIELDS else "data")
+            source = ("fixed" if token.kind == "literal" else "system" if token.value in SYSTEM_FIELDS else
+                      "sequence" if token.value in context.sequences else "data")
+            numeric = (source != "fixed" and (token.width > 0 or
+                       source == "system" and token.value not in {"JobId", "Side", "PageRole", "MediaStock"} or
+                       source == "sequence" and context.sequences[token.value].isascii() and context.sequences[token.value].isdigit()))
             segments.append(BarcodeSegment(name=token.value if token.kind == "field" else f"Fixed {index+1}",
                 source=source, value=token.value, length=len(token.value) if token.kind == "literal" else token.width,
-                format="numeric" if token.width or source in {"system", "sequence"} else "text"))
+                format="numeric" if numeric else "text"))
         old = self.builder
         self.builder = GenericLayoutBuilder(BarcodeProfile.fixed_layout(segments=segments,
             name=self.legacy.name.text(), machine=self.legacy.machine.text()), self.fields, self)

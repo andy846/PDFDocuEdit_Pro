@@ -90,8 +90,9 @@ def _edit_template_barcode(window, selected_preset=None):
         page = plan.page(window.record.value(), page.print_page)
         from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
         seq_values = sequence_record(Template.from_dict(value), data, window.record.value(), window.page_index)
+        system = {**page.fields(), "JobId": seq_values[CONTEXT_KEY].system["JobId"] if CONTEXT_KEY in seq_values else "00000000-000000-00000000"}
         return {**profile_values(seq_values), **page.fields(), CONTEXT_KEY: BarcodeContext(
-            data=data, system=page.fields(), sequences={s.name: seq_values[s.name] for s in window.template.sequences},
+            data=data, system=system, sequences={s.name: seq_values[s.name] for s in window.template.sequences},
             data_loaded=bool(info.get("store")))}
     fields = preview_context(bool(window.template.media.get("duplex")))
     if element.barcode_profile:
@@ -99,7 +100,7 @@ def _edit_template_barcode(window, selected_preset=None):
     else:
         profile = BarcodeProfile.fixed_layout()
     before = window.template.to_dict()
-    dialog = BarcodeSetupDialog(profile, fields, window, symbology=element.type,
+    dialog = BarcodeSetupDialog(profile, fields, window, symbology=element.type, qr_error=element.qr_error,
         duplex=bool(window.template.media.get("duplex")), printing_locked=bool(window.template.media.get("enabled")),
         template=True, selected_preset=selected_preset)
     def check_placement():
