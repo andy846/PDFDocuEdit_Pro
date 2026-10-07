@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -25,7 +26,7 @@ from composition.template.model import CompositionError, Template, required_fiel
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
 
-from .model import JobResult, ProductionJob, now, validate_output_name
+from .model import JobResult, ProductionJob, now, validate_output_name, validate_output_template
 from .resources import peak_memory
 
 
@@ -187,7 +188,10 @@ def generate(
         raise CompositionError("Chunk size must be between 1 and 1,000 pages.")
     if type(job.auto_repair) is not bool:
         raise CompositionError("Automatic glyph repair must be a boolean.")
-    validate_output_name(job.output_name)
+    # Work on a copy: repeated preview/retry must retain the original template
+    # and the prepared clock/identity rather than resolving a new timestamp.
+    job = copy.copy(job)
+    validate_output_template(job.output_name)
     template = Template.from_dict(job.template)
     template._barcode_job_id = job.job_id
     output_root = Path(job.output_dir).expanduser().resolve()
@@ -206,6 +210,10 @@ def generate(
     try:
         check_cancel(is_cancelled)
         store = open_records(template, job.record_store)
+        job.variable_context = copy.deepcopy(job.variable_context)
+        job.variable_context["namespaces"].setdefault("job", {}).update(id=job.job_id, records=store.count)
+        job.output_name = job.resolved_output_name()
+        validate_output_name(job.output_name)
         result.warnings.extend(store.metadata.get("warnings", []))
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)

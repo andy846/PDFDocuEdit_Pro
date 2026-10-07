@@ -222,6 +222,8 @@ class OverlayJob:
     job_id: str = field(default_factory=new_job_id)
     chunk_size: int = 500
     auto_repair: bool = True
+    output_name: str = "production.pdf"
+    variable_context: dict = field(default_factory=dict)
 
 
 @dataclass

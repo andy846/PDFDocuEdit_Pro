@@ -103,6 +103,21 @@ class JobDialog(QDialog):
                 form.addRow(title,row)
             else:
                 form.addRow(title,edit)
+        from core.variables import VariableContext
+        from ui.variable_name import VariableNameEdit
+        self.name_preview = VariableNameEdit(job.output_name, self)
+        self.name_preview.edit.hide()
+        form.addRow("Resolved filename", self.name_preview)
+        self.controls["output_name"].textChanged.connect(self.name_preview.edit.setText)
+
+        def refresh_name(*_):
+            self.name_preview.set_context(VariableContext.for_job(
+                input_path=self.controls["data_path"].text() or self.controls["template_path"].text(),
+                job_id="example-job", job_name=self.controls["name"].text(), sequence=1,
+            ))
+        self.controls["data_path"].textChanged.connect(refresh_name)
+        self.controls["template_path"].textChanged.connect(refresh_name)
+        refresh_name()
         self.mapping=QComboBox()
         self.mapping.addItem("Template / workflow default","")
         for name in window.spec.node("mapping").params.get("profiles",{}):

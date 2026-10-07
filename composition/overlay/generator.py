@@ -22,6 +22,7 @@ from composition.production.resources import peak_memory
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
+from core.variables import VariableContext, resolve_filename
 
 from .model import EnvelopeSpec, OverlayResult
 from .qc import check_mark
@@ -59,6 +60,11 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         raise CompositionError("Invalid job identity.")
     if type(job.chunk_size) is not int or not 1 <= job.chunk_size <= 1000 or type(job.auto_repair) is not bool:
         raise CompositionError("Invalid chunk size or automatic font repair flag.")
+    context = VariableContext(**job.variable_context) if job.variable_context else VariableContext.for_job(
+        input_path=spec.source.path, job_id=job.job_id, job_name=spec.name)
+    values = context.to_dict()
+    values["namespaces"].setdefault("job", {}).update(id=job.job_id)
+    naming = resolve_filename(job.output_name, VariableContext(**values), extension=".pdf")
     output_root=Path(job.output_dir).resolve()
     output_root.mkdir(parents=True,exist_ok=True)
     final=output_root/job.job_id
@@ -67,6 +73,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging=Path(tempfile.mkdtemp(prefix="."+job.job_id+"-",dir=output_root))
     result=OverlayResult(job.job_id)
+    result.warnings.extend(naming.issues)
     result.copied_source_pages=0
     result.rendered_inserted_blanks=0
     current=None
@@ -92,7 +99,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         result.sheets=plan.sheets
         if isinstance(plan,PrintPlan):
             from composition.media.ticket import export_print_package
-            result.media_summary=export_print_package(staging,plan,"production.pdf",is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket)
+            result.media_summary=export_print_package(staging,plan,naming.value,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket)
             result.media_summary["inserted_blanks"]=plan.inserted_blanks
             result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
         if progress:
@@ -188,7 +195,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         check_cancel(is_cancelled)
         if progress:
             progress(plan.output_pages,plan.output_pages,"Assembling and validating overlay PDF")
-        pdf=staging/"production.pdf"
+        pdf=staging/naming.value
         result.assembler_peak_memory_bytes=_assemble(chunks,pdf,executable,is_cancelled)
         validate_pdf_file(pdf,expected_page_count=plan.output_pages)
         for path in chunks:

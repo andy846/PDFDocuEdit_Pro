@@ -287,6 +287,10 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
                                    "substitutions may affect text width and wrapping. Uncheck for strict font validation.")
         self.auto_repair.toggled.connect(self._auto_repair_changed)
         prod_layout.addWidget(self.auto_repair)
+        from ui.variable_name import VariableNameEdit
+        prod_layout.addWidget(QLabel("Output PDF filename"))
+        self.output_name_edit = VariableNameEdit(parent=self.production_page)
+        prod_layout.addWidget(self.output_name_edit)
         source_note = QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
                              "Only validated, reconciled output is published to a new job folder.")
         source_note.setWordWrap(True)
@@ -1069,7 +1073,16 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         if self.properties.apply() is False or not self.review_production_printing():
             return
         from composition.production.model import ProductionJob
-        job = ProductionJob(self.template.to_dict(), info["store"], output, auto_repair=self.auto_repair.isChecked())
+        job = ProductionJob(self.template.to_dict(), info["store"], output,
+                            auto_repair=self.auto_repair.isChecked(), output_name=self.output_name_edit.text())
+        from core.variables import VariableContext, VariableError
+        job.variable_context["namespaces"].setdefault("job", {})["records"] = self.record_count
+        self.output_name_edit.set_context(VariableContext(**job.variable_context), prepared=True)
+        try:
+            self.output_name_edit.resolved()
+        except VariableError as exc:
+            self._error(str(exc))
+            return
         self._output_template = copy.deepcopy(self.template.to_dict())
         self.tabs.setCurrentIndex(3)
         from .production_settings import plan_summary

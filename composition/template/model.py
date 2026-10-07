@@ -6,6 +6,7 @@ import math
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache as _value_cache
 from pathlib import Path
 from typing import Any
 
@@ -292,32 +293,39 @@ def _number(value: object, label: str, low: float, high: float) -> None:
 
 def parse_value(value: str) -> tuple[tuple[str, str], ...]:
     """Compile field references into literal/field tokens; never execute input."""
-    if not isinstance(value, str) or len(value) > 100_000:
-        raise CompositionError("Element content must be text of at most 100,000 characters.")
-    tokens: list[tuple[str, str]] = []
-    cursor = 0
-    for match in VARIABLE.finditer(value):
-        if match.start() > cursor:
-            tokens.append(("literal", value[cursor:match.start()]))
-        tokens.append(("field", match.group(1)))
-        cursor = match.end()
-    tokens.append(("literal", value[cursor:]))
-    for kind, text in tokens:
-        if kind == "literal" and ("{{" in text or "}}" in text):
-            raise CompositionError("Invalid variable syntax. Use {{Field_Name}}.")
-    return tuple(tokens)
+    from core.variables import VariableError, compile_template
+
+    try:
+        compiled = compile_template(value)
+        # Keep the existing project grammar until extended text tokens have a
+        # saved-format gate. Naming can already use the full shared grammar.
+        if any(token.transforms or "." in token.name for token in compiled.tokens):
+            raise VariableError("Invalid variable syntax. Use {{Field_Name}}.")
+        if len(VARIABLE.findall(value)) != sum(bool(token.name) for token in compiled.tokens):
+            raise VariableError("Invalid variable syntax. Use {{Field_Name}} without spaces.")
+        tokens = [("field", token.name) if token.name else ("literal", token.literal)
+                  for token in compiled.tokens]
+        if not tokens or tokens[-1][0] != "literal":
+            tokens.append(("literal", ""))
+        return tuple(tokens)
+    except VariableError as exc:
+        raise CompositionError(f"Invalid variable syntax. {exc}") from exc
 
 
 def resolve_value(tokens: tuple[tuple[str, str], ...], record: dict[str, str]) -> str:
-    parts = []
-    for kind, text in tokens:
-        if kind == "literal":
-            parts.append(text)
-        elif text not in record:
-            raise CompositionError(f"Missing field: {text}")
-        else:
-            parts.append(record[text])
-    return "".join(parts)
+    from core.variables import VariableContext, VariableError, resolve
+    compiled = _shared_value_tokens(tokens)
+    try:
+        return resolve(compiled, VariableContext.for_record(record)).value
+    except VariableError as exc:
+        raise CompositionError(str(exc)) from exc
+
+
+@_value_cache(maxsize=512)
+def _shared_value_tokens(tokens):
+    from core.variables.model import CompiledTemplate, Token
+    return CompiledTemplate("", tuple(Token(literal=text) if kind == "literal" else Token(name=text)
+                                      for kind, text in tokens))
 
 
 def required_fields(template: Template) -> set[str]:

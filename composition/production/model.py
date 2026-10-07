@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import re
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
 
 def new_job_id() -> str:
@@ -19,11 +17,37 @@ def now() -> str:
 
 def validate_output_name(name):
     from composition.template.model import CompositionError
-    if (not isinstance(name,str) or len(name)>160 or not name.lower().endswith(".pdf")
-            or name!=Path(name).name or re.search(r'[<>:"/\\|?*\x00-\x1f]',name)
-            or name.rstrip(" .")!=name or name in (".pdf","..pdf")
-            or re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?",name)):
-        raise CompositionError("Output needs a valid PDF filename, without folders or reserved characters.")
+    from core.variables import VariableError, validate_filename
+    try:
+        validate_filename(name, extension=".pdf")
+    except VariableError as exc:
+        raise CompositionError("Output needs a valid PDF filename, without folders or reserved characters.") from exc
+
+
+def validate_output_template(name):
+    from composition.template.model import CompositionError
+    from core.variables import VariableError, compile_template
+    if isinstance(name, str) and "{{" in name:
+        try:
+            compile_template(name)
+            if not name.lower().endswith(".pdf"):
+                raise VariableError("Output naming template must end in .pdf.")
+        except VariableError as exc:
+            raise CompositionError(str(exc)) from exc
+    else:
+        validate_output_name(name)
+
+
+def resolve_output_name(name, context):
+    from composition.template.model import CompositionError
+    from core.variables import VariableContext, VariableError, resolve_filename
+    validate_output_template(name)
+    try:
+        if "{{" not in name:
+            return name
+        return resolve_filename(name, VariableContext(**context), extension=".pdf").value
+    except VariableError as exc:
+        raise CompositionError(f"Output naming: {exc}") from exc
 
 
 @dataclass
@@ -35,6 +59,19 @@ class ProductionJob:
     chunk_size: int = 500
     auto_repair: bool = False
     output_name: str = "production.pdf"
+    variable_context: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        from core.variables import VariableContext
+        if not self.variable_context:
+            self.variable_context = VariableContext.for_job(
+                input_path=self.template.get("data", {}).get("path", ""),
+                job_id=self.job_id, job_name=self.template.get("name", ""),
+                production={"template": self.template.get("name", "")},
+            ).to_dict()
+
+    def resolved_output_name(self):
+        return resolve_output_name(self.output_name, self.variable_context)
 
 
 @dataclass

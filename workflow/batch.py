@@ -10,13 +10,20 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from composition.data.sequences import open_records
 from composition.data.source import import_records, suggest_import
 from composition.engine.fonts import load_font
 from composition.production.generator import JobCancelled, check_cancel, generate
-from composition.production.model import ProductionJob, new_job_id, now, validate_output_name
+from composition.production.model import (
+    ProductionJob,
+    new_job_id,
+    now,
+    resolve_output_name,
+    validate_output_template,
+)
 from composition.template.model import CompositionError, DataConfig, required_fields, validate_template
 from composition.template.serializer import file_hash, load_project, save_project
 from core.io_atomic import atomic_output
@@ -90,6 +97,10 @@ class BatchJob:
     result: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
     data_summary: dict = field(default_factory=dict)
+    variable_context: dict = field(default_factory=dict)
+
+    def resolved_output_name(self):
+        return resolve_output_name(self.output_name, self.variable_context)
 
     def validate(self):
         if not isinstance(self.id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",self.id):
@@ -98,7 +109,9 @@ class BatchJob:
             raise CompositionError("Use a job name of 1–200 characters.")
         if any(not isinstance(v,str) or len(v)>4096 for v in (self.template_path,self.data_path,self.mapping_profile)):
             raise CompositionError("Invalid batch input path/profile.")
-        validate_output_name(self.output_name)
+        validate_output_template(self.output_name)
+        if not isinstance(self.variable_context, dict):
+            raise CompositionError("Invalid prepared variable context.")
         if not isinstance(self.data_options,dict) or not isinstance(self.sequence_starts,dict):
             raise CompositionError("Invalid import or sequence settings.")
         if (type(self.approved) is not bool or not isinstance(self.status,str)
@@ -200,7 +213,7 @@ def _signature(spec, job):
     sources=[job.template_path,*assets]+([job.data_path] if config else [])
     hashes={str(Path(p).resolve()):file_hash(Path(p)) for p in sources}
     signature=hashlib.sha256(json.dumps({"files":hashes,"config":asdict(config) if config else None,
-        "starts":job.sequence_starts,"output":job.output_name,
+        "starts":job.sequence_starts,"output":job.output_name,"variables":job.variable_context,
         "pipeline":[{"kind":n.kind,"id":n.id,"params":n.params} if n.kind in EXTRA_KINDS else n.kind for n in spec.chain()],
         "auto_repair":spec.node("compose").params.get("auto_repair",True)},sort_keys=True).encode()).hexdigest()
     return signature,template,config,hashes
@@ -227,9 +240,14 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
         raise CompositionError("This queue requires a Mail Merge workflow.")
     root=Path(directory).resolve()/"mail-snapshots"
     root.mkdir(parents=True,exist_ok=True)
-    names={}
-    for job in run.jobs:
-        names.setdefault(job.output_name.casefold(),[]).append(job.id)
+    from core.variables import VariableContext
+    frozen_at = datetime.now().astimezone()
+    for index, job in enumerate(run.jobs, 1):
+        if not job.variable_context:
+            job.variable_context = VariableContext.for_job(
+                input_path=job.data_path or job.template_path, job_id=new_job_id(),
+                job_name=job.name, batch_id=run.batch_id, sequence=index, frozen_at=frozen_at,
+            ).to_dict()
     run.status="Checking"
     for index,job in enumerate(run.jobs,1):
         if is_cancelled and is_cancelled():
@@ -240,8 +258,6 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
         try:
             job.validate()
             check_cancel(is_cancelled)
-            if len(names[job.output_name.casefold()])>1:
-                raise CompositionError("Duplicate output name in batch. Give each job a distinct filename.")
             signature,template,config,before=_signature(spec,job)
             job.template_fields=sorted(required_fields(template)-{seq.name for seq in template.sequences})
             job.sequence_fields=[asdict(seq) for seq in template.sequences]
@@ -291,7 +307,7 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                     progress=progress,is_cancelled=is_cancelled)
                 job.record_store=str(transformed.path)
                 job.data_summary=summary(transformed,with_records.count)
-                job.data_summary["outputs"]=split_names(transformed,job.output_name)
+                job.data_summary["outputs"]=split_names(transformed,job.resolved_output_name())
                 from .transforms import export_audit
                 report=snapshot/"data-review"
                 export_audit(transformed,report)
@@ -348,6 +364,20 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                 break
         if progress:
             progress(index,len(run.jobs),f"Checked {index}/{len(run.jobs)} · {job.name}")
+    names = {}
+    for job in run.jobs:
+        if job.status not in ("Needs review", "Ready", "Completed"):
+            continue
+        try:
+            # Keep the established distinct-PDF-basename queue delivery rule.
+            names.setdefault(job.resolved_output_name().casefold(), []).append(job)
+        except CompositionError as exc:
+            job.status, job.approved, job.error = "Blocked", False, str(exc)
+    for group in names.values():
+        if len(group) > 1:
+            for job in group:
+                if job.status != "Completed":
+                    job.status, job.approved, job.error = "Blocked", False, "Duplicate output name in batch. Give each job a distinct filename."
     if run.status!="Cancelled":
         run.status="Needs review"
     return run
@@ -486,6 +516,12 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
 
 
 def _compose_item(spec,job,root,partitions,progress,is_cancelled):
+    identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id") or new_job_id()
+    if (root / identity).exists() or (root / (identity + "-failed")).exists():
+        # A retry retains the prepared clock, job identity and filename. Prior
+        # attempts remain auditable; the core no-overwrite guard stays intact.
+        root = root / ("retry-" + new_job_id())
+        root.mkdir()
     from contextlib import nullcontext
     # Short owned scratch paths avoid Windows MAX_PATH failures in nested font caches.
     context=tempfile.TemporaryDirectory(prefix="wf-prod-") if partitions else nullcontext(str(root))
@@ -499,7 +535,9 @@ def _compose_item(spec,job,root,partitions,progress,is_cancelled):
                     "excluded":job.data_summary["excluded"],"errors":job.data_summary["errors"],
                     "warnings":job.data_summary["warnings"]},indent=2),encoding="utf-8")
         result=generate(ProductionJob(job.prepared_template,job.record_store,str(directory),
-            auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name),
+            job_id=identity,
+            auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name,
+            variable_context=job.variable_context),
             progress=progress,is_cancelled=is_cancelled,additional_reports=reports,_defer_media_ticket=bool(partitions)).to_dict()
         if result["status"]=="completed" and partitions:
             from .splitter import split_composed
