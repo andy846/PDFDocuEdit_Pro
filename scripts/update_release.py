@@ -173,7 +173,13 @@ def main() -> int:
     if not isinstance(key, Ed25519PrivateKey) or key.public_key().public_bytes_raw().hex() != PUBLIC_KEY_HEX:
         raise UpdateError("Private key does not match the embedded update public key.")
     fingerprint = source_fingerprint()
-    build_info = {"version": APP_VERSION, "source_fingerprint": fingerprint,"composition_enabled":is_enabled()}
+    # Persist exact release provenance alongside the source fingerprint. Only
+    # build committed, reviewable trees; generated/ignored QA output is allowed.
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip():
+        raise UpdateError("Commit release source changes before building signed packages.")
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    build_info = {"version": APP_VERSION, "source_fingerprint": fingerprint,
+                  "source_commit": commit, "composition_enabled": is_enabled()}
     dist = ROOT / "dist" / "PDFDocuEdit Pro"
     if not args.skip_build:
         atomic_json(ROOT / "build_assets" / "update_build.json", build_info)

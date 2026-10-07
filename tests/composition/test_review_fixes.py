@@ -105,7 +105,12 @@ def test_regroup_printing_change_updates_retained_media_and_undo(app, tmp_path):
 
 def test_four_page_template_add_rule_targets_real_page_and_restores_deleted_rule(app):
     model = Template(pages=[PageSpec(name=f"Page {i+1}") for i in range(4)])
-    dialog = MediaDialog({}, {"kind": "template", "project": model.to_dict(), "records": 2})
+    # New templates deliberately do not guess paper assignments. This test
+    # starts with three explicitly configured pages, then repairs page four.
+    media = default_media()
+    media.update(mode="template", assignments={page.id: stock for page, stock in
+                 zip(model.pages[:3], ("LH_A", "LH_B", "LH_C"), strict=True)})
+    dialog = MediaDialog(media, {"kind": "template", "project": model.to_dict(), "records": 2})
     try:
         dialog.add_rule()
         assert "Page 4" in dialog.assignments.item(3, 0).text()
@@ -128,7 +133,10 @@ def test_four_page_template_add_rule_targets_real_page_and_restores_deleted_rule
 
 def test_rule_modes_keep_separate_drafts_and_profile_load_replaces_them(app, monkeypatch):
     model = Template(pages=[PageSpec() for _ in range(3)])
-    dialog = MediaDialog({}, {"kind": "template", "project": model.to_dict(), "records": 1})
+    media = default_media()
+    media.update(mode="template", assignments={page.id: stock for page, stock in
+                 zip(model.pages, ("LH_A", "LH_B", "LH_C"), strict=True)})
+    dialog = MediaDialog(media, {"kind": "template", "project": model.to_dict(), "records": 1})
     try:
         original = dialog.value()["assignments"]
         dialog.mode.setCurrentIndex(dialog.mode.findData("page"))
@@ -155,6 +163,10 @@ def test_rule_modes_keep_separate_drafts_and_profile_load_replaces_them(app, mon
         assert dialog.value()["assignments"] == {"1": "LH_B"}
         monkeypatch.setattr(QInputDialog, "getItem", lambda *args: (args[3][-1], True))
         dialog.mode.setCurrentIndex(dialog.mode.findData("template"))
+        # Blank page rows are now visible for repair. Remove them to exercise
+        # the explicit Add rule chooser rather than treating them as absent.
+        for row in range(dialog.assignments.rowCount()-1, 0, -1):
+            dialog.assignments.removeRow(row)
         dialog.add_rule()
         assert dialog.assignments.item(1, 0).data(Qt.ItemDataRole.UserRole) == model.pages[2].id
         dialog.assignments.removeRow(1)

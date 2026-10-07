@@ -482,7 +482,9 @@ def run(output: Path):
     ps_window.undo.setClean()
     ps_window.close()
     wait(lambda: not ps_window.workers)
-    summary = {"postscript":ps_report,"pdf_overlay": overlay_summary, "passed":True,"frozen":bool(getattr(sys,"frozen",False)),
+    from scripts.release_composition_acceptance import run_new_features
+    release_features = run_new_features(output/"v3.0.2")
+    summary = {"release_features":release_features,"postscript":ps_report,"pdf_overlay": overlay_summary, "passed":True,"frozen":bool(getattr(sys,"frozen",False)),
                "scale":os.environ.get("QT_SCALE_FACTOR","1"), "records":100, "pages":200,
                "pdf":window.last_output, "event_loop_ticks":len(ticks), "layout":layout_metrics,
                "checks":["compact toolbar/canvas", "narrow preview navigation", "single-line full status message", "Welcome entry","PDF background","CSV import","Chinese preview","exact fonts","Windows font family/style selection",

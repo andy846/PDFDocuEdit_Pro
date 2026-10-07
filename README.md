@@ -1,10 +1,20 @@
-# PDFDocuEdit Pro V3.0.1
+# PDFDocuEdit Pro V3.0.2
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
 本次發佈平台為 **Windows x64**，提供 Setup、Managed Portable 及簽署更新包。macOS 核心測試與 Windows 安裝包驗收分開記錄；本次不提供 V3 macOS 安裝包。
 
-## V3.0.0 新功能
+## V3.0.2 更新
+
+- **Conditional Mail Merge**：按清單處理多個資料檔，條件分流到不同模板；整批流水號、例外覆核、逐分支批准及來源記錄對照。
+- **Template Designer**：跨頁同位置／同頁底距離複製欄位及 Paste in place；修正文字框太小時畫布空白問題。
+- **PDF 間尺**：精準端點、上方／左側紙面尺、可拖拉參考線、精確位置設定及磁吸。
+- **雙面選紙**：允許多頁模板重用紙種，按實體正反面檢查選紙設定。
+- **Inserter I25 — 18 digits**：Group／Sheet 預設由 `00` 起、實體紙序、EOG／校驗碼自動計算、六個插頁條件及成品解碼 CSV。
+
+詳見 [v3.0.2 發佈說明](docs/RELEASE_NOTES_3.0.2.md) 及 [驗收記錄](docs/RELEASE_VALIDATION_3.0.2.md)。
+
+## V3.0.0 功能基礎及目前操作指南
 
 | 工作區 | 能力 |
 | --- | --- |
@@ -37,7 +47,7 @@
 - 生產前逐封檢查資料、尺寸與正面條碼數量，超過 99 張紙或資料錯誤會阻止生成。生產後解碼成品並輸出 `barcodes.csv`，包含完整封號、紙序、輸出頁、由 00 起嘅條碼紙序（Sheet sequence）、插頁碼、EOG、校驗碼及核對結果。
 
 依校驗公式，首封第一張非結尾、無插頁、客戶資訊全零為 `000000000000000000`；第二張結尾為 `000100100000000006`。
-設定仍需配合實際入信機尺寸、方向與讀取位置驗證。舊 generic profile 保留原有 payload；新版保存使用 profile v2、模板 v11、套印 v7，不改公開版本號。
+設定仍需配合實際入信機尺寸、方向與讀取位置驗證。舊 generic profile 保留原有 payload；新版保存使用 profile v2、模板 v11、套印 v7。既有明確保存的 Group 起始值保持原設定；要使用零起始請在 Configure 選 `00`。
 
 ### V3.0.1 更新：Visual Workflow 節點核對
 
@@ -50,7 +60,7 @@ Compose／Output 的試跑只檢查及提供單筆預覽，不發布生產檔案
 來源或上游設定改變後須重新檢查。正式生產仍由既有 Review／Run 流程執行。
 詳見 [實作說明](docs/VISUAL_WORKFLOW_INSPECTION.md) 及 [v3.0.1 發佈說明](docs/RELEASE_NOTES_3.0.1.md)。本次亦更新程式內 **Help → README**，補齊 Designer、Workflow、分封及選紙操作入口。
 
-### 最新開發功能：Conditional Mail Merge
+### V3.0.2：Conditional Mail Merge
 
 在 Document Designer 的 **Create Visual Workflow → Conditional Mail Merge**，或首頁 **For each file → Route by template** 開啟。
 
@@ -61,7 +71,7 @@ Compose／Output 的試跑只檢查及提供單筆預覽，不發布生產檔案
 - **Check to step** 與 **Check & Preview** 不發布生產檔案；Input／Output／Issues 每頁 50 筆，保留來源記錄及序號。先覆核並批准，再 **Run approved**。
 - 部分生產須確認已覆核例外／被阻擋項目。生成記錄對照 CSV、例外 CSV、批次摘要及 JSON；已完成且未改動的有效輸出在重新檢查時保留。
 
-這是有界的資料檔迭代及單層條件分支，不支援自由回接、巢狀迴圈或 PDF 分封分支。原有 v1–v4 工作流保持可讀；新功能使用 v5 `.pdflow`。詳細操作及驗證見 [分支工作流說明](docs/VISUAL_WORKFLOW_BRANCHING.md)。本段描述工作區開發版本，未另行發布安裝包。
+這是有界的資料檔迭代及單層條件分支，不支援自由回接、巢狀迴圈或 PDF 分封分支。原有 v1–v4 工作流保持可讀；新功能使用 v5 `.pdflow`。詳細操作及驗證見 [分支工作流說明](docs/VISUAL_WORKFLOW_BRANCHING.md)。
 
 ### PostScript 與 Printer Profile
 
@@ -154,7 +164,7 @@ startup rollback. First deployment can use the Inno Setup installer or extract
 the Managed Portable ZIP; both launch through Launcher.exe.
 See [更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V3.0.1 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.1). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
+Download the [V3.0.2 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.2). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
 Existing legacy Setup installations need a one-time transition to the managed installer or portable package.
 
 ## V2.5.4 stability update
@@ -166,7 +176,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - CI runs affected tests and basic smoke checks on ordinary branch pushes. PRs and merges run the Windows automated suite; UI interaction and Linux/macOS core jobs run when relevant files change, and version tags run every test group. Pillow is pinned to 11.3.0.
 
-The Windows x64 release target is V3.0.1. Setup and Managed Portable downloads include SHA-256 files.
+The Windows x64 release target is V3.0.2. Setup and Managed Portable downloads include SHA-256 files.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -242,8 +252,8 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：[Inno Setup V3.0.0](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.0/PDFDocuEdit-Pro-v3.0.0-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
-- 免安裝版：[Managed Portable V3.0.0](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.0/PDFDocuEdit-Pro-v3.0.0-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 安裝版：[Inno Setup V3.0.2](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.2/PDFDocuEdit-Pro-v3.0.2-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
+- 免安裝版：[Managed Portable V3.0.2](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.2/PDFDocuEdit-Pro-v3.0.2-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
 - 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。各下載均有同名 .sha256 校驗檔。
 
 ### Windows release build

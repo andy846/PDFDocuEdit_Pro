@@ -8,7 +8,7 @@ from .base import ToolDialog
 
 README_CONTENT = """# PDFDocuEdit Pro
 
-PDF Editing & Print Production Suite — v3.0.1
+PDF Editing & Print Production Suite — v3.0.2
 
 **Program Developer:** Andy Leung (andy846@gmail.com)
 
@@ -21,6 +21,20 @@ window. PDF Workspace handles document editing; Document Designer handles
 reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64.
+
+## New in v3.0.2
+
+* Conditional Mail Merge processes an ordered list of data files and routes
+  records exclusively to different templates. Batch sequences, exception
+  review, per-branch approval and reconciliation preserve source identities.
+* Template Designer repeats selected fields across pages at exact coordinates
+  or equal footer distance; Paste in place preserves position with one Undo.
+* PDF measurement uses precise end ticks, paper rulers, draggable guides and
+  snapping. Alt temporarily bypasses snapping; guides are not written to PDF.
+* Duplex media setup supports repeated Stocks across template pages. Clipped
+  merge-field names stay editable without blanking the canvas.
+* Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
+  fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
 ## Quick Start: Two Workspaces
 

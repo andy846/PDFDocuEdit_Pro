@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfdocuedit-pro"
-version = "3.0.1"
+version = "3.0.2"
 description = "PDF editing, document design and print production desktop suite"
 requires-python = ">=3.12,<3.13"
 dependencies = [
