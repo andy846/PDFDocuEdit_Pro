@@ -61,6 +61,7 @@ class BarcodeProfile:
     layout_mode: str = "legacy"
     total_length: int = 0
     segments: list[BarcodeSegment] = field(default_factory=list)
+    sheet_sequence_scope: str = "envelope"
 
     @classmethod
     def fixed_layout(cls, total_length=0, segments=None, **kwargs):
@@ -68,7 +69,7 @@ class BarcodeProfile:
 
     @classmethod
     def inserter(cls):
-        return cls(name="Inserter I25 — 18 digits", preset=INSERTER_I25)
+        return cls(name="Inserter I25 — 18 digits", preset=INSERTER_I25, version=3, sheet_sequence_scope="job")
 
     @classmethod
     def from_dict(cls, raw):
@@ -82,6 +83,8 @@ class BarcodeProfile:
             if version < 3 and (values.get("layout_mode", "legacy") != "legacy" or
                                 values.get("total_length", 0) or values.get("segments")):
                 raise CompositionError("Fixed-length layouts require barcode profile version 3.")
+            if version < 3 and values.get("sheet_sequence_scope", "envelope") != "envelope":
+                raise CompositionError("Job sheet sequencing requires barcode profile version 3.")
             values["version"] = max(2, version)
             if "segments" in values:
                 if not isinstance(values["segments"], list) or len(values["segments"]) > 30:
@@ -100,8 +103,10 @@ class BarcodeProfile:
     def to_dict(self):
         values = asdict(self)
         if self.version < 3:
-            for key in ("layout_mode", "total_length", "segments"):
+            for key in ("layout_mode", "total_length", "segments", "sheet_sequence_scope"):
                 values.pop(key)
+        elif self.preset == "generic":
+            values.pop("sheet_sequence_scope")
         return values
 
     def fields(self):
@@ -141,6 +146,10 @@ class BarcodeProfile:
                 raise CompositionError("Inserter I25 requires barcode profile version 2.")
             if type(self.group_start) is not int or not 0 <= self.group_start <= 99:
                 raise CompositionError("Group sequence start must be 00 to 99.")
+            if self.sheet_sequence_scope not in {"envelope", "job"}:
+                raise CompositionError("Unsupported inserter sheet sequence scope.")
+            if self.sheet_sequence_scope == "job" and (self.version != 3 or self.group_start != 0):
+                raise CompositionError("Current Inserter I25 starts group and job sheet sequences at 00 and requires version 3.")
             if not isinstance(self.inserts, list) or len(self.inserts) != 6:
                 raise CompositionError("Configure exactly six insert positions.")
             if not isinstance(self.customer_field, str):
@@ -217,12 +226,19 @@ class BarcodeProfile:
         if not isinstance(customer, str) or len(customer) != 9 or not customer.isascii() or not customer.isdigit():
             raise RuleValueError(self.customer_field or "CustomerInformation", "Expected exactly nine ASCII digits; leading zeros are preserved.")
         group = f"{(self.group_start+envelope-1) % 100:02d}"
-        page = f"{sheet-1:02d}"
+        job_sheet = None
+        if self.sheet_sequence_scope == "job":
+            value = fields.get("JobSheetNo", "")
+            if not isinstance(value, str) or not value.isascii() or not value.isdigit() or len(value) > 18 or int(value) < 1:
+                raise RuleValueError("JobSheetNo", "The production job physical sheet number is required for Inserter I25.")
+            job_sheet = int(value)
+        page = f"{((job_sheet if job_sheet is not None else sheet)-1) % 100:02d}"
         eog = str(int(sheet == count))
         body = group+page+str(masks[0])+str(masks[1])+eog+"0"+customer
         digit = check_digit(body)
         return {"group": group, "sheet": page, "inserts_1_3": str(masks[0]), "inserts_4_6": str(masks[1]),
-                "eog": eog, "location": "0", "customer": customer, "check_digit": digit, "payload": body+digit}
+                "eog": eog, "location": "0", "customer": customer, "check_digit": digit, "payload": body+digit,
+                "job_sheet": job_sheet}
 
 
 def has_profiles(template):
@@ -233,6 +249,32 @@ def has_profiles(template):
 def has_inserter(template):
     cached = getattr(template, "_has_inserter_profiles", None)
     return cached if cached is not None else any(element.barcode_profile.get("preset") == INSERTER_I25 for element in template.all_elements())
+
+
+def needs_inserter_update(profile):
+    if isinstance(profile, dict):
+        profile = BarcodeProfile.from_dict(profile)
+    return bool(profile and profile.preset == INSERTER_I25 and
+                (profile.sheet_sequence_scope != "job" or profile.version != 3 or profile.group_start != 0))
+
+
+def updated_inserter(profile):
+    """Explicit conversion only: changing production semantics invalidates proof approval."""
+    import copy
+    result = copy.deepcopy(profile)
+    result.version = 3
+    result.sheet_sequence_scope = "job"
+    result.group_start = 0
+    result.validation = "pending"
+    return result
+
+
+def require_current_inserters(profiles):
+    for object_id, profile in profiles:
+        if needs_inserter_update(profile):
+            raise CompositionError(f"Object {object_id}: legacy Inserter I25 sheet sequence restarts per envelope. "
+                                   "Open this project in Designer and confirm Update I25 sequences before production. "
+                                   "Group starts at 00 per job; sheet sequence runs continuously across envelopes (00–99).")
 
 
 def profile_record(template, record, ordinal, page_index):
@@ -251,6 +293,7 @@ def profile_record(template, record, ordinal, page_index):
     context.update(EnvelopeIndex=str(ordinal), EnvelopeSeq=str(ordinal).zfill(18),
                    EnvelopeCount=str(getattr(template, "_barcode_record_count", template.generated_count if template.record_mode == "generated" else 1)),
                    OutputPage=str(int(context["OutputPage"])+(ordinal-1)*template._barcode_output_count))
+    context["JobSheetNo"] = str((int(context["OutputPage"])+1)//2 if template.media.get("duplex") else int(context["OutputPage"]))
     # Legacy concatenation retains its historical values. New layouts have an
     # explicit runtime-job identity; preview uses a clearly provisional ID.
     typed = {**context, "JobId": getattr(template, "_barcode_job_id", "00000000-000000-00000000")}

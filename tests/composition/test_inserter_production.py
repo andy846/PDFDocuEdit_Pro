@@ -71,7 +71,7 @@ def test_overlay_preset_uses_exact_physical_sheet_codes(tmp_path):
     assert rows[0]["Payload"] == "000000000000000000"
     assert rows[1]["Payload"] == "000100100000000006"
     assert [row["Sheet"] for row in rows] == ["1", "2", "1", "2"]
-    assert [row["Sheet sequence"] for row in rows] == ["00", "01", "00", "01"]
+    assert [row["Sheet sequence"] for row in rows] == ["00", "01", "02", "03"]
 
 
 def test_1000_envelopes_real_decode_and_rollover(tmp_path):
@@ -83,7 +83,8 @@ def test_1000_envelopes_real_decode_and_rollover(tmp_path):
         rows = list(csv.DictReader(stream))
     assert [row["Group sequence"] for row in rows[97:101]] == ["97", "98", "99", "00"]
     assert rows[-1]["Envelope"] == "1000" and rows[-1]["Group sequence"] == "99"
-    assert all(row["Sheet sequence"] == "00" for row in rows)
+    assert [row["Sheet sequence"] for row in rows] == [f"{i % 100:02d}" for i in range(1000)]
+    assert [int(row["Job sheet"]) for row in rows] == list(range(1, 1001))
 
 
 def test_media_inserted_backs_share_the_same_barcode_sheet_plan(tmp_path):
@@ -150,3 +151,44 @@ def test_system_count_and_page_sequence_follow_duplex_blanks():
     assert value["PageSeq"] == "5"
     assert profile_values(value)["EnvelopeCount"] == "27"
     assert profile_values(value)["OutputPage"] == "5"
+
+
+def test_imported_200_single_page_records_have_continuous_sheet_sequence(tmp_path):
+    from composition.data.source import import_records
+    from composition.template.model import DataConfig
+    data = tmp_path / "data.csv"
+    data.write_text("Customer\n" + "\n".join(f"Customer {i}" for i in range(200)), encoding="utf-8")
+    store = import_records(DataConfig(path=str(data)), tmp_path / "records.db")
+    model = template_for(pages=1, duplex=False)
+    model.record_mode = "imported"
+    result = generate(ProductionJob(model.to_dict(), str(store.path), str(tmp_path / "output"), chunk_size=37))
+    assert result.status == "completed", result.error
+    assert result.sheets == result.generated_pages == result.decoded_barcodes == 200
+    with Path(result.report_dir, "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [r["Sheet sequence"] for r in rows] == [f"{i % 100:02d}" for i in range(200)]
+    assert [r["Group sequence"] for r in rows] == [r["Sheet sequence"] for r in rows]
+    assert all(r["EOG"] == "1" for r in rows)
+
+
+@pytest.mark.parametrize("duplex", [False, True])
+def test_two_page_template_only_front_barcode_uses_explicit_printing(tmp_path, duplex):
+    model = template_for(pages=2, duplex=duplex)
+    model.pages[1].elements.clear()
+    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
+    if duplex:
+        assert result.status == "completed", result.error
+        assert result.printing == "duplex" and result.sheets == result.decoded_barcodes == 2
+        assert result.generated_pages == 4 and result.inserted_blanks == 0
+    else:
+        assert result.status == "failed" and result.generated_pages == 0
+        assert "Simplex: template page 2" in result.error and "choose Duplex" in result.error
+
+
+def test_legacy_inserter_cannot_silently_generate(tmp_path):
+    model = template_for(pages=1, duplex=False)
+    profile = model.elements[0].barcode_profile
+    profile.update(version=2, sheet_sequence_scope="envelope")
+    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
+    assert result.status == "failed" and result.generated_pages == 0
+    assert "confirm Update I25" in result.error

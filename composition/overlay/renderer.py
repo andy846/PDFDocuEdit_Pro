@@ -116,6 +116,7 @@ class OverlayRenderer:
                 if obj.profile.preset == "inserter_i25_18":
                     marks[-1]["parts"] = obj.profile.inserter_parts(fields)
                     marks[-1]["sheet"] = int(fields["SheetNo"])
+                    marks[-1]["job_sheet"] = int(fields["JobSheetNo"])
         return layer.number, marks
 
     @staticmethod

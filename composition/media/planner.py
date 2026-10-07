@@ -60,6 +60,7 @@ class PrintPage:
             "LetterPage":str(self.logical_page or ""),"LetterPageCount":str(c.pages_per_envelope),
             "OutputPage":str(self.output_page),"PrintPage":str(self.print_page),"PrintPageCount":str(c.output_pages_per_envelope),
             "SheetNo":str(self.sheet),"SheetCount":str(c.sheets_per_envelope),
+            "JobSheetNo":str((self.output_page+1)//2 if c.duplex else self.output_page),
             "Side":"Back" if c.duplex and self.print_page%2==0 else "Front",
             "IsFirstSheet":str(int(self.sheet==1)),"IsLastSheet":str(int(self.sheet==c.sheets_per_envelope)),
             "IsInsertedBlank":str(int(self.source_page is None)),"PageRole":page_role(self.logical_page,c.pages_per_envelope) if self.logical_page else "BLANK",

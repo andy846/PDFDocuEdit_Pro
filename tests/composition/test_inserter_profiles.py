@@ -16,7 +16,7 @@ from composition.template.model import (
 
 
 def values(envelope=1, sheet=1, total=2):
-    return {"EnvelopeIndex": str(envelope), "SheetNo": str(sheet), "SheetCount": str(total)}
+    return {"EnvelopeIndex": str(envelope), "SheetNo": str(sheet), "SheetCount": str(total), "JobSheetNo": str((envelope-1)*total+sheet)}
 
 
 def test_golden_payloads_and_zero_checksum():
@@ -78,3 +78,27 @@ def test_duplex_sheet_context_has_same_payload_both_sides():
     payloads = [profile.payload(page.fields()) for page in plan.pages()]
     assert payloads[0] == payloads[1] == "000000000000000000"
     assert payloads[2] == payloads[3] == "000100100000000006"
+
+
+def test_job_sequence_crosses_envelopes_and_legacy_requires_explicit_update():
+    from composition.engine.barcode_profiles import require_current_inserters, updated_inserter
+    profile = BarcodeProfile.inserter()
+    plan = EnvelopePlan(5, EnvelopeSettings(groups=[[1, 3], [4, 5]]))
+    parts = [profile.inserter_parts(p.fields()) for p in plan.pages()]
+    assert [p["group"] for p in parts] == ["00", "00", "00", "01", "01"]
+    assert [p["sheet"] for p in parts] == ["00", "01", "02", "03", "04"]
+    assert [p["eog"] for p in parts] == ["0", "0", "1", "0", "1"]
+    legacy = BarcodeProfile.from_dict({"version": 2, "preset": profile.preset, "group_start": 5})
+    assert legacy.inserter_parts(plan.page(2, 1).fields())["sheet"] == "00"
+    with pytest.raises(CompositionError, match="confirm Update I25"):
+        require_current_inserters([("old", legacy)])
+    upgraded = updated_inserter(legacy)
+    require_current_inserters([("old", upgraded)])
+    assert upgraded.group_start == 0 and upgraded.sheet_sequence_scope == "job"
+    assert legacy.group_start == 5 and legacy.version == 2
+    assert BarcodeProfile.from_dict(upgraded.to_dict()).payload(plan.page(2, 1).fields()) == profile.payload(plan.page(2, 1).fields())
+
+
+def test_job_sheet_context_missing_is_not_guessed():
+    with pytest.raises(CompositionError, match="physical sheet number"):
+        BarcodeProfile.inserter().payload({"EnvelopeIndex": "2", "SheetNo": "1", "SheetCount": "1"})

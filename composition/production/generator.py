@@ -208,13 +208,15 @@ def generate(
         result.warnings.extend(store.metadata.get("warnings", []))
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)
-        from composition.engine.barcode_profiles import has_inserter, has_profiles
+        from composition.engine.barcode_profiles import has_inserter
         profile_plan = None
-        if has_profiles(template):
-            from composition.media.planner import build_print_plan
-            profile_plan = build_print_plan(template, store.count, is_cancelled=is_cancelled)
-            result.pages_per_record = profile_plan.settings_for(1).output_pages_per_envelope
-            result.expected_pages = profile_plan.output_pages
+        from composition.media.planner import build_print_plan
+        profile_plan = build_print_plan(template, store.count, is_cancelled=is_cancelled)
+        result.pages_per_record = profile_plan.settings_for(1).output_pages_per_envelope
+        result.expected_pages = profile_plan.output_pages
+        result.printing = "duplex" if profile_plan.settings.duplex else "simplex"
+        result.sheets = profile_plan.sheets
+        result.inserted_blanks = profile_plan.inserted_blanks
         if has_inserter(template):
             if any(e.barcode_profile.get("preset") == "inserter_i25_18" and
                    e.barcode_profile.get("validation", "pending") == "pending" for e in template.all_elements()):

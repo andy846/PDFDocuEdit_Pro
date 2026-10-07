@@ -203,7 +203,7 @@ class Renderer:
         indices = range(len(self.template.pages)) if page_index is None else [page_index]
         media_plan=None
         from .barcode_profiles import has_profiles
-        if page_index is None and (self.template.media.get("enabled") or has_profiles(self.template)):
+        if page_index is None and (self.template.media.get("enabled") or self.template.media.get("duplex") or has_profiles(self.template)):
             from composition.media.planner import build_print_plan
             if self.media_plan is None:
                 self.media_plan=build_print_plan(self.template,1,is_cancelled=is_cancelled)

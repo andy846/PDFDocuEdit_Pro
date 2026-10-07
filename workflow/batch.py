@@ -302,6 +302,12 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             missing=required_fields(template)-set(with_records.fields)
             if missing:
                 raise CompositionError("Missing mapped fields: "+", ".join(sorted(missing)))
+            from composition.engine.barcode_profiles import has_inserter
+            if has_inserter(template):
+                from composition.engine.inserter_production import preflight as inserter_preflight
+                from composition.media.planner import build_print_plan
+                inserter_preflight(template, with_records.records(), build_print_plan(template, with_records.count, is_cancelled=is_cancelled),
+                                   is_cancelled, progress)
             from composition.engine.generic_production import preflight as generic_preflight
             generic_preflight(template, with_records.records(), is_cancelled=is_cancelled, progress=progress,
                               audit_path=snapshot/"barcode-cycles.csv", record_store=job.record_store)

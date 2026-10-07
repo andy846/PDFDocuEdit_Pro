@@ -12,7 +12,7 @@ from composition.production.generator import _csv_value, check_cancel
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
 
-from .barcode_profiles import INSERTER_I25, profile_values
+from .barcode_profiles import INSERTER_I25, profile_values, require_current_inserters
 from .rules import ElementPlan
 
 
@@ -25,7 +25,7 @@ class BarcodeRecordError(CompositionError):
 def mark_for(element, profile, fields):
     parts = profile.inserter_parts(fields)
     return {"output_page": int(fields["OutputPage"]), "source_page": "", "envelope": int(fields["EnvelopeIndex"]),
-            "sheet": int(fields["SheetNo"]), "object": element.id, "symbology": "i25", "profile": profile.name,
+            "sheet": int(fields["SheetNo"]), "job_sheet": int(fields["JobSheetNo"]), "object": element.id, "symbology": "i25", "profile": profile.name,
             "payload": parts["payload"], "parts": parts, "rect": [v*MM_TO_PT for v in element_bounds(element)]}
 
 
@@ -39,6 +39,7 @@ def validate_size(element, payload):
 
 
 def preflight(template, records, plan, is_cancelled=None, progress=None):
+    require_current_inserters((e.id, e.barcode_profile) for e in template.all_elements() if e.barcode_profile)
     plans = {e.id: ElementPlan(e) for e in template.all_elements() if e.barcode_profile}
     pattern = list(plan.pages()) if plan.envelopes == 1 else [plan.page(1, p) for p in range(1, plan.settings_for(1).output_pages_per_envelope+1)]
     total = 0
@@ -62,7 +63,11 @@ def preflight(template, records, plan, is_cancelled=None, progress=None):
                     except ValueError as exc:
                         raise CompositionError(f"Template page {page.role+1}, output page {profile_values(values)['OutputPage']}, object {element.id}: {exc}") from exc
                 if len(controls) != 1:
-                    raise CompositionError(f"Template page {page.role+1}, sheet {page.fields()['SheetNo']}: required exactly one visible inserter barcode; found {len(controls)}.")
+                    printing = "Duplex" if plan.settings.duplex else "Simplex"
+                    raise CompositionError(f"{printing}: template page {page.role+1}, sheet {page.fields()['SheetNo']}: "
+                        f"required exactly one visible inserter barcode; found {len(controls)}. "
+                        "Check Production → Printing. If this page is a back, choose Duplex; "
+                        "otherwise use Apply barcode to required fronts in Production.")
                 total += 1
         except ValueError as exc:
             raise BarcodeRecordError(ordinal, exc) from exc
@@ -74,7 +79,7 @@ def preflight(template, records, plan, is_cancelled=None, progress=None):
 def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, expected=None):
     count = 0
     columns = ["Envelope", "Sheet", "Output page", "Object", "Profile", "Payload", "Group sequence",
-               "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC", "Sheet sequence", "Symbology", "Source page"]
+               "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC", "Sheet sequence", "Symbology", "Source page", "Job sheet"]
     with fitz.open(pdf) as document, marks_path.open(encoding="utf-8") as stream, csv_path.open("w", encoding="utf-8-sig", newline="") as output:
         writer = csv.writer(output)
         writer.writerow(columns)
@@ -87,7 +92,7 @@ def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, ex
                 raise BarcodeRecordError(mark["envelope"], f"Output page {mark['output_page']}, object {mark['object']}: {exc}") from exc
             parts = mark.get("parts", {})
             writer.writerow([mark["envelope"], mark["sheet"], mark["output_page"], _csv_value(mark["object"]), _csv_value(mark["profile"]),
-                             mark["payload"], parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", ""), "Decoded: exact match", parts.get("sheet", ""), mark["symbology"], mark.get("source_page", "")])
+                             mark["payload"], parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", ""), "Decoded: exact match", parts.get("sheet", ""), mark["symbology"], mark.get("source_page", ""), mark.get("job_sheet", "")])
             count += 1
             if progress and count % 100 == 0:
                 progress(count, expected or count, "Decoding final production barcodes")

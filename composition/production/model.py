@@ -49,6 +49,9 @@ class JobResult:
     failed_records: int = 0
     pages_per_record: int = 1
     expected_pages: int = 0
+    printing: str = "simplex"
+    sheets: int = 0
+    inserted_blanks: int = 0
     generated_pages: int = 0
     generated_files: int = 0
     output_pdf: str = ""
