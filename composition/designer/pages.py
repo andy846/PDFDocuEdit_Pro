@@ -108,8 +108,7 @@ class PageOperations:
         self.page_combo.setCurrentIndex(self.page_index)
         self.page_combo.blockSignals(False)
         self.production_heading.setText(
-            f"Production: {len(self.template.pages)} fixed page(s) per record · "
-            f"{self.record_count * len(self.template.pages):,} expected pages")
+            f"Production · {len(self.template.pages)} logical template page(s) per record")
         self._update_page_actions()
 
     def _update_page_actions(self):

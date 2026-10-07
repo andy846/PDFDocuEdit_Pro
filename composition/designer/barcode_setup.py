@@ -21,7 +21,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile
+from composition.engine.barcode_profiles import (
+    INSERTER_I25,
+    BarcodeProfile,
+    needs_inserter_update,
+    updated_inserter,
+)
 from composition.engine.barcodes import validate_payload
 from composition.engine.rules import validate_group
 from ui.combo_popup import WideComboBox
@@ -91,17 +96,21 @@ class BarcodeSetupDialog(QDialog):
         sequence, form = self.section("Sequence")
         self.start = SequenceStartSpin()
         self.start.setRange(0, 99)
-        self.start.setValue(self.inserter.group_start)
+        self.start.setValue(0)
+        self.start.setEnabled(False)
         self.start.setDisplayIntegerBase(10)
         self.start.setAccessibleName("Group sequence start")
-        form.addRow("Group start (00–99)", self.start)
+        form.addRow("Group start (automatic)", self.start)
         form.addRow(self.label("Every envelope adds one; 98 → 99 → 00 → 01.\n"
-                               "Sheet sequence restarts at 00 (00, 01, 02…). EOG = 1 on the last physical sheet.\n"
+                               "Same envelope = same group. Whole job sheet sequence runs 00–99, wraps to 00, and never resets at a new envelope.\n"
+                               "Duplex front / back share one sheet sequence. EOG = 1 on the last sheet of each envelope.\n"
                                "Output bin diversion: Off (VS1 / VS2 = 0).\n"
                                "ColourMark / Location = 0. Check digit is automatic."))
         form.addRow(self.label("Machine validation: " +
             ("user verified — " + self.inserter.machine if self.inserter.validation == "user_verified" else
              "pending; confirm barcode dimensions, direction and read position on the actual inserter.")))
+        if needs_inserter_update(self.inserter):
+            form.addRow(self.label("Legacy profile: applying these settings updates Group start to 00 and changes sheet sequence from per-envelope to whole-job. Confirmation is required."))
         inserts, insert_form = self.section("Inserts")
         self.insert_modes, self.insert_buttons, self.insert_summaries = [], [], []
         from PyQt6.QtWidgets import QPushButton
@@ -192,8 +201,8 @@ class BarcodeSetupDialog(QDialog):
     def candidate(self):
         if self.preset.currentData() == "generic":
             return self.generic.candidate()
-        profile = copy.deepcopy(self.inserter)
-        profile.group_start = self.start.value()
+        profile = updated_inserter(self.inserter) if needs_inserter_update(self.inserter) else copy.deepcopy(self.inserter)
+        profile.group_start = 0
         profile.customer_field = self.customer.currentData() or ""
         for insert, control in zip(profile.inserts, self.insert_modes, strict=True):
             insert.mode = control.currentData()
@@ -368,6 +377,13 @@ class BarcodeSetupDialog(QDialog):
         self.refresh()
         if not self.footer.button(QDialogButtonBox.StandardButton.Ok).isEnabled():
             return
+        if self.preset.currentData() == INSERTER_I25 and needs_inserter_update(self.inserter):
+            from PyQt6.QtWidgets import QMessageBox
+            answer = QMessageBox.question(self, "Update I25 sequences",
+                "Update this I25 object? Group starts at 00. Sheet sequence runs continuously across the whole job (00–99), instead of restarting for each envelope. Machine verification becomes pending.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         self.profile = self.candidate()
         self.duplex = bool(self.printing.currentData())
         super().accept()

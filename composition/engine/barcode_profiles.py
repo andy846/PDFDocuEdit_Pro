@@ -146,7 +146,7 @@ class BarcodeProfile:
                 raise CompositionError("Inserter I25 requires barcode profile version 2.")
             if type(self.group_start) is not int or not 0 <= self.group_start <= 99:
                 raise CompositionError("Group sequence start must be 00 to 99.")
-            if self.sheet_sequence_scope not in {"envelope", "job"}:
+            if not isinstance(self.sheet_sequence_scope, str) or self.sheet_sequence_scope not in {"envelope", "job"}:
                 raise CompositionError("Unsupported inserter sheet sequence scope.")
             if self.sheet_sequence_scope == "job" and (self.version != 3 or self.group_start != 0):
                 raise CompositionError("Current Inserter I25 starts group and job sheet sequences at 00 and requires version 3.")

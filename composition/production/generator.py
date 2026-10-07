@@ -156,6 +156,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
         "Pages Per Record": result.pages_per_record, "Expected Pages": result.expected_pages,
         "Page Count": result.generated_pages, "Output Files": result.generated_files,
+        "Printing": result.printing, "Physical Sheets": result.sheets, "Inserted Blank Backs": result.inserted_blanks,
         "Expected Barcodes": result.expected_barcodes, "Rendered Barcodes": result.rendered_barcodes,
         "Decoded Barcodes": result.decoded_barcodes,
         "Output File": result.output_pdf, "PostScript File": result.output_ps, "File Size": result.output_size,

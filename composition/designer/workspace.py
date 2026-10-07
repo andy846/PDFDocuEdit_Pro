@@ -51,6 +51,7 @@ from .font_controls import FontOperations
 from .inspector import InspectorScrollArea
 from .pages import PageOperations
 from .process import Worker
+from .production_settings import ProductionScroll, ProductionSettings
 from .properties import Properties
 from .rule_controls import RuleOperations
 from .sequence_controls import SequenceOperations
@@ -83,7 +84,7 @@ class TemplateEdit(QUndoCommand):
         return True
 
 
-class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
     activityChanged = pyqtSignal()
     projectClosed = pyqtSignal()
 
@@ -278,6 +279,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.production_heading = QLabel()
         self.production_heading.setWordWrap(True)
         prod_layout.addWidget(self.production_heading)
+        self.build_production_settings(prod_layout)
         self.auto_repair = QCheckBox("Automatically substitute missing glyphs and report changes")
         self.auto_repair.setChecked(self.preferences.value("auto_glyph_repair", True, type=bool))
         self.auto_repair.setToolTip("Keeps each object's primary font. Only missing characters use an available embeddable font. "
@@ -285,8 +287,10 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                                    "substitutions may affect text width and wrapping. Uncheck for strict font validation.")
         self.auto_repair.toggled.connect(self._auto_repair_changed)
         prod_layout.addWidget(self.auto_repair)
-        prod_layout.addWidget(QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
-                                    "Only validated, reconciled output is published to a new job folder."))
+        source_note = QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
+                             "Only validated, reconciled output is published to a new job folder.")
+        source_note.setWordWrap(True)
+        prod_layout.addWidget(source_note)
         self.production_summary = QPlainTextEdit()
         self.production_summary.setReadOnly(True)
         prod_layout.addWidget(self.production_summary, 1)
@@ -302,7 +306,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.production_actions.addWidget(self.open_font_report_button)
         self.last_font_report = ""
         self.last_output = ""
-        self.stack.addWidget(self.production_page)
+        self.stack.addWidget(ProductionScroll(self.production_page, self.production_actions))
         layout.addWidget(self.stack, 1)
         self.message = CompactMessage(self)
         self.record_navigation = QWidget()
@@ -531,6 +535,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if self.embedded:
             for key in ("new", "open", "pdf_overlay"):
                 self.actions[key].setEnabled(not self.close_pending)
+        self.refresh_production_settings()
         self.activityChanged.emit()
 
     def _mode_changed(self, index):
@@ -1061,13 +1066,14 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         info = self._store()
         if not info or self.production_worker or self.import_worker:
             return
+        if self.properties.apply() is False or not self.review_production_printing():
+            return
         from composition.production.model import ProductionJob
         job = ProductionJob(self.template.to_dict(), info["store"], output, auto_repair=self.auto_repair.isChecked())
         self._output_template = copy.deepcopy(self.template.to_dict())
         self.tabs.setCurrentIndex(3)
-        page_summary=(f"Logical template pages per record: {len(self.template.pages)}\n"
-                      "Print Media: calculating final pages and sheets in the worker…\n" if self.template.media.get("enabled") else
-                      f"Pages per record: {len(self.template.pages)}\nExpected pages: {self.record_count * len(self.template.pages):,}\n")
+        from .production_settings import plan_summary
+        page_summary = plan_summary(self.template, self.record_count) + "\n"
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
                                              +page_summary+"Composing in an isolated process…")
         self.last_output = ""
@@ -1084,6 +1090,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                  f"Processed records: {result['processed_records']:,}",
                  f"Successful records: {result['successful_records']:,}",
                  f"Failed records: {result['failed_records']:,}",
+                 f"Printing: {result.get('printing', 'simplex').title()}",
+                 f"Physical sheets: {result.get('sheets', 0):,}",
+                 f"Inserted blank backs: {result.get('inserted_blanks', 0):,}",
                  f"Pages per record: {result.get('pages_per_record', 1)}",
                  f"Expected pages: {result.get('expected_pages', result['input_records']):,}",
                  f"Generated pages: {result['generated_pages']:,}",

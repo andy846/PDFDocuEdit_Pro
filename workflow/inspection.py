@@ -356,6 +356,10 @@ def _mail_plan(template, current, node, root, progress, cancelled,*,auto_repair=
     if node.kind in ("mail_review", "compose", "reports"):
         folder = root / (node.id + "-fonts")
         folder.mkdir(exist_ok=True)
+        from composition.engine.barcode_profiles import has_inserter
+        if has_inserter(template):
+            from composition.engine.inserter_production import preflight as inserter_preflight
+            inserter_preflight(template, ((ordinal, values) for ordinal, values, _ in current.rows()), plan, cancelled, progress)
         from composition.engine.generic_production import preflight as generic_preflight
         generic_preflight(template, ((ordinal, values) for ordinal, values, _ in current.rows()), plan,
                           cancelled, progress, audit_path=folder / "barcode-cycles.csv", record_store=str(current.path))

@@ -39,15 +39,15 @@
 在 Template Designer／PDF Overlay 選取條碼物件，於右側 **Barcode → Preset** 選
 **Inserter I25 — 18 digits**，再按 **Configure…**。Visual Workflow 重用所選模板或套印專案嘅 preset。
 
-- **Sequence**：Group 預設從 `00` 起，循環 `99 → 00 → 01`；完整封號另外保存。Page Sequence 按實體紙張計算，每封重新由 `00` 起。
+- **Sequence**：Group＝信封流水號，第一封 `00`、第二封 `01`，同封所有紙張一致，`99 → 00`。Sheet＝整個生產 job 的實體紙張流水號，第一張 `00`、逐張遞增，跨封不重設，`99 → 00`；雙面正反面共用紙序。完整封號及整批紙號另存於報告。
 - **Inserts**：六個插頁各可選不插入、固定插入或宣告式條件；兩組編碼各以 1／2／4 相加。VS1／VS2 出信 BIN 分流保持 Off。
 - **Customer info**：預設九個零，或選擇恰好九位 ASCII 數字欄位；保留前導零，不截短或補數字。
-- **Placement**：未使用 Media 時直接選 Simplex／Duplex；已有 Media 時沿用其設定。每張紙正面一個控制條碼，雙面奇數頁補空白背面且不印條碼。模板可一次套用至所需正面頁、同一座標，列出目標與更新數量並支援一次 Undo。
+- **Printing / Placement**：Production 頁及生成前覆核畫面可直接選 Simplex／Duplex，並顯示輸出頁數、實體紙張及所需條碼數；已有 Media 時沿用其設定。兩頁 Duplex 模板只需第一頁正面條碼；Simplex 的每頁均為獨立紙張，需要各自正面條碼。每張紙正面一個控制條碼，雙面奇數頁補空白背面且不印條碼。模板可一次套用至所需正面頁、同一座標，列出目標與更新數量並支援一次 Undo。
 - **Preview**：分段顯示 18 位數字與條碼圖。第 7 位自動 EOG、第 8 位固定零、第 18 位按前 17 位乘 `31313131313131313` 的 modulo-10 補數自動計算；不額外加校驗碼。
-- 生產前逐封檢查資料、尺寸與正面條碼數量，超過 99 張紙或資料錯誤會阻止生成。生產後解碼成品並輸出 `barcodes.csv`，包含完整封號、紙序、輸出頁、由 00 起嘅條碼紙序（Sheet sequence）、插頁碼、EOG、校驗碼及核對結果。
+- 生產前逐封檢查資料、尺寸與正面條碼數量，超過 99 張紙或資料錯誤會阻止生成。生產後解碼成品並輸出 `barcodes.csv`，包含完整封號、封內紙號（Sheet）、整批實體紙號（Job sheet）、輸出頁、由 00 起嘅整批循環條碼紙序（Sheet sequence）、插頁碼、EOG、校驗碼及核對結果。
 
 依校驗公式，首封第一張非結尾、無插頁、客戶資訊全零為 `000000000000000000`；第二張結尾為 `000100100000000006`。
-設定仍需配合實際入信機尺寸、方向與讀取位置驗證。既有明確保存的 Group 起始值保持原設定；要使用零起始請在 Configure 選 `00`。
+每個獨立 Production Job 重新由 `00` 開始，包含 Workflow 各獨立 job。舊 I25 專案生成前會提示 **Update I25 sequences**；確認才將 Group start 改為 `00`、Sheet 改成跨封計數，並重設機器驗證為 pending。可用一次 Undo 還原，Generic profile 不受影響。Production 的 **Apply barcode to required fronts…** 可預覽後同位置套用至所需正面。設定仍需配合實際入信機尺寸、方向與讀取位置驗證。
 
 ### Generic Barcode：自訂長度及資料來源（開發更新）
 

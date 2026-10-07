@@ -67,6 +67,7 @@ def page_records(spec, plan, job_id, is_cancelled=None, external_values=None):
 class OverlayRenderer:
     def __init__(self, spec, *, auto_repair=True, fallback_directory=None, is_cancelled=None):
         self.spec = spec
+        self._profiles_checked = False
         self.renderer = Renderer(render_template(spec), auto_repair=auto_repair,
                                  fallback_directory=fallback_directory, is_cancelled=is_cancelled)
         self.elements = list(self.renderer.template.elements)
@@ -80,6 +81,10 @@ class OverlayRenderer:
         self.renderer.close()
 
     def selections(self, fields, geometry, *, enforce_control=True):
+        if enforce_control and not self._profiles_checked:
+            from composition.engine.barcode_profiles import require_current_inserters
+            require_current_inserters((o.element.id, o.profile) for o in self.spec.objects if o.profile)
+            self._profiles_checked = True
         visible, controls = [], []
         for element, obj in zip(self.elements, self.spec.objects, strict=True):
             selected = self.renderer.plans[element.id].resolve(fields)

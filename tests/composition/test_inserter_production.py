@@ -119,6 +119,8 @@ def test_variable_envelope_sizes_and_odd_blank_backs(tmp_path):
         rows = list(csv.DictReader(stream))
     assert [r["Envelope"] for r in rows] == ["1", "2", "2", "3", "3", "3"]
     assert [r["EOG"] for r in rows] == ["1", "0", "1", "0", "0", "1"]
+    assert [r["Sheet sequence"] for r in rows] == ["00", "01", "02", "03", "04", "05"]
+    assert [r["Job sheet"] for r in rows] == ["1", "2", "3", "4", "5", "6"]
 
 
 def test_workflow_reuses_profile_and_physical_counts_without_media(tmp_path):
@@ -192,3 +194,60 @@ def test_legacy_inserter_cannot_silently_generate(tmp_path):
     result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
     assert result.status == "failed" and result.generated_pages == 0
     assert "confirm Update I25" in result.error
+
+
+def test_media_job_sheet_sequence_counts_inserted_backs_once_across_records(tmp_path):
+    from tests.composition.test_media_duplex_sheets import four_page_template
+    model = four_page_template()
+    model.media["assignments"].update({"2": "LH_B", "3": "LH_A"})
+    model.media["blank_policy"] = "insert"
+    model.generated_count = 2
+    for page in model.pages:
+        page.elements.append(Element(type="i25", y_mm=50, width_mm=100, height_mm=14,
+                                     barcode_profile=BarcodeProfile.inserter().to_dict()))
+    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
+    assert result.status == "completed", result.error
+    assert result.sheets == result.decoded_barcodes == 8 and result.generated_pages == 16
+    with Path(result.report_dir, "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [r["Sheet sequence"] for r in rows] == [f"{i:02d}" for i in range(8)]
+    assert [r["Group sequence"] for r in rows] == ["00"]*4 + ["01"]*4
+    assert [r["EOG"] for r in rows] == ["0", "0", "0", "1"]*2
+
+
+def test_workflow_jobs_reset_independently_and_legacy_blocks_review(tmp_path):
+    from composition.template.serializer import save_project
+    from workflow.batch import BatchJob, BatchRun, approve, execute_batch, prepare
+    from workflow.model import WorkflowSpec
+    model = template_for(pages=2)
+    model.pages[1].elements.clear()
+    model.record_mode = "imported"
+    path = save_project(model, tmp_path / "current.pdcx")
+    legacy = Template.from_dict(model.to_dict())
+    legacy.elements[0].barcode_profile.update(version=2, sheet_sequence_scope="envelope")
+    old_path = save_project(legacy, tmp_path / "old.pdcx")
+    data = tmp_path / "data.csv"
+    data.write_text("Name\nOne\nTwo\n", encoding="utf-8")
+    jobs = [BatchJob(template_path=str(path), data_path=str(data), output_name=f"job{i}.pdf") for i in range(2)]
+    old = BatchJob(template_path=str(old_path), data_path=str(data), output_name="old.pdf")
+    spec = WorkflowSpec.mail_merge()
+    run = prepare(spec, BatchRun(jobs=[*jobs, old]), tmp_path / "scratch")
+    assert old.status == "Blocked" and "confirm Update I25" in old.error and not old.approved
+    assert all(job.status == "Needs review" for job in jobs)
+    run.jobs = jobs
+    approve(run, [job.id for job in jobs])
+    execute_batch(spec, run, tmp_path / "output")
+    for job in jobs:
+        assert job.status == "Completed", job.error
+        with Path(job.result["report_dir"], "barcodes.csv").open(encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        assert [r["Sheet sequence"] for r in rows] == ["00", "01"]
+        assert [r["Group sequence"] for r in rows] == ["00", "01"]
+
+
+def test_plain_odd_duplex_uses_same_plan_without_barcodes(tmp_path):
+    model = Template(pages=[PageSpec(id=f"p{i}") for i in range(3)],
+                     record_mode="generated", generated_count=2, media={"duplex": True})
+    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
+    assert result.status == "completed", result.error
+    assert result.generated_pages == 8 and result.sheets == 4 and result.inserted_blanks == 2
