@@ -38,6 +38,12 @@ def category(kind):
 
 def settings_summary(node, fallback="Configure step"):
     params = node.params
+    if node.kind in ("flatten_pdf", "repair_pdf"):
+        options = params.get("options", {})
+        pages = options.get("pages")
+        scope = "All pages" if pages is None else f"{len(pages)} selected page(s)"
+        mode = "Rasterise" if options.get("rasterise") or options.get("mode") == "maximum" else options.get("mode", "safe")
+        return f"{mode} · {scope}"
     if node.kind in ("clean_fields", "create_fields", "sort_records", "validate_data", "filter_records"):
         key = {"clean_fields": "operations", "create_fields": "fields", "sort_records": "keys",
                "validate_data": "checks", "filter_records": "conditions"}[node.kind]

@@ -14,6 +14,22 @@
 
 詳見 [v3.0.2 發佈說明](docs/RELEASE_NOTES_3.0.2.md) 及 [驗收記錄](docs/RELEASE_VALIDATION_3.0.2.md)。
 
+## 開發更新：PDF 生產整理與共用變數
+
+以下功能已接入開發版本，公開版本號維持 v3.0.2；未代表新的正式安裝包已發佈。
+
+- **Tools → Flatten PDF**：先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
+- **Tools → PDF Repair / Production Normalise**：Safe Repair 重寫結構；Normalise 可明確選擇移除 JavaScript、附件、metadata、平面化及裁切異常 CropBox。Maximum Compatibility／Rasterise 是獨立、需確認的影像重建選項。
+- 兩工具共用背景處理、取消、驗證、新工作資料夾及 CSV／JSON 紀錄；可選現有 Production Preflight 前後比較。**Choose PDFs for batch processing…** 逐檔處理，保留成功結果及失敗紀錄。
+- **Visual Workflow** 新增 Flatten PDF、Repair / Normalise PDF 節點，放在 Input／Merge 之後、Extract 之前。Check to this step 的 PDF 只留在暫存工作區；正式輸出仍須 Review。需覆核的修復結果請先在 PDF Workspace 檢查。
+- **共用輸出命名**：Template Designer、Mail Merge batch、PDF Workflow 及新工具可用 `{{input.stem}}_{{job.id}}.pdf`、`{{system.date}}`、`{{workflow.sequence|pad:6}}` 等。預覽會指出無效／缺失值；Windows 檔名清理只影響輸出名，不改來源資料。
+- 新 PDF Workflow 使用格式 **v6**，因舊版不認識 PDF 整理節點；v1–v5 繼續讀取，v5 條件分支流程不變。舊流程升級會保存新副本；含新節點的 v6 檔案不能由 v3.0.2 舊安裝版開啟。模板／Overlay／Barcode 格式不變。
+
+**範圍**：不保證修復所有 PDF；XFA、缺失或不支援的外觀會阻止相應操作。Hidden／Invisible／NoView 物件會保留並在分析及報告列明，可能仍具互動性。非光柵化透明度平面化未提供；透明度／Actions 未能全面檢查時會標示 Not checked。數碼簽署副本須確認失去原簽署有效性；加密來源不得靜默解密輸出。Rasterise 不會自動 OCR，會失去原有搜尋文字、向量及互動內容。
+
+Designer 文字仍沿用 `{{Field_Name}}` 保存語法，已共用解析／取值服務；新增 namespace／transform 首先用於輸出命名，尚未擴展至模板文字、Barcode、資料夾或自訂報告欄位。
+詳見 [開發實作與驗收範圍](docs/PDF_PRODUCTION_TOOLS_DEVELOPMENT.md)。
+
 ## V3.0.0 功能基礎及目前操作指南
 
 | 工作區 | 能力 |

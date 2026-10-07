@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 
 from composition.template.model import CompositionError
 
-from .registry import EXTRA_KINDS, MEDIA_KINDS, REGISTRY, validate_chain
+from .registry import EXTRA_KINDS, MEDIA_KINDS, PDF_OPERATION_KINDS, REGISTRY, validate_chain
 
 KINDS = ("input", "merge", "extract", "group", "review", "overlay", "output")
 MAIL_KINDS = ("data", "mapping", "template", "sequences", "mail_review", "compose", "reports")
@@ -21,6 +21,7 @@ LABELS = {"input":"PDF Input", "merge":"Merge PDFs", "extract":"Extract Regions"
           "sequences":"Fields & Sequences", "mail_review":"Preview & Review", "compose":"Compose",
           "reports":"Validate & Reports"}
 LABELS.update({k: REGISTRY[k].label for k in EXTRA_KINDS})
+LABELS.update({k: REGISTRY[k].label for k in PDF_OPERATION_KINDS})
 LABELS.update({k: REGISTRY[k].label for k in ("for_each","batch_sequence","route","exceptions","collect")})
 
 
@@ -65,7 +66,7 @@ class WorkflowSpec:
         if self.workflow_version<3:
             return base
         extra=EXTRA_KINDS if self.workflow_version>=4 else tuple(k for k in EXTRA_KINDS if k not in MEDIA_KINDS)
-        return base+extra
+        return base+extra+(PDF_OPERATION_KINDS if self.workflow_version == 6 else ())
 
     def upgraded(self,version=3):
         result=copy.deepcopy(self)
@@ -86,10 +87,12 @@ class WorkflowSpec:
             outputs=(definition.output,) if definition.output else definition.inputs
             compatible={k for k in self.kinds if k not in ("input","data") and
                         any(REGISTRY[k].accepts(t) for t in outputs)}
+            if kind in PDF_OPERATION_KINDS:
+                return compatible & (set(PDF_OPERATION_KINDS) | {"extract"})
             if kind not in EXTRA_KINDS:
                 legacy=copy.copy(self)
                 legacy.workflow_version=2 if self.project_kind=="mail_merge_workflow" else 1
-                compatible&=legacy.allowed_next(kind)|set(EXTRA_KINDS)
+                compatible&=legacy.allowed_next(kind)|set(EXTRA_KINDS)|set(PDF_OPERATION_KINDS)
             return compatible
         if self.project_kind=="mail_merge_workflow":
             index=MAIL_KINDS.index(kind)
@@ -111,7 +114,7 @@ class WorkflowSpec:
             from .branch_graph import validate
             validate(self)
             return
-        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3,4)
+        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3,4,6)
                 or self.project_kind not in ("pdf_workflow","mail_merge_workflow")
                 or (self.project_kind=="mail_merge_workflow" and self.workflow_version not in (2,3,4))
                 or not isinstance(self.name,str) or len(self.name)>200 or not isinstance(self.nodes,list)
@@ -272,3 +275,5 @@ class WorkflowRun:
     data_steps: list = field(default_factory=list)
     data_summary: dict = field(default_factory=dict)
     page_pipeline_signature: str = ""
+    pdf_sources: dict = field(default_factory=dict)
+    pdf_operation_reports: dict = field(default_factory=dict)

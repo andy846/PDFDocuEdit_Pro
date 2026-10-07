@@ -23,6 +23,7 @@ SYMBOLS={"input":"folder-open","merge":"layers","extract":"scan","group":"table"
          "overlay":"file-text","output":"printer","data":"table","mapping":"settings","template":"file-text",
          "sequences":"table","mail_review":"search","compose":"printer","reports":"file-text"}
 SYMBOLS.update({k:"settings" for k in EXTRA_KINDS})
+SYMBOLS.update(flatten_pdf="layers", repair_pdf="settings")
 SYMBOLS.update(for_each="folder-open",batch_sequence="table",route="settings",exceptions="search",collect="file-text")
 
 

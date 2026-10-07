@@ -58,6 +58,7 @@ class PrefixSpec:
     """Reuse existing headless helpers against only the checked prefix."""
     def __init__(self, spec, nodes):
         self.spec, self.nodes = spec, nodes
+        self.name = spec.name
         self.project_kind, self.workflow_version = spec.project_kind, spec.workflow_version
 
     def chain(self):
@@ -102,7 +103,7 @@ def signature(spec, node_id, job=None, *, hashes=None):
         if path not in cached:
             cached[path] = file_hash(Path(path))
         digests[path] = cached[path]
-    settings = {"project_kind": spec.project_kind, "nodes": [{"id": n.id, "kind": n.kind, "params": n.params} for n in prefix],
+    settings = {"name": spec.name, "project_kind": spec.project_kind, "nodes": [{"id": n.id, "kind": n.kind, "params": n.params} for n in prefix],
                 "job": {k: getattr(job, k) for k in ("id", "data_path", "template_path", "data_options", "mapping_profile", "sequence_starts", "output_name")} if job else None,
                 "sources": digests}
     return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest(), digests
@@ -465,6 +466,12 @@ def _pdf_node(spec, node, current, run, scope, composed, root, evidence, page_id
                 evidence.execute("UPDATE pages SET workflow_page=? WHERE source_id=?", (mapped["output_page"], identity))
                 yield identity, {"SourceFile": mapped["source_file"], "SourcePage": str(mapped["source_page"])}
         current = snapshot(rows(), current.fields, root / (node.id + ".sqlite"), is_cancelled=cancelled)
+    elif node.kind in ("flatten_pdf", "repair_pdf"):
+        from .pdf_operations import process_pdf
+        report = process_pdf(node, run.source, root, progress=progress, is_cancelled=cancelled)
+        run.source = report["output_pdf"]
+        current = snapshot(((identity, values) for _, values, identity in current.rows()), current.fields, root / (node.id + ".sqlite"),
+                           metadata={**current.metadata, "pdf_operation": report}, is_cancelled=cancelled)
     elif node.kind == "extract":
         if not run.source:
             raise CompositionError("Connect Merge PDFs before extracting multiple sources.")
@@ -494,6 +501,10 @@ def _pdf_node(spec, node, current, run, scope, composed, root, evidence, page_id
     elif node.kind in ("overlay", "output"):
         if node.kind == "output":
             _output_folder(node.params.get("directory", ""))
+            from core.variables import VariableContext, resolve_filename
+            context = VariableContext.for_job(input_path=spec.node("input").params["paths"][0],
+                                              job_id="check-job", job_name=spec.name, sequence=1)
+            resolve_filename(node.params.get("output_name", "production.pdf"), context, extension=".pdf")
         composed = _overlay_check(spec, run, current, root, progress, cancelled)
     return current, scope, composed
 

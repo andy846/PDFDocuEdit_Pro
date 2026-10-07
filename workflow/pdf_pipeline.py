@@ -122,7 +122,8 @@ class ProductionValues:
 
 def _legacy(spec):
     result=copy.deepcopy(spec)
-    result.workflow_version=1
+    from .registry import PDF_OPERATION_KINDS
+    result.workflow_version=6 if any(n.kind in PDF_OPERATION_KINDS for n in spec.nodes) else 1
     result.nodes=copy.deepcopy([n for n in spec.chain() if n.kind not in EXTRA_KINDS])
     result.edges=[[a.id,b.id] for a,b in zip(result.nodes,result.nodes[1:],strict=False)]
     result.chain()

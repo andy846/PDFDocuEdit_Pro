@@ -36,6 +36,34 @@ supports Windows x64.
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
+## Development Update: PDF Production Cleanup
+
+* **Tools → Flatten PDF**: Analyse annotations/form appearances, choose all,
+  current or selected pages, then generate a validated new copy. Open-document
+  content and its Undo history are retained. Missing appearances and XFA are
+  not silently guessed. Searchable text remains unless Rasterise is selected.
+* **Tools → PDF Repair / Production Normalise**: Safe Repair rewrites structure;
+  Normalise offers explicit removal/flatten/crop options. Maximum Compatibility
+  rasterises with a loss confirmation. This cannot repair every broken PDF.
+* Choose PDFs for batch processing; each file has its own result and audit.
+  Cancel removes unpublished temporary PDFs and retains completed job bundles.
+  Optional Production Preflight compares before/after findings.
+* PDF Visual Workflow adds **Flatten PDF** and **Repair / Normalise PDF** before
+  Extract Regions. Check to this step processes private copies, never approves
+  production. Source/config changes invalidate cached results.
+* Production filename editors share previews for `{{input.stem}}`, `{{job.id}}`,
+  `{{system.date}}` and `{{workflow.sequence|pad:6}}`. Missing values are errors;
+  illegal Windows filename characters are sanitised without changing data.
+* New PDF workflows use v6; v1–v5 remain readable. Upgrade saved workflows to a
+  new file. Old installations cannot read v6 PDF-cleanup nodes. Template,
+  Overlay and barcode formats and the public application version are unchanged.
+* Namespace/transform syntax currently applies to output naming. Designer text
+  continues to save `{{Field_Name}}`; extended barcode/folder/report templates
+  are future integrations. No arbitrary Python or shell execution is allowed.
+* Digital signature validity cannot survive a derived copy. Encrypted input
+  requires encrypted output. Transparency flattening is not offered; coverage
+  limits are reported. Rasterisation does not automatically run OCR.
+
 ## Quick Start: Two Workspaces
 
 * Use the main-toolbar **PDF Workspace | Document Designer** switch to change
