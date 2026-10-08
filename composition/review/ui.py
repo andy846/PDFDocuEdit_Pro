@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
@@ -279,10 +280,16 @@ class ReviewController:
     def state(self):
         try:
             return hashlib.sha256(json.dumps(self.current(), sort_keys=True, ensure_ascii=True).encode()).hexdigest()
-        except (ValueError, OSError, AttributeError):
+        except (ValueError, OSError, AttributeError, RuntimeError):
             return None
 
+    def alive(self):
+        return not sip.isdeleted(self.owner) and not sip.isdeleted(self.pane)
+
     def invalidate(self, *_):
+        if not self.alive() or getattr(self.owner, "close_pending", False):
+            self.session_valid = False
+            return
         if not self.results and not self.check_worker:
             return
         if self.original_state != self.state():
@@ -326,6 +333,8 @@ class ReviewController:
                 self.owner.active_worker = None
             if getattr(self.owner, "production_worker", None) is worker:
                 self.owner.production_worker = None
+            if not self.alive():
+                return
             self._busy()
             superseded = not checking and self.view_workers.get(key) is not worker
             if not checking and not superseded:
@@ -348,6 +357,8 @@ class ReviewController:
         return worker
 
     def _busy(self):
+        if not self.alive():
+            return
         callback = getattr(self.owner, "_busy", None) or getattr(self.owner, "busy", None) or getattr(self.owner, "lock", None)
         if callback:
             callback()
@@ -585,6 +596,8 @@ class ReviewController:
             PlatformService.open_path(result["summary"]["font_report"])
 
     def refresh_confirm(self, *_):
+        if not self.alive() or getattr(self.owner, "close_pending", False):
+            return
         warnings = any(r["issues"] for r in self.results)
         self.pane.acknowledge.setVisible(warnings)
         valid = self.session_valid and bool(self.contexts) and len(self.results) == len(self.contexts) and not self.check_worker

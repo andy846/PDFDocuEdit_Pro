@@ -4,6 +4,20 @@
 
 本次發佈平台為 **Windows x64**，提供 Setup、Managed Portable 及簽署更新包。macOS 核心測試與 Windows 安裝包驗收分開記錄；本次不提供 V3 macOS 安裝包。
 
+## 最新開發更新：生產覆核
+
+此節描述目前開發版本，尚未另行打包或發佈；公開版本號保持 **3.0.3**。
+
+- **Template Designer／PDF Overlay**：按 Generate PDF 或 **Review Production…**，先選輸出資料夾並進入 **Production Review**。背景檢查完整資料後，才可 **Confirm production**；覆核及預覽不生成正式 PDF／PS／JDF。
+- **Visual Workflow**：保留原有資料／分封及逐工作批准；Run Ready Jobs／Run approved branches 會再進入共用生產覆核，逐一選擇工作核對。
+- **Summary**：輸入、保留及排除數量、輸出頁數、實體紙張、補白背面、Simplex／Duplex、紙種需求、PDF／PS／JDF backend、輸出名稱及分檔計畫。
+- **Mailpieces／Paper sheets**：每頁 50 筆，可搜尋、跳至封號或輸出頁；選一張紙即可查看正反面。Workflow 篩選／排序後仍保留來源記錄及 PDF 頁面定位。
+- **Barcode values／Issues**：顯示實際 payload、I25 各段及 Generic segments、位置與尺寸。錯誤定位到封／記錄、頁面、欄位或物件，可返回既有設定；字體自動替代提供檢查 CSV。
+- **安全確認**：錯誤、取消、未完成或已過期的覆核不能確認；警告須勾選已覆核。修改設定或來源後須 Check again，生成前再核對來源雜湊及工作設定。預覽與正式生產沿用同一 Job ID、時間及輸出命名。
+- **版面**：窄視窗切換 Mailpieces／Details；Barcode values 獨立成頁，保留紙面預覽空間。切回設計後仍可返回 Production Review。
+
+詳見 [生產覆核操作、架構及驗收](docs/PRODUCTION_REVIEW.md)。畫面及預覽不代表打印機／入信機已通過實機驗證；成品條碼解碼及 reconciliation 仍由正式生成流程執行。本輪只做相關測試，完整回歸與 Windows 打包留待統一驗收。
+
 ## V3.0.2 功能基礎
 
 - **Conditional Mail Merge**：按清單處理多個資料檔，條件分流到不同模板；整批流水號、例外覆核、逐分支批准及來源記錄對照。

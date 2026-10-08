@@ -313,6 +313,8 @@ def test_gui_generated_fields_preview_production_undo_and_reopen(app, tmp_path):
         saved = save_project(w.template, tmp_path/"project.pdcx")
         assert load_project(saved).sequences == [seq]
         w.start_production(str(tmp_path/"out"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(w)
         wait(lambda: not w.production_worker and bool(w.last_output))
         with fitz.open(w.last_output) as pdf:
             assert [p.get_text().strip() for p in pdf] == ["T-0001", "T-0002", "T-0003"]

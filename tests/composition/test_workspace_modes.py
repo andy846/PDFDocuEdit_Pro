@@ -250,6 +250,16 @@ def test_background_job_survives_mode_switch(window, tmp_path):
     assert window.command_bar.mode_switcher.busy[WorkspaceMode.DESIGNER]
     wait_until(lambda: project.production_worker is None)
     controller.request_mode("designer")
+    assert project.production_review.results[0]["status"] == "checked"
+    assert not (tmp_path / "output").exists()
+    from tests.composition.review_helpers import confirm_review
+    confirm_review(project)
+    wait_until(lambda: project.production_worker is not None)
+    worker = project.production_worker
+    controller.request_mode("pdf")
+    assert project.production_worker is worker
+    wait_until(lambda: project.production_worker is None)
+    controller.request_mode("designer")
     assert project.last_output, project.production_summary.toPlainText()
     with fitz.open(project.last_output) as doc:
         assert doc.page_count == 2

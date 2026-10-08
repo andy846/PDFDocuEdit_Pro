@@ -244,6 +244,8 @@ def test_gui_excel_sheet_header_alias_preview_save_reopen_and_production(app, tm
         wait(lambda: "Record 3" in w.preview_state.text() and not w.workers)
         saved = save_project(w.template, tmp_path/"excel-project.pdcx")
         w.start_production(str(tmp_path/"production"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(w)
         wait(lambda: not w.production_worker and bool(w.last_output))
         with fitz.open(w.last_output) as pdf:
             assert "000003" in pdf[-1].get_text() and "003" in pdf[-1].get_text()

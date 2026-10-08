@@ -68,6 +68,8 @@ def test_designer_undo_preview_production_and_save(app, tmp_path, monkeypatch):
     timer.timeout.connect(lambda: ticks.append(time.monotonic()))
     timer.start(10)
     window.start_production(str(tmp_path / "output"))
+    from tests.composition.review_helpers import confirm_review
+    confirm_review(window)
     wait_until(lambda: window.production_worker is None)
     timer.stop()
     assert ticks, "GUI event loop must continue during production"

@@ -147,6 +147,8 @@ def test_designer_auto_preview_production_and_strict_switch(tmp_path):
         wait(lambda: window.canvas.preview_item is not None)
         assert "glyph font substitution" in window.message.text()
         window.start_production(str(tmp_path / "production"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(window)
         wait(lambda: window.production_worker is None)
         assert window.last_output and window.open_font_report_button.isEnabled()
         assert window.template.elements[0].font.family == primary
