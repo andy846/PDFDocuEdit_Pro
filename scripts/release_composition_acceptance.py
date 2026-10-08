@@ -86,6 +86,7 @@ def run_new_features(output: Path) -> dict:
     # This harness is called only by the explicitly opt-in composition QA mode.
     from PyQt6.QtCore import QTimer
     from PyQt6.QtWidgets import QApplication, QDialogButtonBox
+
     from composition.designer.production_settings import ProductionReviewDialog
 
     reviewed, review_errors = [], []
