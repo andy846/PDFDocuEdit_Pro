@@ -87,7 +87,9 @@ class WorkspaceModeController(QObject):
     def ensure_host(self, *, create_default=True):
         if self.host is None:
             from composition.designer.project_host import DesignerProjectHost
-            self.host = DesignerProjectHost(self.modes, open_pdf=lambda path: self.window.queue_open_files([str(path)]))
+            self.host = DesignerProjectHost(self.modes, open_pdf=lambda path: self.window.queue_open_files([str(path)]),
+                open_pdf_page=lambda path, page: self.window.open_in_new_tab(str(path),
+                    on_open=lambda session: self.window._session_goto(session, page - 1)))
             self.host.handoff = self.handoff
             self.host.set_animations_enabled(bool(self.window.settings.get("animations_enabled", True)))
             self.host.projectAdded.connect(self.project_added)

@@ -25,9 +25,10 @@ class DesignerProjectHost(QWidget):
     projectAdded = pyqtSignal(object)
     projectRemoved = pyqtSignal(object)
 
-    def __init__(self, parent=None, *, open_pdf=None):
+    def __init__(self, parent=None, *, open_pdf=None, open_pdf_page=None):
         super().__init__(parent)
         self.open_pdf = open_pdf or (lambda path: None)
+        self.open_pdf_page = open_pdf_page or (lambda path, page: self.open_pdf(path))
         self.handoff = None
         self.shutting_down = False
         self.close_buttons = {}

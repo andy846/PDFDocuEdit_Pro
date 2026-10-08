@@ -340,7 +340,6 @@ def test_configure_legacy_profile_requires_confirmation(qt_application, monkeypa
 
 
 def test_production_review_cancel_does_not_start_worker_or_change_printing(qt_application, monkeypatch, tmp_path):
-    from composition.designer.production_settings import ProductionReviewDialog
     from composition.designer.workspace import CompositionWindow
     from tests.composition.test_inserter_production import template_for
     from tests.composition.test_workspace import close_window
@@ -352,13 +351,12 @@ def test_production_review_cancel_does_not_start_worker_or_change_printing(qt_ap
         model.pages[1].elements.clear()
         window._apply_template(model.to_dict())
         before = window.template.to_dict()
-        def reject(dialog):
-            dialog.printing.setCurrentIndex(1)
-            dialog.reject()
-            return dialog.result()
-        monkeypatch.setattr(ProductionReviewDialog, "exec", reject)
         window.start_production(str(tmp_path / "not-created"))
-        assert window.production_worker is None and window.template.to_dict() == before
+        window.production_review.cancel()
+        from tests.composition.test_designer_controls import wait
+        wait(lambda: not window.production_worker)
+        assert not window.production_review.pane.confirm.isEnabled()
+        assert window.template.to_dict() == before
         assert not (tmp_path / "not-created").exists()
     finally:
         close_window(window)

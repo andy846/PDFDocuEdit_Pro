@@ -141,6 +141,8 @@ def test_source_preview_bulk_typography_save_and_production(app, tmp_path):
         timer.timeout.connect(lambda: ticks.append(1))
         timer.start(10)
         window.generate_pdf(output_dir=tmp_path/"output")
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(window)
         wait_until(lambda: window.last_result is not None and not window.active_worker)
         timer.stop()
         assert ticks
@@ -169,12 +171,16 @@ def test_object_scope_payload_and_coverage_failure(app, tmp_path):
         window.scope.setCurrentIndex(window.scope.findData("first"))
         assert window.spec.objects[1].scope == "first"
         window.generate_pdf(output_dir=tmp_path/"failed")
-        wait_until(lambda: window.last_result is not None and not window.active_worker)
-        assert window.last_result["status"] == "failed"
-        assert window.last_result["error_source_page"] == 2
+        wait_until(lambda: len(window.production_review.results) == 1 and not window.active_worker)
+        review = window.production_review.results[0]
+        assert review["status"] == "blocked"
+        assert not window.production_review.pane.confirm.isEnabled()
+        assert not (tmp_path/"failed").exists()
         assert not window.pdf_button.isEnabled()
         window.required_scope.setCurrentIndex(window.required_scope.findData("first"))
         window.generate_pdf(output_dir=tmp_path/"valid")
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(window)
         wait_until(lambda: window.last_result is not None and not window.active_worker)
         assert window.last_result["status"] == "completed", window.last_result["error"]
         assert window.last_result["decoded_barcodes"] == 2

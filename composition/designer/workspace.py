@@ -280,6 +280,9 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.production_heading.setWordWrap(True)
         prod_layout.addWidget(self.production_heading)
         self.build_production_settings(prod_layout)
+        self.review_production_button = QPushButton("Review Production…")
+        self.review_production_button.clicked.connect(self.generate_pdf)
+        prod_layout.addWidget(self.review_production_button)
         self.auto_repair = QCheckBox("Automatically substitute missing glyphs and report changes")
         self.auto_repair.setChecked(self.preferences.value("auto_glyph_repair", True, type=bool))
         self.auto_repair.setToolTip("Keeps each object's primary font. Only missing characters use an available embeddable font. "
@@ -549,7 +552,7 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
             self.tabs.blockSignals(False)
             return
         self._designer_last_tab = index
-        self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
+        self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 3 if index == 4 else 0)
         self.canvas.set_preview_mode(index == 2)
         self.record_navigation.setVisible(index == 2)
         self._show_properties(self.actions["properties"].isChecked())
@@ -1070,11 +1073,14 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         info = self._store()
         if not info or self.production_worker or self.import_worker:
             return
-        if self.properties.apply() is False or not self.review_production_printing():
+        if self.properties.apply() is False:
             return
+        from .production_review import open_template_review
+        open_template_review(self, output)
+
+    def _launch_reviewed_production(self, raw_job, receipt):
         from composition.production.model import ProductionJob
-        job = ProductionJob(self.template.to_dict(), info["store"], output,
-                            auto_repair=self.auto_repair.isChecked(), output_name=self.output_name_edit.text())
+        job = ProductionJob(**raw_job)
         from core.variables import VariableContext, VariableError
         job.variable_context["namespaces"].setdefault("job", {})["records"] = self.record_count
         self.output_name_edit.set_context(VariableContext(**job.variable_context), prepared=True)
@@ -1085,6 +1091,7 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
             return
         self._output_template = copy.deepcopy(self.template.to_dict())
         self.tabs.setCurrentIndex(3)
+        self.stack.setCurrentIndex(2)
         from .production_settings import plan_summary
         page_summary = plan_summary(self.template, self.record_count) + "\n"
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
@@ -1093,7 +1100,7 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.open_output_button.setEnabled(False)
         self.last_font_report = ""
         self.open_font_report_button.setEnabled(False)
-        self.production_worker = self._worker({"task": "generate", "job": asdict(job)}, self._production_ready)
+        self.production_worker = self._worker({"task": "generate", "job": asdict(job), "production_review": receipt}, self._production_ready)
         self.production_worker.progress.connect(self._progress)
         self._busy()
 

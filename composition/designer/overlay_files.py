@@ -176,6 +176,10 @@ class OverlayFiles:
             output_dir = QFileDialog.getExistingDirectory(self, "Output folder: a new job subfolder will be created")
         if not output_dir:
             return
+        from .production_review import open_overlay_review
+        open_overlay_review(self, output_dir)
+
+    def _launch_reviewed_overlay(self, raw_job, receipt):
         self.last_result = None
         import copy
         self._output_spec = copy.deepcopy(self.spec.to_dict())
@@ -183,8 +187,8 @@ class OverlayFiles:
         self.report_button.setEnabled(False)
         self.production_text.setPlainText("Validating source, fonts, page scopes and barcode profiles…")
         self.tabs.setCurrentIndex(1)
-        job = OverlayJob(self.spec.to_dict(), str(output_dir), auto_repair=self.auto_repair.isChecked())
-        self.worker({"task": "overlay_generate", "job": asdict(job)}, self.production_ready, self.production_failed, active=True)
+        job = OverlayJob(**raw_job)
+        self.worker({"task": "overlay_generate", "job": asdict(job), "production_review": receipt}, self.production_ready, self.production_failed, active=True)
 
     def production_ready(self, result):
         self.last_result = result
