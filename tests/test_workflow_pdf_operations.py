@@ -74,6 +74,29 @@ def test_check_cleanup_disconnected_tail_preserves_page_identity(tmp_path):
     assert all(path.is_relative_to(tmp_path / "checks") for path in tmp_path.rglob("*flattened.pdf"))
 
 
+def test_deep_private_stage_and_long_source_name_remain_bounded(tmp_path):
+    from workflow.pdf_operations import process_pdf
+
+    source = source_file(tmp_path)
+    long_source = source.with_name("customer-statement-template-" + "a" * 60 + ".pdf")
+    source.rename(long_source)
+    padding = max(1, 170 - len(str(tmp_path)) - 1)
+    root = tmp_path / ("s" * padding)
+    root.mkdir()
+    first = WorkflowNode("flatten_pdf", params=default_options("flatten_pdf"))
+    second = WorkflowNode("repair_pdf", params=default_options("repair_pdf"))
+    flattened = process_pdf(first, long_source, root)
+    repaired = process_pdf(second, flattened["output_pdf"], root)
+    assert flattened["status"] == repaired["status"] == "completed"
+    assert flattened["source"] == str(long_source.resolve())
+    assert Path(flattened["output_pdf"]).parent.parent != Path(repaired["output_pdf"]).parent.parent
+    for result in (flattened, repaired):
+        path = Path(result["output_pdf"])
+        assert path.is_relative_to(root) and len(str(path)) <= 240
+        with fitz.open(path) as document:
+            assert len(document) == 2 and "Searchable customer text" in document[0].get_text()
+
+
 def test_changed_private_cleanup_copy_is_not_reused(tmp_path):
     spec, node = recipe(source_file(tmp_path))
     run = execute(spec, WorkflowRun(), tmp_path / "scratch")
