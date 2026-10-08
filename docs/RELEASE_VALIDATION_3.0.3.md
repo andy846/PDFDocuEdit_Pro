@@ -24,3 +24,4 @@ Windows host QPrinter construction may emit a handled `0x80040155` diagnostic. A
 - Restored the Template Designer's expected output-page heading through the existing physical-sheet planner, including duplex blank backs. Invalid print-media drafts display a review message.
 - Overlay barcode size/payload prechecks now retain the affected object ID in errors, allowing Review object to select the actual failing item. The original live-preview test remains intact.
 - The regression runner uses UTF-8 for diagnostics so a Big5 Windows console cannot abort the suite while printing Unicode failure evidence. Initial failed logs are retained; no assertion is skipped to obtain a successful run.
+- The frozen acceptance harness now explicitly confirms the new Production Printing review dialog, verifies Duplex and eight planned output pages, and records a screenshot before clicking Generate. The normal application's review gate is unchanged.

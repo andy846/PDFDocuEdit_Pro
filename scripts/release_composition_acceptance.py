@@ -82,7 +82,35 @@ def run_new_features(output: Path) -> dict:
     # Generate the barcode-only template; the footer check does not introduce
     # an unrelated merge field into generated-record production.
     window._commit(window.template.to_dict(), template.to_dict(), "Release inserter acceptance")
-    window.start_production(str(output/"inserter"))
+    # Exercise the actual review dialog instead of bypassing its production gate.
+    # This harness is called only by the explicitly opt-in composition QA mode.
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QApplication, QDialogButtonBox
+    from composition.designer.production_settings import ProductionReviewDialog
+
+    reviewed, review_errors = [], []
+    def approve_printing():
+        dialog = QApplication.activeModalWidget()
+        if not isinstance(dialog, ProductionReviewDialog):
+            return
+        button = dialog.footer.button(QDialogButtonBox.StandardButton.Ok)
+        if not dialog.printing.currentData() or not button.isEnabled() or "Output pages: 8" not in dialog.summary.text():
+            review_errors.append(dialog.summary.text())
+            dialog.reject()
+            return
+        dialog.grab().save(str(output/"production-printing-review.png"))
+        reviewed.append(True)
+        button.click()
+    review_timer = QTimer(window)
+    review_timer.setInterval(10)
+    review_timer.timeout.connect(approve_printing)
+    review_timer.start()
+    try:
+        window.start_production(str(output/"inserter"))
+    finally:
+        review_timer.stop()
+        review_timer.deleteLater()
+    check(reviewed == [True] and not review_errors, f"Production printing review failed: {review_errors}")
     wait(lambda: window.production_worker is None, 120)
     check(bool(window.last_output), window.production_summary.toPlainText())
     with fitz.open(window.last_output) as document:
@@ -98,4 +126,5 @@ def run_new_features(output: Path) -> dict:
     wait(lambda: not window.workers)
     return {"conditional_sources": 2, "conditional_templates": 2, "published_records": 8,
             "branch_pages": pages, "inserter_pages": 8, "decoded_marks": len(marks),
-            "zero_start_payloads": [row["Payload"] for row in marks[:2]], "repeat_coordinates": True}
+            "zero_start_payloads": [row["Payload"] for row in marks[:2]], "repeat_coordinates": True,
+            "printing_review_confirmed": True}
