@@ -34,6 +34,29 @@ def dispatch(request: dict) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task.startswith("production_review_"):
+        from composition.review.service import create_review, preview_sheet, review_rows, validate_snapshot
+        if task == "production_review_check":
+            return create_review(request["directory"], request["context"], progress=progress, is_cancelled=cancelled)
+        if task == "production_review_rows":
+            return review_rows(request["directory"], request["snapshot_id"], offset=request.get("offset", 0),
+                search=request.get("search", ""), envelope=request.get("envelope", 0), output_page=request.get("output_page", 0))
+        if task == "production_review_preview":
+            return preview_sheet(request["directory"], request["snapshot_id"], request["output_page"], scale=request.get("scale", 2))
+        if task == "production_review_validate":
+            validate_snapshot(request["directory"], request["snapshot_id"], request["context"],
+                              warnings_acknowledged=request.get("acknowledge", False), is_cancelled=cancelled)
+            return {"valid": True}
+        raise ValueError("Unknown production review operation.")
+
+    if request.get("production_review"):
+        from composition.review.service import validate_snapshot
+        receipt = request["production_review"]
+        context = dict(receipt["context"])
+        context["job"] = request["job"]
+        validate_snapshot(receipt["directory"], receipt["snapshot_id"], context,
+                          warnings_acknowledged=receipt.get("acknowledge", False), is_cancelled=cancelled)
+
     if task == "workflow":
         from workflow.worker import dispatch as workflow_dispatch
         return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state))
