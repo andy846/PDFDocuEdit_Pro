@@ -119,6 +119,24 @@ def test_template_draft_survives_switch_and_busy_browsing(window,tmp_path):
         window.lock()
 
 
+def test_branch_production_requires_shared_review_and_retains_approval(window,tmp_path):
+    from tests.composition.review_helpers import confirm_review
+    from workflow.branch_engine import approve_routes, prepare_routes
+    spec = fixture(tmp_path, records=2)
+    window.apply_spec(spec.to_dict())
+    window.run = prepare_routes(spec, window.directory)
+    approve_routes(spec, window.run, [j["id"] for j in window.run["jobs"]])
+    window.refresh_results()
+    window.generate(output_dir=str(tmp_path / "out"))
+    wait_until(lambda: bool(window.production_review.contexts) and len(window.production_review.results) == 6 and not window.active_worker, timeout=40)
+    assert not (tmp_path / "out").exists()
+    assert all(j["approved"] for j in window.run["jobs"])
+    confirm_review(window)
+    wait_until(lambda: window.run["status"] == "Completed" and not window.active_worker, timeout=40)
+    assert window.run["published_records"] == 6
+    assert not window.test_errors
+
+
 def test_host_embeds_v5_reopens_without_duplicate_tabs(qt_application,tmp_path):
     from composition.designer.project_host import DesignerProjectHost
     from workflow.serializer import save_workflow

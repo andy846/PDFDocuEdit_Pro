@@ -17,6 +17,12 @@ from .registry import EXTRA_KINDS
 
 def dispatch(request, progress, cancelled, emit_state=None):
     operation=request["operation"]
+    if operation == "production_review_prepare":
+        from .production_review import prepare_contexts
+        return prepare_contexts(request, progress=progress, is_cancelled=cancelled)
+    if request.get("production_reviews"):
+        from .production_review import validate_receipts
+        validate_receipts(request, is_cancelled=cancelled)
     if operation.startswith("branch_"):
         from .branch_engine import approve_routes, execute_routes, prepare_routes, rows
         spec=WorkflowSpec.from_dict(request["spec"])
@@ -117,7 +123,8 @@ def dispatch(request, progress, cancelled, emit_state=None):
     if operation=="run":
         return asdict(execute(WorkflowSpec.from_dict(request["spec"]),WorkflowRun(**request["run"]),
                               request["directory"],until=request.get("until","review"),
-                              progress=progress,is_cancelled=cancelled))
+                              progress=progress,is_cancelled=cancelled,
+                              review_context=request["production_reviews"][0]["context"] if request.get("production_reviews") else None))
     if operation=="save":
         from .serializer import save_workflow
         return {"path":save_workflow(WorkflowSpec.from_dict(request["spec"]),request["path"],is_cancelled=cancelled)}

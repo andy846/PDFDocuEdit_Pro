@@ -235,7 +235,7 @@ def apply_page_data(store,current,*,is_cancelled=None):
         store.db.execute("UPDATE meta SET value='false' WHERE key='accepted'")
 
 
-def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=None):
+def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=None,review_context=None):
     from .engine import context_fingerprint, execute
     root=Path(directory)
     root.mkdir(parents=True,exist_ok=True)
@@ -247,7 +247,7 @@ def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=N
             if not run.accepted or run.fingerprint!=fingerprint:
                 raise CompositionError("Source or workflow changed. Check and accept review before production.")
             run.statuses[spec.node("output").id]="Running"
-            return _produce(spec,run,root,progress=progress,is_cancelled=is_cancelled)
+            return _produce(spec,run,root,progress=progress,is_cancelled=is_cancelled,review_context=review_context)
         legacy=_legacy(spec)
         target=next((n for n in spec.chain() if n.id==until or n.kind==until),None)
         if target and target.kind in ("input","merge","extract"):
@@ -306,7 +306,7 @@ def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=N
             temp.write_text(json.dumps(asdict(run),ensure_ascii=False,indent=2),encoding="utf-8")
 
 
-def _produce(spec,run,root,*,progress=None,is_cancelled=None):
+def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,review_context=None):
     from .engine import detection_audit, external_fields
     with ExtractionStore(run.database) as store:
         if store.metadata()["accepted"]!="true" or store.metadata()["sha256"]!=file_hash(Path(run.source)):
@@ -314,11 +314,13 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None):
         original_groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
         if original_groups!=run.groups:
             raise CompositionError("Original grouping differs from the accepted review.")
-        data=prepare_mailpieces(spec,run,root,progress=progress,is_cancelled=is_cancelled)
+        data=DataSet(review_context["external_data"]) if review_context else prepare_mailpieces(spec,run,root,progress=progress,is_cancelled=is_cancelled)
         folder=spec.node("output").params.get("directory","")
         if not folder:
             raise CompositionError("Choose an output folder.")
         if data.count==0:
+            if _review_only:
+                raise CompositionError("No retained envelopes. There is no PDF to review; no empty PDF will be generated.")
             report=Path(folder)/new_job_id()
             report.mkdir(parents=True)
             export_audit(data,report)
@@ -328,21 +330,36 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None):
             (report/"job.json").write_text(json.dumps(run.output,indent=2),encoding="utf-8")
             run.statuses[spec.node("output").id]="Completed"
             return run
-        data,production_source,groups,selected=production_view(spec,run,root,progress=progress,is_cancelled=is_cancelled,prepared=data)
-        overlay=spec.node("overlay")
-        project=load_project(overlay.params["path"]) if overlay else None
-        settings=copy.deepcopy(project.settings) if project else EnvelopeSettings(pages_per_envelope=1)
-        settings.groups=groups
-        settings.excluded_pages=[]
-        source=inspect_source(production_source,settings,uniform=True,is_cancelled=is_cancelled)
-        composed=EnvelopeSpec(source,settings,objects=project.objects if project else [],
-            required_scope=project.required_scope if project else "all_source",name=spec.name,external_fields=external_fields(spec))
-        media=spec.node("media_assignment")
-        composed.media=copy.deepcopy(media.params if media else project.media if project else {})
-        # External computed names are checked against configured marks, not guessed.
-        composed.detection_review=detection_audit(composed)
+        if review_context:
+            composed=EnvelopeSpec.from_dict(review_context["job"]["project"])
+            selected=review_context["binding"]["selected"]
+            run.data_summary=copy.deepcopy(review_context["binding"]["data_summary"])
+        else:
+            data,production_source,groups,selected=production_view(spec,run,root,progress=progress,is_cancelled=is_cancelled,prepared=data)
+            overlay=spec.node("overlay")
+            project=load_project(overlay.params["path"]) if overlay else None
+            settings=copy.deepcopy(project.settings) if project else EnvelopeSettings(pages_per_envelope=1)
+            settings.groups=groups
+            settings.excluded_pages=[]
+            source=inspect_source(production_source,settings,uniform=True,is_cancelled=is_cancelled)
+            composed=EnvelopeSpec(source,settings,objects=project.objects if project else [],
+                required_scope=project.required_scope if project else "all_source",name=spec.name,external_fields=external_fields(spec))
+            media=spec.node("media_assignment")
+            composed.media=copy.deepcopy(media.params if media else project.media if project else {})
+            composed.detection_review=detection_audit(composed)
         composed.validate()
         plan=overlay_plan(composed,is_cancelled=is_cancelled)
+        if _review_only:
+            from core.variables import VariableContext
+            job=OverlayJob(composed.to_dict(),folder,output_name=spec.node("output").params.get("output_name","production.pdf"))
+            job.variable_context=VariableContext.for_job(input_path=spec.node("input").params["paths"][0],
+                job_id=job.job_id,job_name=spec.name,sequence=1).to_dict()
+            return {"kind":"overlay","job":asdict(job),"label":spec.name,
+                "external_database":run.database,"external_data":str(data.path),
+                "outputs":run.data_summary.get("outputs",[]),
+                "binding":{"owner_spec":spec.to_dict(),"selected":selected,"data_summary":copy.deepcopy(run.data_summary),
+                    "files":[*spec.node("input").params.get("paths",[]),
+                             *([spec.node("overlay").params["path"]] if spec.node("overlay") else [])]}}
         with closing(sqlite3.connect(data.path)) as db:
             db.executescript("DROP TABLE IF EXISTS page_spans; CREATE TABLE page_spans(ordinal INTEGER PRIMARY KEY,start INTEGER,end INTEGER);")
             for i,start in enumerate(plan.output_starts):
@@ -367,7 +384,9 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None):
                 # Keep nested renderer/font caches beneath a short owned Windows path.
                 context=tempfile.TemporaryDirectory(prefix="wf-overlay-") if partitions else nullcontext(folder)
                 with context as generation_root:
-                    result=asdict(generate(OverlayJob(composed.to_dict(),str(generation_root)),progress=progress,is_cancelled=is_cancelled,
+                    job=OverlayJob(**review_context["job"]) if review_context else OverlayJob(composed.to_dict(),str(generation_root))
+                    job.output_dir=str(generation_root)
+                    result=asdict(generate(job,progress=progress,is_cancelled=is_cancelled,
                                            external_values=values,additional_reports=reports,_defer_media_ticket=bool(partitions)))
                     if result["status"]=="completed" and partitions:
                         result=split_composed(result,data,partitions,folder,0,is_cancelled=is_cancelled,progress=progress)

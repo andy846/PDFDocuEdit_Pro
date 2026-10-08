@@ -54,6 +54,8 @@ def test_check_preview_approve_generate_save_reopen(window,tmp_path,monkeypatch)
     assert w.batch.jobs[0].status=="Ready"
     monkeypatch.setattr(QMessageBox,"question",lambda *a,**k:QMessageBox.StandardButton.Yes)
     w.execute("output")
+    from tests.composition.review_helpers import confirm_review
+    confirm_review(w)
     wait_until(lambda:w.active_worker is None,timeout=30)
     assert w.batch.status=="Completed",w.feedback.text()
     assert Path(w.batch.jobs[0].result["output_pdf"]).is_file()
@@ -66,6 +68,25 @@ def test_check_preview_approve_generate_save_reopen(window,tmp_path,monkeypatch)
     wait_until(lambda:w.active_worker is None,timeout=30)
     assert w.batch.jobs[0].status=="Completed"
     assert not w.batch.jobs[0].approved
+
+
+def test_first_output_folder_preserves_data_approval_but_requires_production_review(window,tmp_path,monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog
+
+    from workflow.batch import BatchRun, approve, prepare
+    w = window
+    job = pair(tmp_path, "Folder")
+    spec = recipe([job])
+    w.apply_spec(spec.to_dict())
+    w.batch = prepare(spec, BatchRun(jobs=[job]), w.directory)
+    approve(w.batch, [job.id])
+    w.refresh_jobs()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_: str(tmp_path / "out"))
+    w.execute("output")
+    wait_until(lambda: bool(w.production_review.contexts) and len(w.production_review.results) == 1 and not w.active_worker)
+    assert w.batch.jobs[0].approved and w.batch.jobs[0].status == "Ready"
+    assert w.production_review.results[0]["status"] == "checked"
+    assert not (tmp_path / "out").exists()
 
 
 def test_canvas_cards_survive_changes_navigation_and_checkbox_drafts(window):

@@ -167,6 +167,7 @@ class WorkflowWindow(QMainWindow):
         action("step","Check to this step",self.run_selected,symbol="chevron-right")
         action("scan","Run to review",lambda:self.execute("review"),symbol="scan")
         action("generate","Generate production PDF",lambda:self.execute("output"),"Ctrl+Shift+G","printer")
+        action("production_review","Review Production",lambda:self.execute("output"),symbol="printer")
         self.actions["scan"].setIconText("Scan and review")
         self.actions["generate"].setIconText("Generate PDF")
         action("cancel","Cancel task",self.cancel_job,symbol="x")
@@ -892,7 +893,7 @@ class WorkflowWindow(QMainWindow):
     def run_selected(self):
         self.inspections.check()
 
-    def execute(self,until):
+    def execute(self,until,*,production_reviews=None):
         if self.active_worker or self.capture_active or not self.flush_settings():
             return
         try:
@@ -913,6 +914,16 @@ class WorkflowWindow(QMainWindow):
                 if not project.undo.isClean() or getattr(project,"draft_error", ""):
                     self.message("Save or repair the open overlay project before running Workflow; production uses its saved version.")
                     return
+        if until == "output" and production_reviews is None:
+            from .production_review import open_workflow_review
+            output = self.spec.node("output").params.get("directory", "")
+            if not output:
+                self.message("Choose an output folder in the Output node, then check and accept review.")
+                self.select_node(self.spec.node("output").id)
+                return
+            open_workflow_review(self, {"review_kind": "pdf", "run": asdict(self.run), "output_dir": output},
+                                lambda receipts: self.execute("output", production_reviews=receipts))
+            return
         if until=="output":
             self.run.statuses.pop(self.spec.node("output").id,None)
             self.run.output={}
@@ -941,7 +952,8 @@ class WorkflowWindow(QMainWindow):
                 self.production_summary.setPlainText(self.result_summary())
                 self.tabs.setCurrentWidget(self.production_page)
         self.request({"operation":"run","spec":self.spec.to_dict(),"run":asdict(self.run),
-                      "directory":str(self.directory),"until":until},ready)
+                      "directory":str(self.directory),"until":until,
+                      **({"production_reviews":production_reviews} if production_reviews is not None else {})},ready)
 
     def request(self,request,callback,*,preview=False,on_error=None):
         if self.close_pending or (self.active_worker and not preview):

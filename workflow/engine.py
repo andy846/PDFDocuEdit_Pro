@@ -43,8 +43,12 @@ def context_fingerprint(spec, *, include_overlay=True):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None):
+def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None, review_context=None):
     spec.chain()
+    if review_context is not None and until == "output":
+        from .pdf_pipeline import execute_pdf
+        return execute_pdf(spec, run, directory, until=until, progress=progress,
+                           is_cancelled=is_cancelled, review_context=review_context)
     if spec.workflow_version>=3:
         from .registry import EXTRA_KINDS
         if any(n.kind in EXTRA_KINDS for n in spec.nodes):

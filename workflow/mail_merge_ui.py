@@ -357,16 +357,24 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         previous=getattr(self,"spec",None)
         spec=WorkflowSpec.from_dict(raw)
         changed=previous and previous.fingerprint()!=spec.fingerprint()
+        output_only=False
+        if changed and previous.node("reports"):
+            comparison=WorkflowSpec.from_dict(spec.to_dict())
+            comparison.node("reports").params["directory"]=previous.node("reports").params.get("directory", "")
+            old=WorkflowSpec.from_dict(previous.to_dict())
+            old.node("reports").params.setdefault("directory", "")
+            output_only=comparison.fingerprint()==old.fingerprint()
         self.spec=spec
         if changed:
             self.inspections.invalidate()
             self.run=WorkflowRun()
             for job in self.batch.jobs:
-                if job.status!="Completed":
+                if job.status!="Completed" and not output_only:
                     job.status="Needs review"
                     # Retain approval evidence; checking will compare effective per-job settings.
             self.preview_generation+=1
-            self.message("Workflow changed. Check affected jobs before running." if self.batch.jobs
+            self.message("Output folder updated. Review production before generating." if output_only else
+                         "Workflow changed. Check affected jobs before running." if self.batch.jobs
                          else "Add template + data pairs, then Check & Preview.")
         if self.selected not in [n.id for n in spec.nodes]:
             self.selected=spec.nodes[0].id
@@ -699,9 +707,9 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         self.refresh_jobs()
         self.message("Selected checked jobs approved. Use Run Ready Jobs to start production.")
 
-    def execute(self,until):
+    def execute(self,until,*,production_reviews=None):
         if self.spec.project_kind!="mail_merge_workflow":
-            return super().execute(until)
+            return super().execute(until,production_reviews=production_reviews)
         if until not in ("output","reports","compose"):
             self.check_jobs()
             return
@@ -719,8 +727,10 @@ class MailMergeWorkflowWindow(WorkflowWindow):
                 return
             if not self.params(self.spec.node("reports"),{"directory":output}):
                 return
-        counts=sum(j.input_records for j in ready),sum(j.expected_pages for j in ready)
-        if QMessageBox.question(self,"Run Ready Jobs",f"Generate {len(ready)} approved jobs?\nRecords: {counts[0]:,}\nExpected pages: {counts[1]:,}\nOutput: {output}\nOther jobs remain in the list.",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel)!=QMessageBox.StandardButton.Yes:
+        if production_reviews is None:
+            from .production_review import open_workflow_review
+            open_workflow_review(self, {"review_kind":"batch","batch":self.batch.to_dict(),"output_dir":output},
+                                lambda receipts:self.execute(until,production_reviews=receipts))
             return
         def finished(result):
             self.batch=BatchRun.from_dict(result["batch"])
@@ -732,7 +742,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.message(self.batch.status)
         self.tabs.setCurrentWidget(self.production_page)
         self.run.statuses[self.spec.node("compose").id]="Running"
-        self.request({"operation":"batch_run","spec":self.spec.to_dict(),"batch":self.batch.to_dict(),
+        self.request({"operation":"batch_run","spec":self.spec.to_dict(),"batch":self.batch.to_dict(),"production_reviews":production_reviews,
             "approved":[j.id for j in ready],"output_dir":output},finished)
 
     def update_progress(self,current,total,message):

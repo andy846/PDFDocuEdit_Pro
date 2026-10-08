@@ -380,7 +380,7 @@ class BranchWorkflowWindow(QMainWindow):
         self.production_view,self.production_model=table(self.production_page)
         layout.addWidget(self.production_view,1)
         row=QHBoxLayout()
-        for text,callback in (("Run approved branches…",self.generate),("Open selected PDF",self.open_output),("Open reports",self.show_reports)):
+        for text,callback in (("Review production…",self.generate),("Open selected PDF",self.open_output),("Open reports",self.show_reports)):
             button=QPushButton(text)
             button.clicked.connect(callback)
             row.addWidget(button)
@@ -1058,16 +1058,21 @@ class BranchWorkflowWindow(QMainWindow):
         self.run=result["run"]
         self.refresh_results()
 
-    def generate(self):
+    def generate(self,*,production_reviews=None,output_dir=None):
         if not self.templates_saved():
             return
         if self.draft_error or self.run.get("stale") or not any(j["approved"] and j["status"]=="Ready" for j in self.run.get("jobs",[])):
             self.error("Check, review and explicitly approve the branches before production.")
             return
-        output=QFileDialog.getExistingDirectory(self,"Production output folder")
+        output=output_dir or QFileDialog.getExistingDirectory(self,"Production output folder")
         if output:
+            if production_reviews is None:
+                from .production_review import open_workflow_review
+                open_workflow_review(self,{"review_kind":"branch","run":self.run,"output_dir":output},
+                    lambda receipts:self.generate(production_reviews=receipts,output_dir=output))
+                return
             self.tabs.setCurrentWidget(self.production_page)
-            self.request({"operation":"branch_run","output_dir":output},self.receive_run)
+            self.request({"operation":"branch_run","output_dir":output,"production_reviews":production_reviews},self.receive_run)
 
     def preview_job(self):
         if self.run.get("stale") or self.draft_error or not self.templates_saved():
