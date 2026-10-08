@@ -432,6 +432,17 @@ class CommandBar(QWidget):
         self._undo.setEnabled(can_undo)
         self._redo.setEnabled(can_redo)
 
+    def set_shortcut_hints(self, commands) -> None:
+        from core.commands import command_shortcuts
+        buttons = {"open": self._open, "save": self._save, "save_as": self._save_as,
+                   "search": self._search, "print": self._print, "undo": self._undo,
+                   "redo": self._redo, "main_menu": self._main_menu_button, "toggle_tools": self._panel}
+        for command in commands:
+            if command.id in buttons:
+                sequences = " / ".join(command_shortcuts(command))
+                label = command.label.replace("&", "")
+                buttons[command.id].setToolTip(f"{label} ({sequences})" if sequences else label)
+
     def set_work_status(self, text: str) -> None:
         ready = text.strip().casefold() == "ready"
         self._work.setText(f"{'●' if ready else '◌'}  {text}")

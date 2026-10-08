@@ -229,6 +229,7 @@ class PdfCanvas(QScrollArea):
     noteRequested = pyqtSignal(int, object)  # (page, fitz.Point)
     contextMenuRequested = pyqtSignal(object)  # global QPoint
     annotationSelected = pyqtSignal(int, int)
+    annotationSelectionCleared = pyqtSignal()
     annotationContextRequested = pyqtSignal(int, int, object)
     annotationGeometryChanged = pyqtSignal(int, int, object)
     annotationTextChanged = pyqtSignal(int, int, str)
@@ -476,6 +477,10 @@ class PdfCanvas(QScrollArea):
     def _on_annotation_selected(self, page: int, xref: int) -> None:
         self.select_annotation(page, xref)
         self.annotationSelected.emit(page, xref)
+
+    def _on_annotation_selection_cleared(self, _page: int) -> None:
+        self.clear_annotation_selection()
+        self.annotationSelectionCleared.emit()
 
     def _configure_annotation_preview(self, overlay: PageOverlay) -> None:
         overlay.set_annotation_preview_style(
@@ -1369,6 +1374,7 @@ class PdfCanvas(QScrollArea):
             view.overlay.fontInspectClicked.connect(self._on_font_inspect)
             view.overlay.formClicked.connect(self._on_form_click)
             view.overlay.annotationSelected.connect(self._on_annotation_selected)
+            view.overlay.annotationSelectionCleared.connect(self._on_annotation_selection_cleared)
             view.overlay.annotationContextRequested.connect(
                 self.annotationContextRequested.emit
             )

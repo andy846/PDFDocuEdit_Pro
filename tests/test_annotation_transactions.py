@@ -60,6 +60,59 @@ def state(window):
     )
 
 
+@pytest.mark.parametrize("operation", ["geometry", "properties", "remove"])
+@pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("image_kind", ["image", "signature"])
+def test_added_image_edit_transaction(viewer, tmp_path, monkeypatch, operation, fail, image_kind):
+    window = viewer
+    pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 20), False)
+    pixmap.clear_with(180)
+    path = tmp_path / "picture.png"
+    pixmap.save(path)
+    source = window.engine.original_path.read_bytes()
+    window._handle_annotation(AnnotationOp(kind=image_kind, page=0,
+                                          rects=(fitz.Rect(50, 200, 150, 250),), image_path=str(path)))
+    entries = list_document_annotations(window.engine.document)
+    entry = next(entry for entry in entries if entry["kind"] == ("Image" if image_kind == "image" else "Signature Image"))
+    assert window._session.canvas.tool_mode.value == "browse"
+    # Qt needs && to display a literal &, rather than an invisible mnemonic.
+    assert window.context_panel._apply_properties.text() == "Apply Position && Size"
+    assert not window.context_panel._image_geometry.isHidden()
+    assert not window._tasks  # automatic properties must not scan the entire PDF
+    before = state(window)
+    pixels_before = window.engine.document[0].get_pixmap().samples
+    function = "remove_annotation" if operation == "remove" else "update_annotation_geometry"
+    if fail:
+        original = getattr(viewer_module, function)
+        def failed(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected after image edit")
+        monkeypatch.setattr(viewer_module, function, failed)
+    if operation == "remove":
+        window._handle_remove_annotation(0, entry["xref"])
+    elif operation == "properties":
+        window._edit_annotation(0, entry["xref"], {"rect": fitz.Rect(70, 210, 270, 310), "keep_aspect": False})
+    else:
+        window._change_annotation_geometry(window._session, 0, entry["xref"], {"rect": fitz.Rect(70, 210, 270, 310)})
+    if fail:
+        assert state(window) == before
+        assert window.engine.document[0].get_pixmap().samples == pixels_before
+        assert window._undo_stack.undo_count == 1
+    else:
+        after = state(window)
+        pixels_after = window.engine.document[0].get_pixmap().samples
+        assert after != before
+        assert pixels_after != pixels_before
+        assert window._undo_stack.undo_count == 2
+        assert window._undo()
+        assert state(window) == before
+        assert window.engine.document[0].get_pixmap().samples == pixels_before
+        assert window._redo()
+        assert state(window) == after
+        assert window.engine.document[0].get_pixmap().samples == pixels_after
+    assert window.engine.original_path.read_bytes() == source
+
+
 @pytest.mark.parametrize("operation", ["add", "remove", "geometry", "text", "properties"])
 @pytest.mark.parametrize("fail", [False, True])
 def test_annotation_actions_commit_once_or_roll_back(viewer, monkeypatch, operation, fail):

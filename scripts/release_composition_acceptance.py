@@ -92,7 +92,7 @@ def run_new_features(output: Path) -> dict:
     check(len(marks) == 4, "Frozen inserter front-side count mismatch")
     check([row["Payload"] for row in marks[:2]] == ["000000000000000000", "000100100000000006"],
           "Frozen zero-start payload mismatch")
-    check([row["Sheet sequence"] for row in marks] == ["00", "01", "00", "01"], "Frozen sheet numbering mismatch")
+    check([row["Sheet sequence"] for row in marks] == ["00", "01", "02", "03"], "Frozen continuous sheet numbering mismatch")
     window.undo.setClean()
     window.close()
     wait(lambda: not window.workers)

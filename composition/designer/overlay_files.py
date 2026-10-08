@@ -125,9 +125,10 @@ class OverlayFiles:
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.error(str(exc))
             return
+        if not self.apply_spec(spec.to_dict()):
+            return
         self.project_path = Path(path)
         self.undo.clear()
-        self.apply_spec(spec.to_dict())
         self.undo.setClean()
         self.fit_canvas()
 

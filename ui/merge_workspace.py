@@ -247,6 +247,7 @@ class MergeWorkspace(QWidget):
         super().__init__()
         self.window = window
         self.entries, self.list_path = [], None
+        self.shortcut_defaults = {}
         self.result = None
         self.stopped, self.closing = False, False
         self.pending_close = False
@@ -291,7 +292,11 @@ class MergeWorkspace(QWidget):
             action.setProperty("mergeIcon", glyph)
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
+            if key == "redo":
+                from ui.shortcut_bindings import redo_shortcuts
+                action.setShortcuts(redo_shortcuts())
             action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.shortcut_defaults[key] = list(action.shortcuts())
         action.triggered.connect(callback)
         self.addAction(action)
         self.menu.addAction(action)

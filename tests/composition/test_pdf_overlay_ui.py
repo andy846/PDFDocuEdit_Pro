@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
+from composition.media.planner import preview_plan
 from composition.overlay.serializer import load_project, save_project
 from tests.composition.test_pdf_overlay_models import make_source, sample_spec
 from tests.composition.test_workspace import close_window, wait_until
@@ -24,6 +25,87 @@ def finish(window):
     window.draft_error = ""
     window.close()
     wait_until(lambda: not window.workers)
+
+
+def test_apply_smaller_plan_and_undo_clamp_indices(app, tmp_path, monkeypatch):
+    window = OverlayWindow()
+    monkeypatch.setattr(window, "schedule_preview", lambda *args: None)
+    try:
+        large = sample_spec(tmp_path, pages=60, duplex=True)
+        assert window.apply_spec(large.to_dict())
+        window.envelope.setValue(20)
+        window.print_page.setValue(4)
+        small = sample_spec(tmp_path, pages=6)
+        assert window.commit(small.to_dict(), "Smaller source")
+        assert (window.envelope.value(), window.print_page.value()) == (2, 3)
+        window.undo.undo()
+        window.envelope.setValue(20)
+        window.print_page.setValue(4)
+        window.undo.redo()
+        assert (window.envelope.value(), window.print_page.value()) == (2, 3)
+        assert not window.draft_error
+    finally:
+        finish(window)
+
+
+def test_invalid_plan_preserves_spec_and_can_recover(app, tmp_path, monkeypatch):
+    import composition.designer.overlay_workspace as module
+    from composition.template.model import CompositionError
+
+    window = OverlayWindow()
+    monkeypatch.setattr(window, "schedule_preview", lambda *args: None)
+    try:
+        value = sample_spec(tmp_path).to_dict()
+        assert window.apply_spec(value)
+        previous = window.spec
+        real_plan = module.preview_plan
+
+        def invalid(spec):
+            raise CompositionError("Invalid envelope plan")
+
+        monkeypatch.setattr(module, "preview_plan", invalid)
+        assert not window.apply_spec(value)
+        assert window.spec is previous and window.draft_error
+        window.refresh_canvas()
+        assert "Preview unavailable" in window.preview_status.text()
+        assert not window.timer.isActive()
+        monkeypatch.setattr(module, "preview_plan", real_plan)
+        assert window.apply_spec(value)
+        assert not window.draft_error
+    finally:
+        finish(window)
+
+
+def test_variable_envelope_pages_clamp_before_lookup(app, tmp_path, monkeypatch):
+    window = OverlayWindow()
+    monkeypatch.setattr(window, "schedule_preview", lambda *args: None)
+    try:
+        value = sample_spec(tmp_path, pages=60).to_dict()
+        assert window.apply_spec(value)
+        window.envelope.setValue(20)
+        window.print_page.setValue(3)
+        value["settings"]["groups"] = [[1, 59], [60, 60]]
+        value["source"]["geometry_mode"] = "uniform"
+        value["source"]["geometries"] = value["source"]["geometries"][:1]
+        value["detection_review"] = {
+            "accepted": True, "source_sha256": value["source"]["sha256"],
+            "groups": value["settings"]["groups"], "excluded_pages": [],
+            "config": {"rules": [{"kind": "page_number", "pattern": "Page {CURRENT} of {TOTAL}"}]},
+            "pages": 60, "findings": [], "evidence": [], "edits": [],
+        }
+        assert window.apply_spec(value)
+        assert (window.envelope.value(), window.print_page.value()) == (2, 1)
+        window.envelope.setValue(1)
+        window.print_page.setValue(59)
+        window.envelope.setValue(2)
+        assert window.print_page.value() == 1
+        assert not window.draft_error
+        window.envelope.blockSignals(True)
+        window.sync_preview_indices(preview_plan(window.spec))
+        assert window.envelope.signalsBlocked()
+        window.envelope.blockSignals(False)
+    finally:
+        finish(window)
 
 
 def test_source_preview_bulk_typography_save_and_production(app, tmp_path):

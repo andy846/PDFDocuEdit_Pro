@@ -63,7 +63,9 @@ def sequence_record(template, record, ordinal, page_index=0, *, design=False):
     values = dict(record)
     physical_index=page_index
     physical_count=len(template.pages)
-    if template.media.get("enabled") or has_profiles(template):
+    # Match Renderer.render: duplex can add blank backs without enabled Media
+    # or barcode profiles. Page sequences count those physical output pages.
+    if template.media.get("enabled") or template.media.get("duplex") or has_profiles(template):
         from composition.media.planner import build_print_plan
         key=repr((template.media,[(p.id,p.width_mm,p.height_mm) for p in template.pages]))
         if getattr(template,"_media_sequence_key",None)!=key:

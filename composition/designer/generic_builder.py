@@ -3,19 +3,23 @@ from __future__ import annotations
 
 import copy
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
+from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -38,6 +42,43 @@ SYSTEM_HELP = {
     "OutputPage": "Page in final output PDF · includes inserted blank backs",
     "SourcePage": "Original source PDF page",
 }
+
+
+class SegmentDelegate(QStyledItemDelegate):
+    """Compact editors that fit table cells despite dialog control padding."""
+
+    def createEditor(self, parent, option, index):
+        if index.column() == 3:
+            editor = WideComboBox(parent)
+            for title, value in (("Fixed value", "fixed"), ("Data field", "data"),
+                                 ("System value", "system"), ("Running sequence", "sequence")):
+                editor.addItem(title, value)
+            editor.setMinimumContentsLength(0)
+            editor.activated.connect(lambda: self.commitData.emit(editor))
+        else:
+            editor = QLineEdit(parent)
+            if index.column() == 2:
+                editor.setValidator(QIntValidator(0, 4096, editor))
+                editor.setAccessibleName("Segment length")
+        editor.setStyleSheet("padding: 1px 2px; min-height: 0px; min-width: 0px;")
+        return editor
+
+    def setEditorData(self, editor, index):
+        value = str(index.data(Qt.ItemDataRole.EditRole))
+        if index.column() == 3:
+            editor.setCurrentIndex(editor.findData(value))
+        else:
+            editor.setText(value)
+            editor.selectAll()
+
+    def setModelData(self, editor, model, index):
+        if index.column() == 3:
+            value = editor.currentData()
+        else:
+            if index.column() == 2 and not editor.hasAcceptableInput():
+                return
+            value = editor.text()
+        model.setData(index, value, Qt.ItemDataRole.EditRole)
 
 
 def label(text):
@@ -79,7 +120,9 @@ class GenericLayoutBuilder(QWidget):
         root.addLayout(form)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Name", "Position", "Length", "Source", "Preview"])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
+                                   QAbstractItemView.EditTrigger.EditKeyPressed)
+        self.table.setItemDelegate(SegmentDelegate(self.table))
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setMinimumWidth(0)
@@ -93,6 +136,7 @@ class GenericLayoutBuilder(QWidget):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.table.setColumnWidth(col, width)
         root.addWidget(self.table)
+        root.addWidget(label("Double-click Name, Length or Source to edit. Position and Preview are automatic."))
         buttons = QHBoxLayout()
         self.add, self.remove = QPushButton("Add segment"), QPushButton("Remove")
         self.up, self.down = QPushButton("↑"), QPushButton("↓")
@@ -101,7 +145,10 @@ class GenericLayoutBuilder(QWidget):
         for button in (self.add, self.remove, self.up, self.down):
             buttons.addWidget(button)
         root.addLayout(buttons)
-        self.details = QWidget()
+        self.edit_selected = QPushButton("Edit selected segment…")
+        self.edit_selected.clicked.connect(self.reveal_details)
+        root.addWidget(self.edit_selected)
+        self.details = QGroupBox("Selected segment settings")
         details = QFormLayout(self.details)
         details.setContentsMargins(0, 0, 0, 0)
         details.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -138,6 +185,7 @@ class GenericLayoutBuilder(QWidget):
         self.image.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         root.addWidget(self.image)
         self.table.currentCellChanged.connect(self.select)
+        self.table.itemChanged.connect(self.edit_cell)
         self.add.clicked.connect(self.add_segment)
         self.remove.clicked.connect(self.remove_segment)
         self.up.clicked.connect(lambda: self.move(-1))
@@ -178,6 +226,8 @@ class GenericLayoutBuilder(QWidget):
             values = (segment.name, f"{position}–{position+segment.length-1}" if segment.length else "Set length", str(segment.length), segment.source, "—")
             for col, text in enumerate(values):
                 item = QTableWidgetItem(text)
+                if col not in (0, 2, 3):
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 item.setToolTip(text)
                 self.table.setItem(row, col, item)
             position += segment.length
@@ -210,6 +260,42 @@ class GenericLayoutBuilder(QWidget):
         self.populate_values(segment.value)
         self.updating = False
         self.update_buttons()
+
+    def reveal_details(self, *_):
+        self.segment_name.setFocus()
+        parent = self.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QScrollArea):
+                parent.ensureWidgetVisible(self.segment_name, 0, 12)
+                # Show the section from its heading, rather than leaving only
+                # the first field peeking out behind the fixed dialog footer.
+                scroll = parent.verticalScrollBar()
+                top = self.details.mapTo(parent.viewport(), self.details.rect().topLeft()).y()
+                scroll.setValue(scroll.value() + top - 12)
+                break
+            parent = parent.parentWidget()
+
+    def edit_cell(self, item):
+        if self.updating or item.column() not in (0, 2, 3):
+            return
+        self.select(item.row())
+        if item.column() == 0:
+            self.segment_name.setText(item.text())
+        elif item.column() == 2:
+            try:
+                value = int(item.text())
+            except ValueError:
+                value = self.draft.segments[item.row()].length
+            if not 0 <= value <= 4096:
+                value = self.draft.segments[item.row()].length
+            self.length.setValue(value)
+            # Canonicalise invalid/unchanged programmatic edits as well.
+            self.edit()
+        else:
+            index = self.source.findData(item.text())
+            if index >= 0:
+                self.source.setCurrentIndex(index)
+            self.edit()
 
     def populate_values(self, value):
         source = self.source.currentData()
@@ -281,11 +367,13 @@ class GenericLayoutBuilder(QWidget):
                 value = widget.text()
             setattr(segment, key, value)
         position = 1
+        blocker = QSignalBlocker(self.table)
         for row, item in enumerate(self.draft.segments):
             for col, text in enumerate((item.name, f"{position}–{position+item.length-1}" if item.length else "Set length", str(item.length), item.source)):
                 self.table.item(row, col).setText(text)
                 self.table.item(row, col).setToolTip(text)
             position += item.length
+        del blocker
         self.update_details()
         self.notify()
 
@@ -307,6 +395,7 @@ class GenericLayoutBuilder(QWidget):
             self.rebuild(target)
 
     def update_buttons(self):
+        self.edit_selected.setEnabled(self.index >= 0)
         self.add.setEnabled(len(self.draft.segments) < 30)
         self.remove.setEnabled(self.index >= 0)
         self.up.setEnabled(self.index > 0)

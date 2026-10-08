@@ -10,6 +10,10 @@ import sys
 from pathlib import Path
 
 # Worker dispatch must precede Qt/editor imports in frozen development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--print-worker":
+    from core.print_worker import main as print_worker_main
+    raise SystemExit(print_worker_main(sys.argv[2:]))
+
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--pdf-operations-worker":
     from core.pdf_operations.worker import main as pdf_operations_worker_main
     raise SystemExit(pdf_operations_worker_main(sys.argv[2:]))
@@ -27,7 +31,7 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--compositio
     raise SystemExit(import_module("scripts.composition_smoke").main(sys.argv[2:]))
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 
@@ -168,29 +172,9 @@ class SingleInstanceRouter(QObject):
 
 
 def _create_splash() -> QSplashScreen:
-    splash_path = resource_path("Splash.png")
-    if splash_path.exists():
-        pixmap = QPixmap(str(splash_path))
-        # Show the splash at up to 45% of the screen width at native
-        # resolution (the previous fixed 520px looked small and blurry).
-        screen = QApplication.primaryScreen()
-        if screen and not pixmap.isNull():
-            dpr = screen.devicePixelRatio()
-            max_pixels = max(320, int(screen.availableGeometry().width() * 0.45 * dpr))
-            if pixmap.width() > max_pixels:
-                pixmap = pixmap.scaledToWidth(
-                    max_pixels, Qt.TransformationMode.SmoothTransformation
-                )
-            pixmap.setDevicePixelRatio(dpr)
-    else:
-        pixmap = QPixmap(520, 292)
-        pixmap.fill(QColor("#1c1c1e"))
-        painter = QPainter(pixmap)
-        painter.setPen(QColor("#f2f2f4"))
-        painter.setFont(QFont(QApplication.font().family(), 24, QFont.Weight.DemiBold))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, APP_NAME)
-        painter.end()
-    return QSplashScreen(pixmap)
+    from ui.splash import create_splash
+
+    return create_splash(resource_path("Splash.png"), APP_VERSION)
 
 
 def _set_windows_app_id() -> None:

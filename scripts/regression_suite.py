@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(paths: list[str], output: Path, *, timeout: int = 600) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     output.mkdir(parents=True, exist_ok=True)
     rows = []
     for index, path in enumerate(paths, 1):
@@ -30,7 +32,8 @@ def run(paths: list[str], output: Path, *, timeout: int = 600) -> int:
                 result = subprocess.run(
                     [sys.executable, "-u", "-m", "pytest", "-q", path,
                      "--tb=short", f"--junitxml={xml}"], cwd=ROOT,
-                    env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONFAULTHANDLER": "1"},
+                    env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONFAULTHANDLER": "1",
+                         "PYTHONIOENCODING": "utf-8"},
                     stdout=log, stderr=subprocess.STDOUT, timeout=timeout,
                 )
                 code = result.returncode

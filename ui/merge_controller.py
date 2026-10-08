@@ -2,7 +2,7 @@
 from PyQt6 import sip
 from PyQt6.QtCore import Qt
 
-from core.commands import Command
+from core.commands import Command, shortcut_conflict
 
 from .merge_workspace import MergeWorkspace
 
@@ -121,14 +121,14 @@ class MergeController:
         page = self.window.workspace.current_tool()
         active = page is not None and self.pdf_active()
         if active:
-            bar._open.setToolTip("Open merge list (Ctrl+O)")
-            bar._save.setToolTip("Save merge list (Ctrl+S)")
+            bar.set_shortcut_hints([Command(key, action.text(), action.shortcut().toString(), "Merge workspace",
+                                  action.trigger, alternate_shortcuts=tuple(s.toString() for s in action.shortcuts()[1:]))
+                                  for key, action in page.actions.items()])
             bar._save.setEnabled(not page.busy_state and not page.saving)
             bar._save_as.setEnabled(not page.busy_state and not page.saving)
             bar.set_undo_redo_enabled(page.undo.canUndo() and not page.busy_state, page.undo.canRedo() and not page.busy_state)
         else:
-            bar._open.setToolTip("Open PDF (Ctrl+O)")
-            bar._save.setToolTip("Save (Ctrl+S)")
+            bar.set_shortcut_hints(self.window._commands)
 
     def sync_activity(self):
         page = getattr(self.window, "_merge_workspace", None)
@@ -137,12 +137,21 @@ class MergeController:
 
     def commands(self, page):
         return [Command("merge."+key, action.text(), action.shortcut().toString(), "Merge workspace",
-                        action.trigger, action.isEnabled) for key, action in page.actions.items()]
+                        action.trigger, action.isEnabled,
+                        alternate_shortcuts=tuple(s.toString() for s in action.shortcuts()[1:]))
+                for key, action in page.actions.items()]
 
     def set_active(self, active):
         page = getattr(self.window, "_merge_workspace", None)
         if page:
-            for action in page.actions.values():
+            shared = [sequence.toString() for key, action in self.window._command_action_map.items()
+                      if key in self.global_ids() for sequence in action.shortcuts()]
+            shared.extend(shortcut.key().toString() for shortcut in self.window._command_shortcuts
+                          if shortcut.property("commandId") in self.global_ids())
+            for key, action in page.actions.items():
+                sequences = page.shortcut_defaults.get(key, [])
+                action.setShortcuts([s for s in sequences if not any(shortcut_conflict(s.toString(), value) for value in shared)]
+                                    if active else [])
                 if not active:
                     action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
                 else:

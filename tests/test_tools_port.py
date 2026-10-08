@@ -398,6 +398,15 @@ def test_batch_print_skips_unreadable_files(tmp_path, monkeypatch):
         return printer
 
     monkeypatch.setattr(window, "_create_printer", create)
+    spool_jobs = []
+    render_settings = window._print_render_settings
+
+    def capture_spool(printer, choices):
+        printer.setOutputFileName(str(tmp_path / f"output-{len(spool_jobs)}.pdf"))
+        spool_jobs.append((printer.docName(), printer.copyCount()))
+        return render_settings(printer, choices)
+
+    monkeypatch.setattr(window, "_print_render_settings", capture_spool)
     details = {
         "paths": [str(good1), str(bad), str(good2)],
         "printer": "",
@@ -417,8 +426,8 @@ def test_batch_print_skips_unreadable_files(tmp_path, monkeypatch):
     window._run_batch_print(fake, details)
     _wait_for_print(window)
     # One actual PDF output job per readable file, named after its source.
-    assert [printer.docName() for printer in printers] == ["good1.pdf", "good2.pdf"]
-    assert [printer.copyCount() for printer in printers] == [3, 3]
+    assert spool_jobs == [("good1.pdf", 3), ("good2.pdf", 3)]
+    assert len(printers) == 1  # same confirmed device, separate painter/spool jobs
     for index in range(2):
         with fitz.open(tmp_path / f"output-{index}.pdf") as output:
             assert output.page_count == 2

@@ -27,6 +27,14 @@ retains JSON evidence when the output root is writable, with zero published PDFs
 Batch cancellation preserves earlier completed bundles; a batch is not a single
 atomic transaction. PDF/CSV/JSON share a new bundle, never silently overwrite input.
 
+Work snapshots, qpdf candidates and Preflight inputs live in a separate owned
+temporary directory; user-selected PDF basenames cannot collide with those
+internal files. Confirmation-only flags preserve the analyzed inventory. Changing
+the source password or processing options invalidates it. Batch analysis exposes
+required signature/recovery confirmations, validates ranges per source and shows
+per-status completion counts. See the 2026-10-07 consolidation record for targeted
+verification performed on 2026-10-08.
+
 Safe Repair rewrites with qpdf and saves through the current PDF stack. Normalise
 only performs explicit removal/flatten/crop choices. Rasterisation is separate,
 per page, with pixel limits, and never automatically adds OCR. Missing Normal

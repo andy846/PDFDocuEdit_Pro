@@ -152,7 +152,11 @@ class WorkflowWindow(QMainWindow):
         action("close","Close workflow",self.close,"Ctrl+W",bar=False)
         for key in ("undo","redo"):
             act=self.undo.createUndoAction(self,"Undo") if key=="undo" else self.undo.createRedoAction(self,"Redo")
-            act.setShortcut("Ctrl+Z" if key=="undo" else "Ctrl+Shift+Z")
+            if key == "undo":
+                act.setShortcut("Ctrl+Z")
+            else:
+                from ui.shortcut_bindings import redo_shortcuts
+                act.setShortcuts(redo_shortcuts())
             act.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             act.setIcon(icon(key))
             act.setProperty("workflow_icon",key)

@@ -151,6 +151,58 @@ def test_text_undo_does_not_undo_object(window, app):
     assert "added" not in control.toPlainText()
 
 
+def test_project_tab_shortcuts_and_redo_aliases(window, app):
+    controller, first = designer(window)
+    second = controller.host.new_template()
+    second.add_element("text", "Second")
+    second.canvas.setFocus()
+    app.processEvents()
+    QTest.keyClick(second.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert not second.template.elements
+    QTest.keyClick(second.canvas, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
+    assert len(second.template.elements) == 1
+    QTest.keyClick(second.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    QTest.keyClick(second.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert len(second.template.elements) == 1
+    QTest.keyClick(second.canvas, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
+    assert controller.host.current_project is first
+    first.canvas.setFocus()
+    QTest.keyClick(first.canvas, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert controller.host.current_project is second
+    controller.request_mode("pdf")
+    assert controller.designer_actions["tab_next"].shortcut().isEmpty()
+    assert first.actions["redo"].shortcuts() == second.actions["redo"].shortcuts() == []
+
+
+def test_all_designer_project_types_report_real_redo_bindings(window):
+    controller, _ = designer(window)
+    for make in (controller.host.new_template, controller.host.new_overlay, controller.host.new_workflow):
+        project = make()
+        assert {s.toString() for s in project.actions["redo"].shortcuts()} == {"Ctrl+Y", "Ctrl+Shift+Z"}
+        command = next(c for c in controller.commands() if c.id == "designer.redo")
+        assert command.shortcut == "Ctrl+Y" and command.alternate_shortcuts == ("Ctrl+Shift+Z",)
+
+
+def test_custom_global_shortcut_does_not_conflict_with_designer(window):
+    from core.commands import find_shortcut_conflict
+    controller, project = designer(window)
+    window.settings.set_shortcut_overrides({"command_palette": "Ctrl+O", "main_menu": "Ctrl+Y"})
+    window._build_command_registry()
+    window._apply_command_shortcuts()
+    assert controller.designer_actions["open"].shortcut().isEmpty()
+    assert project.actions["redo"].shortcuts() == [QKeySequence("Ctrl+Shift+Z")]
+    assert find_shortcut_conflict(controller.commands(), {}) is None
+    commands = {c.id: c for c in controller.commands()}
+    assert "visual_workflow" in commands and "visual_workflow" in window._command_action_map
+    assert not commands["designer.host.open"].shortcut
+    assert commands["designer.redo"].shortcut == "Ctrl+Shift+Z"
+    window.settings.set_shortcut_overrides({})
+    window._build_command_registry()
+    window._apply_command_shortcuts()
+    assert controller.designer_actions["open"].shortcut() == QKeySequence("Ctrl+O")
+    assert len(project.actions["redo"].shortcuts()) == 2
+
+
 def test_commands_and_menus_follow_active_project(window):
     controller, template = designer(window)
     keys = {command.id for command in window._commands_for_mode()}

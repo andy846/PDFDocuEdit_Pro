@@ -6,7 +6,7 @@ from PyQt6.QtCore import QObject
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QMenu, QVBoxLayout, QWidget
 
-from core.commands import Command
+from core.commands import Command, shortcut_conflict
 
 from .workspace_modes import WorkspaceMode, WorkspaceModes
 
@@ -46,6 +46,8 @@ class WorkspaceModeController(QObject):
             ("overlay", "New PDF envelope overlay", "", lambda: self.host.new_overlay()),
             ("workflow", "New Visual Workflow…", "", lambda: self.host.choose_workflow()),
             ("close", "Close project", "Ctrl+W", self.close_current_project),
+            ("tab_next", "Next project tab", "Ctrl+Tab", lambda: self.cycle_project(1)),
+            ("tab_prev", "Previous project tab", "Ctrl+Shift+Tab", lambda: self.cycle_project(-1)),
             ("pdf", "Switch to PDF Workspace", "", lambda: self.request_mode("pdf")),
         ):
             action = QAction(label, window)
@@ -54,8 +56,7 @@ class WorkspaceModeController(QObject):
             self.designer_actions[key] = action
             window.addAction(action)
             self.workspace_menu.addAction(action)
-        entry=QAction("Visual Workflow…",window)
-        entry.triggered.connect(self.new_workflow)
+        entry=window._action("Visual Workflow…", None, self.new_workflow, command_id="visual_workflow")
         window.addAction(entry)
         window.command_bar._pdf_more_menu.addAction(entry)
         window._command_action_map["visual_workflow"]=entry
@@ -133,6 +134,11 @@ class WorkspaceModeController(QObject):
         if self.host and self.host.current_project:
             self.host.close_project(self.host.current_project)
 
+    def cycle_project(self, direction):
+        if self.host and self.host.tabs.count() > 1:
+            tabs = self.host.tabs
+            tabs.setCurrentIndex((tabs.currentIndex() + direction) % tabs.count())
+
     def sync_bindings(self):
         pdf = self.modes.mode == WorkspaceMode.PDF
         tool = self.window.workspace.current_tool()
@@ -142,6 +148,11 @@ class WorkspaceModeController(QObject):
             action.setShortcuts(sequences if (pdf and tool is None) or action in global_actions else [])
         for shortcut in self.window._command_shortcuts:
             shortcut.setEnabled((pdf and tool is None) or shortcut.property("commandId") in shared_ids)
+        shared_sequences = [sequence.toString() for action in global_actions for sequence in action.shortcuts()]
+        shared_sequences.extend(shortcut.key().toString() for shortcut in self.window._command_shortcuts
+                                if shortcut.property("commandId") in shared_ids)
+        def available(sequence):
+            return not any(shortcut_conflict(sequence.toString(), value) for value in shared_sequences)
         current = self.host.current_project if self.host else None
         for project, bindings in self.project_bindings.items():
             # New/Open/Close belong to the host, including its empty state.
@@ -149,10 +160,14 @@ class WorkspaceModeController(QObject):
             for action, sequences in bindings.items():
                 if sip.isdeleted(action):
                     continue
-                action.setShortcuts(sequences if not pdf and project is current and action not in host_actions else [])
+                action.setShortcuts([s for s in sequences if available(s)]
+                                    if not pdf and project is current and action not in host_actions else [])
         for key, action in self.designer_actions.items():
-            action.setShortcut(QKeySequence(str(action.property("modeShortcut"))) if not pdf else QKeySequence())
+            sequence = QKeySequence(str(action.property("modeShortcut")))
+            action.setShortcut(sequence if not pdf and available(sequence) else QKeySequence())
             action.setEnabled(not pdf and (key != "close" or current is not None))
+            if key in {"tab_next", "tab_prev"}:
+                action.setEnabled(not pdf and bool(self.host and self.host.tabs.count() > 1))
 
     def sync_mode(self, mode):
         self.sync_bindings()
@@ -197,17 +212,17 @@ class WorkspaceModeController(QObject):
         commands = [c for c in self.window._commands if c.id in self.GLOBAL]
         for key, action in self.designer_actions.items():
             commands.append(Command("designer.host." + key, action.text().replace("&", ""),
-                                    str(action.property("modeShortcut")), "Designer workspace", action.trigger, action.isEnabled))
+                                    action.shortcut().toString(), "Designer workspace", action.trigger, action.isEnabled))
         project = self.host.current_project if self.host else None
         if project:
-            bindings = self.project_bindings.get(project, {})
             for key, action in project.actions.items():
                 if key in {"new", "open", "close"}:
                     continue
-                sequences = bindings.get(action, [])
+                sequences = action.shortcuts()
                 category = "Template Designer" if hasattr(project, "template") else "Visual Workflow" if getattr(project, "is_workflow", False) else "PDF Overlay"
                 commands.append(Command("designer." + key, action.text().replace("&", ""),
-                                        sequences[0].toString() if sequences else "", category, action.trigger, action.isEnabled))
+                                        sequences[0].toString() if sequences else "", category, action.trigger, action.isEnabled,
+                                        alternate_shortcuts=tuple(s.toString() for s in sequences[1:])))
         return commands
 
     def set_animations_enabled(self, enabled):
@@ -258,6 +273,7 @@ class WorkspaceModeController(QObject):
             self.shutdown_started = True
             window._closing = True
             window._queued_open_paths.clear()
+            window._pending_searches.clear()
             for task in list(window._tasks):
                 task.cancel()
         designer_ready = self.host is None or self.host.shutdown()

@@ -22,6 +22,7 @@ from core.measurement import (
     write_marker,
 )
 
+from .page_images import add_page_image, list_page_images, remove_page_image, update_page_image
 from .pdf_engine import DOCUMENT_LOCK
 from .system_fonts import is_pdf_base_font, resolve_system_font
 
@@ -223,7 +224,8 @@ def validate_annotation_op(doc: fitz.Document, op: AnnotationOp) -> AnnotationOp
         if style.fill:
             parse_annotation_color(style.fill)
 
-        page_rect = doc.load_page(op.page).rect
+        page = doc.load_page(op.page)
+        page_rect = (page.rect * page.derotation_matrix) if kind in {"image", "signature_image"} else page.rect
         rects: list[fitz.Rect] = []
         for source in op.rects:
             rect = (fitz.Rect(source).normalize() & page_rect).normalize()
@@ -888,7 +890,7 @@ def insert_image(
         _page(doc, page_num).insert_image(rect, filename=str(image_path), overlay=True)
 
 
-def list_annotations(page: fitz.Page) -> list[dict]:
+def list_annotations(page: fitz.Page, *, include_page_images: bool = True) -> list[dict]:
     """Return lightweight descriptions of all annotations on a page.
 
     Page operations (delete/insert/reorder) rebuild page objects, which can
@@ -975,17 +977,20 @@ def list_annotations(page: fitz.Page) -> list[dict]:
     except Exception:
         log_failure('annotations.list_annotations: fallback after failure', 10)
         pass  # the annotation list itself is stale
+    if include_page_images:
+        # Interactive annotations render above ordinary image page content.
+        results = list_page_images(page) + results
     return results
 
 
-def list_document_annotations(doc: fitz.Document) -> list[dict]:
+def list_document_annotations(doc: fitz.Document, *, include_page_images: bool = True) -> list[dict]:
     """Return stable annotation records for every page in document order."""
 
     with DOCUMENT_LOCK:
         records: list[dict] = []
         for page_num in range(doc.page_count):
             page = doc.load_page(page_num)
-            for entry in list_annotations(page):
+            for entry in list_annotations(page, include_page_images=include_page_images):
                 entry["page"] = page_num
                 records.append(entry)
         return records
@@ -999,6 +1004,8 @@ def remove_annotation(page: fitz.Page, xref: int) -> bool:
     a stale xref disappears can silently delete a different annotation.
     """
     with DOCUMENT_LOCK:
+        if remove_page_image(page, xref):
+            return True
         try:
             annots = list(page.annots())
         except Exception:
@@ -1029,10 +1036,15 @@ def update_annotation_geometry(
     *,
     rect: fitz.Rect | None = None,
     points: Sequence[tuple[float, float]] = (),
+    keep_aspect: bool | None = None,
 ) -> int | None:
     """Move/resize an annotation and return its stable (possibly new) xref."""
 
     with DOCUMENT_LOCK:
+        if rect is not None:
+            image_xref = update_page_image(page, xref, rect, keep_aspect=keep_aspect)
+            if image_xref is not None:
+                return image_xref
         target = next(
             (
                 annot
@@ -1394,8 +1406,9 @@ def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
                 add_stamp(doc, op.page, op.rects[0], op.stamp_kind)
         elif op.kind == "redact":
             redact(doc, op.page, list(op.rects))
-        elif op.kind in {"signature_image", "image"}:
-            insert_image(doc, op.page, op.rects[0], op.image_path)
+        elif op.kind in {"image", "signature_image"}:
+            add_page_image(_page(doc, op.page), op.rects[0], op.image_path,
+                           signature=op.kind == "signature_image")
         else:
             raise ValueError(f"Unknown annotation kind: {op.kind}")
 

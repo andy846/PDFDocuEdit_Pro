@@ -67,7 +67,11 @@ class DesignerChrome:
                            ("redo", self.undo.createRedoAction(self, "Redo"))):
             value.setIcon(icon(key))
             value.setProperty("designer_icon", key)
-            value.setShortcut(QKeySequence.StandardKey.Undo if key == "undo" else QKeySequence.StandardKey.Redo)
+            if key == "undo":
+                value.setShortcut(QKeySequence.StandardKey.Undo)
+            else:
+                from ui.shortcut_bindings import redo_shortcuts
+                value.setShortcuts(redo_shortcuts())
             menus["&Edit"].addAction(value)
             self.project_toolbar.addAction(value)
             self.actions[key] = value

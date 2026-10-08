@@ -1,9 +1,26 @@
 """Scoped command bindings shared by the viewer and modal tools."""
+import sys
+
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit
 
 from core.commands import Command
+
+TEXT_SAFE_COMMANDS = {
+    "open", "search_open", "save", "save_as", "save_all", "print", "close", "quit",
+    "command_palette", "main_menu", "preferences", "about", "shortcuts", "readme",
+    "document_designer", "visual_workflow", "toggle_tools",
+}
+
+
+def shortcut_blocked_by_editing(command_id):
+    return editing_focused() and command_id not in TEXT_SAFE_COMMANDS
+
+
+def redo_shortcuts():
+    primary = QKeySequence(QKeySequence.StandardKey.Redo)
+    return [primary, QKeySequence("Ctrl+Shift+Z")] if sys.platform == "win32" else [primary]
 
 
 def editing_focused():
@@ -17,7 +34,7 @@ def editing_focused():
 
 class CommandAction(QAction):
     def event(self, event):
-        if event.type() == QEvent.Type.Shortcut and editing_focused():
+        if event.type() == QEvent.Type.Shortcut and shortcut_blocked_by_editing(self.property("commandId")):
             return True
         return super().event(event)
 

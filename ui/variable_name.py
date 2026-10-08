@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from core.variables import VariableContext, VariableError, resolve_filename, validate_filename
+from core.variables.model import ResolvedValue
 
 
 class VariableNameEdit(QWidget):
@@ -34,21 +35,30 @@ class VariableNameEdit(QWidget):
         self.prepared = prepared
         self.refresh()
 
-    def resolved(self):
+    def resolution(self):
         value = self.edit.text().strip()
         if "{{" in value:
-            return resolve_filename(value, self.context, extension=".pdf").value
-        return validate_filename(value, extension=".pdf")
+            return resolve_filename(value, self.context, extension=".pdf")
+        return ResolvedValue(validate_filename(value, extension=".pdf"))
+
+    def resolved(self):
+        return self.resolution().value
 
     def refresh(self, *_):
         try:
-            value = self.resolved()
-            self.preview.setText(("Prepared output: " if self.prepared else "Example output: ") + value)
-            self.preview.setToolTip(value)
+            result = self.resolution()
+            details = "\n".join(result.issues)
+            self.preview.setText(("Prepared output: " if self.prepared else "Example output: ") + result.value
+                                 + ("\n" + details if details else ""))
+            self.preview.setToolTip(result.value + ("\n" + details if details else ""))
             self.edit.setProperty("invalid", False)
         except VariableError as exc:
             self.preview.setText("Output naming: " + str(exc))
+            self.preview.setToolTip(str(exc))
             self.edit.setProperty("invalid", True)
+        self.edit.style().unpolish(self.edit)
+        self.edit.style().polish(self.edit)
+        self.edit.update()
 
     def text(self):
         return self.edit.text().strip()

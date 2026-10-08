@@ -107,3 +107,21 @@ def test_failure_leaves_no_final_bundle(tmp_path, monkeypatch):
     assert not list((tmp_path / "output").rglob("*.pdf"))
     reports = list((tmp_path / "output").rglob("job.json"))
     assert len(reports) == 1 and json.loads(reports[0].read_text())["published_files"] == 0
+
+
+@pytest.mark.parametrize("operation", ["flatten", "repair"])
+@pytest.mark.parametrize("name", ["source-snapshot.pdf", "candidate.pdf", "preflight.pdf", "recovered-source.pdf"])
+def test_output_names_cannot_collide_with_private_work_files(tmp_path, operation, name):
+    from pathlib import Path
+    source = source_file(tmp_path)
+    original = source.read_bytes()
+    options = PdfOptions(operation=operation, annotations=operation == "flatten",
+                         preflight=name == "preflight.pdf", allow_preflight_errors=True)
+    result = execute(analyse(source, options), tmp_path / "output", output_name=name)
+    output = Path(result["output_pdf"])
+    assert output.name == name and output.is_file()
+    with fitz.open(output) as doc:
+        assert doc.page_count == 2
+        assert "Searchable customer text" in doc[0].get_text()
+    assert source.read_bytes() == original
+    assert {p.name for p in output.parent.iterdir()} == {name, "job.json", "control.csv"}

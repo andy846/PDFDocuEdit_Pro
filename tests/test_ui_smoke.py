@@ -292,7 +292,8 @@ def test_background_print_cancel_restores_ui_and_keeps_dialog_alive(tmp_path, mo
             QTest.qWait(5)
         assert entered.is_set()
         assert window._printing
-        assert not window.workspace.isEnabled()
+        assert window.workspace.isEnabled()  # browsing stays available; editing controls are locked
+        assert not window.context_panel.isEnabled()
         assert not window.command_bar.isEnabled()
         assert window.task_bar._cancel.isEnabled()
         assert window._open_in_new_tab_sync(str(source)) is None

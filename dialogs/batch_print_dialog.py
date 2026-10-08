@@ -12,11 +12,13 @@ from datetime import datetime
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrinterInfo
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPageSize
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinterInfo
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -37,7 +39,7 @@ from core.diagnostics import log_failure
 
 from .base import ToolDialog
 from .batch_tools import PdfFileTable
-from .print_profile import collect_print_profile, quality_changed, restore_print_profile
+from .print_profile import collect_print_profile, printer_profile, quality_changed, restore_print_profile
 
 
 class BatchPrintDialog(ToolDialog):
@@ -177,7 +179,7 @@ class BatchPrintDialog(ToolDialog):
         paper_group = QGroupBox("Paper and placement")
         paper_form = QFormLayout(paper_group)
         self.paper = QComboBox()
-        self.paper.addItems(["PDF page size", "A4", "A3", "A5", "Letter"])
+        self.paper.addItems(["PDF page size", "A4", "A3", "A5", "Letter", "Printer settings"])
         self.orientation = QComboBox()
         self.orientation.addItems(["Automatic", "Portrait", "Landscape"])
         self.scale_mode = QComboBox()
@@ -211,6 +213,12 @@ class BatchPrintDialog(ToolDialog):
         paper_form.addRow("Shift from left", self.left)
         paper_form.addRow("Shift from right", self.right)
         restore_print_profile(self, self._default_profile())
+        self.selected_printer = None
+        self.selected_printer_profile = {}
+        self.printer.currentTextChanged.connect(self._printer_changed)
+        self.paper.setItemData(self.paper.findText("Printer settings"),
+                              "Use the paper size and margins accepted in Printer Preferences for this batch.",
+                              Qt.ItemDataRole.ToolTipRole)
         paper_form.addRow("Shift from top", self.top)
         paper_form.addRow("Shift from bottom", self.bottom)
         paper_note = QLabel(
@@ -276,16 +284,51 @@ class BatchPrintDialog(ToolDialog):
     def add_dropped_paths(self, paths: list[str]) -> None:
         self.add_paths(paths)
 
-    # --- printer preferences (legacy feature) ------------------------------
+    def _printer_changed(self, name):
+        if self.selected_printer is not None and name != self.selected_printer.printerName():
+            self.selected_printer = None
+            self.selected_printer_profile = {}
+            if self.paper.currentText() == "Printer settings":
+                self.paper.setCurrentIndex(0)
+            self.log_message("Printer changed: confirm Printer Preferences again for device-specific settings.")
+
+    # --- retained printer preferences --------------------------------------
     def _printer_preferences(self) -> None:
+        if self._printing:
+            return
         name = self.printer.currentText()
         if not name:
             self.show_error("No printer is available.")
             return
         try:
-            printer = QPrinter()
-            printer.setPrinterName(name)
-            QPrintDialog(printer, self).exec()
+            from core.viewer import PDFViewer
+            details = collect_print_profile(self)
+            candidate = PDFViewer._create_printer(details)
+            if self.selected_printer is not None:
+                candidate.setPageLayout(self.selected_printer.pageLayout())
+                candidate.setPaperSource(self.selected_printer.paperSource())
+            if details["paper"] != "Printer settings":
+                PDFViewer._configure_print_layout(candidate, fitz.Rect(0, 0, 595, 842), details)
+            dialog = QPrintDialog(candidate, self)
+            dialog.setWindowTitle("Printer Preferences — apply settings to this batch")
+            if hasattr(dialog, "setOption"):
+                for option in (QPrintDialog.PrintDialogOption.PrintPageRange,
+                               QPrintDialog.PrintDialogOption.PrintSelection,
+                               QPrintDialog.PrintDialogOption.PrintCurrentPage):
+                    dialog.setOption(option, False)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            accepted = printer_profile(candidate)
+            if self.printer.findText(accepted["printer"]) < 0:
+                self.printer.addItem(accepted["printer"])
+            restore_print_profile(self, {**details, **accepted})
+            self.selected_printer = candidate
+            self.selected_printer_profile = accepted
+            size = candidate.pageLayout().pageSize().size(QPageSize.Unit.Millimeter)
+            self.log_message(f"Printer settings applied: {size.width():.1f} × {size.height():.1f} mm; "
+                             f"{self.duplex.currentText()}, {self.orientation.currentText()}.")
+            self.paper.setToolTip(f"Printer settings: {size.width():.1f} × {size.height():.1f} mm. "
+                                 "Retained for this batch; reopen Preferences to change device settings.")
         except Exception as exc:
             log_failure('batch_print_dialog._printer_preferences: fallback after failure', 10)
             self.show_error(f"Could not open printer preferences: {exc}")
@@ -375,6 +418,9 @@ class BatchPrintDialog(ToolDialog):
             return
         if not self.printer.currentText():
             self.show_error("No printer is available on this system.")
+            return
+        if self.paper.currentText() == "Printer settings" and self.selected_printer is None:
+            self.show_error("Open Printer Preferences and confirm the paper layout for this batch.")
             return
         self.details = collect_print_profile(self)
         self.details.update(
@@ -478,6 +524,7 @@ class BatchPrintDialog(ToolDialog):
         self.start_button.setEnabled(not printing)
         self.start_button.setText("Printing…" if printing else "Start Batch Print")
         self.cancel_button.setEnabled(printing)
+        self._settings_column.setEnabled(not printing)
 
     def closeEvent(self, event) -> None:
         if self._printing:

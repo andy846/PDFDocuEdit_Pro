@@ -92,7 +92,7 @@ def analyse(source, options=None, *, password="", progress=None, is_cancelled=No
             return replace(plan, source=str(source), source_sha256=digest, diagnostics=diagnostics)
     with opened as doc:
         options.validate(doc.page_count)
-        pages = options.pages if options.pages is not None else tuple(range(doc.page_count))
+        pages = set(options.pages) if options.pages is not None else range(doc.page_count)
         page_count = doc.page_count
         encrypted = doc._pdf_operation_encrypted
         diagnostics = {"structure": {"status": "Warning" if doc.is_repaired else "OK",

@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -24,6 +23,7 @@ from PyQt6.QtWidgets import (
 from composition.designer.process import Worker
 from core.pdf_operations.model import PdfOperationPlan, PdfOptions
 from core.variables import VariableContext, VariableError
+from ui.combo_popup import WideComboBox
 from ui.variable_name import VariableNameEdit
 
 from .base import ToolDialog
@@ -68,14 +68,14 @@ class PdfOperationDialog(ToolDialog):
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_edit.setPlaceholderText("For an encrypted source; passed privately to the worker")
         form.addRow("Source password", self.password_edit)
-        self.mode = QComboBox()
+        self.mode = WideComboBox()
         for label, value in (("Safe Repair — structural rewrite only", "safe"),
                              ("Production Normalise — explicit options", "normalise"),
                              ("Maximum Compatibility — rasterise all pages", "maximum")):
             self.mode.addItem(label, value)
         if operation == "repair":
             form.addRow("Mode", self.mode)
-        self.pages = QComboBox()
+        self.pages = WideComboBox()
         self.pages.addItems(["All pages", "Current page", "Page range"])
         self.range = QLineEdit()
         self.range.setPlaceholderText("1-3,5")
@@ -122,6 +122,7 @@ class PdfOperationDialog(ToolDialog):
         self.output_folder.setPlaceholderText("Each run publishes PDF + CSV + JSON in a new job folder")
         form.addRow("Output root", self.output_folder)
         browse = QPushButton("Choose output folder…")
+        self.output_browse = browse
         browse.clicked.connect(self.browse_output)
         form.addRow(browse)
         self.summary = QPlainTextEdit()
@@ -156,9 +157,11 @@ class PdfOperationDialog(ToolDialog):
         self.range.textChanged.connect(self.options_changed)
         self.dpi.valueChanged.connect(self.options_changed)
         for control in (self.annotations, self.forms, self.raster, self.javascript, self.attachments,
-                        self.metadata, self.boxes, self.preflight, self.allow_errors, self.signature, self.raster_ack):
+                        self.metadata, self.boxes, self.preflight, self.allow_errors):
             control.toggled.connect(self.options_changed)
-        self.recovery_ack.toggled.connect(self.options_changed)
+        for control in (self.signature, self.raster_ack, self.recovery_ack):
+            control.toggled.connect(self.approvals_changed)
+        self.password_edit.textChanged.connect(self.options_changed)
         self.options_changed()
         if settings_only:
             self.pages.model().item(1).setEnabled(False)
@@ -192,17 +195,19 @@ class PdfOperationDialog(ToolDialog):
 
     def options(self):
         selected = None
-        if self.pages.currentIndex() == 1:
+        maximum = self.operation == "repair" and self.mode.currentData() == "maximum"
+        if not maximum and self.pages.currentIndex() == 1:
+            if len(self.sources) > 1:
+                raise ValueError("Current page applies to one PDF. Choose All pages or Page range for a batch.")
             if not self.page_count and not self.settings_only:
                 raise ValueError("Analyze all pages first to establish the page count.")
             selected = (self.current_page,)
-        elif self.pages.currentIndex() == 2:
+        elif not maximum and self.pages.currentIndex() == 2:
             from core.pdf_engine import parse_page_range
-            if not self.page_count and not self.settings_only:
+            if not self.page_count and not self.settings_only and len(self.sources) == 1:
                 raise ValueError("Analyze all pages first to establish the page count.")
             selected = tuple(parse_page_range(self.range.text(), self.page_count or 1000000))
         normalise = self.operation == "repair" and self.mode.currentData() == "normalise"
-        maximum = self.operation == "repair" and self.mode.currentData() == "maximum"
         options = PdfOptions(operation=self.operation, mode=self.mode.currentData(), pages=None if maximum else selected,
                              annotations=self.annotations.isChecked() if self.operation == "flatten" or normalise else False,
                              forms=self.forms.isChecked() if self.operation == "flatten" or normalise else False,
@@ -222,7 +227,9 @@ class PdfOperationDialog(ToolDialog):
         active = self.operation == "flatten" or self.mode.currentData() == "normalise"
         for control in (self.annotations, self.forms, self.raster, self.javascript, self.attachments, self.metadata, self.boxes):
             control.setEnabled(active and self.worker is None)
-        self.range.setEnabled(self.pages.currentIndex() == 2 and self.worker is None)
+        maximum = self.operation == "repair" and self.mode.currentData() == "maximum"
+        self.pages.setEnabled(not maximum and self.worker is None)
+        self.range.setEnabled(not maximum and self.pages.currentIndex() == 2 and self.worker is None)
         self.generate_button.setEnabled(self.settings_only)
         self.cancel_button.setEnabled(self.worker is not None)
         self.cancel_button.setVisible(self.worker is not None)
@@ -236,6 +243,25 @@ class PdfOperationDialog(ToolDialog):
         self.allow_errors.setVisible(self.preflight.isChecked())
         self.dpi.setEnabled((self.raster.isChecked() or self.mode.currentData() == "maximum") and self.worker is None)
 
+    def approvals_changed(self, *_):
+        # These confirmations alter permission to proceed, not the selected
+        # transformations or source inventory. Do not rescan thousands of pages
+        # merely to acknowledge a warning. Generate still compares all options
+        # and the worker rechecks the source fingerprint before publishing.
+        if self.worker is not None:
+            return
+        flags = {"acknowledge_signatures": self.signature.isChecked(),
+                 "acknowledge_raster": self.raster_ack.isChecked(),
+                 "acknowledge_recovery": self.recovery_ack.isChecked()}
+        if self.plan is not None:
+            self.plan = replace(self.plan, options=replace(self.plan.options, **flags))
+        for row in self.analyses:
+            if row.get("plan"):
+                row["plan"] = {**row["plan"], "options": {**row["plan"]["options"], **flags}}
+        self.generate_button.setEnabled(self.settings_only or bool(
+            (self.plan and not self.plan.issues) or
+            any(row.get("plan") and not row["plan"]["issues"] for row in self.analyses)))
+
     def browse_output(self):
         path = QFileDialog.getExistingDirectory(self, "Output root folder", self.output_folder.text())
         if path:
@@ -248,6 +274,13 @@ class PdfOperationDialog(ToolDialog):
             self.source = paths[0]
             self.source_label.setText(f"Sources: {len(paths)} PDF(s) · {Path(paths[0]).name}")
             self.page_count = 0
+            self.current_page = 0
+            if self.pages.currentIndex() == 1:
+                self.pages.setCurrentIndex(0)
+            self.pages.model().item(1).setEnabled(len(paths) == 1)
+            self.signed_hint = self.recovery_hint = False
+            self.signature.setChecked(False)
+            self.recovery_ack.setChecked(False)
             self.naming.set_context(VariableContext.for_job(input_path=paths[0], job_id="example-job"))
             self.batch_button.setText(f"Batch: {len(paths)} PDF(s) · choose again…")
             self.source_current = lambda: True
@@ -278,6 +311,7 @@ class PdfOperationDialog(ToolDialog):
             control.setEnabled(False)
         self.recovery_ack.setEnabled(False)
         self.password_edit.setEnabled(False)
+        self.output_browse.setEnabled(False)
 
     def update_progress(self, done, total, message):
         self.progress.setRange(0, total)
@@ -301,6 +335,11 @@ class PdfOperationDialog(ToolDialog):
     def analysis_ready(self, result):
         if "analyses" in result:
             self.analyses = result["analyses"]
+            plans = [row["plan"] for row in self.analyses if row.get("plan")]
+            self.signed_hint = any(plan.get("signed") for plan in plans)
+            self.recovery_hint = any(plan.get("diagnostics", {}).get("recovery", {}).get("original_unrenderable") for plan in plans)
+            self.signature.setVisible(self.signed_hint)
+            self.recovery_ack.setVisible(self.recovery_hint)
             self.summary.setPlainText("\n".join(
                 Path(row["source"]).name + ": " + (row["error"] or "; ".join(row["plan"]["issues"]) or
                     f"Ready for review · {row['plan']['page_count']} pages") for row in self.analyses))
@@ -335,7 +374,10 @@ class PdfOperationDialog(ToolDialog):
         if self.worker or not (self.plan or self.analyses):
             return
         try:
-            expected = self.plan.options if self.plan else PdfOptions.from_dict(next(row["plan"]["options"] for row in self.analyses if row["plan"]))
+            first_plan = next((row["plan"] for row in self.analyses if row.get("plan")), None)
+            if not self.plan and first_plan is None:
+                raise ValueError("No source passed analysis. Review the errors or choose another batch.")
+            expected = self.plan.options if self.plan else PdfOptions.from_dict(first_plan["options"])
             if not self.source_current() or self.options() != expected:
                 raise ValueError("Source/settings changed. Analyze again before generation.")
             if not self.output_folder.text().strip():
@@ -349,10 +391,20 @@ class PdfOperationDialog(ToolDialog):
 
     def generated(self, result):
         self.last_result = result
-        self.summary.setPlainText("\n".join(["Status: " + result.get("status", "failed"),
+        lines = ["Status: " + result.get("status", "failed"),
                                               "PDF: " + result.get("output_pdf", ""),
                                               "Reports: " + result.get("report_dir", ""),
-                                              *result.get("warnings", []), result.get("error", "")]))
+                                              *result.get("warnings", []), result.get("error", "")]
+        if "files" in result:
+            files = result["files"]
+            counts = {status: sum(row.get("status") == status for row in files)
+                      for status in ("completed", "needs_review", "failed", "cancelled")}
+            lines.extend([f"Files: {len(files)}", " · ".join(f"{status.replace('_', ' ').title()}: {count}" for status, count in counts.items())])
+            lines.extend(f"{Path(row['source']).name}: {row.get('status', 'failed')}" +
+                         (" · " + row["error"] if row.get("error") else "") for row in files[:100])
+            if len(files) > 100:
+                lines.append("First 100 files shown. Open reports for the complete batch results.")
+        self.summary.setPlainText("\n".join(lines))
 
     def worker_ended(self):
         self.worker = None
@@ -361,9 +413,11 @@ class PdfOperationDialog(ToolDialog):
         self.cancel_button.hide()
         self.analyse_button.setEnabled(True)
         self.mode.setEnabled(True)
-        self.pages.setEnabled(True)
+        maximum = self.operation == "repair" and self.mode.currentData() == "maximum"
+        self.pages.setEnabled(not maximum)
         self.batch_button.setEnabled(True)
         self.password_edit.setEnabled(True)
+        self.output_browse.setEnabled(True)
         for control in (self.preflight, self.allow_errors, self.signature, self.raster_ack,
                         self.dpi, self.naming, self.output_folder):
             control.setEnabled(True)
@@ -371,7 +425,7 @@ class PdfOperationDialog(ToolDialog):
         active = self.operation == "flatten" or self.mode.currentData() == "normalise"
         for control in (self.annotations, self.forms, self.raster, self.javascript, self.attachments, self.metadata, self.boxes):
             control.setEnabled(active)
-        self.range.setEnabled(self.pages.currentIndex() == 2)
+        self.range.setEnabled(not maximum and self.pages.currentIndex() == 2)
         self.dpi.setEnabled(self.raster.isChecked() or self.mode.currentData() == "maximum")
         self.cancel_button.setEnabled(False)
         self.generate_button.setEnabled(bool((self.plan and not self.plan.issues) or

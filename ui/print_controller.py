@@ -9,7 +9,7 @@ from PyQt6.QtGui import QPainter
 from PyQt6.QtPrintSupport import QPrinter
 
 from core.diagnostics import log_failure
-from core.printing import prepare_print_job, render_print_page
+from core.printing import PrintSession, prepare_print_job, render_print_page
 from core.tasks import FunctionTask, TaskCancelled
 
 
@@ -40,6 +40,11 @@ class PrintController(QObject):
         self._done = False
         self._started = False
         self._job_active = False
+        self._render_session = None
+        self._stopping = False
+        self._kill_timer = QTimer(self)
+        self._kill_timer.setSingleShot(True)
+        self._kill_timer.timeout.connect(self._kill_renderer)
 
     def start(self):
         if self._started:
@@ -51,7 +56,16 @@ class PrintController(QObject):
     def cancel(self):
         self._cancel.set()
         if self._task is not None:
-            self._task.cancel()
+            if self._kind not in {"close", "reset", "shutdown"}:
+                self._task.cancel()
+        if self._render_session is not None:
+            self._render_session.cancel()
+            if not self._kill_timer.isActive():
+                self._kill_timer.start(5000)
+
+    def _kill_renderer(self):
+        if self._render_session is not None:
+            self._render_session.kill()
 
     def _cancelled(self):
         if self.should_cancel and self.should_cancel():
@@ -61,13 +75,22 @@ class PrintController(QObject):
     def _submit(self, kind, function, *args):
         self._kind = kind
         self._outcome = None
-        task = FunctionTask(function, *args, cancel_argument="is_cancelled")
+        cleanup = kind in {"close", "reset", "shutdown"}
+        kwargs = {"session": self._render_session} if kind == "prepare" else {}
+        task = FunctionTask(function, *args,
+                            cancel_argument=None if cleanup else "is_cancelled",
+                            discard_result=self._discard_prepared if kind == "prepare" else None,
+                            **kwargs)
         self._task = task
         task.signals.result.connect(self._result)
         task.signals.error.connect(self._error)
         task.signals.cancelled.connect(self._worker_cancelled)
         task.signals.finished.connect(self._worker_finished)
         self.pool.start(task)
+
+    @staticmethod
+    def _discard_prepared(prepared):
+        prepared.session.close()
 
     @pyqtSlot(object)
     def _result(self, result):
@@ -86,6 +109,24 @@ class PrintController(QObject):
         self._task = None
         outcome, value = self._outcome or ("error", "Print worker ended without a result.")
         self._outcome = None
+        if self._kind == "shutdown":
+            self._render_session = None
+            self._complete_finish()
+            return
+        if self._kind == "reset":
+            self._render_session = None
+            self._release_job()
+            QTimer.singleShot(0, self._next_job)
+            return
+        if self._kind == "close":
+            if self._cancelled():
+                self._finish()
+            elif outcome == "error":
+                self._submit("reset", self._render_session.close)
+            else:
+                self._release_job()
+                QTimer.singleShot(0, self._next_job)
+            return
         if self._cancelled() or outcome == "cancelled":
             self._cancel.set()
             self._finish()
@@ -96,6 +137,7 @@ class PrintController(QObject):
         try:
             if self._kind == "prepare":
                 self._prepared = value
+                self._render_session = value.session
                 self._page = 0
                 self._printer = self.printer_factory(self.jobs[self._index], value)
                 if self._cancelled():
@@ -127,6 +169,12 @@ class PrintController(QObject):
         job = self.jobs[self._index]
         self._job_active = True
         self.progress.emit(job.key, 0, 0)
+        if self._render_session is None:
+            try:
+                self._render_session = PrintSession()
+            except Exception as exc:
+                self._fail(str(exc), skipped=True)
+                return
         self._submit("prepare", prepare_print_job, job)
 
     @pyqtSlot()
@@ -145,8 +193,7 @@ class PrintController(QObject):
                 return
             self._sent += 1
             self.file_finished.emit(self.jobs[self._index].key, "sent", "")
-            self._release_job()
-            QTimer.singleShot(0, self._next_job)
+            self._close_document()
             return
         self._submit("render", render_print_page, self._prepared, self._page, self._settings)
 
@@ -175,6 +222,13 @@ class PrintController(QObject):
         self._job_active = False
         self._prepared = self._settings = self._printer = None
 
+    def _close_document(self):
+        if self._render_session is not None and not self._render_session.closed:
+            self._submit("close", self._render_session.request, "close_document")
+        else:
+            self._release_job()
+            QTimer.singleShot(0, self._next_job)
+
     def _fail(self, message, skipped=False):
         self._end_painter(abort=True)
         if skipped:
@@ -183,15 +237,22 @@ class PrintController(QObject):
             self._failed += 1
         self.file_finished.emit(self.jobs[self._index].key,
                                 "skipped" if skipped else "failed", message)
-        self._release_job()
-        QTimer.singleShot(0, self._next_job)
+        self._close_document()
 
     def _finish(self):
-        if self._done:
+        if self._done or self._stopping:
             return
-        self._done = True
+        self._stopping = True
         self._end_painter(abort=self._cancel.is_set())
         if self._cancel.is_set() and self._job_active:
             self.file_finished.emit(self.jobs[self._index].key, "cancelled", "")
         self._release_job()
+        if self._render_session is not None:
+            self._submit("shutdown", self._render_session.close)
+        else:
+            self._complete_finish()
+
+    def _complete_finish(self):
+        self._done = True
+        self._kill_timer.stop()
         self.finished.emit(self._sent, self._failed, self._skipped, self._cancel.is_set())

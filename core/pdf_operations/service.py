@@ -155,13 +155,17 @@ def _execute(plan, output_dir, *, password="", output_password="", output_permis
         warnings.append("Derived PDF does not retain original digital-signature validity.")
     if recovered_source:
         warnings.append("Original PDF was unreadable by MuPDF. QC compares against qpdf's recovered baseline, not the original appearance.")
-    with tempfile.TemporaryDirectory(prefix=".pdf-operation-", dir=root) as folder:
+    with (tempfile.TemporaryDirectory(prefix=".pdf-operation-", dir=root) as folder,
+          tempfile.TemporaryDirectory(prefix="pdf-operation-work-") as working_folder):
         staging = Path(folder)
-        unlocked = staging / "source-snapshot.pdf"
-        candidate = staging / "candidate.pdf"
+        # User-selected output names must never collide with our snapshots or
+        # preflight input: only deliverables belong in the publication folder.
+        working = Path(working_folder)
+        unlocked = working / "source-snapshot.pdf"
+        candidate = working / "candidate.pdf"
         reference_source = plan.source
         if recovered_source:
-            reference_source = str(staging / "recovered-source.pdf")
+            reference_source = str(working / "recovered-source.pdf")
             recover_source(plan.source, reference_source, is_cancelled=is_cancelled)
         with _owned_document(open_pdf(reference_source, password)) as doc:
             if doc.page_count != plan.page_count:
@@ -248,11 +252,11 @@ def _execute(plan, output_dir, *, password="", output_password="", output_permis
         after = None
         if options.preflight:
             with open_pdf(published_pdf, output_password) as validated:
-                validated.save(staging / "preflight.pdf", encryption=fitz.PDF_ENCRYPT_NONE)
-            after = _preflight(staging / "preflight.pdf", is_cancelled, progress)
+                validated.save(working / "preflight.pdf", encryption=fitz.PDF_ENCRYPT_NONE)
+            after = _preflight(working / "preflight.pdf", is_cancelled, progress)
             if after["errors"] and not options.allow_preflight_errors:
                 raise PdfOperationError(f"Production Preflight found {after['errors']} error(s). Review or explicitly save a Needs review copy.")
-            (staging / "preflight.pdf").unlink()
+            (working / "preflight.pdf").unlink()
         if file_hash(plan.source, is_cancelled) != plan.source_sha256:
             raise PdfOperationError("Source changed during generation. Output was not published.")
         report = {"report_version": 1, "job_id": identity, "status": "needs_review" if recovered_source or (after and after["errors"]) else "completed",

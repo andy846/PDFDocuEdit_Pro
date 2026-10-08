@@ -43,6 +43,7 @@ class ToolItem:
     icon_name: str
     asset_name: str | None = None
     capability: CapabilityId | None = None
+    description: str = ""
 
 
 # Keyboard shortcut hints shown in tool tooltips (matches menu bar shortcuts).
@@ -202,6 +203,7 @@ class SidePanel(QFrame):
         "ocr",
         "pdf_to_word",
         "extract_text",
+        "flatten",
         "encrypt",
         "decrypt",
         "highlight",
@@ -269,8 +271,8 @@ class SidePanel(QFrame):
                 ToolItem("freetext_callout", "Callout", "message-square-more"),
                 ToolItem("redact", "Redact content", "eraser"),
                 ToolItem("stamp", "Rubber stamp", "stamp"),
-                ToolItem("signature", "Signature image", "signature"),
-                ToolItem("image", "Insert image", "image"),
+                ToolItem("signature", "Signature image", "signature", description="Place a handwritten-signature image and adjust its position and size. This does not create a digital signature."),
+                ToolItem("image", "Insert image", "image", description="Insert a PNG/JPG; drag to move or resize, or enter exact position and dimensions."),
                 ToolItem("watermark", "Add watermark", "watermark"),
             ),
         ),
@@ -333,6 +335,10 @@ class SidePanel(QFrame):
                 ToolItem("overlay", "PDF overlay", "layers", "overlay.png"),
                 ToolItem("batch_print", "Batch print", "printer", "Batch_print.png"),
                 ToolItem("compress", "Compress PDFs", "files", "compress.png"),
+                ToolItem("flatten", "Flatten PDF", "layers", description=
+                         "Flatten annotations and form fields on selected pages; save a new PDF copy."),
+                ToolItem("pdf_repair", "PDF Repair / Normalise", "wrench", description=
+                         "PDF Repair / Production Normalise: analyse, repair, validate and report; save a new copy."),
                 ToolItem("deep_search", "Deep search", "search", "deep_search.png"),
                 ToolItem(
                     "merge_sheet",
@@ -475,6 +481,8 @@ class SidePanel(QFrame):
                 button.setIcon(self._item_icon(item))
                 hint = self._shortcut_hints.get(item.key, "")
                 tooltip = f"{item.label} ({hint})" if hint else item.label
+                if item.description:
+                    tooltip += f"\n{item.description}"
                 button.setToolTip(tooltip)
                 button.setAccessibleName(item.label)
                 button.setSizePolicy(
@@ -534,7 +542,7 @@ class SidePanel(QFrame):
         ):
             matches = 0
             for item in items:
-                searchable = (item.label, title, SHORTCUT_HINTS.get(item.key, ""))
+                searchable = (item.label, title, item.description, SHORTCUT_HINTS.get(item.key, ""))
                 visible = not query or any(query in value.casefold() for value in searchable)
                 self._buttons[item.key].setVisible(visible)
                 matches += int(visible)
@@ -597,7 +605,8 @@ class SidePanel(QFrame):
     def _base_tooltip(self, key: str) -> str:
         item = self._items[key]
         hint = self._shortcut_hints.get(key, "")
-        return f"{item.label} ({hint})" if hint else item.label
+        text = f"{item.label} ({hint})" if hint else item.label
+        return f"{text}\n{item.description}" if item.description else text
 
     def set_shortcut_hints(self, hints: dict[str, str]) -> None:
         self._shortcut_hints = {

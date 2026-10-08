@@ -1,10 +1,10 @@
-# PDFDocuEdit Pro V3.0.2
+# PDFDocuEdit Pro V3.0.3
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
 本次發佈平台為 **Windows x64**，提供 Setup、Managed Portable 及簽署更新包。macOS 核心測試與 Windows 安裝包驗收分開記錄；本次不提供 V3 macOS 安裝包。
 
-## V3.0.2 更新
+## V3.0.2 功能基礎
 
 - **Conditional Mail Merge**：按清單處理多個資料檔，條件分流到不同模板；整批流水號、例外覆核、逐分支批准及來源記錄對照。
 - **Template Designer**：跨頁同位置／同頁底距離複製欄位及 Paste in place；修正文字框太小時畫布空白問題。
@@ -14,12 +14,18 @@
 
 詳見 [v3.0.2 發佈說明](docs/RELEASE_NOTES_3.0.2.md) 及 [驗收記錄](docs/RELEASE_VALIDATION_3.0.2.md)。
 
-## 開發更新：PDF 生產整理與共用變數
+## V3.0.3 更新：PDF 生產整理與共用變數
 
-以下功能已接入開發版本，公開版本號維持 v3.0.2；未代表新的正式安裝包已發佈。
+本版新增 PDF 生產整理工具、共用變數及以下修正。詳見 [v3.0.3 發佈說明](docs/RELEASE_NOTES_3.0.3.md) 與 [驗收記錄](docs/RELEASE_VALIDATION_3.0.3.md)。
 
-- **Tools → Flatten PDF**：先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
-- **Tools → PDF Repair / Production Normalise**：Safe Repair 重寫結構；Normalise 可明確選擇移除 JavaScript、附件、metadata、平面化及裁切異常 CropBox。Maximum Compatibility／Rasterise 是獨立、需確認的影像重建選項。
+- **Splash 自動版本號**：啟動畫面由 `core.resources.APP_VERSION` 繪製版本文字；日後更新程式版本毋須再修改 `Splash.png`。支援 Windows 顯示縮放及圖片載入失敗時的備用畫面。
+- **Generic Barcode 表格編輯**：雙擊 Name、Length 或 Source 可直接修改；位置及預覽自動更新。選取一段後按 **Edit selected segment…** 可跳至詳細設定，指定資料欄位、固定值及流水號。
+- **每頁流水號雙面修正（H5）**：Duplex 開啟而 Print Media 關閉時，仍按實際輸出 PDF 頁數計算，包含補白背面；補白頁佔號但不印流水號。三頁模板從 1 開始時，前兩筆為 `1、2、3、空白` 及 `5、6、7、空白`。預覽、正式生成及 Job log 使用相同計算；每筆流水號及 I25 實體紙序語義不變。受此問題影響的舊成品需重新生成，既有輸出檔不會自動修正。
+- **Add Image／Signature Image 位置與尺寸**：新加入的圖片會自動選取並轉回 Browse，可拖動位置、拖四角縮放，右側 Manage 可輸入 X／Y／Width／Height（mm）。預設保留比例，Shift 可自由縮放；支援刪除及 Undo／Redo，保存 PDF 後重開仍可編輯。Apply 固定於設定面板底部，鍵盤移到設定欄會自動捲動至完整顯示；點頁面空白處取消選取。未修改的尺寸保留原始精度，避免顯示四捨五入造成超出頁面。圖片保持一般 PDF 頁面內容；Signature Image 是簽名圖片，不是數碼簽署。舊版插入或外部 PDF 的未標記圖片不會自動變成可編輯物件。
+- **Keyboard Shortcuts Review**：Windows 各工作區 Redo 支援 `Ctrl+Y`／`Ctrl+Shift+Z`；Designer 專案分頁可用 `Ctrl+Tab`／`Ctrl+Shift+Tab` 切換。文字欄位保留編輯快捷鍵，Save 及命令面板仍可使用；修正自訂全域鍵、連續按鍵前綴及跨模式衝突，主工具列提示與 Help → Keyboard Shortcuts 同步顯示實際綁定。詳見 [快捷鍵檢查及使用說明](docs/KEYBOARD_SHORTCUT_REVIEW.md)。
+
+- **Tools → Flatten PDF**：亦可從 PDF Workspace 左側 **Utilities → Flatten PDF** 開啟。先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
+- **Tools → PDF Repair / Production Normalise**：亦可從左側 **Utilities → PDF Repair / Normalise** 開啟；未開文件時可選擇來源 PDF。Safe Repair 重寫結構；Normalise 可明確選擇移除 JavaScript、附件、metadata、平面化及裁切異常 CropBox。Maximum Compatibility／Rasterise 是獨立、需確認的影像重建選項。
 - 兩工具共用背景處理、取消、驗證、新工作資料夾及 CSV／JSON 紀錄；可選現有 Production Preflight 前後比較。**Choose PDFs for batch processing…** 逐檔處理，保留成功結果及失敗紀錄。
 - **Visual Workflow** 新增 Flatten PDF、Repair / Normalise PDF 節點，放在 Input／Merge 之後、Extract 之前。Check to this step 的 PDF 只留在暫存工作區；正式輸出仍須 Review。需覆核的修復結果請先在 PDF Workspace 檢查。
 - **共用輸出命名**：Template Designer、Mail Merge batch、PDF Workflow 及新工具可用 `{{input.stem}}_{{job.id}}.pdf`、`{{system.date}}`、`{{workflow.sequence|pad:6}}` 等。預覽會指出無效／缺失值；Windows 檔名清理只影響輸出名，不改來源資料。
@@ -29,6 +35,12 @@
 
 Designer 文字仍沿用 `{{Field_Name}}` 保存語法，已共用解析／取值服務；新增 namespace／transform 首先用於輸出命名，尚未擴展至模板文字、Barcode、資料夾或自訂報告欄位。
 詳見 [開發實作與驗收範圍](docs/PDF_PRODUCTION_TOOLS_DEVELOPMENT.md)。
+
+今日功能、程式完整性及版面鞏固的修正與針對性測試，見 [2026-10-08 開發鞏固紀錄](docs/DEVELOPMENT_CONSOLIDATION_2026-10-08.md)。
+
+搜尋連續提交時會先取消並等待舊任務完成，只執行最後一次要求；舊進度與結果不再更新介面。PDF 套印載入較小專案、切換分封及 Undo／Redo 時，先調整封號及頁碼範圍；無效計劃顯示錯誤並停止預覽及生成。
+
+昨日 PDF 生產工具、變數、條碼及間尺更新的進一步覆核，見 [2026-10-07 更新鞏固紀錄](docs/DEVELOPMENT_CONSOLIDATION_2026-10-07.md)。Flatten／Repair 批次支援共同頁碼範圍、逐檔錯誤及完成數量摘要；純警告確認保留分析，修改處理設定或密碼仍需重新分析。輸出命名預覽會說明非法字元清理，內部工作 PDF 與成品分開存放。
 
 ## V3.0.0 功能基礎及目前操作指南
 
@@ -197,7 +209,7 @@ startup rollback. First deployment can use the Inno Setup installer or extract
 the Managed Portable ZIP; both launch through Launcher.exe.
 See [更新與發佈指南](docs/PORTABLE_UPDATES.md).
 
-Download the [V3.0.2 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.2). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
+Download the [V3.0.3 release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.3). New users can install the Setup EXE or extract the Managed Portable ZIP. Both use Launcher.exe for managed updates.
 Existing legacy Setup installations need a one-time transition to the managed installer or portable package.
 
 ## V2.5.4 stability update
@@ -209,7 +221,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 - Safe association unregister, settings null fallback, and public `PDFViewer.apply_theme()`.
 - CI runs affected tests and basic smoke checks on ordinary branch pushes. PRs and merges run the Windows automated suite; UI interaction and Linux/macOS core jobs run when relevant files change, and version tags run every test group. Pillow is pinned to 11.3.0.
 
-The Windows x64 release target is V3.0.2. Setup and Managed Portable downloads include SHA-256 files.
+The Windows x64 release target is V3.0.3. Setup and Managed Portable downloads include SHA-256 files.
 
 See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
 
@@ -262,6 +274,10 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 - 頁面範圍、紙張、方向、彩色、雙面、份數、縮放、置中及偏移設定
 - Draft 150、Standard 300、High 600 DPI 及 72–600 DPI 自訂列印質素
 - 自動記住上一次列印設定
+- **開發版列印改善**：PDF 在獨立渲染程序每份開啟一次；逐頁傳回影像，不再每頁重新解析整份 PDF。列印期間可捲動、縮放及切換 PDF 分頁，修改與重複送印暫時鎖定。
+- **Batch Print → Printer Preferences…**：確認後同步通用設定，並沿用同一個 QPrinter 執行整批獨立送印工作。Paper 的 **Printer settings** 使用本次確認的紙張尺寸及邊界；之後修改介面設定會優先套用，取消 Preferences 不改動原設定。
+- 自訂 printer layout 及驅動專用設定只保留於本次對話框／批次；更換打印機或重開程式需重新確認。選紙、Tray 及 finishing 仍以實際 Windows 驅動支援和實機驗收為準。
+- 取消停止後續頁面；已交给 spooler 的頁面未必能撤回。詳見 [列印改善驗證紀錄](docs/PRINTING_M5_M6.md)。
 
 ### 轉換與資料工具
 
@@ -285,8 +301,8 @@ See [background printing report](docs/BACKGROUND_PRINTING_REPORT.md). The backgr
 
 Windows 版本可於 [Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 下載：
 
-- 安裝版：[Inno Setup V3.0.2](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.2/PDFDocuEdit-Pro-v3.0.2-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
-- 免安裝版：[Managed Portable V3.0.2](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.2/PDFDocuEdit-Pro-v3.0.2-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
+- 安裝版：[Inno Setup V3.0.3](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.3/PDFDocuEdit-Pro-v3.0.3-Setup-Windows-x64.exe)，新安裝會使用 Launcher.exe，支援日後程式內更新。
+- 免安裝版：[Managed Portable V3.0.3](https://github.com/andy846/PDFDocuEdit_Pro/releases/download/v3.0.3/PDFDocuEdit-Pro-v3.0.3-Managed-Portable-Windows-x64.zip)，解壓後執行 Launcher.exe。
 - 後續更新：在程式內按 Help → Check for Updates；Update ZIP 是更新附件，不是首次部署包。各下載均有同名 .sha256 校驗檔。
 
 ### Windows release build

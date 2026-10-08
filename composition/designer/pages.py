@@ -107,8 +107,18 @@ class PageOperations:
             self.page_combo.addItem(f"{index+1} · {page.name}", page.id)
         self.page_combo.setCurrentIndex(self.page_index)
         self.page_combo.blockSignals(False)
-        self.production_heading.setText(
-            f"Production · {len(self.template.pages)} logical template page(s) per record")
+        heading = f"Production · {len(self.template.pages)} logical template page(s) per record"
+        try:
+            from composition.media.planner import build_print_plan
+            count = self.record_count
+            plan = build_print_plan(self.template, max(1, count))
+            heading += f" · {plan.output_pages if count else 0:,} expected pages"
+            self.production_heading.setToolTip(
+                "Expected physical output pages, including inserted blank backs.")
+        except ValueError as exc:
+            heading += " · Print plan needs review"
+            self.production_heading.setToolTip(str(exc))
+        self.production_heading.setText(heading)
         self._update_page_actions()
 
     def _update_page_actions(self):

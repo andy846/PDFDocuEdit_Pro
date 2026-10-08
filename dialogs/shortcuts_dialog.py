@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QDialogButtonBox,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QTableWidgetItem,
 )
 
-from core.commands import Command, filter_commands
+from core.commands import Command, command_shortcuts, filter_commands
 
 from .base import SortableTableWidget, ToolDialog
 
@@ -40,6 +42,11 @@ class ShortcutsDialog(ToolDialog):
             self.setMinimumSize(840, 600)
             self.resize(1100, 780)
         self._commands = list(commands)
+        note = QLabel("Shortcuts for the current workspace. Text fields keep their own editing keys. "
+                      "Save and application commands remain available while typing. "
+                      "Commands without a shortcut can be opened from menus or the command palette.")
+        note.setWordWrap(True)
+        self._root.addWidget(note)
 
         self._filter = QLineEdit()
         self._filter.setPlaceholderText("Filter commands or shortcuts")
@@ -48,6 +55,7 @@ class ShortcutsDialog(ToolDialog):
         self._root.addWidget(self._filter)
 
         self.table = SortableTableWidget(0, 3)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setWordWrap(False)
         self.table.setHorizontalHeaderLabels(["Command", "Shortcut", "Section"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -70,5 +78,6 @@ class ShortcutsDialog(ToolDialog):
             label = QTableWidgetItem(command.label)
             label.setData(Qt.ItemDataRole.UserRole, command.id)
             self.table.setItem(row, 0, label)
-            self.table.setItem(row, 1, QTableWidgetItem(command.shortcut))
+            bindings = command_shortcuts(command)
+            self.table.setItem(row, 1, QTableWidgetItem(" / ".join(bindings) if bindings else "Not assigned"))
             self.table.setItem(row, 2, QTableWidgetItem(command.section))

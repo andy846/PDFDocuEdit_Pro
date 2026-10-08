@@ -13,6 +13,7 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from core.measurement import SavedMeasurement, distance_mm, format_distance
+from core.page_images import IMAGE_KINDS
 from styles.theme import get_colors
 
 SELECTION_ALPHA = 56
@@ -159,6 +160,7 @@ class PageOverlay(QWidget):
     measurementMoved = pyqtSignal(int, object, object)
     polygonDrawn = pyqtSignal(int, object)  # (page_num, list[QPointF])
     annotationSelected = pyqtSignal(int, int)
+    annotationSelectionCleared = pyqtSignal(int)
     annotationContextRequested = pyqtSignal(int, int, object)
     pageContextRequested = pyqtSignal(object)
     annotationGeometryChanged = pyqtSignal(int, int, object)
@@ -964,6 +966,7 @@ class PageOverlay(QWidget):
             if event.button() == Qt.MouseButton.LeftButton:
                 if entry is None:
                     self._selected_xref = None
+                    self.annotationSelectionCleared.emit(self._page_num)
                     self.update()
                 else:
                     self._select_entry(entry)
@@ -1013,6 +1016,19 @@ class PageOverlay(QWidget):
             self._update_polygon_preview(event.position())
             event.accept()
             return
+
+        if self._interaction_state == InteractionState.IDLE and self._annotations_editable:
+            entry = self._hit_annotation(event.position())
+            cursor = Qt.CursorShape.ArrowCursor
+            if entry is not None and entry.get("kind") in IMAGE_KINDS:
+                rect = self.pdf_rect_to_widget(fitz.Rect(entry["rect"]))
+                corners = (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight())
+                handle = next((index for index, value in enumerate(corners)
+                               if hypot(event.position().x() - value.x(), event.position().y() - value.y()) <= 10), None)
+                cursor = (Qt.CursorShape.SizeFDiagCursor if handle in {0, 3}
+                          else Qt.CursorShape.SizeBDiagCursor if handle is not None
+                          else Qt.CursorShape.SizeAllCursor)
+            self.setCursor(cursor)
 
         super().mouseMoveEvent(event)
 
@@ -1296,6 +1312,12 @@ class PageOverlay(QWidget):
         return hypot(point.x() - (first.x() + ratio * dx), point.y() - (first.y() + ratio * dy))
 
     def _hit_annotation(self, point: QPointF) -> dict | None:
+        selected = self._selected_entry()
+        if selected is not None and selected.get("kind") in IMAGE_KINDS:
+            rect = self.pdf_rect_to_widget(fitz.Rect(selected["rect"]))
+            if any(hypot(point.x() - corner.x(), point.y() - corner.y()) <= 10
+                   for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight())):
+                return selected
         for entry in reversed(self._annotations):
             if str(entry.get("kind")) == "Line":
                 points = self._entry_widget_points(entry)[:2]
@@ -1335,6 +1357,8 @@ class PageOverlay(QWidget):
         self._geometry_drag = {
             "origin": QPointF(point), "original_rect": QRectF(rect),
             "rect": QRectF(rect), "handle": handle,
+            "image": entry.get("kind") in IMAGE_KINDS,
+            "keep_aspect": bool(entry.get("keep_aspect", True)),
         }
 
     def _update_geometry_drag(self, point: QPointF) -> None:
@@ -1365,6 +1389,25 @@ class PageOverlay(QWidget):
                 else:
                     rect.setBottomRight(point)
                 rect = rect.normalized()
+                if drag.get("image") and drag.get("keep_aspect") and not (
+                    QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier
+                ):
+                    original = drag["original_rect"]
+                    ratio = original.width() / original.height()
+                    width = max(2.0, rect.width(), rect.height() * ratio)
+                    height = width / ratio
+                    anchor = (original.bottomRight(), original.bottomLeft(),
+                              original.topRight(), original.topLeft())[handle]
+                    x = anchor.x() - width if handle in {0, 2} else anchor.x()
+                    y = anchor.y() - height if handle in {0, 1} else anchor.y()
+                    rect = QRectF(x, y, width, height)
+            if drag.get("image"):
+                bounds = QRectF(self.rect())
+                if handle is None:
+                    rect.moveLeft(max(0.0, min(rect.left(), bounds.width() - rect.width())))
+                    rect.moveTop(max(0.0, min(rect.top(), bounds.height() - rect.height())))
+                elif not bounds.contains(rect):
+                    return
             drag["rect"] = rect
         self.update()
 

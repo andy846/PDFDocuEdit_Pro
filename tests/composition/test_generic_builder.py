@@ -4,8 +4,9 @@ import traceback
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QPoint
-from PyQt6.QtWidgets import QDialogButtonBox
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit
 
 from composition.designer.barcode_setup import BarcodeSetupDialog
 from composition.engine.barcode_profiles import BarcodeProfile, BarcodeToken
@@ -67,6 +68,88 @@ def test_numeric_error_fixed_and_positions_order_drafts(qt_application):
         b.table.setCurrentCell(0, 0)
         assert b.length.value() == 3 and not ok.isEnabled()
         assert original.to_dict() == before
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_table_length_edit_repairs_zero_draft_and_updates_preview(qt_application):
+    original = valid_profile()
+    original.segments[0].length = 0
+    dialog = BarcodeSetupDialog(original, fields(), symbology="i25")
+    try:
+        dialog.resize(960, 640)
+        dialog.show()
+        b = dialog.generic.builder
+        dialog.scroll.ensureWidgetVisible(b.table)
+        qt_application.processEvents()
+        ok = dialog.footer.button(QDialogButtonBox.StandardButton.Ok)
+        assert not ok.isEnabled()
+        cell = b.table.item(0, 2)
+        b.table.setCurrentItem(cell)
+        b.table.editItem(cell)
+        qt_application.processEvents()
+        editor = b.table.findChild(QLineEdit)
+        assert editor is not None and editor.isVisible()
+        editor.selectAll()
+        QTest.keyClicks(editor, "2")
+        QTest.keyClick(editor, Qt.Key.Key_Return)
+        qt_application.processEvents()
+        assert b.draft.segments[0].length == b.length.value() == 2
+        assert b.table.item(0, 1).text() == "1–2"
+        assert b.table.item(1, 1).text() == "3–4"
+        assert ok.isEnabled(), dialog.status.text()
+        assert "0100" in b.preview.text()
+        assert dialog.candidate().payload(fields()) == "0100"
+        assert original.segments[0].length == 0
+        assert editor.width() <= b.table.columnWidth(2)
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_table_name_source_and_readonly_computed_columns(qt_application):
+    dialog = BarcodeSetupDialog(valid_profile(), fields(), symbology="i25")
+    try:
+        b = dialog.generic.builder
+        for col in (1, 4):
+            assert not b.table.item(0, col).flags() & Qt.ItemFlag.ItemIsEditable
+        for col in (0, 2, 3):
+            assert b.table.item(0, col).flags() & Qt.ItemFlag.ItemIsEditable
+        b.table.item(1, 0).setText("Counter")
+        assert b.draft.segments[1].name == b.segment_name.text() == "Counter"
+        index = b.table.model().index(1, 3)
+        delegate = b.table.itemDelegate()
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+        editor = delegate.createEditor(b.table, QStyleOptionViewItem(), index)
+        delegate.setEditorData(editor, index)
+        editor.setCurrentIndex(editor.findData("system"))
+        delegate.setModelData(editor, b.table.model(), index)
+        assert b.draft.segments[1].source == b.source.currentData() == "system"
+        assert b.draft.segments[1].value == "EnvelopeIndex"
+        assert dialog.candidate().payload(fields()) == "0101"
+        editor.deleteLater()
+        b.table.item(1, 2).setText("bad")
+        assert b.table.item(1, 2).text() == "2"
+        assert b.draft.segments[1].length == 2
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_edit_selected_reveals_details_in_small_dialog(qt_application):
+    dialog = BarcodeSetupDialog(valid_profile(), fields(), symbology="i25")
+    try:
+        dialog.resize(460, 360)
+        dialog.show()
+        qt_application.processEvents()
+        b = dialog.generic.builder
+        b.edit_selected.click()
+        qt_application.processEvents()
+        rect = dialog.scroll.viewport().rect()
+        point = b.segment_name.mapTo(dialog.scroll.viewport(), b.segment_name.rect().center())
+        assert rect.contains(point)
+        assert b.segment_name.hasFocus()
     finally:
         dialog.close()
         dialog.deleteLater()

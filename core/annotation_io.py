@@ -63,7 +63,7 @@ def annotation_payload(doc: fitz.Document) -> dict:
             "version": SCHEMA_VERSION,
             "page_count": doc.page_count,
             "annotations": [
-                _json_record(entry) for entry in list_document_annotations(doc)
+                _json_record(entry) for entry in list_document_annotations(doc, include_page_images=False)
             ],
         }
 
@@ -204,7 +204,7 @@ def export_annotation_summary(
 ) -> Path:
     target = Path(output_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    records = list_document_annotations(doc)
+    records = list_document_annotations(doc, include_page_images=False)
     lines = [
         "# Annotation Summary",
         "",

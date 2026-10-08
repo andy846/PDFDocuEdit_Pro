@@ -90,10 +90,14 @@ class OverlayRenderer:
             selected = self.renderer.plans[element.id].resolve(fields)
             if not selected.visible:
                 continue
-            check_object_bounds(element, geometry)
-            if obj.profile:
-                from composition.engine.barcodes import validate_size
-                validate_size(element, selected.value)
+            try:
+                check_object_bounds(element, geometry)
+                if obj.profile:
+                    from composition.engine.barcodes import validate_size
+                    validate_size(element, selected.value)
+            except ValueError as exc:
+                raise CompositionError(f"Envelope {fields.get('EnvelopeSeq', '?')}, "
+                    f"output page {fields.get('OutputPage', '?')}, object {element.id}: {exc}") from exc
             visible.append((element,obj,selected))
             if obj.control:
                 controls.append(element)
