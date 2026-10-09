@@ -12,6 +12,8 @@ from .service import execute
 
 
 def main(argv=None):
+    from auth.guard import require_worker_access
+    require_worker_access()
     parser = argparse.ArgumentParser(description="Headless PDF production operation")
     parser.add_argument("request")
     args = parser.parse_args(argv)

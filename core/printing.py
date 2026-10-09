@@ -38,6 +38,9 @@ class PreparedPrintJob:
 class PrintSession:
     """Sequential process transport, used by worker tasks without Qt ownership."""
     def __init__(self):
+        from auth.guard import worker_allowed
+        if not worker_allowed():
+            raise RuntimeError("Private account access is paused. Sign in before printing.")
         self.temporary = tempfile.TemporaryDirectory(prefix="pdfdocuedit-print-")
         self.directory = Path(self.temporary.name)
         self.serial = 0

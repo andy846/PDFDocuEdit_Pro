@@ -12,6 +12,7 @@ TESTS = ROOT / "tests"
 
 SMOKE_TESTS = ("tests/test_commands.py", "tests/test_source_contract.py")
 UI_TESTS = (
+    "tests/test_private_auth_ui.py",
     "tests/composition/test_production_review_ui.py",
     "tests/test_workflow_inspection_ui.py",
     "tests/composition/test_profile_library_ui.py",
@@ -103,7 +104,7 @@ def is_ui_change(path: str) -> bool:
     return path == "main.py" or path == "core/viewer.py" or path.startswith(
         ("ui/", "dialogs/", "styles/", "composition/designer/", "composition/preview/", "workflow/workspace",
          "workflow/regions_ui", "workflow/canvas", "workflow/chrome", "workflow/mail_merge_ui", "workflow/node_settings",
-         "workflow/inspection_ui", "workflow/drafts", "workflow/node_presentation")
+         "workflow/inspection_ui", "workflow/drafts", "workflow/node_presentation", "auth/application", "auth/ui", "auth/controller")
     ) or path in UI_TESTS
 
 
