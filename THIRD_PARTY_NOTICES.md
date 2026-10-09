@@ -101,3 +101,14 @@ Source: https://github.com/WhyNotHugo/python-barcode
 
 The installed package licence files and the composition asset manifest
 identify the exact versions and checksums used by the build.
+
+## Optional private Windows account test build
+
+Supabase Python SDK 2.32.0 and keyring 25.7.0 are MIT licensed.
+Sources: https://github.com/supabase/supabase-py and https://github.com/jaraco/keyring
+
+HTTPX 0.28.1 is BSD 3-Clause licensed; certifi 2026.7.22 uses MPL 2.0
+for its public CA certificate bundle. These optional components are pinned
+in requirements-auth-windows.lock; installed distribution metadata and
+licence texts accompany the private auth build. Public builds do not require
+the Supabase/keyring account feature.

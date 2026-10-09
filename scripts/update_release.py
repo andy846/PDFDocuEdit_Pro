@@ -36,7 +36,10 @@ from updates.protocol import (  # noqa: E402
 
 def source_fingerprint() -> str:
     sources = [ROOT / "main.py", ROOT / "launcher.py", ROOT / "PDFDocuEdit Pro.spec", ROOT / "requirements-base.txt"]
-    for name in ("core", "ui", "dialogs", "styles", "updates", "composition", "workflow", "scripts"):
+    for extra in ("requirements-auth-windows.lock", "build_assets/auth/PROJECT.json"):
+        if (ROOT / extra).is_file():
+            sources.append(ROOT / extra)
+    for name in ("auth", "core", "ui", "dialogs", "styles", "updates", "composition", "workflow", "scripts"):
         sources.extend((ROOT / name).rglob("*.py"))
     digest = hashlib.sha256()
     for path in sorted(sources):
@@ -102,13 +105,15 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
     release.mkdir(parents=True, exist_ok=True)
     zip_path = release / f"PDFDocuEdit-Pro-v{app_version}-Update-Windows-x64.zip"
     files = []
-    forbidden_names = {"secret", "config.json", "vc_config.json", "settings.json"}
+    from scripts.distribution_safety import assert_public_distribution
+    try:
+        assert_public_distribution(dist)
+    except ValueError as error:
+        raise UpdateError(str(error)) from None
     for path in sorted(dist.rglob("*")):
         if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
             raise UpdateError("Distribution must not contain links.")
         if path.is_file():
-            if path.name.casefold() in forbidden_names or path.suffix.casefold() in {".pem", ".key", ".log"}:
-                raise UpdateError(f"Private/local file found in distribution: {path.relative_to(dist)}")
             files.append(path)
     expanded = sum(path.stat().st_size for path in files)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
