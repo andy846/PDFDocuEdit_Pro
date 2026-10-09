@@ -184,7 +184,8 @@ def run_tests(mode: str, tests: str = "") -> int:
         available = {item.relative_to(ROOT).as_posix() for item in TESTS.rglob("test_*.py")}
         if not paths or any(path not in available for path in paths):
             raise ValueError("Invalid focused test selection")
-        command = [sys.executable, "-m", "pytest", *paths]
+        from scripts.regression_suite import run
+        return run(paths, ROOT / "build/ci-focused")
     elif mode == "core":
         command = [sys.executable, "scripts/regression_suite.py", "--group", "core", "--output", "build/ci-core"]
     elif mode == "ui":
@@ -217,4 +218,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(ROOT))
     raise SystemExit(main())

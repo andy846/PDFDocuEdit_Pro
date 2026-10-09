@@ -59,17 +59,18 @@ jobs:
         run: |
           echo "$GITHUB_WORKSPACE/build_assets/macos/ghostscript/bin" >> "$GITHUB_PATH"
           echo "DYLD_LIBRARY_PATH=$GITHUB_WORKSPACE/build_assets/macos/zbar/lib" >> "$GITHUB_ENV"
-      - name: Source and targeted platform tests
+      - name: Source quality
         run: |
           python -m ruff check .
           python -m scripts.verify_source
-          python -m scripts.macos_test_plan
       - name: Prepare offline veraPDF
         run: python -m scripts.prepare_verapdf
       - name: Build internal application and DMG
         run: python -m scripts.build --composition
       - name: Frozen application acceptance
         run: python -m scripts.macos_install_smoke --app 'dist/PDFDocuEdit Pro.app' --output build/macos-acceptance
+      - name: Source and targeted platform tests
+        run: python -m scripts.macos_test_plan
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -82,6 +82,16 @@ After native IPC/project/redo fixes, five isolated Windows modules passed 88
 tests, including all existing mode-switch and veraPDF fixture assertions.
 The initial cloud Windows affected-test run reached its 20-minute time limit
 without completing; this is **not** a pass or a substitute for the full merge gate.
+The focused CI runner now reuses the existing per-module isolation and retains
+all selected tests/JUnit evidence: mixed Qt application/style globals caused a
+native crash when several UI modules shared one process. Crashes remain failures.
+
+Native macOS source gate at `345d9b3` (Actions run `37880248212`): 21 modules,
+345 passed, 1 Windows-registry-only font test skipped, zero failures/errors.
+The actual Mac installed-font catalogue is checked separately in the frozen app.
+The first packaging attempt rejected the moving latest veraPDF archive; its
+fixed official 1.30.2 archive was verified against the original checksum without
+changing the validator or Java version.
 
 ## Operator acceptance on the M-series Mac
 

@@ -90,6 +90,12 @@ jobs:
         uses: ./.github/actions/setup-postscript
       - name: Execute affected tests and smoke
         run: python scripts/ci_plan.py run focused "$env:FOCUSED_TESTS"
+      - name: Retain Windows focused diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-focused-diagnostics
+          path: build/ci-focused/
 
   core:
     name: Automated suite on Windows

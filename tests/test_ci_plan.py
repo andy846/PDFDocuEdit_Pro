@@ -87,10 +87,19 @@ def test_composition_changes_are_selected_recursively() -> None:
 
 
 def test_focused_runner_accepts_composition_test_paths(monkeypatch) -> None:
-    from scripts import ci_plan
+    from scripts import ci_plan, regression_suite
 
     calls = []
-    monkeypatch.setattr(ci_plan.subprocess, "call",
-                        lambda command, **kwargs: calls.append(command) or 0)
+    monkeypatch.setattr(regression_suite, "run",
+                        lambda paths, output: calls.append((paths, output)) or 0)
     assert run_tests("focused", "tests/composition/test_renderer.py") == 0
-    assert calls[0][3:] == ["tests/composition/test_renderer.py"]
+    assert calls == [(["tests/composition/test_renderer.py"], ci_plan.ROOT / "build/ci-focused")]
+
+
+def test_focused_isolation_keeps_every_selected_module_and_failure(monkeypatch):
+    from scripts import regression_suite
+    calls = []
+    monkeypatch.setattr(regression_suite, "run", lambda paths, output: calls.append(paths) or 1)
+    paths = ["tests/composition/test_designer_entry.py", "tests/composition/test_workspace_modes.py"]
+    assert run_tests("focused", " ".join(paths)) == 1
+    assert calls == [paths]
