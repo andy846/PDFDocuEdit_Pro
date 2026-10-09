@@ -45,6 +45,16 @@ jobs:
       - name: Build verified native runtime sources
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: python -m scripts.prepare_macos
+      - uses: actions/cache/save@v4
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+          path: |
+            build_assets/macos/qpdf
+            build_assets/macos/zbar
+            build_assets/macos/ghostscript
+            build_assets/macos/licenses
+            build_assets/composition
       - name: Set source test runtime locations
         run: |
           echo "$GITHUB_WORKSPACE/build_assets/macos/ghostscript/bin" >> "$GITHUB_PATH"

@@ -12,6 +12,10 @@ FONT_SUFFIXES = frozenset({".ttf", ".otf", ".ttc", ".otc"})
 PDF_BASE_FONTS = frozenset({"helv", "cour", "times-roman"})
 
 
+def font_platform_label() -> str:
+    return "macOS" if sys.platform == "darwin" else "Windows" if os.name == "nt" else "System"
+
+
 def is_pdf_base_font(family: str) -> bool:
     """Return whether *family* is one of the portable PDF built-in choices."""
 

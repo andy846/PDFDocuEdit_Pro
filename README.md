@@ -4,6 +4,14 @@
 
 本次發佈平台為 **Windows x64**，提供 Setup、Managed Portable 及簽署更新包。macOS 核心測試與 Windows 安裝包驗收分開記錄；本次不提供 V3 macOS 安裝包。
 
+## macOS 對齊開發
+
+Apple Silicon 對齊工作在獨立 `codex/macos-parity` 分支進行，不替換目前 Windows 發布。
+專用 Mac CI 建置原生 qpdf、libzbar、Ghostscript 及離線 veraPDF／JRE，再檢查
+Designer、Workflow、Production Review、Barcode 與 PDF／PS 生產功能。
+候選 DMG 採用手動更新；OCR、Intel、自動更新與正式簽署／公證另待後續。
+下載 Mac CI artifact 不代表已完成實機或打印機驗收。詳見 [macOS 開發與部署紀錄](docs/MACOS_PARITY.md)。
+
 ## 最新開發更新：生產覆核
 
 此節描述目前開發版本，尚未另行打包或發佈；公開版本號保持 **3.0.3**。

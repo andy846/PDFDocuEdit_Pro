@@ -70,6 +70,33 @@ def test_windows_file_routing_unchanged(monkeypatch):
     assert len(main.pdf_arguments(["letter.pdcx", "sample.pdf"])) == 1
 
 
+def test_mac_library_uses_owned_bundle_and_windows_labels_remain(monkeypatch, tmp_path):
+    import pyzbar.zbar_library as zbar
+
+    from core.system_fonts import font_platform_label
+    original = zbar.load
+    monkeypatch.setattr(zbar, "load", original)
+    monkeypatch.setattr(macos_runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(macos_runtime.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(macos_runtime.sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(macos_runtime.sys, "argv", ["application"])
+    # bootstrap sets only the Mac child environment. Restore it after the test.
+    monkeypatch.setenv("GS_LIB", "before")
+    monkeypatch.setenv("GS_FONTPATH", "before")
+    assert font_platform_label() == "macOS"
+    with pytest.raises(RuntimeError, match="barcode decoder"):
+        macos_runtime.bootstrap()
+    library = tmp_path / "pyzbar/libzbar.dylib"
+    library.parent.mkdir()
+    library.touch()
+    loaded = Mock()
+    loader = Mock(return_value=loaded)
+    monkeypatch.setattr(macos_runtime.ctypes, "CDLL", loader)
+    macos_runtime.bootstrap()
+    assert zbar.load() == (loaded, [])
+    loader.assert_called_once_with(str(library))
+
+
 def test_mac_update_ui_never_starts_windows_update(qt_application, monkeypatch):
     from PyQt6.QtWidgets import QWidget
 

@@ -1,4 +1,4 @@
-"""Type-aware property groups and searchable exact Windows font selection."""
+"""Type-aware property groups and searchable exact installed font selection."""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from composition.engine.fonts import FAMILIES
+from core.system_fonts import font_platform_label
 from ui.combo_popup import WideComboBox
 
 from .rule_controls import rules_summary
@@ -167,14 +168,14 @@ class Properties(QWidget):
         self.font_family.setMinimumContentsLength(12)
         self.font_family.addItems(FAMILIES)
         self.font_family.setAccessibleName("Font family")
-        self.font_family.setToolTip("Search installed Windows font families and bundled Noto fonts.")
+        self.font_family.setToolTip(f"Search installed {font_platform_label()} font families and bundled Noto fonts.")
         self.font_family.setMinimumWidth(0)
         self.font_family.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.font_style = QComboBox()
         self.font_style.setMinimumWidth(0)
         self.font_style.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.font_style.setAccessibleName("Exact font style")
-        self.font_status = QLabel("Loading Windows fonts…")
+        self.font_status = QLabel(f"Loading {font_platform_label()} fonts…")
         self.font_status.setWordWrap(True)
         form.addRow("Family", self.font_family)
         form.addRow("Style", self.font_style)
@@ -473,7 +474,7 @@ class Properties(QWidget):
                 self.font_family.addItem(element.font.family)
             self.font_family.setCurrentIndex(self.font_family.findText(element.font.family))
             self.font_family.lineEdit().setCursorPosition(0)
-            self.font_family.setToolTip(element.font.family + "\nSearch Windows families or choose a font file.")
+            self.font_family.setToolTip(element.font.family + f"\nSearch {font_platform_label()} families or choose a font file.")
             self._set_styles(element.font.family, bool(element.font.file))
             if element.font.file:
                 self.font_style.setCurrentIndex(0)

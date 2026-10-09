@@ -80,8 +80,10 @@ def prepare():
                     flags = ["--disable-nls", "--disable-doc", "--disable-video", "--without-x", "--without-jpeg", "--without-imagemagick",
                              "--without-gtk", "--without-qt", "--without-python", "--without-dbus"]
                 else:
-                    flags = ["--without-x", "--disable-cups", "--without-tesseract", "--disable-dbus"]
-                run([source / "configure", f"--prefix={prefix}", *flags], source, env)
+                    flags = ["--without-x", "--disable-cups", "--without-tesseract", "--disable-dbus", "--disable-fontconfig"]
+                # GS's libtiff configure prepends cwd; an absolute configure
+                # argv[0] incorrectly duplicates the path in its subconfigure.
+                run(["./configure", f"--prefix={prefix}", *flags], source, env)
                 run(["make", "-j" + jobs], source, env)
                 run(["make", "install"], source, env)
                 env.pop("LIBS", None)

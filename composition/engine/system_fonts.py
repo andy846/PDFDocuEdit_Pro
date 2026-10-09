@@ -12,6 +12,7 @@ from fontTools.ttLib import TTFont
 
 from composition.template.model import CompositionError
 from core.io_atomic import atomic_output
+from core.system_fonts import font_platform_label
 
 
 def installed_font_files():
@@ -122,7 +123,7 @@ def font_catalogue(progress=None, is_cancelled=None):
         except Exception:
             unsupported.append(path.name)
         if progress and index % 20 == 0:
-            progress(index, len(paths), "Loading Windows font families and styles")
+            progress(index, len(paths), f"Loading {font_platform_label()} font families and styles")
     return {"faces": faces, "unsupported": unsupported, "files": len(paths)}
 
 
