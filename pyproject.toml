@@ -33,11 +33,14 @@ dependencies = [
 [project.gui-scripts]
 pdfdocuedit-pro = "main:main"
 
+[project.optional-dependencies]
+private-auth = ["supabase==2.32.0", "keyring==25.7.0"]
+
 [tool.setuptools]
 py-modules = ["main", "PDFdocuEdit_Pro", "launcher"]
 
 [tool.setuptools.packages.find]
-include = ["core*", "ui*", "styles*", "updates*", "composition*", "workflow*"]
+include = ["auth*", "core*", "ui*", "styles*", "updates*", "composition*", "workflow*"]
 exclude = ["backup*", "tests*"]
 
 [tool.pytest.ini_options]

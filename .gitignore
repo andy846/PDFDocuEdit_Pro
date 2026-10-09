@@ -57,6 +57,15 @@ pytest_out*.txt
 build_assets/composition/*
 !build_assets/composition/BUNDLE_INFO.json
 
+# Public Supabase client configuration only; never put private credentials here.
+!build_assets/auth/
+build_assets/auth/*
+!build_assets/auth/PROJECT.json
+.env
+.env.*
+*.pem
+*.key
+
 # Isolated Composition font-fix development build
 /dist-font-fix/
 
@@ -83,3 +92,5 @@ build_assets/composition/*
 /dist-compact-designer/
 
 /dist-pdf-overlay/
+
+/dist-private-auth/
