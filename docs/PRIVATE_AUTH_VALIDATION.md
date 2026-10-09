@@ -1,4 +1,4 @@
-# Private Windows access — validation, 2026-10-09
+# Private Windows access — validation, 2026-10-10
 
 Baseline: v3.0.3, `85b57d4`. Implementation is isolated on
 `codex/supabase-private-login`; no public version, template format, installer ID
@@ -50,8 +50,10 @@ Evidence: `build/private-packaged-final-2/result.json`.
 
 These artifacts are internal test outputs, not GitHub Releases or signed update
 packages. No production update private key was used.
-Product artifacts were built at `690b0a9`; later commits add documentation and
-source-only QA scripts, with no application-code changes.
+These hashes record the initial product artifacts built at `690b0a9`. The
+2026-10-10 UI update rebuilds the internal Portable at the same public version;
+use its accompanying SHA256 file for the updated artifact. The initial Setup
+remains the earlier UI until rebuilt.
 
 ## Owner-assisted gates still pending
 
@@ -63,13 +65,16 @@ violation in the existing Organizer audit module during shortcut construction.
 That module created per-test QApplication instances rather than requesting the
 existing retained session fixture. It now uses `qt_application` for the entire
 module; all 13 assertions pass locally. No tests/assertions were removed. Remote
-CI must confirm this lifecycle correction before the PR leaves draft.
+CI confirmed this lifecycle correction at `2c720dc`: Windows core/UI, macOS and
+Linux core, and source quality all passed (run `37908267790`). Subsequent UI
+updates still require their own checks; the PR remains draft.
 
 ### Live backend onboarding
 
 The owner subsequently requested one account to be provisioned through the
-normal Supabase Auth API. Its allowlist grant is active; email confirmation is
-still required before real login acceptance. No password/account identity is
+normal Supabase Auth API. Its allowlist grant is active; read-only inspection
+subsequently confirmed email verification. Real login acceptance is separate.
+No password/account identity is
 stored in this repository. Public signup is still enabled; anonymous login is
 disabled. Owner-assisted account/security gates below remain pending.
 
@@ -79,12 +84,32 @@ disabled. Owner-assisted account/security gates below remain pending.
   and logout cancellation with actual credentials.
 - Owner disables public signup and provisions a second isolated test account
   for cross-account checks. Anonymous login is already disabled; one approved
-  account awaits email confirmation.
+  account has completed email confirmation.
 - Native desktop layout/DPI and a second Windows machine.
 
 Read-only backend inspection confirmed the applied migration, own-row RLS and
-SELECT-only grants; security/performance advisors returned no lints. No backend
-schema/settings/account changes were made to bypass pending owner actions.
+SELECT-only grants. Advisors returned no lints before provisioning; after
+provisioning, security advisors reported leaked-password protection disabled.
+No backend schema/settings/account changes bypassed pending owner actions.
+
+## UI improvement, 2026-10-10
+
+- Existing full-colour app mark, version, themed header, labelled fields and
+  status panel; Enter submits once, blank inputs focus the missing field, and
+  submission clears the password and resets visibility.
+- The account QAction displays the signed-in email beside settings, not in the
+  top command-bar layout. The same action survives menu rebuilds in both modes.
+- Scoped tests cover mode/menu routing and existing admission, account-change,
+  revocation, logout cancellation and managed startup behaviour.
+- All 73 related auth/UI, workspace-mode and command tests passed; repository
+  Ruff and source verification passed. This update does not repeat full regression.
+- Offscreen fixture screenshots cover dark/100%, light/200% and logical 960×640;
+  native DPI and real-account interaction remain owner-assisted checks.
+- Rebuilt Portable and fresh extracted deployment passed distribution scanning.
+  Updated Portable SHA256:
+  `3e753c6cc66672af21db1e6aa19fa81eae7a4fef441901a5a31cb8fbdb2c8c03`.
+  The fresh deployment is `build/private-ui-polish-app/PDFDocuEditPro`; no
+  previously running deployment was replaced or closed.
 
 ## Reproduce
 

@@ -61,6 +61,14 @@ def main():
         session.login.show()
         app.processEvents()
         session.login.grab().save(str(args.output / "login.png"))
+        session.login.resize(450, 350)
+        app.processEvents()
+        session.login.password.setFocus()
+        app.processEvents()
+        session.login.grab().save(str(args.output / "login-narrow.png"))
+        assert session.login._responsive_scroll.horizontalScrollBar().maximum() == 0
+        submit = session.login.submit
+        assert submit.mapTo(session.login, submit.rect().bottomRight()).y() < session.login.height()
         now = timestamp()
         # In-memory fixture only. Nothing is written to Windows Credential Manager.
         controller.approval = Approval(config.project_ref, "f63613d9-81b8-4a36-b765-a37b6e9e0916",
@@ -79,10 +87,16 @@ def main():
             QTimer.singleShot(350, loop.quit)
             loop.exec()
             viewer.grab().save(str(args.output / (mode + ".png")))
-            button = session.account_button
-            assert button.isVisible()
-            assert 0 <= button.mapTo(viewer, button.rect().topLeft()).x()
-            assert button.mapTo(viewer, button.rect().bottomRight()).x() < viewer.width()
+            bar = viewer.command_bar
+            menu = bar._more.menu()
+            if mode == "designer":
+                menu = next(action.menu() for action in menu.actions() if action.text() == "Settings")
+            assert session.account_action in menu.actions()
+            # Render a fixture popup independently: no live desktop interaction.
+            menu.popup(viewer.mapToGlobal(viewer.rect().center()))
+            app.processEvents()
+            menu.grab().save(str(args.output / (mode + "-settings.png")))
+            menu.hide()
         dialog = AccountDialog(controller, lambda: None, viewer)
         dialog.show()
         app.processEvents()

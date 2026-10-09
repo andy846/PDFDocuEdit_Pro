@@ -10,6 +10,8 @@
 其後使用 Windows Credential Manager 保存的批准可離線啟動；背景核對不傳送 PDF 或客戶資料。
 此功能未加入公開安裝包，不影響現有公開 Windows／Mac 使用方式。
 帳戶配置、停權／登出行為及驗收限制見 [Private account 開發及驗收](docs/PRIVATE_AUTH.md)。
+私人測試版登入畫面沿用程式圖示及深淺色主題；帳戶入口位於 More commands／Settings
+選單，顯示登入帳戶，提供核對及登出操作，不佔用主工具列。
 
 此節描述目前開發版本，尚未另行打包或發佈；公開版本號保持 **3.0.3**。
 

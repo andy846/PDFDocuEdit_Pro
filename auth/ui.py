@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -11,6 +13,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.resources import APP_VERSION
+from styles.theme import get_colors
+from ui.icons import brand_pixmap
 from ui.responsive import ResponsiveDialog
 
 
@@ -20,52 +25,142 @@ class LoginWindow(ResponsiveDialog):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PDFDocuEdit Pro — Private Account")
-        self.resize(540, 400)
+        self.setObjectName("privateLogin")
+        self.setWindowTitle("Sign in — PDFDocuEdit Pro")
+        self.setWindowIcon(QIcon(brand_pixmap(64)))
+        self.resize(520, 620)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(28, 24, 28, 20)
+        layout.setSpacing(12)
+        header = QHBoxLayout()
+        header.setSpacing(16)
+        self.brand = QLabel()
+        self.brand.setObjectName("loginBrand")
+        self.brand.setPixmap(brand_pixmap(56))
+        self.brand.setFixedSize(56, 56)
+        self.brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.addWidget(self.brand)
+        identity = QVBoxLayout()
+        identity.setSpacing(4)
         title = QLabel("PDFDocuEdit Pro")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
-        layout.addWidget(title)
-        description = QLabel("Sign in with an approved account.\nAfter approval, this Windows account can work offline.")
+        title.setObjectName("loginProduct")
+        identity.addWidget(title)
+        version = QLabel(f"Version {APP_VERSION}  ·  Private access")
+        version.setObjectName("loginSecondary")
+        identity.addWidget(version)
+        header.addLayout(identity, 1)
+        layout.addLayout(header)
+        divider = QFrame()
+        divider.setObjectName("loginDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        heading = QLabel("Welcome back")
+        heading.setObjectName("loginHeading")
+        layout.addWidget(heading)
+        description = QLabel("Sign in to your PDF editing and production workspace.")
+        description.setObjectName("loginSecondary")
         description.setWordWrap(True)
         layout.addWidget(description)
         self.email = QLineEdit()
-        self.email.setPlaceholderText("Email address")
+        self.email.setObjectName("loginEmail")
+        self.email.setPlaceholderText("you@example.com")
         self.email.setAccessibleName("Email address")
         self.email.setMaxLength(320)
         self.password = QLineEdit()
+        self.password.setObjectName("loginPassword")
         self.password.setPlaceholderText("Password")
         self.password.setAccessibleName("Password")
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setInputMethodHints(Qt.InputMethodHint.ImhSensitiveData | Qt.InputMethodHint.ImhNoPredictiveText)
         self.password.setMaxLength(1024)
-        layout.addWidget(self.email)
-        layout.addWidget(self.password)
-        show = QCheckBox("Show password")
-        show.toggled.connect(lambda visible: self.password.setEchoMode(
+        for label, field in (("&Email address", self.email), ("&Password", self.password)):
+            caption = QLabel(label)
+            caption.setObjectName("loginFieldLabel")
+            caption.setBuddy(field)
+            layout.addWidget(caption)
+            layout.addWidget(field)
+        self.show_password = QCheckBox("Show password")
+        self.show_password.toggled.connect(lambda visible: self.password.setEchoMode(
             QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password))
-        layout.addWidget(show)
+        layout.addWidget(self.show_password)
         self.status = QLabel("Sign in with an approved account.")
+        self.status.setObjectName("loginStatus")
+        self.status.setAccessibleName("Sign-in status")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         layout.addStretch()
+        note = QLabel("An approved account and internet connection are required for your first sign-in. "
+                      "Saved approval allows offline use on this Windows account.")
+        note.setObjectName("loginSecondary")
+        note.setWordWrap(True)
+        layout.addWidget(note)
         self.submit = QPushButton("Sign in")
+        self.submit.setObjectName("loginSubmit")
+        self.submit.setDefault(True)
         self.submit.clicked.connect(self._submit)
-        self.password.returnPressed.connect(self._submit)
-        layout.addWidget(self.submit)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(22, 4, 22, 4)
+        footer.addWidget(self.submit)
+        layout.addLayout(footer)
+        self.email.setFocus()
+        self._style_login()
+
+    def _style_login(self):
+        c = get_colors()
+        self.setStyleSheet(f"""
+            QDialog#privateLogin {{ background: {c['bg_surface']}; }}
+            QLabel#loginProduct {{ font-size: 23px; font-weight: 600; }}
+            QLabel#loginHeading {{ font-size: 21px; font-weight: 600; }}
+            QLabel#loginSecondary {{ color: {c['text_secondary']}; }}
+            QLabel#loginFieldLabel {{ font-weight: 600; }}
+            QFrame#loginDivider {{ background: {c['border']}; border: none; }}
+            QLineEdit#loginEmail, QLineEdit#loginPassword {{
+                min-height: 26px; padding: 8px 12px; border-radius: 8px;
+                border: 1px solid {c['border_strong']}; background: {c['bg_base']};
+            }}
+            QLineEdit#loginEmail:focus, QLineEdit#loginPassword:focus {{
+                border: 1px solid {c['primary']};
+            }}
+            QLabel#loginStatus {{
+                background: {c['primary_soft']}; color: {c['text_primary']};
+                padding: 12px; border-radius: 8px;
+            }}
+            QPushButton#loginSubmit {{
+                min-height: 28px; padding: 8px 20px; border-radius: 8px;
+                background: {c['primary']}; color: {c['on_primary']};
+                border: none; font-weight: 600;
+            }}
+            QPushButton#loginSubmit:hover {{ background: {c['primary_hover']}; }}
+            QPushButton#loginSubmit:pressed {{ background: {c['primary_pressed']}; }}
+            QPushButton#loginSubmit:disabled {{ background: {c['bg_active']}; color: {c['text_disabled']}; }}
+        """)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._style_login()
 
     def _submit(self):
-        if self.submit.isEnabled() and self.email.text().strip() and self.password.text():
+        if not self.submit.isEnabled():
+            return
+        if not self.email.text().strip():
+            self.status.setText("Enter your email address to continue.")
+            self.email.setFocus()
+        elif not self.password.text():
+            self.status.setText("Enter your password to continue.")
+            self.password.setFocus()
+        else:
             password = self.password.text()
             self.password.clear()
+            self.show_password.setChecked(False)
             self.signIn.emit(self.email.text(), password)
 
     def update_state(self, controller):
         self.submit.setEnabled(not controller.busy and not controller.stopping)
         self.email.setEnabled(not controller.busy)
         self.password.setEnabled(not controller.busy)
+        self.show_password.setEnabled(not controller.busy)
+        self.submit.setText("Signing in…" if controller.busy else "Sign in")
         self.status.setText("Verifying account…" if controller.busy else controller.message)
 
     def closeEvent(self, event):

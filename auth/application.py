@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, QTimer
-from PyQt6.QtWidgets import QDialog, QToolButton
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QDialog
+
+from ui.icons import icon
 
 from . import guard
 from .client import AccessClient
@@ -30,6 +33,7 @@ class PrivateApplication(QObject):
         self.login.signIn.connect(self.controller.sign_in)
         self.login.quitRequested.connect(self.quit)
         self.controller.changed.connect(lambda: self.login.update_state(self.controller))
+        self.controller.changed.connect(self._refresh_account_action)
         self.controller.approved.connect(self.admit)
         self.controller.approvalRequested.connect(self.prepare_account)
         self.controller.revoked.connect(self.lock)
@@ -84,21 +88,28 @@ class PrivateApplication(QObject):
             self.viewer = self.viewer_factory()
             self.viewer_account = approval.user_id
             self.viewer.installEventFilter(self)
-            button = QToolButton(self.viewer.command_bar)
-            button.setText("Account")
-            button.setToolTip("Private account · offline approval / check / sign out")
-            button.setAccessibleName("Private account")
-            button.clicked.connect(self.account)
-            self.viewer.command_bar.layout().insertWidget(3, button)
-            self.account_button = button
+            self.account_action = QAction(icon("lock"), "Account…", self.viewer)
+            self.account_action.setObjectName("privateAccountAction")
+            self.account_action.triggered.connect(self.account)
+            self.viewer.command_bar.add_settings_action(self.account_action)
             update = self.viewer._command_action_map.get("check_updates")
             if update:
                 update.setEnabled(False)
                 update.setToolTip("Internal private build: public updates are disabled.")
+        self._refresh_account_action()
         self.viewer.setEnabled(self.ready)
         self.viewer.show()
         self.login.hide()
         self._drain_paths()
+
+    def _refresh_account_action(self):
+        if self.viewer is None:
+            return
+        approval = self.controller.approval
+        label = f"Account: {approval.email} · Signed in" if approval else "Account: Sign-in required…"
+        # QAction treats '&' as a menu mnemonic, even in an email address.
+        self.account_action.setText(label.replace("&", "&&"))
+        self.account_action.setToolTip("Account details, verification and sign out.\n" + self.controller.message)
 
     def account(self):
         dialog = AccountDialog(self.controller, self.logout, self.viewer)

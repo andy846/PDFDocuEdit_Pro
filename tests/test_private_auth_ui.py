@@ -3,7 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 
 import pytest
-from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QMainWindow, QMenuBar, QToolButton
 
 from auth import guard
 from auth.application import PrivateApplication
@@ -12,6 +14,8 @@ from auth.controller import AuthController
 from auth.model import Approval, timestamp
 from auth.store import ApprovalStore
 from tests.test_private_auth import pump
+from ui.command_bar import CommandBar
+from ui.workspace_modes import WorkspaceMode
 
 CONFIG = AuthConfig("qatest", "https://qatest.supabase.co", "sb_publishable_qa")
 
@@ -29,8 +33,9 @@ class Memory:
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.command_bar = QWidget(self)
-        QHBoxLayout(self.command_bar)
+        self.command_bar = CommandBar(parent=self)
+        self.command_bar.set_application_menu(self.menuBar())
+        self.setCentralWidget(self.command_bar)
         self._command_action_map = {}
         self.opened = []
         self._queued_open_paths = []
@@ -158,6 +163,57 @@ def test_login_narrow_layout_and_password_cleared_on_submit(private, qt_applicat
     assert received == [("test@example.invalid", "中文Pass")]
     assert login.password.text() == ""
     assert login.submit.isVisible()
+
+
+def test_login_keyboard_submit_validation_and_branding(private, qt_application):
+    login = private.login
+    login.show()
+    qt_application.processEvents()
+    assert not login.brand.pixmap().isNull()
+    assert not login.windowIcon().isNull()
+    received = []
+    login.signIn.disconnect()
+    login.signIn.connect(lambda email, password: received.append((email, password)))
+    login._submit()
+    assert not received and "email" in login.status.text()
+    login.email.setText("test@example.invalid")
+    login._submit()
+    assert not received and "password" in login.status.text()
+    login.password.setText("中文Pass")
+    login.show_password.setChecked(True)
+    QTest.keyClick(login.password, Qt.Key.Key_Return)
+    assert received == [("test@example.invalid", "中文Pass")]
+    assert login.password.text() == ""
+    assert not login.show_password.isChecked()
+
+
+def test_account_is_in_settings_across_modes_and_updates_status(private, qt_application, monkeypatch):
+    opened = []
+    monkeypatch.setattr(private, "account", lambda: opened.append(True))
+    private.controller.commit_approval(approved())
+    bar = private.viewer.command_bar
+    action = private.account_action
+    assert "test@example.invalid" in action.text() and "Signed in" in action.text()
+    assert not any(button.text() == "Account" for button in bar.findChildren(QToolButton))
+    for mode in (WorkspaceMode.DESIGNER, WorkspaceMode.PDF, WorkspaceMode.DESIGNER):
+        bar.set_mode(mode)
+        menus = QMenuBar(private.viewer)
+        menus.addMenu("Workspace")
+        bar.set_application_menu(menus)
+        if mode == WorkspaceMode.PDF:
+            assert bar._more.menu().actions().count(action) == 1
+        else:
+            settings = [item.menu() for item in bar._more.menu().actions() if item.text() == "Settings"]
+            assert len(settings) == 1 and settings[0].actions().count(action) == 1
+        action.trigger()
+        menus.deleteLater()
+    assert len(opened) == 3
+    private.controller.message = "Using saved offline approval."
+    private.controller.changed.emit()
+    assert "Signed in" in action.text() and "offline" in action.toolTip()
+    private.controller.approval = None
+    private.controller.changed.emit()
+    assert "Sign-in required" in action.text() and "test@example.invalid" not in action.text()
 
 
 def test_locked_worker_refuses_production_without_writing_ipc(tmp_path, qt_application, monkeypatch):

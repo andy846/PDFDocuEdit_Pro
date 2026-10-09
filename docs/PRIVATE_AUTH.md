@@ -28,7 +28,12 @@ Do not merge or distribute as a public update until the owner accepts the tests.
 6. Sign out reuses existing save/close confirmation and safe worker cleanup.
    Cancel leaves the original account approved. Different accounts cannot
    inherit the prior account's workspace; same-account re-login can resume it.
-7. `Account` is visible in both workspace modes. Public updater actions are
+7. Account details are available beside Preferences in **More commands** in PDF
+   mode, or **Settings** in the main/Designer menu. The entry shows the signed-in
+   email, including while using saved offline approval; it uses no toolbar space.
+   The branded sign-in screen follows the application theme, supports keyboard
+   submission, validates empty inputs and clears/hides the password on submission.
+   Public updater actions are
    disabled in this test build to prevent installing an authentication-free
    public package over a private build. Future private updates need their own
    channel. This gate is not tamper-proof DRM against a local administrator.
