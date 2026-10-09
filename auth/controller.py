@@ -48,7 +48,10 @@ class AuthController(QObject):
     def busy(self):
         return self.thread is not None
 
-    def start(self):
+    def start(self, *, asynchronous=False):
+        if asynchronous:
+            self._start_cached_async()
+            return
         try:
             self.approval = self.store.load()
         except StorageError as error:
@@ -58,6 +61,34 @@ class AuthController(QObject):
             self.approved.emit(self.approval)
             self.timer.start()
             QTimer.singleShot(0, self.check)
+        self.changed.emit()
+
+    def _start_cached_async(self):
+        if self.busy or self.stopping:
+            return
+        generation = self.generation
+
+        def load():
+            approval = self.store.load()
+            return AuthResult(Outcome.APPROVED if approval else Outcome.DENIED,
+                              "Using saved offline approval." if approval else "Sign in with an approved account.", approval)
+
+        def received(result):
+            if self.stopping or generation != self.generation:
+                return
+            self.message = result.message
+            if result.outcome == Outcome.APPROVED:
+                self.approval = result.approval
+                self.approved.emit(self.approval)
+                self.timer.start()
+            self.changed.emit()
+
+        thread = RequestThread(load, self)
+        self.thread = thread
+        thread.completed.connect(received)
+        thread.finished.connect(lambda: self._finished(thread))
+        thread.finished.connect(self.check)
+        thread.start()
         self.changed.emit()
 
     def _begin(self, operation, *, login=False):

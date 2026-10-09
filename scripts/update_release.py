@@ -66,12 +66,19 @@ def keygen(path: Path) -> None:
     print(f"Created signing key at {path}. Back it up privately; only the public trust anchor belongs in Git.")
 
 
-def build_launcher() -> Path:
+def build_launcher(*, target=None) -> Path:
+    extra = []
+    if target is not None:
+        from dataclasses import asdict
+        folder = ROOT / "build/launcher-target"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "pdfdocuedit_update_build.py").write_text("TARGET = " + repr(asdict(target)) + "\n", encoding="utf-8")
+        extra = ["--paths", str(folder), "--hidden-import", "pdfdocuedit_update_build"]
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed",
         "--name", "Launcher", "--contents-directory", "launcher_runtime", "--icon", str(ROOT / "icon.ico"),
         "--copy-metadata", "cryptography", "--copy-metadata", "cffi", "--copy-metadata", "pycparser",
-        "--specpath", str(ROOT / "build" / "launcher-spec"), str(ROOT / "launcher.py"),
+        "--specpath", str(ROOT / "build" / "launcher-spec"), *extra, str(ROOT / "launcher.py"),
     ], cwd=ROOT, check=True)
     from scripts.build import _sign_windows_file, _windows_signing_settings
 

@@ -91,7 +91,7 @@ class LoginWindow(ResponsiveDialog):
         layout.addWidget(self.status)
         layout.addStretch()
         note = QLabel("An approved account and internet connection are required for your first sign-in. "
-                      "Saved approval allows offline use on this Windows account.")
+                      "Saved approval allows offline use on this computer’s user account.")
         note.setObjectName("loginSecondary")
         note.setWordWrap(True)
         layout.addWidget(note)

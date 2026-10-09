@@ -7,6 +7,8 @@ from pathlib import Path
 
 
 def is_public_ca(path: Path, relative: Path) -> bool:
+    if relative.as_posix() in {"Contents/Resources/certifi/cacert.pem", "Contents/Frameworks/certifi/cacert.pem"}:
+        relative = Path("certifi/cacert.pem")
     if len(relative.parts) == 5 and relative.parts[0] == "versions" and re.fullmatch(r"\d+\.\d+\.\d+", relative.parts[1]):
         relative = Path(*relative.parts[2:])
     if relative.as_posix() not in {"_internal/certifi/cacert.pem", "certifi/cacert.pem"}:
@@ -22,10 +24,12 @@ def is_public_ca(path: Path, relative: Path) -> bool:
         return False
 
 
-def assert_public_distribution(root: Path):
+def assert_public_distribution(root: Path, *, allow_bundle_links=False):
     for path in root.rglob("*"):
         if path.is_symlink() or path.is_junction():
-            raise ValueError("Distribution must not contain links.")
+            if not allow_bundle_links or not path.resolve().is_relative_to(root.resolve()):
+                raise ValueError("Distribution must not contain external links.")
+            continue
         if not path.is_file():
             continue
         relative = path.relative_to(root)

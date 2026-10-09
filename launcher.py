@@ -113,7 +113,8 @@ def main() -> int:
     set_process_identity()
     root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
     try:
-        installation = Installation(root)
+        from updates.target import build_target
+        installation = Installation(root, target=build_target())
         handler = RotatingFileHandler(root / "logs" / "updater.log", maxBytes=1024 * 1024, backupCount=2, encoding="utf-8")
         logging.basicConfig(level=logging.INFO, handlers=[handler], format="%(asctime)s %(levelname)s %(message)s")
         launcher_lock = FileLock(root / "launcher.lock")

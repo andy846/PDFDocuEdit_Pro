@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -38,7 +39,9 @@ def main():
     from scripts.build import _clean_portable_tree, sha256
     _clean_portable_tree(dist)
     assert_public_distribution(dist)
-    launcher = build_launcher()
+    from updates.target import UpdateTarget
+    project = json.loads((ROOT / "build_assets/auth/PROJECT.json").read_text(encoding="utf-8"))
+    launcher = build_launcher(target=UpdateTarget("windows-x64", "private", project["project_ref"]))
     release = ROOT / "release"
     release.mkdir(exist_ok=True)
     deployment = release / f"PDFDocuEdit-Pro-v{APP_VERSION}-Private-Auth-Managed-Portable-Windows-x64.zip"
@@ -50,7 +53,7 @@ def main():
         atomic_json(folder / "state.json", {"current": APP_VERSION, "previous": None, "phase": "stable"})
         (folder / "PRIVATE-TEST.txt").write_text(
             "Internal authentication acceptance build. Not a public release.\n"
-            "Extract into an empty folder and launch Launcher.exe. Public updates are disabled.\n"
+            "Extract into an empty folder and launch Launcher.exe. Only signed private-channel updates are accepted.\n"
             "First sign-in requires an approved account online; later launches may work offline.\n", encoding="utf-8")
         assert_public_distribution(folder)
         with zipfile.ZipFile(deployment, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:

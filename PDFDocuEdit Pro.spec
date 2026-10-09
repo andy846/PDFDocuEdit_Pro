@@ -15,8 +15,8 @@ WIN_VERSION = ROOT / "installer" / "PDFDocuEditPro.version.txt"
 _auth_enabled = os.environ.get("PDFDOCUEDIT_BUILD_AUTH") == "1"
 _auth_pathex = []
 if _auth_enabled:
-    if sys.platform != "win32":
-        raise RuntimeError("Private account builds currently target Windows only.")
+    if sys.platform not in {"win32", "darwin"}:
+        raise RuntimeError("Private account builds require Windows or macOS.")
     import json as _auth_json
     from auth.config import AuthConfig
     _project = _auth_json.loads((ROOT / "build_assets/auth/PROJECT.json").read_text(encoding="utf-8"))
@@ -32,6 +32,17 @@ datas = [
     (str(ROOT / "icon.png"), "."),
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
 ]
+if sys.platform == "darwin" or _auth_enabled:
+    import json as _update_json
+    _update_target = {"platform": "macos-arm64" if sys.platform == "darwin" else "windows-x64",
+                      "channel": "private" if _auth_enabled else "public",
+                      "auth_project": _project["project_ref"] if _auth_enabled else ""}
+    _update_folder = ROOT / "build/update-config"
+    _update_folder.mkdir(parents=True, exist_ok=True)
+    (_update_folder / "pdfdocuedit_update_build.py").write_text("TARGET = " + repr(_update_target) + "\n", encoding="utf-8")
+    (_update_folder / "update-target.json").write_text(_update_json.dumps(_update_target), encoding="utf-8")
+    _auth_pathex.append(str(_update_folder))
+    datas.append((str(_update_folder / "update-target.json"), "."))
 for _package in ("cryptography", "cffi", "pycparser"):
     datas.extend(copy_metadata(_package))
 if (ROOT / "build_assets" / "update_build.json").exists():
@@ -204,8 +215,12 @@ _hiddenimports = [
     "barcode.codex",
     "segno",
 ]
+if sys.platform == "darwin" or _auth_enabled:
+    _hiddenimports.append("pdfdocuedit_update_build")
 if _auth_enabled:
-    _hiddenimports += ["pdfdocuedit_auth_build", "keyring.backends.Windows", "win32ctypes.pywin32", "certifi"]
+    _hiddenimports += ["pdfdocuedit_auth_build", "certifi"]
+    _hiddenimports += (["keyring.backends.macOS", "keyring.backends.macOS.api"] if sys.platform == "darwin"
+                       else ["keyring.backends.Windows", "win32ctypes.pywin32"])
     for _package in ("supabase", "supabase_auth", "postgrest", "storage3", "supabase_functions", "realtime", "jaraco"):
         _hiddenimports.extend(collect_submodules(_package))
     for _package in ("supabase", "supabase-auth", "postgrest", "storage3", "supabase-functions", "realtime", "keyring", "certifi", "httpx", "httpcore", "jaraco.classes", "jaraco.context", "jaraco.functools"):

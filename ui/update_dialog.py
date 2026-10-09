@@ -13,6 +13,7 @@ from core.resources import APP_VERSION
 from ui.responsive import ResponsiveDialog
 from updates.protocol import Cancelled, check_release, download
 from updates.runtime import managed_root, request_restart
+from updates.target import build_target
 from updates.trust import PUBLIC_KEY_HEX, REPOSITORY
 
 
@@ -30,7 +31,9 @@ class UpdateWorker(QThread):
     def run(self):
         try:
             if self.release is None:
-                result = check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION)
+                target = build_target()
+                result = (check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION) if target.legacy else
+                          check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION, target=target))
             else:
                 result = download(
                     self.release, self.root / "staging",
@@ -71,7 +74,7 @@ class UpdateDialog(ResponsiveDialog):
         buttons.addWidget(self.action)
         buttons.addWidget(self.cancel)
         layout.addLayout(buttons)
-        if sys.platform == "darwin":
+        if sys.platform == "darwin" and self.root is None:
             self.status.setText(f"Current version: {APP_VERSION}. macOS uses manual DMG updates. Close the application before replacing it; your projects and user settings are retained.")
             self.action.setText("Open download page")
             self.action.clicked.disconnect(self.perform)
@@ -91,7 +94,7 @@ class UpdateDialog(ResponsiveDialog):
         return self.worker is not None and self.worker.isRunning()
 
     def perform(self):
-        if sys.platform == "darwin":
+        if sys.platform == "darwin" and self.root is None:
             self.open_mac_downloads()
             return
         if self.busy():

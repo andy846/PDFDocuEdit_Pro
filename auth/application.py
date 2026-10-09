@@ -1,6 +1,8 @@
 """Startup/login routing and recovery around the existing main window."""
 from __future__ import annotations
 
+import sys
+
 from PyQt6.QtCore import QEvent, QObject, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QDialog
@@ -15,10 +17,12 @@ from .ui import AccountDialog, LoginWindow, RecoveryDialog
 
 
 class PrivateApplication(QObject):
-    def __init__(self, app, config, viewer_factory, *, root=None, controller=None):
+    def __init__(self, app, config, viewer_factory, *, root=None, controller=None, open_paths=None):
         super().__init__(app)
         self.app, self.config, self.viewer_factory = app, config, viewer_factory
         self.root = root
+        self.open_paths = open_paths or (lambda viewer, paths: viewer.queue_open_files(paths))
+        self.update_restart = False
         self.controller = controller or AuthController(AccessClient(config), ApprovalStore(config.project_ref), self)
         self.viewer = None
         self.viewer_account = None
@@ -45,7 +49,7 @@ class PrivateApplication(QObject):
     def start(self, paths=()):
         self.pending_paths.extend(str(p) for p in paths)
         self.login.show()
-        self.controller.start()
+        self.controller.start(asynchronous=True) if sys.platform == "darwin" else self.controller.start()
 
     def managed_ready(self):
         self.ready = True
@@ -64,7 +68,7 @@ class PrivateApplication(QObject):
     def _drain_paths(self):
         if self.ready and self.viewer and not self.locked and self.controller.approval and self.pending_paths:
             paths, self.pending_paths = self.pending_paths, []
-            self.viewer.queue_open_files(paths)
+            self.open_paths(self.viewer, paths)
 
     def prepare_account(self, approval):
         if self.viewer and self.viewer_account != approval.user_id:
@@ -93,7 +97,8 @@ class PrivateApplication(QObject):
             self.account_action.triggered.connect(self.account)
             self.viewer.command_bar.add_settings_action(self.account_action)
             update = self.viewer._command_action_map.get("check_updates")
-            if update:
+            from updates.target import build_target
+            if update and build_target().channel != "private":
                 update.setEnabled(False)
                 update.setToolTip("Internal private build: public updates are disabled.")
         self._refresh_account_action()
@@ -224,6 +229,7 @@ class PrivateApplication(QObject):
             return
         old, self.viewer = self.viewer, None
         if old:
+            self.update_restart = bool(getattr(old, "_update_restart", False))
             old.removeEventFilter(self)
             old.deleteLater()
         purpose, self.closing_for = self.closing_for, None
@@ -251,9 +257,13 @@ class PrivateApplication(QObject):
         self.login.status.setText("Finishing account request…")
         if not self.controller.busy:
             self.app.removeEventFilter(self)
-            self.app.quit()
+            self._exit_app()
 
     def _idle(self):
         if self.exiting:
             self.app.removeEventFilter(self)
-            self.app.quit()
+            self._exit_app()
+
+    def _exit_app(self):
+        from updates.runtime import RESTART_EXIT_CODE
+        self.app.exit(RESTART_EXIT_CODE if self.update_restart else 0)

@@ -18,6 +18,7 @@ from .protocol import (
     read_json,
     version,
 )
+from .target import DEFAULT_TARGET, UpdateTarget
 
 ROOT_ENV = "PDFDOCUEDIT_UPDATE_ROOT"
 TOKEN_ENV = "PDFDOCUEDIT_LAUNCH_TOKEN"
@@ -111,8 +112,12 @@ def queue_launch(root: Path, paths: list[str]) -> None:
 
 
 class Installation:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, target: UpdateTarget = DEFAULT_TARGET, validator=None):
         self.root = root.resolve()
+        self.target = target
+        self.validator = validator
+        if target.platform == "macos-arm64" and validator is None:
+            raise UpdateError("Mac installations require bundle validation.")
         self.state_path = self.root / "state.json"
         for name in ("versions", "staging", "data", "backups", "logs", "requests"):
             path = self.root / name
@@ -134,14 +139,16 @@ class Installation:
         folder = self.root / "versions" / value
         if folder.resolve().parent != (self.root / "versions").resolve():
             raise UpdateError("Version directory points outside the installation.")
-        executable = folder / EXECUTABLE
+        executable = folder / self.target.executable
         if not executable.is_file():
             raise UpdateError(f"Application executable is missing for version {value}.")
+        if self.validator:
+            self.validator(folder, value, self.target)
         return executable
 
     def prepare(self, public_key: str) -> str:
         stage = self.root / "staging"
-        manifest = Manifest.verify((stage / "update.json").read_bytes(), (stage / "update.sig").read_bytes(), public_key)
+        manifest = Manifest.verify((stage / "update.json").read_bytes(), (stage / "update.sig").read_bytes(), public_key, target=self.target)
         state = self.state()
         if state["phase"] != "stable" or version(manifest.version) <= version(state["current"]):
             raise UpdateError("Update is not newer than the active stable version.")
@@ -154,6 +161,12 @@ class Installation:
             raise UpdateError("This version directory already exists. Preserve or remove it manually before retrying.")
         temporary = self.root / "versions" / f".staging-{uuid.uuid4().hex}"
         extract_archive(stage / "package.zip", temporary, manifest)
+        if self.validator:
+            try:
+                self.validator(temporary, manifest.version, self.target)
+            except Exception:
+                shutil.rmtree(temporary)
+                raise
         (temporary / ".managed-update").write_text(manifest.version, encoding="utf-8")
         temporary.rename(target)
         return manifest.version

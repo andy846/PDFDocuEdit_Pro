@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Every frozen/internal worker entry is checked before Qt or PDF imports.
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] in {
-    "--print-worker", "--pdf-operations-worker", "--composition-worker", "--composition-smoke",
+    "--print-worker", "--pdf-operations-worker", "--composition-worker", "--composition-smoke", "--macos-smoke",
 }:
     from auth.guard import require_worker_access
     require_worker_access()
@@ -421,7 +421,7 @@ def _run_application(root: Path | None) -> int:
             QTimer.singleShot(200, viewer._update_title_bar)
             return viewer
 
-        private = PrivateApplication(app, auth_config, private_viewer, root=root)
+        private = PrivateApplication(app, auth_config, private_viewer, root=root, open_paths=route_open_files)
         app._private_session = private
         app.fileOpenRequested.connect(lambda path: private.accept_paths([path]))
         instance_router.pathsReceived.connect(private.accept_paths)

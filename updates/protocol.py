@@ -7,7 +7,9 @@ import json
 import os
 import re
 import shutil
+import ssl
 import stat
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -19,6 +21,8 @@ from pathlib import Path, PurePosixPath
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from .target import DEFAULT_TARGET, UpdateTarget
 
 PRODUCT = "PDFDocuEditPro"
 EXECUTABLE = "PDFDocuEdit Pro.exe"
@@ -83,9 +87,10 @@ class Manifest:
     size: int
     sha256: str
     expanded_size: int
+    target: UpdateTarget = UpdateTarget()
 
     @classmethod
-    def verify(cls, raw: bytes, signature: bytes, public_key_hex: str) -> Manifest:
+    def verify(cls, raw: bytes, signature: bytes, public_key_hex: str, *, target: UpdateTarget = DEFAULT_TARGET) -> Manifest:
         try:
             Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex)).verify(signature, raw)
         except (ValueError, InvalidSignature) as exc:
@@ -94,18 +99,20 @@ class Manifest:
             data = json.loads(raw)
             if not isinstance(data, dict):
                 raise ValueError("manifest must be an object")
-            if (data["schema"], data["product"], data["platform"]) != (1, PRODUCT, "windows-x64"):
+            if (data["schema"], data["product"], data["platform"]) != (1 if target.legacy else 2, PRODUCT, target.platform):
                 raise UpdateError("This update is not compatible with this application.")
+            if not target.legacy and (data.get("channel"), data.get("auth_project", "")) != (target.channel, target.auth_project):
+                raise UpdateError("Update channel/account project does not match this build.")
             version(data["version"])
             if version(data["min_launcher_version"]) > version(LAUNCHER_VERSION):
                 raise UpdateError("Please manually replace the launcher using the new deployment ZIP first.")
             for key, limit in (("size", MAX_ZIP_BYTES), ("expanded_size", MAX_EXPANDED_BYTES)):
                 if type(data[key]) is not int or not 0 < data[key] <= limit:
                     raise UpdateError("Update size exceeds the supported limit.")
-            asset = f"PDFDocuEdit-Pro-v{data['version']}-Update-Windows-x64.zip"
+            asset = target.asset(data['version'])
             if data["asset"] != asset or not re.fullmatch(r"[0-9a-f]{64}", data["sha256"]):
                 raise UpdateError("Invalid update filename or checksum.")
-            return cls(data["version"], asset, data["size"], data["sha256"], data["expanded_size"])
+            return cls(data["version"], asset, data["size"], data["sha256"], data["expanded_size"], target)
         except (KeyError, TypeError, ValueError) as exc:
             raise UpdateError("Invalid update manifest.") from exc
 
@@ -133,7 +140,11 @@ def _open(url: str):
     # store; no credentials or certificate-verification bypasses are embedded.
     media_type = "application/vnd.github+json" if urllib.parse.urlparse(url).hostname == "api.github.com" else "application/octet-stream"
     request = urllib.request.Request(url, headers={"User-Agent": f"{PRODUCT}-Updater/1", "Accept": media_type})
-    return urllib.request.build_opener(_HTTPSRedirect()).open(request, timeout=20)
+    handlers = [_HTTPSRedirect()]
+    if sys.platform == "darwin":
+        import certifi
+        handlers.append(urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where())))
+    return urllib.request.build_opener(*handlers).open(request, timeout=20)
 
 
 def fetch_small(url: str, limit: int) -> bytes:
@@ -153,7 +164,7 @@ class Release:
     notes: str
 
 
-def check_release(repository: str, public_key: str, current: str) -> Release | None:
+def check_release(repository: str, public_key: str, current: str, *, target: UpdateTarget = DEFAULT_TARGET) -> Release | None:
     if not public_key:
         raise UpdateError("Release signing has not been configured for this build.")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
@@ -162,15 +173,15 @@ def check_release(repository: str, public_key: str, current: str) -> Release | N
         payload = json.loads(fetch_small(f"https://api.github.com/repos/{repository}/releases/latest", 2 * CHUNK))
     except urllib.error.HTTPError as exc:
         if exc.code in (403, 429):
-            return check_release_direct(repository, public_key, current)
+            return check_release_direct(repository, public_key, current, target=target)
         if exc.code == 404:
             raise UpdateError("No public stable release is available yet.") from exc
         raise
     if payload.get("draft") or payload.get("prerelease"):
         return None
     tag = payload.get("tag_name", "")
-    target = tag.removeprefix("v")
-    if version(target) <= version(current):
+    target_version = tag.removeprefix("v")
+    if version(target_version) <= version(current):
         return None
     assets = {a["name"]: a["browser_download_url"] for a in payload.get("assets", [])}
 
@@ -182,10 +193,10 @@ def check_release(repository: str, public_key: str, current: str) -> Release | N
         _check_url(url)
         return url
 
-    raw = fetch_small(asset_url("update.json"), 65536)
-    signature = fetch_small(asset_url("update.sig"), 64)
-    manifest = Manifest.verify(raw, signature, public_key)
-    if manifest.version != target:
+    raw = fetch_small(asset_url(target.metadata + ".json"), 65536)
+    signature = fetch_small(asset_url(target.metadata + ".sig"), 64)
+    manifest = Manifest.verify(raw, signature, public_key, target=target)
+    if manifest.version != target_version:
         raise UpdateError("Release tag and signed version do not match.")
     return Release(manifest, raw, signature, asset_url(manifest.asset), str(payload.get("body") or "")[:20000])
 
@@ -253,6 +264,10 @@ def archive_members(archive: zipfile.ZipFile, expanded_size: int) -> list[zipfil
 
 
 def extract_archive(package: Path, destination: Path, manifest: Manifest) -> None:
+    if manifest.target.platform == "macos-arm64":
+        from .macos_archive import extract_bundle
+        extract_bundle(package, destination, manifest.expanded_size)
+        return
     # destination is newly created: no pre-existing symlinks/reparse points.
     destination.mkdir(parents=False, exist_ok=False)
     try:
@@ -272,7 +287,7 @@ def extract_archive(package: Path, destination: Path, manifest: Manifest) -> Non
         raise
 
 
-def check_release_direct(repository: str, public_key: str, current: str) -> Release | None:
+def check_release_direct(repository: str, public_key: str, current: str, *, target: UpdateTarget = DEFAULT_TARGET) -> Release | None:
     """Public-release redirect fallback when GitHub's shared API quota is exhausted."""
     with _open(f"https://github.com/{repository}/releases/latest") as response:
         final = urllib.parse.urlparse(response.geturl())
@@ -280,19 +295,19 @@ def check_release_direct(repository: str, public_key: str, current: str) -> Rele
         if final.hostname != "github.com" or not final.path.startswith(prefix):
             raise UpdateError("No public stable release is available yet.")
         tag = urllib.parse.unquote(final.path[len(prefix):])
-    target = tag.removeprefix("v")
-    if version(target) <= version(current):
+    target_version = tag.removeprefix("v")
+    if version(target_version) <= version(current):
         return None
     base = f"https://github.com/{repository}/releases/download/{urllib.parse.quote(tag, safe='')}/"
     try:
-        raw = fetch_small(base + "update.json", 65536)
-        signature = fetch_small(base + "update.sig", 64)
+        raw = fetch_small(base + target.metadata + ".json", 65536)
+        signature = fetch_small(base + target.metadata + ".sig", 64)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             raise UpdateError("The latest release has no signed update package yet.") from exc
         raise
-    manifest = Manifest.verify(raw, signature, public_key)
-    if manifest.version != target:
+    manifest = Manifest.verify(raw, signature, public_key, target=target)
+    if manifest.version != target_version:
         raise UpdateError("Release tag and signed version do not match.")
     return Release(manifest, raw, signature, base + manifest.asset,
                    f"Release notes: https://github.com/{repository}/releases/tag/{tag}")

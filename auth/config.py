@@ -41,7 +41,7 @@ def configuration() -> AuthConfig | None:
         return AuthConfig.from_dict(build.PROJECT)
     if os.environ.get("PDFDOCUEDIT_ENABLE_AUTH") != "1":
         return None
-    if sys.platform != "win32":
-        raise ValueError("Private authentication builds currently require Windows.")
+    if sys.platform not in {"win32", "darwin"}:
+        raise ValueError("Private authentication builds require Windows or macOS.")
     path = Path(__file__).resolve().parents[1] / "build_assets" / "auth" / "PROJECT.json"
     return AuthConfig.from_dict(json.loads(path.read_text(encoding="utf-8")))

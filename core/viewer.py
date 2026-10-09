@@ -7056,7 +7056,8 @@ class PDFViewer(QMainWindow):
     def _check_for_updates(self) -> None:
         from auth.config import configuration
 
-        if configuration() is not None:
+        from updates.target import build_target
+        if configuration() is not None and build_target().channel != "private":
             self._error("Private test build", "Public updates are disabled in this internal build.")
             return
         from ui.update_dialog import UpdateDialog
