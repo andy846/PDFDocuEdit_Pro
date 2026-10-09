@@ -35,6 +35,7 @@ class PrivateApplication(QObject):
         self.controller.revoked.connect(self.lock)
         self.controller.idle.connect(self._idle)
         self.app.setQuitOnLastWindowClosed(False)
+        self.app.installEventFilter(self)
         guard.runtime_access = False
 
     def start(self, paths=()):
@@ -44,6 +45,8 @@ class PrivateApplication(QObject):
 
     def managed_ready(self):
         self.ready = True
+        if self.viewer and not self.locked:
+            self.viewer.setEnabled(True)
         self._drain_paths()
 
     def accept_paths(self, paths):
@@ -92,7 +95,7 @@ class PrivateApplication(QObject):
             if update:
                 update.setEnabled(False)
                 update.setToolTip("Internal private build: public updates are disabled.")
-        self.viewer.setEnabled(True)
+        self.viewer.setEnabled(self.ready)
         self.viewer.show()
         self.login.hide()
         self._drain_paths()
@@ -182,6 +185,16 @@ class PrivateApplication(QObject):
             self._closed()
 
     def eventFilter(self, watched, event):
+        if self.locked and self.viewer and not guard.recovery_saving and event.type() in {
+            QEvent.Type.KeyPress, QEvent.Type.KeyRelease, QEvent.Type.Shortcut,
+            QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+            QEvent.Type.MouseButtonDblClick, QEvent.Type.Drop,
+        }:
+            owner = watched
+            while owner is not None:
+                if owner is self.viewer:
+                    return True
+                owner = owner.parent()
         if watched is self.viewer and event.type() == QEvent.Type.Close:
             QTimer.singleShot(0, self._closed)
         return super().eventFilter(watched, event)
@@ -226,8 +239,10 @@ class PrivateApplication(QObject):
         self.login.setEnabled(False)
         self.login.status.setText("Finishing account request…")
         if not self.controller.busy:
+            self.app.removeEventFilter(self)
             self.app.quit()
 
     def _idle(self):
         if self.exiting:
+            self.app.removeEventFilter(self)
             self.app.quit()

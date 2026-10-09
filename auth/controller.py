@@ -103,8 +103,8 @@ class AuthController(QObject):
             self.timer.stop()
             try:
                 self.store.clear()
-            except StorageError:
-                result = AuthResult(Outcome.REVOKED, "Access revoked. Windows could not remove the saved credential; contact support before restarting.")
+            except StorageError as error:
+                result = AuthResult(Outcome.REVOKED, "Access revoked. " + str(error))
             self.revoked.emit(result.message)
         self.message = result.message
         self.response.emit(result)

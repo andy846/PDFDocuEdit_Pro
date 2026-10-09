@@ -6,9 +6,10 @@ from .model import Approval, AuthResult, Outcome, timestamp
 
 
 class AccessClient:
-    def __init__(self, config: AuthConfig, *, factory=None):
+    def __init__(self, config: AuthConfig, *, factory=None, http_factory=None):
         self.config = config
         self.factory = factory
+        self.http_factory = http_factory
 
     def _create(self, http):
         if self.factory:
@@ -47,7 +48,7 @@ class AccessClient:
         import httpx
         try:
             # SDK session persistence/background refresh are disabled. One owned HTTP client per request.
-            with httpx.Client(timeout=httpx.Timeout(10), follow_redirects=False) as http:
+            with (self.http_factory or httpx.Client)(timeout=httpx.Timeout(10), follow_redirects=False) as http:
                 client = self._create(http)
                 return operation(client)
         except Exception as error:

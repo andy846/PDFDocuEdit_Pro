@@ -226,3 +226,22 @@ def test_actual_windows_credential_manager_roundtrip():
     finally:
         store.clear()
     assert store.load() is None
+    store.blocked_path.unlink(missing_ok=True)
+    store.blocked_path.parent.rmdir()
+
+
+def test_failed_credential_deletion_blocks_restart_until_new_signin(tmp_path):
+    class RefuseDeletion(MemoryBackend):
+        def delete_password(self, *args):
+            raise RuntimeError("PRIVATE_REFRESH")
+    backend = RefuseDeletion()
+    marker = tmp_path / "qa/require-signin"
+    store = ApprovalStore(CONFIG.project_ref, backend=backend, blocked_path=marker)
+    store.save(approval())
+    with pytest.raises(StorageError, match="blocked until sign-in"):
+        store.clear()
+    assert marker.read_bytes() == b""
+    assert backend.value is not None
+    assert ApprovalStore(CONFIG.project_ref, backend=backend, blocked_path=marker).load() is None
+    store.save(approval())
+    assert not marker.exists() and store.load() is not None

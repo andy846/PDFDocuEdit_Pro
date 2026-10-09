@@ -11,6 +11,7 @@ from auth.config import AuthConfig
 from auth.controller import AuthController
 from auth.model import Approval, timestamp
 from auth.store import ApprovalStore
+from tests.test_private_auth import pump
 
 CONFIG = AuthConfig("qatest", "https://qatest.supabase.co", "sb_publishable_qa")
 
@@ -132,6 +133,7 @@ def test_account_change_cancel_does_not_replace_cached_account(private, qt_appli
 
 
 def test_same_account_relogin_resumes_retained_workspace(private, qt_application):
+    private.managed_ready()
     original = approved()
     private.controller.commit_approval(original)
     viewer = private.viewer
@@ -156,3 +158,34 @@ def test_login_narrow_layout_and_password_cleared_on_submit(private, qt_applicat
     assert received == [("test@example.invalid", "中文Pass")]
     assert login.password.text() == ""
     assert login.submit.isVisible()
+
+
+def test_locked_worker_refuses_production_without_writing_ipc(tmp_path, qt_application, monkeypatch):
+    from composition.designer.process import Worker
+    monkeypatch.setattr(guard, "runtime_access", False)
+    monkeypatch.setattr(guard, "recovery_saving", True)
+    folder = tmp_path / "ipc"
+    worker = Worker(folder, {"task": "generate", "target": str(tmp_path / "production.pdf")})
+    errors = []
+    worker.failed.connect(errors.append)
+    pump(qt_application, lambda: bool(errors))
+    assert "paused" in errors[0]
+    assert not folder.exists() and not (tmp_path / "production.pdf").exists()
+
+
+def test_locked_worker_can_save_template_draft_without_ipc(tmp_path, qt_application, monkeypatch):
+    from composition.designer.process import Worker
+    from composition.template.model import Element, Template
+    from composition.template.serializer import load_project
+    monkeypatch.setattr(guard, "runtime_access", False)
+    monkeypatch.setattr(guard, "recovery_saving", True)
+    target = tmp_path / "retained.pdcx"
+    template = Template(elements=[Element(value="Unsaved {{Customer}}")])
+    worker = Worker(tmp_path / "ipc", {"task": "save", "target": str(target), "template": template.to_dict()})
+    results, ended = [], []
+    worker.resultReady.connect(results.append)
+    worker.ended.connect(lambda: ended.append(True))
+    pump(qt_application, lambda: bool(ended))
+    assert results[0]["project"] == str(target)
+    assert load_project(target).elements[0].value == "Unsaved {{Customer}}"
+    assert not (tmp_path / "ipc").exists()

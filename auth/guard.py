@@ -11,6 +11,8 @@ def recovery_save_allowed(request):
 
 
 def worker_allowed() -> bool:
+    if runtime_access is True:
+        return True
     if runtime_access is False:
         return False
     from .config import configuration
