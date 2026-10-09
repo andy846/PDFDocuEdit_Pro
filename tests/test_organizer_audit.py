@@ -28,6 +28,11 @@ from dialogs.organizer_tools import (
     SplitPlanDialog,
 )
 
+# Keep the shared application/theme alive between these modal-dialog cases.
+# The CI access violation occurred during organizer shortcut construction;
+# repeatedly recreating QApplication gives native style objects stale ownership.
+pytestmark = pytest.mark.usefixtures("qt_application")
+
 
 def make_pdf(path, layers=False, password=None):
     with fitz.open() as doc:

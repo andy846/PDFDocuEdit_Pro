@@ -3,7 +3,7 @@
 from pathlib import Path
 import os
 import sys
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 from core.resources import APP_VERSION
 
 ROOT = Path(SPECPATH)
@@ -12,6 +12,19 @@ MAC_ICON = ROOT / "build_assets" / "icon.icns"
 _win_icon_alt = ROOT / "icon_2.ico"
 WIN_ICON = _win_icon_alt if _win_icon_alt.exists() else ROOT / "icon.ico"
 WIN_VERSION = ROOT / "installer" / "PDFDocuEditPro.version.txt"
+_auth_enabled = os.environ.get("PDFDOCUEDIT_BUILD_AUTH") == "1"
+_auth_pathex = []
+if _auth_enabled:
+    if sys.platform != "win32":
+        raise RuntimeError("Private account builds currently target Windows only.")
+    import json as _auth_json
+    from auth.config import AuthConfig
+    _project = _auth_json.loads((ROOT / "build_assets/auth/PROJECT.json").read_text(encoding="utf-8"))
+    AuthConfig.from_dict(_project)
+    _auth_folder = ROOT / "build/auth-config"
+    _auth_folder.mkdir(parents=True, exist_ok=True)
+    (_auth_folder / "pdfdocuedit_auth_build.py").write_text("PROJECT = " + repr(_project) + "\n", encoding="utf-8")
+    _auth_pathex = [str(_auth_folder)]
 
 datas = [
     (str(ROOT / "Splash.png"), "."),
@@ -191,6 +204,12 @@ _hiddenimports = [
     "barcode.codex",
     "segno",
 ]
+if _auth_enabled:
+    _hiddenimports += ["pdfdocuedit_auth_build", "keyring.backends.Windows", "win32ctypes.pywin32", "certifi"]
+    for _package in ("supabase", "supabase_auth", "postgrest", "storage3", "supabase_functions", "realtime", "jaraco"):
+        _hiddenimports.extend(collect_submodules(_package))
+    for _package in ("supabase", "supabase-auth", "postgrest", "storage3", "supabase-functions", "realtime", "keyring", "certifi", "httpx", "httpcore", "jaraco.classes", "jaraco.context", "jaraco.functools"):
+        datas.extend(copy_metadata(_package))
 if _composition_enabled:
     _hiddenimports.append("scripts.composition_smoke")
 if sys.platform == "darwin":
@@ -201,7 +220,7 @@ if sys.platform == "win32":
 
 a = Analysis(
     [str(ROOT / "main.py")],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT), *_auth_pathex],
     binaries=binaries,
     datas=datas,
     hiddenimports=_hiddenimports,
@@ -210,7 +229,7 @@ a = Analysis(
     runtime_hooks=[str(ROOT / "scripts/pyinstaller_hooks/runtime_macos.py")] if sys.platform == "darwin" else [],
     # Keep builds deterministic even when they run in a broad Conda environment.
     # None of these optional pandas/test/notebook integrations are used by the app.
-    excludes=[
+    excludes=([] if _auth_enabled else ["supabase", "supabase_auth", "keyring", "pdfdocuedit_auth_build"]) + [
         "PyQt5",
         "tkinter",
         "pandas",
