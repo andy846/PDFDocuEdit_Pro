@@ -28,7 +28,7 @@ jobs:
           architecture: arm64
       - name: Install pinned Python dependencies
         run: |
-          python -m pip install -r requirements-macos.txt -r requirements-dev.txt
+          python -m pip install -r requirements-macos.txt -r requirements-dev.txt -r requirements-auth-macos.lock
           python -m pip check
       - name: Install native build tools
         run: brew install cmake autoconf automake libtool gettext pkgconf
@@ -69,6 +69,16 @@ jobs:
         run: python -m scripts.build --composition
       - name: Frozen application acceptance
         run: python -m scripts.macos_install_smoke --app 'dist/PDFDocuEdit Pro.app' --output build/macos-acceptance
+      - name: Build managed public Mac deployment
+        run: python -m scripts.build_macos_managed
+      - name: Build private account-gated Mac application
+        env:
+          PDFDOCUEDIT_BUILD_AUTH: '1'
+        run: python -m scripts.build --composition
+      - name: Frozen private login and worker admission
+        run: python -m scripts.macos_private_smoke --app 'dist/PDFDocuEdit Pro.app' --output build/macos-private-acceptance
+      - name: Build managed private Mac deployment
+        run: python -m scripts.build_macos_managed
       - name: Source and targeted platform tests
         run: python -m scripts.macos_test_plan
       - uses: actions/upload-artifact@v4
@@ -77,7 +87,12 @@ jobs:
           name: macOS-arm64-internal-candidate
           path: |
             release/*macOS-arm64.dmg*
+            release/*macOS-arm64-Private.dmg*
+            release/*Update-macOS-arm64*.zip*
+            release/candidate-update-macos-*.json
             build/macos-tests
             build/macos-acceptance/frozen.log
             build/macos-acceptance/results
+            build/macos-private-acceptance/*.log
+            build/macos-private-acceptance/results.json
           retention-days: 14

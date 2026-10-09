@@ -349,6 +349,21 @@ def route_open_files(viewer, paths):
 
 
 def main() -> int:
+    if getattr(sys, "frozen", False) and sys.platform == "darwin" and not os.environ.get(TOKEN_ENV):
+        from updates.macos import managed_shell
+        from updates.target import build_target
+        try:
+            launcher_path = managed_shell(Path(sys.executable), build_target())
+            if launcher_path is not None:
+                environment = os.environ.copy()
+                environment.pop(ROOT_ENV, None)
+                environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                subprocess.Popen([str(launcher_path), *sys.argv[1:]], env=environment)
+                return 0
+        except Exception:
+            from core.diagnostics import log_failure
+            log_failure("Managed Mac launcher could not start")
+            return 1
     if getattr(sys, "frozen", False) and sys.platform == "win32":
         if not os.environ.get(TOKEN_ENV):
             from updates.protocol import UpdateError

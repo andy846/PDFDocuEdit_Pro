@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,7 @@ from updates.protocol import (  # noqa: E402
     digest_file,
     version,
 )
+from updates.target import DEFAULT_TARGET  # noqa: E402
 
 
 def source_fingerprint() -> str:
@@ -73,7 +75,9 @@ def build_launcher(*, target=None) -> Path:
         folder = ROOT / "build/launcher-target"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "pdfdocuedit_update_build.py").write_text("TARGET = " + repr(asdict(target)) + "\n", encoding="utf-8")
-        extra = ["--paths", str(folder), "--hidden-import", "pdfdocuedit_update_build"]
+        atomic_json(folder / "update-target.json", asdict(target))
+        extra = ["--paths", str(folder), "--hidden-import", "pdfdocuedit_update_build",
+                 "--add-data", str(folder / "update-target.json") + ";."]
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed",
         "--name", "Launcher", "--contents-directory", "launcher_runtime", "--icon", str(ROOT / "icon.ico"),
@@ -88,7 +92,7 @@ def build_launcher(*, target=None) -> Path:
     return ROOT / "dist" / "Launcher"
 
 
-def create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey) -> list[Path]:
+def create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey, *, target=DEFAULT_TARGET) -> list[Path]:
     from scripts.build import _clean_portable_tree
 
     for path in dist.rglob("*"):
@@ -98,10 +102,10 @@ def create_packages(dist: Path, launcher: Path, release: Path, app_version: str,
         clean = Path(temporary) / "application"
         shutil.copytree(dist, clean, symlinks=True)
         _clean_portable_tree(clean)
-        return _create_packages(clean, launcher, release, app_version, key)
+        return _create_packages(clean, launcher, release, app_version, key, target=target)
 
 
-def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey) -> list[Path]:
+def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey, *, target=DEFAULT_TARGET) -> list[Path]:
     version(app_version)
     from updates.trust import PUBLIC_KEY_HEX
 
@@ -109,8 +113,19 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
         raise UpdateError("Signing key does not match the embedded trust anchor.")
     if not (dist / EXECUTABLE).is_file() or not (launcher / "Launcher.exe").is_file():
         raise UpdateError("Build the editor and launcher before packaging.")
+    from dataclasses import asdict
+    if target.platform != "windows-x64":
+        raise UpdateError("Use the Mac packager for Mac applications.")
+    identity = dist / "_internal/update-target.json"
+    if target.legacy:
+        if identity.exists() and json.loads(identity.read_text()) != asdict(target):
+            raise UpdateError("Cannot publish a private application as a public update.")
+    else:
+        for path in (identity, launcher / "launcher_runtime/update-target.json"):
+            if not path.is_file() or json.loads(path.read_text()) != asdict(target):
+                raise UpdateError("Application and launcher must match the private update identity.")
     release.mkdir(parents=True, exist_ok=True)
-    zip_path = release / f"PDFDocuEdit-Pro-v{app_version}-Update-Windows-x64.zip"
+    zip_path = release / target.asset(app_version)
     files = []
     from scripts.distribution_safety import assert_public_distribution
     try:
@@ -129,17 +144,20 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
     with zipfile.ZipFile(zip_path) as archive:
         archive_members(archive, expanded)
     metadata = {
-        "schema": 1, "product": PRODUCT, "platform": "windows-x64", "version": app_version,
+        "schema": 1 if target.legacy else 2, "product": PRODUCT, "platform": "windows-x64", "version": app_version,
         "min_launcher_version": LAUNCHER_VERSION, "asset": zip_path.name,
         "size": zip_path.stat().st_size, "expanded_size": expanded, "sha256": digest_file(zip_path),
     }
+    if not target.legacy:
+        metadata.update(channel=target.channel, auth_project=target.auth_project)
     raw = json.dumps(metadata, sort_keys=True, indent=2).encode("utf-8")
     signature = key.sign(raw)
-    Manifest.verify(raw, signature, PUBLIC_KEY_HEX).verify_archive(zip_path)
-    manifest_path, signature_path = release / "update.json", release / "update.sig"
+    Manifest.verify(raw, signature, PUBLIC_KEY_HEX, target=target).verify_archive(zip_path)
+    manifest_path, signature_path = release / (target.metadata + ".json"), release / (target.metadata + ".sig")
     manifest_path.write_bytes(raw)
     signature_path.write_bytes(signature)
-    deployment = release / f"PDFDocuEdit-Pro-v{app_version}-Managed-Portable-Windows-x64.zip"
+    suffix = "-Private" if target.channel == "private" else ""
+    deployment = release / f"PDFDocuEdit-Pro-v{app_version}-Managed-Portable-Windows-x64{suffix}.zip"
     with tempfile.TemporaryDirectory(prefix="pdfdocuedit-deployment-") as temporary:
         folder = Path(temporary) / PRODUCT
         shutil.copytree(launcher, folder)
@@ -167,6 +185,7 @@ def main() -> int:
     parser.add_argument("--key", type=Path, default=ROOT / ".update-keys" / "signing.pem")
     parser.add_argument("--skip-build", action="store_true", help="Reuse a matching, already built application; rebuild launcher")
     parser.add_argument("--run-tests", action="store_true", help="Explicitly repeat the full suite locally")
+    parser.add_argument("--private-auth", action="store_true", help="Build account-gated private updates; never a public installer")
     args = parser.parse_args()
     if args.command == "keygen":
         keygen(args.key)
@@ -179,6 +198,14 @@ def main() -> int:
 
     if sys.platform != "win32" or sys.version_info[:2] != (3, 12) or sys.maxsize <= 2**32:
         raise UpdateError("Release builds require Windows x64 and Python 3.12.")
+    target = DEFAULT_TARGET
+    if args.private_auth:
+        from updates.target import UpdateTarget
+        project = json.loads((ROOT / "build_assets/auth/PROJECT.json").read_text())
+        target = UpdateTarget("windows-x64", "private", project["project_ref"])
+        os.environ["PDFDOCUEDIT_BUILD_AUTH"] = "1"
+    elif os.environ.get("PDFDOCUEDIT_BUILD_AUTH") == "1":
+        raise UpdateError("Private builds require --private-auth; public packaging is blocked.")
     if int(APP_VERSION.split(".",1)[0])>=3 and not is_enabled():
         raise UpdateError("V3 release packages must enable Document Designer.")
     key = serialization.load_pem_private_key(args.key.read_bytes(), password=None)
@@ -202,12 +229,13 @@ def main() -> int:
     info_path = dist / "_internal" / "update_build.json"
     if not info_path.is_file() or json.loads(info_path.read_text(encoding="utf-8")) != build_info:
         raise UpdateError("Packaged application does not match this source tree. Build without --skip-build.")
-    launcher = build_launcher()
-    outputs = create_packages(dist, launcher, ROOT / "release", APP_VERSION, key)
+    launcher = build_launcher(target=target if not target.legacy else None)
+    outputs = create_packages(dist, launcher, ROOT / "release", APP_VERSION, key, target=target)
     from scripts.build_managed_installer import build_installer
 
-    installer = build_installer(outputs[3], APP_VERSION)
-    outputs.extend((installer, installer.with_suffix(installer.suffix + ".sha256")))
+    if target.legacy:
+        installer = build_installer(outputs[3], APP_VERSION)
+        outputs.extend((installer, installer.with_suffix(installer.suffix + ".sha256")))
     for output in outputs:
         print(output)
     return 0

@@ -9,12 +9,13 @@
 Apple Silicon 對齊工作在獨立 `codex/macos-parity` 分支進行，不替換目前 Windows 發布。
 專用 Mac CI 建置原生 qpdf、libzbar、Ghostscript 及離線 veraPDF／JRE，再檢查
 Designer、Workflow、Production Review、Barcode 與 PDF／PS 生產功能。
-候選 DMG 採用手動更新；OCR、Intel、自動更新與正式簽署／公證另待後續。
+Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows 共用登入批准、離線使用、撤銷覆核及簽章更新／回退核心。
+私人版使用 macOS Keychain，更新按平台及私人／公開渠道隔離。原生 Mac 安裝包驗收仍需通過 CI；OCR、Intel 及正式 Developer ID 簽署／公證另待後續。
 下載 Mac CI artifact 不代表已完成實機或打印機驗收。詳見 [macOS 開發與部署紀錄](docs/MACOS_PARITY.md)。
 
 ## 最新開發更新：生產覆核
 
-另有獨立的 **Windows private account 測試分支**：首次登入須在線取得帳戶批准，
+另有独立的 **Windows／macOS private account 測試分支**：首次登入須在線取得帳戶批准，
 其後使用 Windows Credential Manager 保存的批准可離線啟動；背景核對不傳送 PDF 或客戶資料。
 此功能未加入公開安裝包，不影響現有公開 Windows／Mac 使用方式。
 帳戶配置、停權／登出行為及驗收限制見 [Private account 開發及驗收](docs/PRIVATE_AUTH.md)。

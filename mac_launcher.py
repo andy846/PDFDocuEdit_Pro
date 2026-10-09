@@ -14,13 +14,14 @@ def main():
     from PyQt6.QtWidgets import QApplication, QMessageBox
 
     from launcher import supervise
-    from updates.macos import installation_for
+    from updates.macos import installation_for, register_shell
     from updates.runtime import FileLock, queue_launch
     from updates.target import UpdateTarget
     resources = Path(sys.executable).resolve().parent.parent / "Resources"
     settings = json.loads((resources / "bootstrap.json").read_text(encoding="utf-8"))
     target = UpdateTarget(**settings["target"])
     installation = installation_for(resources / "Initial.app", settings["version"], target)
+    register_shell(installation, sys.executable)
     root = installation.root
     handler = RotatingFileHandler(root / "logs/updater.log", maxBytes=1024 * 1024, backupCount=2, encoding="utf-8")
     logging.basicConfig(level=logging.INFO, handlers=[handler], format="%(asctime)s %(levelname)s %(message)s")
@@ -48,7 +49,10 @@ def main():
 
     signals = Completion()
     signals.ended.connect(app.exit)
-    signals.failed.connect(lambda text: QMessageBox.critical(None, "PDFDocuEdit Pro update", text))
+    def failed(text):
+        QMessageBox.critical(None, "PDFDocuEdit Pro update", text)
+        app.exit(1)
+    signals.failed.connect(failed)
 
     def run():
         try:
@@ -59,7 +63,7 @@ def main():
         except Exception:
             logging.exception("Mac launcher failed")
             signals.failed.emit("The application could not start. Your documents were not modified.")
-            result = 1
+            return
         signals.ended.emit(result)
 
     thread = threading.Thread(target=run, daemon=False)

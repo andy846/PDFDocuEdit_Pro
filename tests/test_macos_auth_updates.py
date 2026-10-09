@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import plistlib
 import stat
+import subprocess
 import sys
+import uuid
 import zipfile
 from types import SimpleNamespace
 
@@ -150,3 +152,107 @@ def test_native_bundle_links_and_permissions_roundtrip(tmp_path):
     extract_archive(package, destination, manifest)
     assert (destination / APP / "Contents/Resources/link").read_text() == "owned"
     assert (destination / MAC.executable).stat().st_mode & 0o111
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Native macOS Keychain")
+def test_native_keychain_roundtrip_and_signout(tmp_path):
+    project = "qatest" + uuid.uuid4().hex
+    store = ApprovalStore(project, blocked_path=tmp_path / "require-signin")
+    # Unique synthetic service only; never read or change a real user's session.
+    try:
+        assert store.load() is None
+        store.save(approval(project_ref=project))
+        assert store.load().project_ref == project
+        store.clear()
+        assert store.load() is None and store.blocked_path.exists()
+    finally:
+        if store.backend.get_password(store.service, store.username) is not None:
+            store.backend.delete_password(store.service, store.username)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Native arm64 code signing and bundle install")
+def test_native_signed_install_update_and_rollback(tmp_path):
+    from dataclasses import asdict
+
+    from scripts.build_macos_managed import create_update
+    from updates.macos import installation_for, validate_app
+
+    def native_app(folder, value):
+        app = fixture_app(folder, value)
+        source = folder / "fixture.c"
+        source.write_text("int main(void) { return 0; }")
+        subprocess.run(["/usr/bin/clang", "-arch", "arm64", str(source), "-o",
+                        str(app / "Contents/MacOS/PDFDocuEdit Pro")], check=True)
+        resources = app / "Contents/Resources"
+        resources.mkdir()
+        (resources / "update-target.json").write_text(json.dumps(asdict(MAC)))
+        subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
+        return app
+
+    old = native_app(tmp_path / "old", "3.0.3")
+    new = native_app(tmp_path / "new", "3.0.4")
+    instance = installation_for(old, "3.0.3", MAC, base=tmp_path / "managed")
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw().hex()
+    package = create_update(new, tmp_path / "release", "3.0.4", MAC, key=key, public_key=public)
+    import shutil
+    shutil.copy2(package, instance.root / "staging/package.zip")
+    shutil.copy2(package.parent / (MAC.metadata + ".json"), instance.root / "staging/update.json")
+    shutil.copy2(package.parent / (MAC.metadata + ".sig"), instance.root / "staging/update.sig")
+    assert instance.prepare(public) == "3.0.4"
+    validate_app(instance.root / "versions/3.0.4", "3.0.4", MAC)
+    instance.begin_trial("3.0.4")
+    assert instance.recover() and instance.state()["current"] == "3.0.3"
+    instance.begin_trial("3.0.4")
+    instance.commit(instance.state()["token"])
+    assert instance.state()["current"] == "3.0.4"
+
+
+def test_versioned_mac_app_routes_to_channel_matching_fixed_shell(tmp_path, monkeypatch):
+    from dataclasses import asdict
+
+    from updates.macos import managed_shell, register_shell
+    root = tmp_path / "managed"
+    instance = Installation(root, target=MAC, validator=lambda *_: None)
+    app = fixture_app(root / "versions/3.0.3", "3.0.3")
+    (app.parent / ".managed-update").write_text("3.0.3")
+    atomic_json(instance.state_path, {"current": "3.0.3", "previous": None, "phase": "stable"})
+    shell = fixture_app(tmp_path / "installed", "3.0.3")
+    resources = shell / "Contents/Resources"
+    resources.mkdir()
+    atomic_json(resources / "bootstrap.json", {"target": asdict(MAC)})
+    register_shell(instance, shell / "Contents/MacOS/PDFDocuEdit Pro")
+    monkeypatch.setattr("updates.macos.validate_app", lambda *_: None)
+    monkeypatch.setattr("updates.macos.subprocess.run", lambda *_a, **_k: None)
+    assert managed_shell(root / "versions/3.0.3" / MAC.executable, MAC) == shell / "Contents/MacOS/PDFDocuEdit Pro"
+    atomic_json(resources / "bootstrap.json", {"target": asdict(UpdateTarget("macos-arm64"))})
+    with pytest.raises(UpdateError, match="incomplete"):
+        managed_shell(root / "versions/3.0.3" / MAC.executable, MAC)
+    assert managed_shell(shell / "Contents/MacOS/PDFDocuEdit Pro", MAC) is None
+
+
+def test_private_windows_package_cannot_use_public_update_channel(tmp_path):
+    from dataclasses import asdict
+
+    from scripts.update_release import create_packages
+    dist = tmp_path / "app"
+    (dist / "_internal").mkdir(parents=True)
+    (dist / "PDFDocuEdit Pro.exe").write_bytes(b"fixture")
+    atomic_json(dist / "_internal/update-target.json", asdict(UpdateTarget("windows-x64", "private", "qatest")))
+    launcher = tmp_path / "launcher"
+    launcher.mkdir()
+    (launcher / "Launcher.exe").write_bytes(b"fixture")
+    key = Ed25519PrivateKey.generate()
+    import updates.trust
+    original = updates.trust.PUBLIC_KEY_HEX
+    try:
+        updates.trust.PUBLIC_KEY_HEX = key.public_key().public_bytes_raw().hex()
+        with pytest.raises(UpdateError, match="private application"):
+            create_packages(dist, launcher, tmp_path / "release", "3.0.4", key)
+        target = UpdateTarget("windows-x64", "private", "qatest")
+        atomic_json(launcher / "launcher_runtime/update-target.json", asdict(target))
+        outputs = create_packages(dist, launcher, tmp_path / "release", "3.0.4", key, target=target)
+        assert outputs[0].name == target.asset("3.0.4")
+        assert Manifest.verify(outputs[1].read_bytes(), outputs[2].read_bytes(), updates.trust.PUBLIC_KEY_HEX, target=target).target == target
+    finally:
+        updates.trust.PUBLIC_KEY_HEX = original

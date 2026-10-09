@@ -330,7 +330,7 @@ if sys.platform == "darwin":
         coll,
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
-        bundle_identifier="com.pdfdocuedit.pro",
+        bundle_identifier="com.pdfdocuedit.pro.private" if _auth_enabled else "com.pdfdocuedit.pro",
         version=APP_VERSION,
         info_plist={
             "CFBundleDisplayName": APP_NAME,

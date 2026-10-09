@@ -39,7 +39,8 @@ class ApprovalStore:
                 base = Path.home() / "Library/Application Support"
             else:
                 raise StorageError("A supported OS credential store is required.")
-            self.blocked_path = base / "PDFDocuEditPro/private-access" / project_ref / "require-signin"
+            if self.blocked_path is None:
+                self.blocked_path = base / "PDFDocuEditPro/private-access" / project_ref / "require-signin"
         self.backend = backend
 
     def load(self) -> Approval | None:

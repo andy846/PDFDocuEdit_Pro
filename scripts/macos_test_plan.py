@@ -4,6 +4,8 @@ from pathlib import Path
 from scripts.regression_suite import run
 
 TESTS = [
+    "tests/test_macos_auth_updates.py", "tests/test_updates.py", "tests/test_update_ui.py",
+    "tests/test_private_auth.py", "tests/test_private_auth_ui.py",
     "tests/test_macos_parity.py", "tests/test_entrypoint.py", "tests/test_printing.py",
     "tests/test_tools_port.py", "tests/test_mutation_transactions.py", "tests/test_io_atomic.py",
     "tests/test_pdf_operations.py", "tests/test_variables.py", "tests/test_v2_analysis.py",

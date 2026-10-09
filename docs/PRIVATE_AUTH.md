@@ -1,4 +1,4 @@
-# Private Windows account build (Issue #9)
+# Private account builds (Issue #9)
 
 This is an isolated internal acceptance build on v3.0.3. Public Windows/Mac
 builds remain authentication-free. No public release/version/format change.
@@ -33,10 +33,10 @@ Do not merge or distribute as a public update until the owner accepts the tests.
    email, including while using saved offline approval; it uses no toolbar space.
    The branded sign-in screen follows the application theme, supports keyboard
    submission, validates empty inputs and clears/hides the password on submission.
-   Public updater actions are
-   disabled in this test build to prevent installing an authentication-free
-   public package over a private build. Future private updates need their own
-   channel. This gate is not tamper-proof DRM against a local administrator.
+   The older Windows-only candidate disables public updates. The Mac parity
+   branch adds a signed private update channel shared by both platforms; it
+   rejects public packages and other account projects. This gate is not
+   tamper-proof DRM against a local administrator.
 
 ## Setup and owner actions
 
@@ -112,3 +112,7 @@ acceptance and a second Windows machine remain separate owner-assisted gates.
 
 See [owner setup runbook](SUPABASE_AUTH_SETUP.md) and
 [validation results and pending gates](PRIVATE_AUTH_VALIDATION.md).
+
+Mac Keychain storage, managed deployment and native test gates are described in
+[macOS account/update parity](MACOS_AUTH_UPDATES.md). The old Mac manual-update
+candidate does not contain these features; use a new Managed private DMG.

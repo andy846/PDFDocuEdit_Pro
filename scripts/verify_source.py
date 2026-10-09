@@ -15,6 +15,8 @@ ACTIVE = [
     ROOT / "styles",
     ROOT / "composition",
     ROOT / "auth",
+    ROOT / "updates",
+    ROOT / "mac_launcher.py",
 ]
 FORBIDDEN = {
     "PyQt5": "PyQt5 import",
