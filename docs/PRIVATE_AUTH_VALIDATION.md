@@ -21,6 +21,7 @@ or update release was changed. Public default builds remain authentication-free.
 | Actual Setup install/launch/uninstall | Dedicated fresh worktree QA folder; login readiness 1.83 seconds; install and uninstall successful |
 | Existing file associations | Compared before/after private Setup; unchanged |
 | Distribution safety | Private build/deployment scans passed; PEM allowance limited to exact installed certifi public CA bundle |
+| Actual Build Kit | 1,692 allowlisted files, 185,233,265 bytes; private names absent and new auth sources present |
 | UI fixtures | Login, account, recovery and account entry in both modes rendered/inspected at logical 960×640, dark/100% and light/200% |
 
 UI rendering used Qt offscreen fixtures with Segoe UI explicitly loaded because
@@ -49,6 +50,8 @@ Evidence: `build/private-packaged-final-2/result.json`.
 
 These artifacts are internal test outputs, not GitHub Releases or signed update
 packages. No production update private key was used.
+Product artifacts were built at `690b0a9`; later commits add documentation and
+source-only QA scripts, with no application-code changes.
 
 ## Owner-assisted gates still pending
 
