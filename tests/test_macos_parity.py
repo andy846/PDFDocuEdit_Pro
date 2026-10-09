@@ -83,6 +83,45 @@ def test_mac_ipc_endpoint_is_short_user_scoped_and_windows_is_unchanged(monkeypa
     assert main.local_server_endpoint(name) == name
 
 
+def test_mac_pdf_redo_alias_respects_user_conflicts(qt_application, monkeypatch, tmp_path):
+    import core.viewer as module
+    from core.settings import SettingsManager
+    monkeypatch.setattr(module, "SettingsManager", lambda: SettingsManager(tmp_path / "settings.json"))
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    viewer = module.PDFViewer()
+    command = next(c for c in viewer._commands if c.id == "redo")
+    assert command.alternate_shortcuts == ("Ctrl+Shift+Z",)
+    viewer.settings.set_shortcut_overrides({"main_menu": "Ctrl+Shift+Z"})
+    viewer._build_command_registry()
+    assert not next(c for c in viewer._commands if c.id == "redo").alternate_shortcuts
+    viewer.close()
+
+
+def test_mac_transition_cleanup_survives_rapid_switch_and_destroy(qt_application, monkeypatch):
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QWidget
+
+    import ui.workspace_modes as module
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    errors = []
+    monkeypatch.setattr(module.sys, "excepthook", lambda *args: errors.append(args))
+    modes = module.WorkspaceModes()
+    for name in ("pdf", "designer"):
+        modes.add_mode(name, QWidget())
+    modes.show()
+    qt_application.processEvents()
+    for name in ("designer", "pdf", "designer"):
+        modes.request_mode(name)
+    QTest.qWait(300)
+    assert modes.mode == "designer" and modes.overlay is None
+    modes.request_mode("pdf")
+    modes.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QTest.qWait(300)
+    assert not errors
+
+
 def test_mac_library_uses_owned_bundle_and_windows_labels_remain(monkeypatch, tmp_path):
     import pyzbar.zbar_library as zbar
 

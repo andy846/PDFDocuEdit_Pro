@@ -5323,10 +5323,10 @@ class PDFViewer(QMainWindow):
             if sequence:
                 used_shortcuts.add(sequence)
             resolved_commands.append(replace(command, shortcut=sequence))
-        # Restore the second standard Windows redo binding only when the user
+        # Restore the native-compatible redo alias only when the user
         # has not reassigned it (including a conflicting chord prefix).
         for index, command in enumerate(resolved_commands):
-            if command.id == "redo" and command.shortcut and "redo" not in overrides and sys.platform == "win32":
+            if command.id == "redo" and command.shortcut and "redo" not in overrides and sys.platform in {"win32", "darwin"}:
                 alias = "Ctrl+Shift+Z"
                 if not any(shortcut_conflict(alias, value) for value in used_shortcuts):
                     resolved_commands[index] = replace(command, alternate_shortcuts=(alias,))

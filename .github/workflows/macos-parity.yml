@@ -32,10 +32,10 @@ jobs:
           python -m pip check
       - name: Install native build tools
         run: brew install cmake autoconf automake libtool gettext pkgconf
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: native-cache
         with:
-          key: macos-arm64-native-${{ hashFiles('build_assets/macos/SOURCES.json', 'scripts/prepare_macos.py') }}
+          key: macos-arm64-native-${{ hashFiles('build_assets/macos/SOURCES.json', 'scripts/prepare_macos.py', 'build_assets/composition/BUNDLE_INFO.json', 'scripts/prepare_composition_assets.py') }}
           path: |
             build_assets/macos/qpdf
             build_assets/macos/zbar

@@ -117,12 +117,18 @@ class WorkspaceModes(QStackedWidget):
         self.focus = {}
         self.animations_enabled = True
         self.overlay = self.fade = None
+        self.transition_timeout = QTimer(self) if sys.platform == "darwin" else None
+        if self.transition_timeout:
+            self.transition_timeout.setSingleShot(True)
+            self.transition_timeout.timeout.connect(self._finish_transition)
 
     def add_mode(self, mode, widget):
         self.pages[WorkspaceMode(mode)] = widget
         self.addWidget(widget)
 
     def _finish_transition(self):
+        if self.transition_timeout:
+            self.transition_timeout.stop()
         if self.fade:
             self.fade.stop()
             self.fade.deleteLater()
@@ -167,11 +173,10 @@ class WorkspaceModes(QStackedWidget):
             self.fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self.fade.finished.connect(self._finish_transition)
             self.fade.start()
-            if sys.platform == "darwin":
+            if self.transition_timeout:
                 # The offscreen Mac animation clock can start late. Ensure an
                 # outgoing screenshot never blocks the newly selected mode.
-                animation = self.fade
-                QTimer.singleShot(200, lambda: self._finish_transition() if self.fade is animation else None)
+                self.transition_timeout.start(200)
 
     def set_animations_enabled(self, enabled):
         self.animations_enabled = bool(enabled)

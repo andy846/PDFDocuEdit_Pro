@@ -15,7 +15,7 @@ def main(argv):
     from composition.engine.barcode_profiles import BarcodeProfile
     from composition.media.model import PrinterProfile, default_media
     from composition.production.model import ProductionJob
-    from composition.template.model import Element, PageSpec, Template
+    from composition.template.model import DataConfig, Element, FontSpec, PageSpec, Template
     from core.pdf_runtime import qpdf_executable
     from core.printing import (
         PrintJob,
@@ -64,10 +64,20 @@ def main(argv):
     if not any(face["usable"] for face in catalogue["faces"]):
         raise RuntimeError("Mac installed font inventory is empty.")
     profile = BarcodeProfile.inserter().to_dict()
+    source = output / "客戶 data.csv"
+    source.write_text("Name,CustomerID\n田文,000000001\n陳明,000000002\n", encoding="utf-8-sig")
+    data = DataConfig(path=str(source))
+    imported = worker({"task": "import", "config": asdict(data), "target": str(output / "records.sqlite")})
     template = Template(pages=[PageSpec(elements=[Element(type="i25", width_mm=100, height_mm=14,
-                        barcode_profile=profile)]) for _ in range(3)], record_mode="generated",
-                        generated_count=2, media={"duplex": True})
-    job = ProductionJob(template.to_dict(), "", str(output / "production"))
+                        barcode_profile=profile), Element(value="{{Name}}", y_mm=35, width_mm=100,
+                        font=FontSpec(family="Noto Sans CJK HK"))]) for _ in range(3)],
+                        data=data, media={"duplex": True})
+    preview = worker({"task": "preview", "template": template.to_dict(), "store": imported["store"],
+                      "record": 2, "target": str(output / "record-preview.pdf")})
+    with fitz.open(preview["pdf"]) as pdf:
+        if len(pdf) != 1 or "陳明" not in pdf[0].get_text():
+            raise RuntimeError("Frozen imported-record CJK preview is incorrect.")
+    job = ProductionJob(template.to_dict(), imported["store"], str(output / "production"))
     context = {"kind": "template", "job": asdict(job)}
     reviewed = worker({"task": "production_review_check", "directory": str(output / "review"), "context": context})
     if reviewed["status"] != "checked" or (output / "production").exists():
@@ -99,8 +109,13 @@ def main(argv):
     finally:
         session.close()
     with fitz.open(generated["output_pdf"]) as pdf:
-        if len(pdf) != 8:
+        if len(pdf) != 8 or "田文" not in pdf[0].get_text():
             raise RuntimeError("Output cannot be reopened.")
+    from core.analysis import ValidationStatus
+    from core.verapdf import validate_with_verapdf
+    preflight = validate_with_verapdf(generated["output_pdf"], "2b")
+    if preflight.summary.status not in (ValidationStatus.PASS, ValidationStatus.FAIL):
+        raise RuntimeError(f"Frozen offline veraPDF is unavailable: {preflight.message}")
     host = viewer._mode_controller.host
     for project in list(host.projects):
         host.close_project(project, approved=True)

@@ -32,6 +32,11 @@ existing project host; PDF/PS/EPS continue through the background PDF queue.
 
 Native Qt shortcuts already map logical Ctrl to Command on macOS. They are not
 converted to Meta, which would incorrectly map back to physical Control.
+Designer uses Command+Shift+Z as its primary redo binding and also accepts
+Command+Y. PDF Workspace accepts both. User overrides and conflicts remain
+authoritative. The Finder instance endpoint is short and user-scoped; existing
+project files are identified by filesystem identity on Mac, respecting the
+volume's actual case sensitivity.
 
 The build refreshes qpdf hashes after PyInstaller relocation/signing and seals
 the application afterwards. Fonts must retain their original hashes. Frozen
@@ -72,3 +77,31 @@ Windows: initial 29 protection tests passed. An additional isolated six-module
 run passed 64 tests (entrypoint, printing, update UI, fonts, workspace modes,
 shortcut scopes), with no failures/errors/skips. Mac CI outcomes are recorded
 separately; do not interpret these Windows results as Mac acceptance.
+
+After native IPC/project/redo fixes, five isolated Windows modules passed 88
+tests, including all existing mode-switch and veraPDF fixture assertions.
+The initial cloud Windows affected-test run reached its 20-minute time limit
+without completing; this is **not** a pass or a substitute for the full merge gate.
+
+## Operator acceptance on the M-series Mac
+
+The internal candidate is for local acceptance, not public deployment:
+
+1. Close any existing Mac edition. Verify the downloaded DMG against its
+   accompanying SHA-256 file and copy the app to Applications.
+2. Open PDF, `.pdcx` and `.pdflow` files from Finder; a second launch should focus
+   the running app without losing unsaved tabs. Reopen an already open project.
+3. Check Command+S/O/Z/Shift+Z, text-field editing, mode switching, trackpad zoom,
+   Retina sharpness, narrow windows and both themes.
+4. Copy source data/background assets with a representative Windows project.
+   Locate missing sources and fonts explicitly. Compare preview and PDF output
+   against the Windows job: record/page counts, sequences, I25 values, reports
+   and Production Review approval must agree.
+5. Generate PDF + PS/JDF using neutral saved media profiles. Compare paper rules
+   and duplex plans first, then run a small printer/DFE job and confirm the actual
+   selected stocks. A generated PS file is not proof of hardware tray support.
+6. Check the native print dialog, cancellation and reopening/saving projects.
+
+Record Mac model, macOS version, printer/DFE, failures and the candidate commit.
+The internal ad-hoc signature is not Developer ID/notarization acceptance;
+public deployment remains a separate gate.
