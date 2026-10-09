@@ -46,9 +46,11 @@ def main():
     class Completion(QObject):
         ended = pyqtSignal(int)
         failed = pyqtSignal(str)
+        notice = pyqtSignal(str)
 
     signals = Completion()
     signals.ended.connect(app.exit)
+    signals.notice.connect(lambda text: QMessageBox.warning(None, "PDFDocuEdit Pro update", text))
     def failed(text):
         QMessageBox.critical(None, "PDFDocuEdit Pro update", text)
         app.exit(1)
@@ -59,7 +61,7 @@ def main():
             with FileLock(root / "app.lock"):
                 if installation.recover():
                     logging.warning("Recovered an interrupted update.")
-            result = supervise(installation, paths)
+            result = supervise(installation, paths, notify_callback=signals.notice.emit)
         except Exception:
             logging.exception("Mac launcher failed")
             signals.failed.emit("The application could not start. Your documents were not modified.")

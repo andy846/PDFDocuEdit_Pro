@@ -237,7 +237,8 @@ def test_release_metadata_pins_assets_and_ignores_old_versions(tmp_path, signing
     assert protocol.check_release("owner/repo", signing[1], "2.5.5") is None
 
 
-def test_supervisor_rolls_back_timeout_and_reopens_old(installation, signing, monkeypatch):
+@pytest.mark.parametrize("use_callback", [False, True])
+def test_supervisor_rolls_back_timeout_and_reopens_old(installation, signing, monkeypatch, use_callback):
     package(installation.root / "staging", signing)
     installation.begin_trial(installation.prepare(signing[1]))
     calls = []
@@ -269,7 +270,8 @@ def test_supervisor_rolls_back_timeout_and_reopens_old(installation, signing, mo
         calls.append(args[0])
         return Child(len(calls) > 1, kwargs["env"][TOKEN_ENV])
 
-    assert launcher.supervise(installation, [], spawn=spawn, timeout=0) == 0
+    options = {"notify_callback": notices.append} if use_callback else {}
+    assert launcher.supervise(installation, [], spawn=spawn, timeout=0, **options) == 0
     assert len(calls) == 2 and "2.5.5" in calls[1]
     assert notices and installation.state()["phase"] == "stable"
 

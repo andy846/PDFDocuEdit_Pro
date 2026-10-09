@@ -149,6 +149,19 @@ def test_same_account_relogin_resumes_retained_workspace(private, qt_application
     assert not private.locked and private.recovery is None
 
 
+def test_private_update_restart_retains_supervisor_exit_code(private, qt_application, monkeypatch):
+    from updates.runtime import RESTART_EXIT_CODE
+    codes = []
+    monkeypatch.setattr(qt_application, "exit", codes.append)
+    private.controller.commit_approval(approved())
+    private.viewer.allow_close = True
+    private.viewer._update_restart = True
+    private.quit()
+    pump(qt_application, lambda: bool(codes))
+    assert codes == [RESTART_EXIT_CODE]
+    assert private.viewer is None
+
+
 def test_login_narrow_layout_and_password_cleared_on_submit(private, qt_application):
     login = private.login
     login.resize(450, 350)

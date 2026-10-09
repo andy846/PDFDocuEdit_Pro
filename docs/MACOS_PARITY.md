@@ -3,9 +3,11 @@
 Baseline: Windows v3.0.3 + production review (`85b57d4`). Work is isolated on
 `codex/macos-parity`; no Windows release or public version change is implied.
 
-Apple Silicon is the initial target. OCR, Intel and managed automatic updates
-are excluded from this first internal DMG. Native and printer acceptance must
-run on macOS; Windows tests alone are not Mac acceptance evidence.
+Apple Silicon is the initial target. The original manual-update candidate below
+excluded account login and managed updates. The next phase adds both with the
+same Windows core: see [account/update parity](MACOS_AUTH_UPDATES.md). OCR and
+Intel remain excluded. Native and printer acceptance must run on macOS;
+Windows tests alone are not Mac acceptance evidence.
 
 ## Build and deployment
 
@@ -45,8 +47,9 @@ loader resolves the owned library rather than searching a developer's Homebrew.
 
 `.github/workflows/macos-parity.yml` builds on an arm64 macOS runner and retains
 the DMG/checksum and test evidence as an internal artifact. No GitHub Release or
-Windows deployment is published by this workflow. Copy/replace the application
-after closing it; Qt user settings and external projects remain outside `.app`.
+Windows deployment is published by this workflow. The standalone DMG requires
+manual replacement; the new **Managed** DMG runs the shared signed updater.
+User settings and external projects remain outside `.app`.
 
 ## Gates and known limits
 
@@ -68,8 +71,8 @@ after closing it; Qt user settings and external projects remain outside `.app`.
   missing fonts must not be silently changed.
 - The internal DMG is ad-hoc signed. Public distribution needs Developer ID,
   hardened runtime, timestamped signing, notarization and Gatekeeper acceptance.
-- OCR, Intel, managed automatic updates, new template/workflow schemas, and
-  printer-specific tray guarantees are excluded from the first candidate.
+- OCR, Intel, new template/workflow schemas, and printer-specific tray guarantees
+  are excluded. Managed update/account acceptance is tracked in the new phase.
 
 ## Validation record
 

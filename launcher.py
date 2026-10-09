@@ -45,9 +45,10 @@ def stop_child(child) -> None:
             child.wait(timeout=10)
 
 
-def supervise(installation: Installation, arguments: list[str], *, spawn=subprocess.Popen, timeout=STARTUP_TIMEOUT) -> int:
+def supervise(installation: Installation, arguments: list[str], *, spawn=subprocess.Popen, timeout=STARTUP_TIMEOUT, notify_callback=None) -> int:
     """The launcher stays alive while the editor runs; only it switches versions."""
     root = installation.root
+    inform = notify_callback or notify
     while True:
         state = installation.state()
         trial = state["phase"] == "trial"
@@ -85,7 +86,7 @@ def supervise(installation: Installation, arguments: list[str], *, spawn=subproc
             # Never restore files while an orphaned editor still holds its lock.
             with FileLock(root / "app.lock"):
                 recovered = installation.recover()
-            notify(f"Startup failed: {exc}" + ("\nThe previous version and settings were restored." if recovered else ""))
+            inform(f"Startup failed: {exc}" + ("\nThe previous version and settings were restored." if recovered else ""))
             if recovered:
                 arguments = []
                 continue
@@ -104,7 +105,7 @@ def supervise(installation: Installation, arguments: list[str], *, spawn=subproc
                 installation.begin_trial(target)
         except Exception as exc:
             logging.exception("Update preparation failed")
-            notify(f"Update could not be installed: {exc}\nThe current version will reopen.")
+            inform(f"Update could not be installed: {exc}\nThe current version will reopen.")
         arguments = []
 
 
