@@ -70,6 +70,19 @@ def test_windows_file_routing_unchanged(monkeypatch):
     assert len(main.pdf_arguments(["letter.pdcx", "sample.pdf"])) == 1
 
 
+def test_mac_ipc_endpoint_is_short_user_scoped_and_windows_is_unchanged(monkeypatch):
+    import main
+    name = "PDFDocuEditPro-" + "a" * 180
+    monkeypatch.setattr(main.sys, "platform", "darwin")
+    monkeypatch.setattr(main.os, "getuid", lambda: 501, raising=False)
+    endpoint = main.local_server_endpoint(name)
+    assert endpoint.startswith("/tmp/pdfdocuedit-501-") and len(endpoint.encode()) < 100
+    assert endpoint == main.local_server_endpoint(name)
+    assert endpoint != main.local_server_endpoint(name + "another")
+    monkeypatch.setattr(main.sys, "platform", "win32")
+    assert main.local_server_endpoint(name) == name
+
+
 def test_mac_library_uses_owned_bundle_and_windows_labels_remain(monkeypatch, tmp_path):
     import pyzbar.zbar_library as zbar
 

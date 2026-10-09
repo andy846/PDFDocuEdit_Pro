@@ -78,15 +78,26 @@ class PDFDocuEditApplication(QApplication):
 SINGLE_INSTANCE_KEY = f"{APP_SLUG}-v1-1-single-instance"
 
 
+def local_server_endpoint(name):
+    if sys.platform != "darwin":
+        return name
+    # macOS TMPDIR paths can exceed sockaddr_un's limit before Qt appends the
+    # server name. Use a short, deterministic endpoint isolated by user ID.
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:24]
+    return f"/tmp/pdfdocuedit-{os.getuid()}-{digest}.sock"
+
+
 class SingleInstanceRouter(QObject):
-    """Forward later Windows launches to the first running application."""
+    """Forward later launches to the first running application."""
 
     pathsReceived = pyqtSignal(list)
 
     def __init__(self, server_name: str = SINGLE_INSTANCE_KEY, parent=None):
         super().__init__(parent)
-        self.server_name = server_name
+        self.server_name = local_server_endpoint(server_name)
         self._server = QLocalServer(self)
+        if sys.platform == "darwin":
+            self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self._server.newConnection.connect(self._accept_connections)
         self._buffers: dict[QLocalSocket, bytearray] = {}
 
@@ -106,7 +117,7 @@ class SingleInstanceRouter(QObject):
         timeout_ms: int = 700,
     ) -> bool:
         socket = QLocalSocket()
-        socket.connectToServer(server_name)
+        socket.connectToServer(local_server_endpoint(server_name))
         if not socket.waitForConnected(timeout_ms):
             socket.abort()
             return False

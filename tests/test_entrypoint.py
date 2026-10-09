@@ -227,8 +227,9 @@ for _ in range(20):
     name = 'PDFDocuEditPro-lifetime-' + uuid.uuid4().hex
     router = SingleInstanceRouter(name)
     assert router.listen()
+    endpoint = router.server_name
     client = QLocalSocket()
-    client.connectToServer(name)
+    client.connectToServer(router.server_name)
     assert client.waitForConnected(1000)
     deadline = time.monotonic() + 3
     while not router._buffers and time.monotonic() < deadline:
@@ -245,7 +246,7 @@ for _ in range(20):
     gc.collect()
     app.processEvents()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    QLocalServer.removeServer(name)
+    QLocalServer.removeServer(endpoint)
 assert not errors, errors
 """
     environment = os.environ.copy()

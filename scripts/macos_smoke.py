@@ -35,6 +35,7 @@ def main(argv):
     viewer = viewer_module.PDFViewer()
     viewer.resize(960, 640)
     viewer.show()
+    viewer._mode_controller.set_animations_enabled(False)
     viewer._mode_controller.request_mode("designer")
     app.processEvents()
     viewer.grab().save(str(output / "designer.png"))

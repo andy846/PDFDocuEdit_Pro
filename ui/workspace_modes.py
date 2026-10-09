@@ -1,9 +1,10 @@
 """Persistent workspace modes and lightweight transitions; no document processing."""
 from __future__ import annotations
 
+import sys
 from enum import StrEnum
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -166,6 +167,11 @@ class WorkspaceModes(QStackedWidget):
             self.fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self.fade.finished.connect(self._finish_transition)
             self.fade.start()
+            if sys.platform == "darwin":
+                # The offscreen Mac animation clock can start late. Ensure an
+                # outgoing screenshot never blocks the newly selected mode.
+                animation = self.fade
+                QTimer.singleShot(200, lambda: self._finish_transition() if self.fade is animation else None)
 
     def set_animations_enabled(self, enabled):
         self.animations_enabled = bool(enabled)

@@ -19,6 +19,8 @@ def shortcut_blocked_by_editing(command_id):
 
 
 def redo_shortcuts():
+    if sys.platform == "darwin":
+        return [QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")]
     primary = QKeySequence(QKeySequence.StandardKey.Redo)
     return [primary, QKeySequence("Ctrl+Shift+Z")] if sys.platform == "win32" else [primary]
 

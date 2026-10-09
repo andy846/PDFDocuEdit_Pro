@@ -27,8 +27,12 @@ def run(app, output):
         if magic not in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"):
             continue
         dependencies = subprocess.check_output(["otool", "-L", str(file)], text=True)
-        if "/opt/homebrew/" in dependencies or "/usr/local/" in dependencies or "pdfdocuedit-native-" in dependencies:
-            raise RuntimeError(f"Bundle has a build-machine dependency: {file}\n{dependencies}")
+        for line in dependencies.splitlines()[1:]:
+            dependency = line.strip().split(" (", 1)[0]
+            if dependency.startswith("/") and not dependency.startswith(("/usr/lib/", "/System/Library/")):
+                raise RuntimeError(f"Bundle has a build-machine dependency: {file}\n{dependencies}")
+        if subprocess.check_output(["lipo", "-archs", str(file)], text=True).strip() != "arm64":
+            raise RuntimeError(f"Bundle contains an unexpected native architecture: {file}")
     with (output / "frozen.log").open("w") as log:
         subprocess.run([str(executable), "--macos-smoke", str(output / "results")], cwd=output,
                        env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600, check=True)

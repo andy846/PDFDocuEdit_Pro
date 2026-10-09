@@ -77,5 +77,6 @@ jobs:
           path: |
             release/*macOS-arm64.dmg*
             build/macos-tests
-            build/macos-acceptance
+            build/macos-acceptance/frozen.log
+            build/macos-acceptance/results
           retention-days: 14

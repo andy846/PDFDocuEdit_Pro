@@ -104,6 +104,8 @@ if _composition_enabled:
     if sys.platform == "darwin":
         from scripts.prepare_macos import require_arm64
         require_arm64()
+    elif sys.platform != "win32":
+        raise RuntimeError("Document Designer production builds require Windows x64 or macOS arm64.")
     import json as _json
     import hashlib as _hashlib
     _composition_root = ROOT / "build_assets" / "composition"

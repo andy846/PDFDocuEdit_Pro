@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from PyQt6 import sip
@@ -73,6 +74,12 @@ class DesignerProjectHost(QWidget):
 
     @staticmethod
     def identity(path):
+        if sys.platform == "darwin":
+            try:
+                stat = Path(path).expanduser().stat()
+                return (stat.st_dev, stat.st_ino)
+            except OSError:
+                pass
         return os.path.normcase(str(Path(path).expanduser().resolve()))
 
     def _append(self, project):

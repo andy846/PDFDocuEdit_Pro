@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import fitz
 import pytest
 from PyQt6.QtCore import Qt
@@ -180,7 +182,10 @@ def test_all_designer_project_types_report_real_redo_bindings(window):
         project = make()
         assert {s.toString() for s in project.actions["redo"].shortcuts()} == {"Ctrl+Y", "Ctrl+Shift+Z"}
         command = next(c for c in controller.commands() if c.id == "designer.redo")
-        assert command.shortcut == "Ctrl+Y" and command.alternate_shortcuts == ("Ctrl+Shift+Z",)
+        if sys.platform == "darwin":
+            assert command.shortcut == "Ctrl+Shift+Z" and command.alternate_shortcuts == ("Ctrl+Y",)
+        else:
+            assert command.shortcut == "Ctrl+Y" and command.alternate_shortcuts == ("Ctrl+Shift+Z",)
 
 
 def test_custom_global_shortcut_does_not_conflict_with_designer(window):
