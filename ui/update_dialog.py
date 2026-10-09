@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
@@ -70,16 +71,29 @@ class UpdateDialog(ResponsiveDialog):
         buttons.addWidget(self.action)
         buttons.addWidget(self.cancel)
         layout.addLayout(buttons)
-        if self.root is None:
+        if sys.platform == "darwin":
+            self.status.setText(f"Current version: {APP_VERSION}. macOS uses manual DMG updates. Close the application before replacing it; your projects and user settings are retained.")
+            self.action.setText("Open download page")
+            self.action.clicked.disconnect(self.perform)
+            self.action.clicked.connect(self.open_mac_downloads)
+        elif self.root is None:
             self.status.setText("Automatic ZIP updates require the managed portable edition. Extract the deployment ZIP once and open Launcher.exe.")
             self.action.setEnabled(False)
         else:
             QTimer.singleShot(0, self.perform)
 
+    def open_mac_downloads(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(f"https://github.com/{REPOSITORY}/releases"))
+
     def busy(self) -> bool:
         return self.worker is not None and self.worker.isRunning()
 
     def perform(self):
+        if sys.platform == "darwin":
+            self.open_mac_downloads()
+            return
         if self.busy():
             return
         if self.downloaded:

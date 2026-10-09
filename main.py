@@ -23,6 +23,12 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--compositio
     raise SystemExit(composition_worker_main(sys.argv[2:]))
 
 # Internal acceptance mode is available only in explicitly enabled development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--macos-smoke":
+    if sys.platform != "darwin" or os.environ.get("PDFDOCUEDIT_COMPOSITION_QA") != "1":
+        raise SystemExit("Mac acceptance requires an explicitly enabled Mac QA session.")
+    from scripts.macos_smoke import main as mac_smoke_main
+    raise SystemExit(mac_smoke_main(sys.argv[2:]))
+
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-smoke":
     from composition.enabled import is_enabled
     if not is_enabled() or os.environ.get("PDFDOCUEDIT_COMPOSITION_QA") != "1":
@@ -296,8 +302,25 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
     return [
         Path(os.path.abspath(os.path.expanduser(argument)))
         for argument in argv
-        if Path(argument).suffix.casefold() in {".pdf", ".ps", ".eps"}
+        if Path(argument).suffix.casefold() in ({".pdf", ".ps", ".eps", ".pdcx", ".pdflow"}
+                                              if sys.platform == "darwin" else {".pdf", ".ps", ".eps"})
     ]
+
+
+def route_open_files(viewer, paths):
+    """Finder projects use the existing host; PDF requests retain their queue."""
+    if sys.platform != "darwin":
+        viewer.queue_open_files(paths)
+        return
+    for path in paths:
+        if Path(path).suffix.casefold() in {".pdcx", ".pdflow"}:
+            controller = getattr(viewer, "_mode_controller", None)
+            if controller:
+                host = controller.ensure_host(create_default=False)
+                if host.open_project(path):
+                    controller.request_mode("designer")
+        else:
+            viewer.queue_open_files([path])
 
 
 def main() -> int:
@@ -358,7 +381,7 @@ def _run_application(root: Path | None) -> int:
     viewer = PDFViewer()
     # macOS FileOpen events each open in their own tab instead of replacing
     # the current document.
-    app.fileOpenRequested.connect(lambda path: viewer.queue_open_files([path]))
+    app.fileOpenRequested.connect(lambda path: route_open_files(viewer, [path]))
     app.activate_file_open_handler()
 
     def accept_forwarded_paths(forwarded: list[str]) -> None:
@@ -368,7 +391,7 @@ def _run_application(root: Path | None) -> int:
         viewer.raise_()
         viewer.activateWindow()
         if forwarded:
-            viewer.queue_open_files(forwarded)
+            route_open_files(viewer, forwarded)
 
     instance_router.pathsReceived.connect(accept_forwarded_paths)
     try:
@@ -388,7 +411,7 @@ def _run_application(root: Path | None) -> int:
     viewer.show()
     splash.finish(viewer)
     if paths and root is None:
-        viewer.queue_open_files([str(path) for path in paths])
+        route_open_files(viewer, [str(path) for path in paths])
     # Qt's HICON mask renders the title-bar icon as a white square; hand
     # Windows a correctly-masked icon once the native window exists.
     QTimer.singleShot(150, lambda: _force_windows_icon(viewer))

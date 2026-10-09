@@ -1,10 +1,11 @@
-"""Windows installed outline font catalogue and exact-face export; no Qt."""
+"""Installed outline font catalogue and exact-face export; no Qt."""
 from __future__ import annotations
 
 import hashlib
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
@@ -15,6 +16,9 @@ from core.io_atomic import atomic_output
 
 def installed_font_files():
     """Discover machine/per-user registered fonts, including nonstandard locations."""
+    if sys.platform == "darwin":
+        from core.system_fonts import _font_files
+        return list(_font_files())
     if os.name != "nt":
         return []
     import winreg

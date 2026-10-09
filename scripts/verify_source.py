@@ -51,8 +51,9 @@ def main() -> int:
         ROOT / "App_icon" / "Search.png",
         ROOT / "App_icon" / "insert.png",
         ROOT / "App_icon" / "delete.png",
-        ROOT / "Ghostscript" / "bin" / "gswin64c.exe",
     ]
+    if sys.platform == "win32":
+        required.append(ROOT / "Ghostscript" / "bin" / "gswin64c.exe")
     errors.extend(f"Missing resource: {path.relative_to(ROOT)}" for path in required if not path.exists())
     if sys.version_info[:2] != (3, 12):
         current = ".".join(map(str, sys.version_info[:3]))

@@ -1,0 +1,60 @@
+name: macOS parity candidate
+
+on:
+  push:
+    branches: [codex/macos-parity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      PDFDOCUEDIT_ENABLE_COMPOSITION: '1'
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - name: Install pinned Python dependencies
+        run: |
+          python -m pip install -r requirements-macos.txt -r requirements-dev.txt
+          python -m pip check
+      - name: Install native build tools
+        run: brew install cmake autoconf automake libtool gettext pkgconf
+      - name: Build verified native runtime sources
+        run: python -m scripts.prepare_macos
+      - name: Set source test runtime locations
+        run: |
+          echo "$GITHUB_WORKSPACE/build_assets/macos/ghostscript/bin" >> "$GITHUB_PATH"
+          echo "DYLD_LIBRARY_PATH=$GITHUB_WORKSPACE/build_assets/macos/zbar/lib" >> "$GITHUB_ENV"
+      - name: Source and targeted platform tests
+        run: |
+          python -m ruff check .
+          python -m scripts.verify_source
+          python -m scripts.macos_test_plan
+      - name: Prepare offline veraPDF
+        run: python -m scripts.prepare_verapdf
+      - name: Build internal application and DMG
+        run: python -m scripts.build --composition
+      - name: Frozen application acceptance
+        run: python -m scripts.macos_install_smoke --app 'dist/PDFDocuEdit Pro.app' --output build/macos-acceptance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macOS-arm64-internal-candidate
+          path: |
+            release/*macOS-arm64.dmg*
+            build/macos-tests
+            build/macos-acceptance
+          retention-days: 14

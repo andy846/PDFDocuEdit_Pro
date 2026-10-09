@@ -57,6 +57,10 @@ pytest_out*.txt
 build_assets/composition/*
 !build_assets/composition/BUNDLE_INFO.json
 
+!build_assets/macos/
+build_assets/macos/*
+!build_assets/macos/SOURCES.json
+
 # Isolated Composition font-fix development build
 /dist-font-fix/
 
