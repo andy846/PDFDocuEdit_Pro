@@ -1,4 +1,5 @@
 """Bounded Mac port gates, using the existing isolated module runner."""
+import argparse
 from pathlib import Path
 
 from scripts.regression_suite import run
@@ -19,4 +20,12 @@ TESTS = [
 
 
 if __name__ == "__main__":
-    raise SystemExit(run(TESTS, Path("build/macos-tests")))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--auth-updates", action="store_true", help="Only repeat the account/update and application lifecycle gates")
+    args = parser.parse_args()
+    selected = TESTS
+    if args.auth_updates:
+        selected = TESTS[:8] + ["tests/test_mutation_transactions.py", "tests/test_io_atomic.py",
+                               "tests/composition/test_workspace_modes.py"]
+        selected += ["tests/test_private_auth_build.py", "tests/test_update_release.py"]
+    raise SystemExit(run(selected, Path("build/macos-tests")))

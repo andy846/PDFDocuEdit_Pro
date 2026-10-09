@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import time
 import uuid
@@ -73,9 +74,82 @@ def run(app, output):
                 "unauthenticated_entries_blocked": True, "real_account_tested": False})
 
 
+def run_shell(shell, output):
+    """Exercise frozen parent/child isolation, duplicate launch and direct reroute."""
+    require_arm64()
+    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
+        raise RuntimeError("Managed shell smoke requires a disposable hosted CI account.")
+    shell, output = Path(shell).resolve(), Path(output).resolve()
+    settings = json.loads((shell / "Contents/Resources/bootstrap.json").read_text())
+    target = UpdateTarget(**settings["target"])
+    if target.channel != "private" or ApprovalStore(target.auth_project).load() is not None:
+        raise RuntimeError("Managed shell smoke requires a clean private CI account.")
+    root = Path.home() / "Library/Application Support/PDFDocuEditPro/managed" / f"private-{target.auth_project}-arm64"
+    if root.exists():
+        raise RuntimeError("Refusing to touch an existing managed installation.")
+    output.mkdir(parents=True, exist_ok=True)
+    environment = {k: v for k, v in os.environ.items() if not k.startswith(("DYLD_", "PYTHON", "GS_"))}
+    for name in (ROOT_ENV, TOKEN_ENV):
+        environment.pop(name, None)
+    environment.update(PATH="/usr/bin:/bin:/usr/sbin:/sbin", QT_QPA_PLATFORM="offscreen",
+                       PYINSTALLER_RESET_ENVIRONMENT="1")
+    executable = shell / "Contents/MacOS/PDFDocuEdit Pro"
+    child_pid = None
+    with (output / "shell-startup.log").open("w") as log:
+        process = subprocess.Popen([str(executable)], cwd=output, env=environment,
+                                   stdout=log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 120
+            while not list(root.glob("accepted-*.json")):
+                if process.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError("Frozen managed shell did not acknowledge its private child.")
+                time.sleep(0.1)
+            versioned = root / "versions" / settings["version"] / target.executable
+
+            def children():
+                result = subprocess.run(["/usr/bin/pgrep", "-P", str(process.pid)], capture_output=True, text=True, timeout=5)
+                matches = []
+                for value in result.stdout.split():
+                    pid = int(value)
+                    command = subprocess.check_output(["/bin/ps", "-p", str(pid), "-o", "command="], text=True, timeout=5)
+                    if str(versioned) in command:
+                        matches.append(pid)
+                return matches
+
+            found = children()
+            if len(found) != 1:
+                raise RuntimeError("Managed shell did not retain exactly one owned editor child.")
+            child_pid = found[0]
+            subprocess.run([str(executable)], cwd=output, env=environment, stdout=log,
+                           stderr=subprocess.STDOUT, timeout=30, check=True)
+            subprocess.run([str(versioned)], cwd=output, env=environment, stdout=log,
+                           stderr=subprocess.STDOUT, timeout=30, check=True)
+            deadline = time.monotonic() + 10
+            while list((root / "requests").glob("*.json")) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if children() != [child_pid] or list((root / "requests").glob("*.json")):
+                raise RuntimeError("Duplicate/direct launch did not route to the existing private login shell.")
+            atomic_json(output / "shell-results.json", {"frozen_parent_child": True,
+                        "duplicate_launch_routed": True, "direct_version_launch_routed": True})
+        finally:
+            # Only the observed child of this owned shell is signalled. Leave
+            # failed evidence for CI; never delete an operator's installation.
+            if child_pid is not None:
+                try:
+                    os.kill(child_pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=10)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--shell", type=Path)
     args = parser.parse_args()
-    run(args.app, args.output)
+    run_shell(args.shell, args.output) if args.shell else run(args.app, args.output)

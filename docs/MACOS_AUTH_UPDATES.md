@@ -80,6 +80,12 @@ signing, signed update installation, rollback and successful commit. They never
 read/change the operator's real session. The frozen private smoke refuses a Mac
 account with an existing real approval rather than clearing it.
 
+The native round-trip uses the CI account's actual Keychain. The service name is
+unique and the synthetic entry is deleted afterwards. Neither product nor tests
+change the operator's Keychain defaults or unlock it. This iteration uses
+`scripts.macos_test_plan --auth-updates` to repeat affected source tests;
+the complete Mac plan remains available without this flag for the merge gate.
+
 ## Remaining operator gates
 
 CI does not prove real-account login, Keychain permissions after an actual

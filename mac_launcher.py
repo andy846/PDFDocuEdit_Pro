@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def main():
-    from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
+    from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
     from PyQt6.QtWidgets import QApplication, QMessageBox
 
     from launcher import supervise
@@ -49,11 +49,33 @@ def main():
         notice = pyqtSignal(str)
 
     signals = Completion()
-    signals.ended.connect(app.exit)
-    signals.notice.connect(lambda text: QMessageBox.warning(None, "PDFDocuEdit Pro update", text))
+    notices = []
+    exit_code = None
+
+    def finished_notice(box):
+        notices.remove(box)
+        if not notices and exit_code is not None:
+            app.exit(exit_code)
+
+    def notice(text):
+        box = QMessageBox(QMessageBox.Icon.Warning, "PDFDocuEdit Pro update", text,
+                          QMessageBox.StandardButton.Ok)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        notices.append(box)
+        box.finished.connect(lambda _code: finished_notice(box))
+        box.show()
+
+    def ended(code):
+        nonlocal exit_code
+        exit_code = code
+        if not notices:
+            app.exit(code)
+
+    signals.ended.connect(ended)
+    signals.notice.connect(notice)
     def failed(text):
-        QMessageBox.critical(None, "PDFDocuEdit Pro update", text)
-        app.exit(1)
+        notice(text)
+        ended(1)
     signals.failed.connect(failed)
 
     def run():

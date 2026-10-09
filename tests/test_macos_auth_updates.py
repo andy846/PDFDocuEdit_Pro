@@ -203,6 +203,8 @@ def test_native_signed_install_update_and_rollback(tmp_path):
     validate_app(instance.root / "versions/3.0.4", "3.0.4", MAC)
     instance.begin_trial("3.0.4")
     assert instance.recover() and instance.state()["current"] == "3.0.3"
+    # Recovery quarantines the failed version; retry must validate/extract again.
+    assert instance.prepare(public) == "3.0.4"
     instance.begin_trial("3.0.4")
     instance.commit(instance.state()["token"])
     assert instance.state()["current"] == "3.0.4"

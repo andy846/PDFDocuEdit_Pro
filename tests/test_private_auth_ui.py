@@ -60,6 +60,8 @@ def private(qt_application):
     session = PrivateApplication(qt_application, CONFIG, Window, root="managed", controller=controller)
     yield session
     controller.stop()
+    if controller.busy:
+        pump(qt_application, lambda: not controller.busy)
     if session.viewer:
         session.viewer.allow_close = True
         session.viewer.removeEventFilter(session)
@@ -83,6 +85,8 @@ def approved(user="f63613d9-81b8-4a36-b765-a37b6e9e0916"):
 
 def test_no_viewer_before_approval_and_paths_wait_for_managed_ready(private, qt_application):
     private.start(["first.pdf"])
+    if private.controller.busy:
+        pump(qt_application, lambda: not private.controller.busy)
     private.accept_paths(["second.pdf"])
     assert private.viewer is None
     private.controller.commit_approval(approved())
