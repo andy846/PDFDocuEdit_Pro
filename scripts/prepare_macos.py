@@ -70,19 +70,21 @@ def prepare():
                 run(["cmake", "-S", source, "-B", folder / "cmake", "-DCMAKE_BUILD_TYPE=Release",
                      "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
                      f"-DCMAKE_INSTALL_PREFIX={prefix}", "-DBUILD_SHARED_LIBS=OFF", "-DBUILD_STATIC_LIBS=ON",
-                     "-DREQUIRE_CRYPTO_NATIVE=ON", "-DBUILD_TESTING=OFF"], source, env)
+                     "-DUSE_IMPLICIT_CRYPTO=OFF", "-DREQUIRE_CRYPTO_NATIVE=ON", "-DBUILD_TESTING=OFF"], source, env)
                 run(["cmake", "--build", folder / "cmake", "--parallel", jobs], source, env)
                 run(["cmake", "--install", folder / "cmake"], source, env)
             else:
                 if name == "zbar":
+                    env = {**env, "LIBS": "-liconv"}
                     run(["autoreconf", "-fi"], source, env)
-                    flags = ["--disable-video", "--without-x", "--without-jpeg", "--without-imagemagick",
+                    flags = ["--disable-nls", "--disable-doc", "--disable-video", "--without-x", "--without-jpeg", "--without-imagemagick",
                              "--without-gtk", "--without-qt", "--without-python", "--without-dbus"]
                 else:
                     flags = ["--without-x", "--disable-cups", "--without-tesseract", "--disable-dbus"]
                 run([source / "configure", f"--prefix={prefix}", *flags], source, env)
                 run(["make", "-j" + jobs], source, env)
                 run(["make", "install"], source, env)
+                env.pop("LIBS", None)
             license_dir = NATIVE / "licenses" / name
             license_dir.mkdir(parents=True, exist_ok=True)
             for pattern in ("COPYING*", "LICENSE*", "doc/COPYING*"):
