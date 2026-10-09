@@ -104,3 +104,6 @@ single-flight requests, stale results after sign-out, managed path routing,
 logout cancellation, account switch isolation, retained revoked workspace,
 Unicode passwords, narrow login layout and packaging exclusions. Real account
 acceptance and a second Windows machine remain separate owner-assisted gates.
+
+See [owner setup runbook](SUPABASE_AUTH_SETUP.md) and
+[validation results and pending gates](PRIVATE_AUTH_VALIDATION.md).
