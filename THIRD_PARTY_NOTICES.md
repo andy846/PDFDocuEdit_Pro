@@ -2,10 +2,11 @@
 
 ## Ghostscript 10.05.1
 
-The Windows distribution bundles Ghostscript for PDF/PostScript conversion.
+The Windows distribution and macOS arm64 candidate bundle Ghostscript for PDF/PostScript conversion.
 Ghostscript is distributed under GNU Affero General Public License version 3
 (with commercial licensing available separately from Artifex).
 The original licence text accompanies the runtime at `ghostscript/doc/COPYING`.
+The macOS candidate carries it at `native-licenses/ghostscript/COPYING`.
 Upstream source and release: https://github.com/ArtifexSoftware/ghostpdl/tree/gs10051
 No Ghostscript licence text or notices have been modified.
 
@@ -87,7 +88,12 @@ notices for its OpenSSL and Rust dependencies. Source: https://github.com/pyca/c
 ## Document Designer components (V3 production builds)
 
 qpdf 12.4.2 is distributed under Apache License 2.0. Its LICENSE.txt and
-NOTICE.md accompany the pinned Windows runtime. Source: https://github.com/qpdf/qpdf
+NOTICE.md accompany the pinned Windows runtime and the macOS candidate's
+`native-licenses/qpdf` directory. Source: https://github.com/qpdf/qpdf
+
+The macOS candidate bundles zbar 0.23.93 under LGPL 2.1 or later. Its original
+licence accompanies the runtime in `native-licenses/zbar`.
+Source: https://github.com/mchehab/zbar
 
 Noto Sans and Noto Sans CJK HK fonts are distributed under the SIL Open Font
 License 1.1. Their OFL texts accompany the font files.

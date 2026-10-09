@@ -89,7 +89,7 @@ def prepare():
                 env.pop("LIBS", None)
             license_dir = NATIVE / "licenses" / name
             license_dir.mkdir(parents=True, exist_ok=True)
-            for pattern in ("COPYING*", "LICENSE*", "doc/COPYING*"):
+            for pattern in ("COPYING*", "LICENSE*", "NOTICE*", "doc/COPYING*"):
                 for license_file in source.glob(pattern):
                     if license_file.is_file():
                         shutil.copy2(license_file, license_dir / license_file.name)

@@ -18,6 +18,10 @@ def finalize(app):
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("platform") != "macos-arm64":
         raise RuntimeError("Mac bundle has an incorrect native manifest.")
+    notices = app / "Contents/Resources/native-licenses"
+    for relative in ("qpdf/LICENSE.txt", "qpdf/NOTICE.md", "zbar/COPYING", "ghostscript/COPYING"):
+        if not (notices / relative).is_file():
+            raise RuntimeError(f"Mac bundle is missing a native licence/notice: {relative}")
     executable = root / "qpdf/qpdf"
     subprocess.run([str(executable), "--version"], check=True)
     for entry in manifest["assets"]:
