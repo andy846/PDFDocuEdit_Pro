@@ -55,12 +55,31 @@ source-only QA scripts, with no application-code changes.
 
 ## Owner-assisted gates still pending
 
+### GitHub CI follow-up
+
+The first PR CI run passed Windows core, macOS/Linux core and source quality.
+Private auth UI tests passed too. The Windows UI job failed with a native access
+violation in the existing Organizer audit module during shortcut construction.
+That module created per-test QApplication instances rather than requesting the
+existing retained session fixture. It now uses `qt_application` for the entire
+module; all 13 assertions pass locally. No tests/assertions were removed. Remote
+CI must confirm this lifecycle correction before the PR leaves draft.
+
+### Live backend onboarding
+
+The owner subsequently requested one account to be provisioned through the
+normal Supabase Auth API. Its allowlist grant is active; email confirmation is
+still required before real login acceptance. No password/account identity is
+stored in this repository. Public signup is still enabled; anonymous login is
+disabled. Owner-assisted account/security gates below remain pending.
+
 - Real approved/unapproved account login, wrong passwords and session expiry.
 - Actual backend cross-account isolation using two provisioned users.
 - Live revocation while PDF/Designer/Workflow have unsaved work; save/re-login
   and logout cancellation with actual credentials.
-- Owner disables signup and anonymous login, privately provisions accounts and
-  sets the allowlist. Latest read-only query still showed **0 users/0 grants**.
+- Owner disables public signup and provisions a second isolated test account
+  for cross-account checks. Anonymous login is already disabled; one approved
+  account awaits email confirmation.
 - Native desktop layout/DPI and a second Windows machine.
 
 Read-only backend inspection confirmed the applied migration, own-row RLS and
