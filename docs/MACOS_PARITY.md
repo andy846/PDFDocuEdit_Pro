@@ -93,6 +93,42 @@ The first packaging attempt rejected the moving latest veraPDF archive; its
 fixed official 1.30.2 archive was verified against the original checksum without
 changing the validator or Java version.
 
+Native bundle gate at `f460932` (Actions run `37882683234`): the DMG build and
+copied-app acceptance passed on macOS 14 arm64. The copied application ran with
+Homebrew/development runtime paths removed. Checks covered installed fonts,
+Chinese CSV import and record preview, Production Review, duplex I25 generation
+(2 records, 8 output pages, 4 decoded barcodes), PDF reopening/searchable Chinese
+text, PostScript output, the persistent print worker and offline veraPDF.
+The validator check establishes that veraPDF runs; it does not assert PDF/A
+conformance of the sample production PDF.
+
+The final source gate at the same commit passed 345 tests across all 21 selected
+modules, with one Windows-registry-only font test skipped and zero failures or
+errors. The downloaded DMG was verified against its companion SHA-256:
+`778d08a35aefac811567296a087eae1037fe265dda9a6f09b8b907571e10f1b5`.
+
+Windows CI at the same commit (Actions run `37882683255`) passed. This is CI
+protection evidence, not the full Windows release/build/install merge gate.
+
+## Internal candidate delivery
+
+Download the `macOS-arm64-internal-candidate` artifact from the successful
+[Mac candidate run](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/37882683234/artifacts/11595915278).
+The ZIP contains the DMG and its SHA-256 file under `release/`, test evidence
+under `build/macos-tests/`, and copied-app results/screenshots under
+`build/macos-acceptance/results/`. Artifact access requires repository access
+and expires after 14 days; it is not a public release.
+
+In Terminal, compare the downloaded DMG checksum with its companion file:
+
+```sh
+shasum -a 256 /path/to/PDFDocuEdit-Pro-3.0.3-macOS-arm64.dmg
+```
+
+Use the actual filename supplied in `release/`. The internal application is
+ad-hoc signed and has not been notarized; macOS may require explicit operator
+approval to open it. Record that result in the acceptance checklist below.
+
 ## Operator acceptance on the M-series Mac
 
 The internal candidate is for local acceptance, not public deployment:
