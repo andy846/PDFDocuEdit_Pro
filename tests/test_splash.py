@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtGui import QColor, QPixmap
 
-from ui.splash import create_splash, splash_pixmap
+from ui.splash import StartupSplash, create_splash, splash_pixmap
 
 
 @pytest.mark.parametrize("dpr", [1.0, 1.5, 2.0])
@@ -49,3 +49,34 @@ def test_real_artwork_preserves_transparent_corner(qt_application):
     source = QPixmap(str(Path(__file__).resolve().parents[1] / "Splash.png"))
     result = splash_pixmap(source, "3.0.2", max_width=source.width())
     assert result.toImage().pixelColor(0, 0) == source.toImage().pixelColor(0, 0)
+
+
+def test_private_splash_dismissal_keeps_event_loop_responsive(qt_application):
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtTest import QTest
+
+    splash = StartupSplash(QPixmap(100, 100), minimum_ms=100)
+    splash.show()
+    splash.finish_startup()
+    events = []
+    QTimer.singleShot(0, lambda: events.append("login ready"))
+    qt_application.processEvents()
+    assert events == ["login ready"]
+    assert splash.isVisible()
+    QTest.qWait(150)
+    assert not splash.isVisible()
+    splash.deleteLater()
+
+
+def test_splash_quit_and_manual_close_stop_pending_dismissal(qt_application):
+    splash = StartupSplash(QPixmap(100, 100))
+    splash.show()
+    splash.finish_startup()
+    assert splash._dismiss.isActive()
+    splash.close()
+    assert not splash._dismiss.isActive()
+    splash.show()
+    splash.finish_startup()
+    qt_application.aboutToQuit.emit()
+    assert not splash.isVisible() and not splash._dismiss.isActive()
+    splash.deleteLater()

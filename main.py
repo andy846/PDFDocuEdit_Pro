@@ -422,6 +422,10 @@ def _run_application(root: Path | None) -> int:
         if SingleInstanceRouter.forward_to_primary(paths, server_name):
             return 0
 
+    splash = _create_splash()
+    splash.show()
+    app.processEvents()
+
     if auth_config is not None:
         from auth.application import PrivateApplication
 
@@ -441,6 +445,7 @@ def _run_application(root: Path | None) -> int:
         app.fileOpenRequested.connect(lambda path: private.accept_paths([path]))
         instance_router.pathsReceived.connect(private.accept_paths)
         private.start(paths)
+        splash.finish_startup()
         app.activate_file_open_handler()
         if root is not None:
             from updates.app_session import activate
@@ -448,10 +453,6 @@ def _run_application(root: Path | None) -> int:
             # waiting for a human password entry or a network request.
             QTimer.singleShot(300, lambda: activate(private, private.accept_paths, on_ready=private.managed_ready))
         return app.exec()
-
-    splash = _create_splash()
-    splash.show()
-    app.processEvents()
 
     viewer = PDFViewer()
     # macOS FileOpen events each open in their own tab instead of replacing

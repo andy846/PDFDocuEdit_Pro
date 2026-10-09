@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtCore import QElapsedTimer, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 
@@ -52,9 +52,38 @@ def splash_pixmap(
     return pixmap
 
 
-def create_splash(path: Path, version: str) -> QSplashScreen:
+class StartupSplash(QSplashScreen):
+    """Keep fast private startup visible without delaying login or readiness."""
+
+    def __init__(self, pixmap: QPixmap, *, minimum_ms: int = 750):
+        super().__init__(pixmap, Qt.WindowType.WindowStaysOnTopHint)
+        self._minimum_ms = max(0, minimum_ms)
+        self._shown = QElapsedTimer()
+        self._dismiss = QTimer(self)
+        self._dismiss.setSingleShot(True)
+        self._dismiss.timeout.connect(self.close)
+        app = QApplication.instance()
+        if app:
+            app.aboutToQuit.connect(self.close)
+
+    def showEvent(self, event):
+        if not self._shown.isValid():
+            self._shown.start()
+        super().showEvent(event)
+
+    def finish_startup(self) -> None:
+        """Login is ready; dismiss asynchronously, never wait for credentials."""
+        elapsed = self._shown.elapsed() if self._shown.isValid() else self._minimum_ms
+        self._dismiss.start(max(0, self._minimum_ms - elapsed))
+
+    def closeEvent(self, event):
+        self._dismiss.stop()
+        super().closeEvent(event)
+
+
+def create_splash(path: Path, version: str) -> StartupSplash:
     screen = QApplication.primaryScreen()
     dpr = screen.devicePixelRatio() if screen else 1.0
     width = max(320, int(screen.availableGeometry().width() * 0.45)) if screen else 520
     source = QPixmap(str(path)) if path.is_file() else QPixmap()
-    return QSplashScreen(splash_pixmap(source, version, max_width=width, dpr=dpr))
+    return StartupSplash(splash_pixmap(source, version, max_width=width, dpr=dpr))

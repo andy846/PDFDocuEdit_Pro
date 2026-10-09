@@ -7,6 +7,94 @@ import time
 import uuid
 from pathlib import Path
 
+import pytest
+
+
+@pytest.mark.parametrize("case", ["public", "private-login", "private-cache", "forwarded"])
+def test_primary_gui_startup_shows_splash_without_blocking_login(case):
+    script = """
+import sys
+import traceback
+from types import SimpleNamespace as NS
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QMainWindow
+import main
+import auth.application
+import auth.config
+from auth.controller import AuthController
+from auth.model import Approval, timestamp
+from ui.splash import StartupSplash
+from PyQt6.QtGui import QPixmap
+
+case = sys.argv[1]
+class App(main.PDFDocuEditApplication):
+    def exec(self):
+        QTimer.singleShot(350, check)
+        return super().exec()
+app = App(['splash-entrypoint-test'])
+main.create_application = lambda: app
+main.SingleInstanceRouter.forward_to_primary = staticmethod(lambda *args: case == 'forwarded')
+main.SingleInstanceRouter.listen = lambda self: True
+auth.config.configuration = lambda: None if case == 'public' else NS(project_ref='splashfixture')
+splashes = []
+def create():
+    splash = StartupSplash(QPixmap(100, 100), minimum_ms=100)
+    splashes.append(splash)
+    return splash
+main._create_splash = create
+main._force_windows_icon = lambda viewer: None
+class Window(QMainWindow):
+    def __init__(self):
+        assert len(splashes) == 1 and splashes[0].isVisible()
+        super().__init__()
+        self.command_bar = NS(add_settings_action=lambda action: None)
+        self._command_action_map = {}
+        self.settings = NS(get_theme=lambda: 'dark')
+        self._update_title_bar = lambda: None
+        self.offer_default_app = lambda: None
+        self.queue_open_files = lambda paths: None
+main.PDFViewer = Window
+class Controller(AuthController):
+    def start(self, **kwargs):
+        if case == 'private-cache':
+            now = timestamp()
+            self.approval = Approval('splashfixture', 'fixture', 'test@example.invalid', 'fixture', now, now)
+            self.approved.emit(self.approval)
+        self.changed.emit()
+class Session(auth.application.PrivateApplication):
+    def __init__(self, app, config, factory, **kwargs):
+        assert splashes[0].isVisible()
+        super().__init__(app, config, factory, controller=Controller(NS(), NS()), **kwargs)
+auth.application.PrivateApplication = Session
+checks = []
+errors = []
+def check():
+    try:
+        assert len(splashes) == 1 and not splashes[0].isVisible()
+        if case.startswith('private'):
+            private = app._private_session
+            if case == 'private-cache':
+                assert private.viewer.isVisible() and not private.login.isVisible()
+            else:
+                assert private.viewer is None and private.login.isVisible()
+        checks.append(True)
+    except Exception:
+        errors.append(traceback.format_exc())
+    finally:
+        app.quit()
+assert main._run_application(None) == 0
+assert not errors, errors
+assert checks == ([] if case == 'forwarded' else [True])
+assert len(splashes) == (0 if case == 'forwarded' else 1)
+"""
+    environment = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    result = subprocess.run(
+        [sys.executable, "-c", script, case],
+        cwd=Path(__file__).resolve().parents[1], env=environment,
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
 
 def test_pdf_arguments_picks_pdf_files_from_argv(tmp_path) -> None:
     script = """
