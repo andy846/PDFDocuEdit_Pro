@@ -17,7 +17,7 @@ def bootstrap():
             if getattr(sys, name) is None:
                 setattr(sys, name, os.fdopen(os.dup(descriptor), mode, encoding="utf-8", buffering=1))
     root = Path(sys._MEIPASS)
-    gs = root / "ghostscript" / "share" / "ghostscript" / "10.05.1"
+    gs = root / "ghostscript-resources"
     os.environ["GS_LIB"] = os.pathsep.join(str(gs / part) for part in ("Resource/Init", "Resource/Font", "lib"))
     os.environ["GS_FONTPATH"] = str(root / "build_assets/composition/fonts")
     # pyzbar's POSIX discovery does not look inside .app. Bind its loader to

@@ -154,7 +154,7 @@ if sys.platform == "darwin":
                      (str(_zbar.resolve()), "pyzbar"), (str(_gs), "ghostscript/bin")])
     # Force the public name irrespective of the versioned install filename.
     binaries[-2] = (str(_zbar), "pyzbar")
-    for _folder, _destination in ((_native / "ghostscript/share", "ghostscript/share"),
+    for _folder, _destination in ((_native / "ghostscript/share/ghostscript/10.05.1", "ghostscript-resources"),
                                   (_native / "licenses", "native-licenses")):
         for _file in _folder.rglob("*"):
             if _file.is_file():
