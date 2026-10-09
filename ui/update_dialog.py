@@ -75,7 +75,8 @@ class UpdateDialog(ResponsiveDialog):
         buttons.addWidget(self.cancel)
         layout.addLayout(buttons)
         if sys.platform == "darwin" and self.root is None:
-            self.status.setText(f"Current version: {APP_VERSION}. macOS uses manual DMG updates. Close the application before replacing it; your projects and user settings are retained.")
+            channel = "private account" if build_target().channel == "private" else "public"
+            self.status.setText(f"Current version: {APP_VERSION}. Open the matching {channel} Managed DMG application to enable automatic updates. This older standalone app requires manual replacement; retain your projects and user settings.")
             self.action.setText("Open download page")
             self.action.clicked.disconnect(self.perform)
             self.action.clicked.connect(self.open_mac_downloads)

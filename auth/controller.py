@@ -148,7 +148,7 @@ class AuthController(QObject):
         try:
             self.store.save(approval)
         except (StorageError, ValueError):
-            result = AuthResult(Outcome.UNAVAILABLE, "Cannot save Windows credentials. Try signing in again.")
+            result = AuthResult(Outcome.UNAVAILABLE, "Cannot save approval in the system credential store. Try signing in again.")
         else:
             self.approval = approval
             self.timer.start()

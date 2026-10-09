@@ -13,6 +13,11 @@ from scripts.prepare_macos import digest, require_arm64
 def finalize(app):
     require_arm64()
     app = Path(app).resolve()
+    # Runtime installers may leave build-machine logs. Remove from the owned
+    # payload before sealing; never relax the distribution scanner's log ban.
+    for path in app.rglob("*.log"):
+        if not path.is_symlink() and path.is_file():
+            path.unlink()
     root = app / "Contents/Resources/build_assets/composition"
     manifest_path = root / "BUNDLE_INFO.json"
     manifest = json.loads(manifest_path.read_text())

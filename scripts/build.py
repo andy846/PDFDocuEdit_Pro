@@ -53,7 +53,8 @@ def build_macos() -> Path:
     release = ROOT / "release"
     release.mkdir(exist_ok=True)
     arch = platform.machine()
-    dmg = release / f"PDFDocuEdit-Pro-{VERSION}-macOS-{arch}.dmg"
+    suffix = "-Private" if os.environ.get("PDFDOCUEDIT_BUILD_AUTH") == "1" else ""
+    dmg = release / f"PDFDocuEdit-Pro-{VERSION}-macOS-{arch}{suffix}.dmg"
     with tempfile.TemporaryDirectory(prefix="pdfdocuedit-dmg-") as value:
         staging = Path(value)
         shutil.copytree(app, staging / app.name, symlinks=True)

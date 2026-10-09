@@ -54,11 +54,25 @@ def test_successful_close_requests_supervised_restart(app, tmp_path, monkeypatch
 
 
 def test_unmanaged_build_explains_bootstrap(app, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
     monkeypatch.delenv(ROOT_ENV, raising=False)
     viewer = Viewer(True)
     dialog = UpdateDialog(viewer)
     assert not dialog.action.isEnabled()
     assert "Launcher.exe" in dialog.status.text()
+    dialog.close()
+    viewer.close()
+
+
+def test_unmanaged_mac_explains_matching_managed_dmg(app, monkeypatch):
+    from updates.target import UpdateTarget
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+    monkeypatch.setattr("ui.update_dialog.build_target", lambda: UpdateTarget("macos-arm64", "private", "qatest"))
+    viewer = Viewer(True)
+    dialog = UpdateDialog(viewer)
+    assert "private account Managed DMG" in dialog.status.text()
+    assert "Launcher.exe" not in dialog.status.text()
     dialog.close()
     viewer.close()
 

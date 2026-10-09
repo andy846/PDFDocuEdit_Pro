@@ -105,7 +105,7 @@ class Manifest:
                 raise UpdateError("Update channel/account project does not match this build.")
             version(data["version"])
             if version(data["min_launcher_version"]) > version(LAUNCHER_VERSION):
-                raise UpdateError("Please manually replace the launcher using the new deployment ZIP first.")
+                raise UpdateError("Please install the new managed deployment first; its launcher is required for this update.")
             for key, limit in (("size", MAX_ZIP_BYTES), ("expanded_size", MAX_EXPANDED_BYTES)):
                 if type(data[key]) is not int or not 0 < data[key] <= limit:
                     raise UpdateError("Update size exceeds the supported limit.")
