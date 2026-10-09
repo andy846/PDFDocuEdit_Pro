@@ -5,7 +5,6 @@ from pathlib import Path
 
 import fitz
 import pytest
-
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
