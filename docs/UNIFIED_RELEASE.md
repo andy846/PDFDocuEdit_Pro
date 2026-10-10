@@ -101,6 +101,34 @@ result.json. It never drives or terminates the operator's existing application.
 The Mac gates require an operator Mac/account; hosted synthetic tests do not
 count as real-account login or offline use.
 
+### Existing Mac v3.0.3 account testing installation
+
+A draft is not visible to the installed app's normal latest-release check.
+Before publication, use the operator-only candidate helper to test the existing
+installation with the signed Mac package. This uses the existing transaction,
+settings backup, native bundle validation, readiness handshake and rollback
+supervisor; it does not replace the fixed installed launcher.
+
+1. Save work and close PDFDocuEdit Pro on the Apple Silicon Mac.
+2. Put the signed Mac update ZIP and its matching platform `.json` / `.sig`
+   from the sealed draft into one directory. Do not use `candidate-*.json`.
+3. Use a checkout containing the owner helper and Python 3.12 with the
+   `cryptography` dependency (the helper does not require Qt or account secrets).
+4. Run from that checkout:
+
+```text
+python3 -m scripts.macos_candidate_upgrade --app "/Applications/PDFDocuEdit Pro.app" --folder "$HOME/Downloads/v3.0.4-update" --report "$HOME/Desktop/mac-update-result.json"
+```
+
+Keep Terminal open until the upgraded app is closed. An already running app,
+pending update, wrong project/platform, invalid signature or damaged ZIP blocks
+the operation. Existing pending work is left untouched. Close the app normally
+after testing; the report records the actual version transition, not a claim
+that account login was tested. Reopen the installed app normally to confirm it
+still launches v3.0.4, then test approved account login and offline reopening.
+Provide the report and those two operator results before public promotion.
+Do not set acceptance flags solely because the helper's synthetic tests passed.
+
 ```text
 python -m scripts.unified_release publish --folder release-sealed/v3.0.4 --notes docs/RELEASE_NOTES_3.0.4.md --make-public
 ```
