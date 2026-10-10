@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import plistlib
@@ -13,7 +12,6 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.distribution_safety import assert_public_distribution
@@ -35,6 +33,7 @@ def create_update(app, output, app_version, target, *, key=None, public_key=None
     metadata = {"schema": 2, "product": PRODUCT, **asdict(target), "version": app_version,
                 "min_launcher_version": LAUNCHER_VERSION, "asset": package.name,
                 "size": package.stat().st_size, "expanded_size": expanded, "sha256": digest_file(package)}
+    metadata["maturity"] = "preview"
     raw = json.dumps(metadata, sort_keys=True, indent=2).encode()
     if key is not None:
         if not isinstance(key, Ed25519PrivateKey) or key.public_key().public_bytes_raw().hex() != public_key:
@@ -92,11 +91,8 @@ def main():
     target = UpdateTarget(**json.loads((app / "Contents/Resources/update-target.json").read_text()))
     key = None
     if args.key:
-        value = args.key.read_bytes()
-        try:
-            key = serialization.load_pem_private_key(value, password=None)
-        except TypeError:
-            key = serialization.load_pem_private_key(value, password=getpass.getpass("Signing-key password: ").encode())
+        from scripts.release_signing import load_signing_key
+        key = load_signing_key(args.key)
     from updates.trust import PUBLIC_KEY_HEX
     output = ROOT / "release"
     package = create_update(app, output, app_version, target, key=key, public_key=PUBLIC_KEY_HEX)

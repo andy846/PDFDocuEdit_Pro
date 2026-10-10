@@ -19,6 +19,9 @@ __pycache__/
 build/
 dist/
 release/
+release-candidate/
+release-sealed/
+dist-mac-shell/
 wheels/
 Ghostscript/
 Tesseract/

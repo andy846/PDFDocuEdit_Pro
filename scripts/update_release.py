@@ -26,7 +26,6 @@ from updates.protocol import (  # noqa: E402
     EXECUTABLE,
     LAUNCHER_VERSION,
     PRODUCT,
-    Manifest,
     UpdateError,
     archive_members,
     atomic_json,
@@ -46,7 +45,8 @@ def source_fingerprint() -> str:
     digest = hashlib.sha256()
     for path in sorted(sources):
         digest.update(path.relative_to(ROOT).as_posix().encode())
-        digest.update(path.read_bytes())
+        # Native Windows/Mac checkouts can use CRLF/LF for the same Git blob.
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     return digest.hexdigest()
 
 
@@ -92,7 +92,7 @@ def build_launcher(*, target=None) -> Path:
     return ROOT / "dist" / "Launcher"
 
 
-def create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey, *, target=DEFAULT_TARGET) -> list[Path]:
+def create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey | None, *, target=DEFAULT_TARGET) -> list[Path]:
     from scripts.build import _clean_portable_tree
 
     for path in dist.rglob("*"):
@@ -109,7 +109,7 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
     version(app_version)
     from updates.trust import PUBLIC_KEY_HEX
 
-    if key.public_key().public_bytes_raw().hex() != PUBLIC_KEY_HEX:
+    if key is not None and key.public_key().public_bytes_raw().hex() != PUBLIC_KEY_HEX:
         raise UpdateError("Signing key does not match the embedded trust anchor.")
     if not (dist / EXECUTABLE).is_file() or not (launcher / "Launcher.exe").is_file():
         raise UpdateError("Build the editor and launcher before packaging.")
@@ -150,12 +150,8 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
     }
     if not target.legacy:
         metadata.update(channel=target.channel, auth_project=target.auth_project)
-    raw = json.dumps(metadata, sort_keys=True, indent=2).encode("utf-8")
-    signature = key.sign(raw)
-    Manifest.verify(raw, signature, PUBLIC_KEY_HEX, target=target).verify_archive(zip_path)
-    manifest_path, signature_path = release / (target.metadata + ".json"), release / (target.metadata + ".sig")
-    manifest_path.write_bytes(raw)
-    signature_path.write_bytes(signature)
+    from scripts.release_signing import write_update_metadata
+    manifest_path, signature_path = write_update_metadata(release, metadata, key)
     suffix = "-Private" if target.channel == "private" else ""
     deployment = release / f"PDFDocuEdit-Pro-v{app_version}-Managed-Portable-Windows-x64{suffix}.zip"
     with tempfile.TemporaryDirectory(prefix="pdfdocuedit-deployment-") as temporary:
@@ -177,6 +173,34 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
         checksum.write_text(f"{digest_file(path)}  {path.name}\n", encoding="utf-8")
         outputs.append(checksum)
     return outputs
+
+
+def create_legacy_auth_bridge(release, app_version, target, key=None):
+    """Explicit schema-1 compatibility publication of the SAME private payload."""
+    from dataclasses import asdict
+
+    from scripts.release_signing import write_update_metadata
+    if target.platform != "windows-x64" or target.channel != "private":
+        raise UpdateError("Only account-enabled Windows releases may create a legacy bridge.")
+    prefix = "" if key is not None else "candidate-"
+    release = Path(release)
+    data = json.loads((release / (prefix + target.metadata + ".json")).read_text(encoding="utf-8"))
+    if (data.get("platform"), data.get("channel"), data.get("auth_project"), data.get("version")) != (
+        target.platform, target.channel, target.auth_project, app_version
+    ):
+        raise UpdateError("Canonical account manifest identity differs.")
+    original = release / target.asset(app_version)
+    if original.stat().st_size != data["size"] or digest_file(original) != data["sha256"]:
+        raise UpdateError("Canonical account payload differs from its manifest.")
+    data.update(schema=1, asset=DEFAULT_TARGET.asset(app_version), application_target=asdict(target))
+    data.pop("channel")
+    data.pop("auth_project")
+    alias = release / data["asset"]
+    shutil.copyfile(original, alias)
+    manifest, signature = write_update_metadata(release, data, key)
+    checksum = alias.with_suffix(".zip.sha256")
+    checksum.write_text(f"{data['sha256']}  {alias.name}\n", encoding="utf-8")
+    return [alias, manifest, signature, checksum]
 
 
 def main() -> int:
@@ -208,7 +232,8 @@ def main() -> int:
         raise UpdateError("Private builds require --private-auth; public packaging is blocked.")
     if int(APP_VERSION.split(".",1)[0])>=3 and not is_enabled():
         raise UpdateError("V3 release packages must enable Document Designer.")
-    key = serialization.load_pem_private_key(args.key.read_bytes(), password=None)
+    from scripts.release_signing import load_signing_key
+    key = load_signing_key(args.key)
     if not isinstance(key, Ed25519PrivateKey) or key.public_key().public_bytes_raw().hex() != PUBLIC_KEY_HEX:
         raise UpdateError("Private key does not match the embedded update public key.")
     fingerprint = source_fingerprint()
@@ -231,6 +256,8 @@ def main() -> int:
         raise UpdateError("Packaged application does not match this source tree. Build without --skip-build.")
     launcher = build_launcher(target=target if not target.legacy else None)
     outputs = create_packages(dist, launcher, ROOT / "release", APP_VERSION, key, target=target)
+    if args.private_auth:
+        outputs.extend(create_legacy_auth_bridge(ROOT / "release", APP_VERSION, target, key))
     from scripts.build_managed_installer import build_installer
 
     if target.legacy:

@@ -1,12 +1,24 @@
-# PDFDocuEdit Pro V3.0.3
+# PDFDocuEdit Pro V3.0.4 — Release Candidate
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-本次發佈平台為 **Windows x64**，提供 Setup、Managed Portable 及簽署更新包。macOS 核心測試與 Windows 安裝包驗收分開記錄；本次不提供 V3 macOS 安裝包。
+v3.0.4 候選版本準備同步提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**。
+現有 GitHub 正式版 v3.0.3 保留；只有兩平台原生打包、簽章及發布驗收完成後才公開新 Release。
+Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+
+## v3.0.4 登入與雙平台更新
+
+- 首次登入需連線核對已批准帳戶；離線批准分別保存於 Windows Credential Manager／macOS Keychain。帳戶入口位於 Settings／More commands，不佔用主工具列；啟動 Splash 自動顯示版本。
+- 現有 v3.0.3 Windows Managed 版可透過原有更新入口升級到登入版。舊 Launcher 保留 schema-1 格式，新版程式額外驗證已簽署的登入版／帳戶項目；後續更新亦保留相容附件。
+- 新 Windows 登入版及 Mac Managed 登入版使用各平台專用簽章更新。Mac 第一次使用請安裝 Managed DMG；舊 standalone 版本須先手動更換為 Managed 版。
+- 更新仍由使用者確認：檢查、下載驗證、保存，再更新並重啟。取消保存不重啟；等待登入不觸發回退；真正啟動失敗可恢復上個版本及設定。
+- 兩平台由同一 commit 打包。先補齊同一 Draft Release 的安裝包、更新包、manifest、簽章及校驗碼，核對完成再公開；CI 不持有更新私鑰。
+
+操作及發布門檻見 [雙平台發布流程](docs/UNIFIED_RELEASE.md)。
 
 ## macOS 對齊開發
 
-Apple Silicon 對齊工作在獨立 `codex/macos-parity` 分支進行，不替換目前 Windows 發布。
+Apple Silicon 對齊及登入工作已整合至 v3.0.4 候選來源；目前 Windows 正式發布仍保留 v3.0.3。
 專用 Mac CI 建置原生 qpdf、libzbar、Ghostscript 及離線 veraPDF／JRE，再檢查
 Designer、Workflow、Production Review、Barcode 與 PDF／PS 生產功能。
 Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows 共用登入批准、離線使用、撤銷覆核及簽章更新／回退核心。
@@ -17,12 +29,12 @@ Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows �
 
 另有独立的 **Windows／macOS private account 測試分支**：首次登入須在線取得帳戶批准，
 其後使用 Windows Credential Manager 保存的批准可離線啟動；背景核對不傳送 PDF 或客戶資料。
-此功能未加入公開安裝包，不影響現有公開 Windows／Mac 使用方式。
+v3.0.4 新安裝及 Windows Managed 更新目標均為登入版；v3.0.3 舊安裝保持原有行為直到使用者選擇升級。
 帳戶配置、停權／登出行為及驗收限制見 [Private account 開發及驗收](docs/PRIVATE_AUTH.md)。
 私人測試版登入畫面沿用程式圖示及深淺色主題；帳戶入口位於 More commands／Settings
 選單，顯示登入帳戶，提供核對及登出操作，不佔用主工具列。
 
-此節描述目前開發版本，尚未另行打包或發佈；公開版本號保持 **3.0.3**。
+此節描述已整合的候選功能；GitHub 最新公開版本仍為 **3.0.3**，發布狀態以 Release 及验收紀錄為準。
 
 - **Template Designer／PDF Overlay**：按 Generate PDF 或 **Review Production…**，先選輸出資料夾並進入 **Production Review**。背景檢查完整資料後，才可 **Confirm production**；覆核及預覽不生成正式 PDF／PS／JDF。
 - **Visual Workflow**：保留原有資料／分封及逐工作批准；Run Ready Jobs／Run approved branches 會再進入共用生產覆核，逐一選擇工作核對。

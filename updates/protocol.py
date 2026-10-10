@@ -88,9 +88,12 @@ class Manifest:
     sha256: str
     expanded_size: int
     target: UpdateTarget = UpdateTarget()
+    application_target: UpdateTarget | None = None
+    maturity: str = "stable"
 
     @classmethod
-    def verify(cls, raw: bytes, signature: bytes, public_key_hex: str, *, target: UpdateTarget = DEFAULT_TARGET) -> Manifest:
+    def verify(cls, raw: bytes, signature: bytes, public_key_hex: str, *, target: UpdateTarget = DEFAULT_TARGET,
+               application_target: UpdateTarget | None = None) -> Manifest:
         try:
             Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex)).verify(signature, raw)
         except (ValueError, InvalidSignature) as exc:
@@ -103,6 +106,14 @@ class Manifest:
                 raise UpdateError("This update is not compatible with this application.")
             if not target.legacy and (data.get("channel"), data.get("auth_project", "")) != (target.channel, target.auth_project):
                 raise UpdateError("Update channel/account project does not match this build.")
+            application = (UpdateTarget(**data["application_target"]) if "application_target" in data else target)
+            if application_target is not None and application != application_target:
+                raise UpdateError("Signed update is not the required account-enabled application/project.")
+            if application != target and not (target.legacy and application.platform == target.platform and application.channel == "private"):
+                raise UpdateError("Unsupported update transport migration.")
+            maturity = data.get("maturity", "stable")
+            if maturity not in {"stable", "preview"}:
+                raise UpdateError("Invalid platform release maturity.")
             version(data["version"])
             if version(data["min_launcher_version"]) > version(LAUNCHER_VERSION):
                 raise UpdateError("Please install the new managed deployment first; its launcher is required for this update.")
@@ -112,7 +123,7 @@ class Manifest:
             asset = target.asset(data['version'])
             if data["asset"] != asset or not re.fullmatch(r"[0-9a-f]{64}", data["sha256"]):
                 raise UpdateError("Invalid update filename or checksum.")
-            return cls(data["version"], asset, data["size"], data["sha256"], data["expanded_size"], target)
+            return cls(data["version"], asset, data["size"], data["sha256"], data["expanded_size"], target, application, maturity)
         except (KeyError, TypeError, ValueError) as exc:
             raise UpdateError("Invalid update manifest.") from exc
 
@@ -164,7 +175,8 @@ class Release:
     notes: str
 
 
-def check_release(repository: str, public_key: str, current: str, *, target: UpdateTarget = DEFAULT_TARGET) -> Release | None:
+def check_release(repository: str, public_key: str, current: str, *, target: UpdateTarget = DEFAULT_TARGET,
+                  application_target: UpdateTarget | None = None) -> Release | None:
     if not public_key:
         raise UpdateError("Release signing has not been configured for this build.")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
@@ -173,7 +185,7 @@ def check_release(repository: str, public_key: str, current: str, *, target: Upd
         payload = json.loads(fetch_small(f"https://api.github.com/repos/{repository}/releases/latest", 2 * CHUNK))
     except urllib.error.HTTPError as exc:
         if exc.code in (403, 429):
-            return check_release_direct(repository, public_key, current, target=target)
+            return check_release_direct(repository, public_key, current, target=target, application_target=application_target)
         if exc.code == 404:
             raise UpdateError("No public stable release is available yet.") from exc
         raise
@@ -195,7 +207,7 @@ def check_release(repository: str, public_key: str, current: str, *, target: Upd
 
     raw = fetch_small(asset_url(target.metadata + ".json"), 65536)
     signature = fetch_small(asset_url(target.metadata + ".sig"), 64)
-    manifest = Manifest.verify(raw, signature, public_key, target=target)
+    manifest = Manifest.verify(raw, signature, public_key, target=target, application_target=application_target)
     if manifest.version != target_version:
         raise UpdateError("Release tag and signed version do not match.")
     return Release(manifest, raw, signature, asset_url(manifest.asset), str(payload.get("body") or "")[:20000])
@@ -287,7 +299,8 @@ def extract_archive(package: Path, destination: Path, manifest: Manifest) -> Non
         raise
 
 
-def check_release_direct(repository: str, public_key: str, current: str, *, target: UpdateTarget = DEFAULT_TARGET) -> Release | None:
+def check_release_direct(repository: str, public_key: str, current: str, *, target: UpdateTarget = DEFAULT_TARGET,
+                         application_target: UpdateTarget | None = None) -> Release | None:
     """Public-release redirect fallback when GitHub's shared API quota is exhausted."""
     with _open(f"https://github.com/{repository}/releases/latest") as response:
         final = urllib.parse.urlparse(response.geturl())
@@ -306,7 +319,7 @@ def check_release_direct(repository: str, public_key: str, current: str, *, targ
         if exc.code == 404:
             raise UpdateError("The latest release has no signed update package yet.") from exc
         raise
-    manifest = Manifest.verify(raw, signature, public_key, target=target)
+    manifest = Manifest.verify(raw, signature, public_key, target=target, application_target=application_target)
     if manifest.version != target_version:
         raise UpdateError("Release tag and signed version do not match.")
     return Release(manifest, raw, signature, base + manifest.asset,

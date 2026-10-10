@@ -30,6 +30,8 @@ AppId={{78A4BA20-C425-4B80-9360-4F07D06F786D}
 AppId={{C17A5D2E-1A04-45D5-95CE-295E1D9884B0}
 #endif
 AppName={#MyAppName}
+; AccountRelease uses the production product identity and empty-folder safety.
+; Its initial editor and fixed launcher are both account-bound.
 AppVerName={#MyAppName} {#MyAppVersion}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}

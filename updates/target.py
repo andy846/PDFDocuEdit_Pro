@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,50 @@ class UpdateTarget:
 
 
 DEFAULT_TARGET = UpdateTarget()
+
+# Frozen Launcher.exe shipped in the immutable v3.0.3 managed deployment.
+# Its schema-1 transport must remain usable after the editor requires login.
+LEGACY_WINDOWS_LAUNCHERS = {
+    "172dbae78ff8951e13de3aae4e3378d5a4a6995d03fc05e47a46814050d37522",
+}
+
+
+@dataclass(frozen=True)
+class UpdateRoute:
+    transport: UpdateTarget
+    application: UpdateTarget
+
+    @property
+    def bridge(self):
+        return self.transport != self.application
+
+
+def resolve_update_route(root: Path | None, application_target: UpdateTarget) -> UpdateRoute:
+    """Select the installed launcher's transport, never the user's preference."""
+    import json
+
+    from .protocol import UpdateError, digest_file
+
+    if application_target.platform != "windows-x64" or application_target.legacy:
+        return UpdateRoute(application_target, application_target)
+    if root is None:
+        raise UpdateError("Install the account-enabled Managed edition to enable updates.")
+    root = Path(root)
+    launcher = root / "Launcher.exe"
+    identity = root / "launcher_runtime/update-target.json"
+    if not launcher.is_file() or launcher.is_symlink():
+        raise UpdateError("Managed Launcher.exe is missing. Restore the complete installation.")
+    if identity.exists():
+        try:
+            target = UpdateTarget(**json.loads(identity.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError) as error:
+            raise UpdateError("Installed launcher identity is invalid.") from error
+        if target != application_target:
+            raise UpdateError("Installed launcher belongs to another account channel/project.")
+        return UpdateRoute(target, application_target)
+    if digest_file(launcher) not in LEGACY_WINDOWS_LAUNCHERS:
+        raise UpdateError("This older launcher is not verified for account updates. Install the new Managed edition.")
+    return UpdateRoute(DEFAULT_TARGET, application_target)
 
 
 def build_target():

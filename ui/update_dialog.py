@@ -13,7 +13,7 @@ from core.resources import APP_VERSION
 from ui.responsive import ResponsiveDialog
 from updates.protocol import Cancelled, check_release, download
 from updates.runtime import managed_root, request_restart
-from updates.target import build_target
+from updates.target import build_target, resolve_update_route
 from updates.trust import PUBLIC_KEY_HEX, REPOSITORY
 
 
@@ -32,8 +32,10 @@ class UpdateWorker(QThread):
         try:
             if self.release is None:
                 target = build_target()
+                route = resolve_update_route(self.root, target)
                 result = (check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION) if target.legacy else
-                          check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION, target=target))
+                          check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION, target=route.transport,
+                                        application_target=route.application))
             else:
                 result = download(
                     self.release, self.root / "staging",
@@ -130,6 +132,10 @@ class UpdateDialog(ResponsiveDialog):
             self.release = result
             self.status.setText(f"Version {result.manifest.version} is available ({result.manifest.size / 1024**2:.1f} MB).")
             self.notes.setPlainText(result.notes)
+            if result.manifest.maturity == "preview":
+                self.status.setText(self.status.text() + "\nmacOS test build: Apple notarization is not completed. Download only if you accept testing this build.")
+            if result.manifest.application_target and result.manifest.application_target.channel == "private":
+                self.notes.append("\nThis version requires an approved account. First sign-in requires an internet connection.")
             self.action.setText("Download Update")
 
     def failed(self, message):

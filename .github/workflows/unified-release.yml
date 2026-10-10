@@ -1,0 +1,90 @@
+name: Unified account release candidates
+
+on:
+  push:
+    branches: [codex/unified-release-v3.0.4]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unified-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PDFDOCUEDIT_ENABLE_COMPOSITION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install -r requirements-windows.txt -r requirements-dev.txt -r requirements-auth-windows.lock
+      - run: python -m pip check
+      - run: python -m scripts.prepare_windows_release
+      - run: python -m scripts.prepare_composition_assets
+      - name: Full isolated regression
+        run: python -m scripts.regression_suite --group all --output build/ci-release
+      - name: Native account application, installer and update candidates
+        run: python -m scripts.build_release_candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-x64-account-candidate
+          path: |
+            release-candidate/*
+            build/ci-release/result.json
+          retention-days: 30
+
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      QT_QPA_PLATFORM: offscreen
+      PDFDOCUEDIT_ENABLE_COMPOSITION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - run: python -m pip install -r requirements-macos.txt -r requirements-dev.txt -r requirements-auth-macos.lock
+      - run: python -m pip check
+      - run: brew install cmake autoconf automake libtool gettext pkgconf
+      - uses: actions/cache@v4
+        with:
+          key: macos-arm64-native-${{ hashFiles('build_assets/macos/SOURCES.json', 'scripts/prepare_macos.py', 'build_assets/composition/BUNDLE_INFO.json', 'scripts/prepare_composition_assets.py') }}
+          path: |
+            build_assets/macos/qpdf
+            build_assets/macos/zbar
+            build_assets/macos/ghostscript
+            build_assets/macos/licenses
+            build_assets/composition
+      - run: python -m scripts.prepare_macos
+      - run: python -m scripts.prepare_verapdf
+      - name: Native source quality and regression
+        run: |
+          export PATH="$GITHUB_WORKSPACE/build_assets/macos/ghostscript/bin:$PATH"
+          export DYLD_LIBRARY_PATH="$GITHUB_WORKSPACE/build_assets/macos/zbar/lib"
+          echo "$GITHUB_WORKSPACE/build_assets/macos/ghostscript/bin" >> "$GITHUB_PATH"
+          echo "DYLD_LIBRARY_PATH=$GITHUB_WORKSPACE/build_assets/macos/zbar/lib" >> "$GITHUB_ENV"
+          python -m ruff check .
+          python -m scripts.macos_test_plan
+      - name: Native account application, managed DMG and update candidate
+        run: python -m scripts.build_release_candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-arm64-account-candidate
+          path: |
+            release-candidate/*
+            build/macos-tests/result.json
+            build/macos-release-smoke/*.json
+          retention-days: 30

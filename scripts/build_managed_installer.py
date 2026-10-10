@@ -51,7 +51,7 @@ def extract_deployment(package: Path, destination: Path, app_version: str) -> Pa
     return root
 
 
-def build_installer(package: Path, app_version: str, *, private_test=False) -> Path:
+def build_installer(package: Path, app_version: str, *, private_test=False, account_release=False) -> Path:
     version(app_version)
     compiler = _find_inno_setup_compiler()
     if not compiler:
@@ -75,6 +75,10 @@ def build_installer(package: Path, app_version: str, *, private_test=False) -> P
         ]
         if private_test:
             command.insert(1, "/DAuthPrivateBuild")
+        if account_release:
+            if private_test:
+                raise UpdateError("A production account installer cannot also be an auth test installer.")
+            command.insert(1, "/DAccountRelease")
         subprocess.run(command, cwd=ROOT, check=True)
     label = "Private-Auth-Setup" if private_test else "Setup"
     output = ROOT / "release" / f"PDFDocuEdit-Pro-v{app_version}-{label}-Windows-x64.exe"
