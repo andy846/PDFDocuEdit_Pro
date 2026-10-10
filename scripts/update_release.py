@@ -43,7 +43,9 @@ def source_fingerprint() -> str:
     for name in ("auth", "core", "ui", "dialogs", "styles", "updates", "composition", "workflow", "scripts"):
         sources.extend((ROOT / name).rglob("*.py"))
     digest = hashlib.sha256()
-    for path in sorted(sources):
+    # Path ordering is case-insensitive on Windows but case-sensitive on Mac.
+    # Order repository-relative POSIX strings explicitly on BOTH platforms.
+    for path in sorted(sources, key=lambda item: item.relative_to(ROOT).as_posix()):
         digest.update(path.relative_to(ROOT).as_posix().encode())
         # Native Windows/Mac checkouts can use CRLF/LF for the same Git blob.
         digest.update(path.read_bytes().replace(b"\r\n", b"\n"))

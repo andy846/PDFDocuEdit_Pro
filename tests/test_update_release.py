@@ -13,6 +13,20 @@ from updates import protocol, trust
 from updates.protocol import EXECUTABLE, Manifest, UpdateError
 
 
+def test_source_fingerprint_has_platform_independent_order_and_line_endings(tmp_path, monkeypatch):
+    from scripts import update_release
+
+    monkeypatch.setattr(update_release, "ROOT", tmp_path)
+    names = ["main.py", "requirements-base.txt", "launcher.py", "PDFDocuEdit Pro.spec"]
+    for name in names:
+        (tmp_path / name).write_bytes(b"fixture\n")
+    expected = "6c05561d9424da46e881a21e3c18158291d423ae9ae511497d9db6b23c5078f3"
+    assert update_release.source_fingerprint() == expected
+    for name in reversed(names):
+        (tmp_path / name).write_bytes(b"fixture\r\n")
+    assert update_release.source_fingerprint() == expected
+
+
 def test_release_packages_round_trip_and_exclude_signing_key(tmp_path, monkeypatch):
     key = Ed25519PrivateKey.generate()
     monkeypatch.setattr(trust, "PUBLIC_KEY_HEX", key.public_key().public_bytes_raw().hex())
