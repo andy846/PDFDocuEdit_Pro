@@ -376,7 +376,8 @@ class PdfOperationControls:
         self.signature.setVisible(self.signed_hint)
         self.recovery_ack.setVisible(self.recovery_hint)
         self.page_count = self.plan.page_count
-        lines = [f"Pages: {self.plan.page_count}", f"Annotations: {self.plan.annotations}", f"Form widgets: {self.plan.forms}",
+        selected_count = self.plan.page_count if self.plan.options.pages is None else len(self.plan.options.pages)
+        lines = [f"Document pages: {self.plan.page_count}", f"Selected pages: {selected_count}", f"Annotations on selected pages: {self.plan.annotations}", f"Form widgets on selected pages: {self.plan.forms}",
                  "Source preserved; output is a new job folder."]
         if self.plan.signed:
             lines.append("Digital signature found — explicit confirmation required.")

@@ -36,9 +36,19 @@ supports Windows x64.
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
+## Development Update: PDF Production Tools
+
+* **Left Utilities / Tools → PDF Production Tools** opens a persistent PDF Workspace tab: Overview, Fonts, Flatten, Repair / Normalise, Results.
+* Analyze is read-only and runs in the background. Overview combines the existing inspectors without approving processing; unsupported checks remain visible. Generate new copy executes only the selected processing section.
+* Sources, output root and progress are shared. Editor input includes unsaved changes; source changes/closure invalidate results. Refresh source captures the original Editor again. Section changes preserve drafts and do not start jobs.
+* Fonts retains strict original-font / trusted-reference validation. Batch scans isolate failures; configure safe embedding per PDF. Rasterisation and destructive normalisation remain explicit choices.
+* Results separates analysis from production, keeps source/settings context and out-of-date evidence, and opens completed outputs/reports. Export JSON/CSV for review. Completed job bundles remain when a task is cancelled.
+* Switch PDF/Designer without cancelling work. Ctrl+O chooses sources, Ctrl+W safely closes the tool, Ctrl+Tab cycles PDF Workspace tabs. Save/Undo cannot change a background PDF. Running close requests wait for safe cleanup.
+* Narrow windows use a section dropdown; content scrolls while the shared action row remains visible. Old tool commands and Workflow settings remain compatible. No public version or project-format change.
+
 ## Development Update: Editor Font Preflight
 
-* **Tools → Font Preflight / Safe Embed Fonts…**, also in left Utilities: read-only existing-PDF font inventory, affected pages, exact original-face candidates, and JSON/CSV reports.
+* **Tools → Font Preflight / Safe Embed Fonts…**, under PDF Production Tools in left Utilities: read-only existing-PDF font inventory, affected pages, exact original-face candidates, and JSON/CSV reports.
 * Safe native repair currently supports verified simple TrueType / WinAnsi cases only. Select authorized original fonts, Check sources, then provide the authoritative reference PDF with the same font binary. Missing proof blocks repair; family names alone are insufficient.
 * Repair Copy publishes PDF + audit together after original-object/stream checks, independent qpdf validation and exact 300 dpi reference comparisons on every page. No substitution, reflow or rasterisation. Originals and Editor Undo remain unchanged.
 * Batch scan isolates file failures; inspect individual files to configure their fonts. Signed/encrypted/restricted sources and unverified formats are scan-only. No new public release is implied.

@@ -4569,8 +4569,8 @@ class PDFViewer(QMainWindow):
 
     def _open_pdf_production(self, section="overview") -> None:
         from ui.merge_controller import MergeController
-        from ui.pdf_production_workspace import PdfProductionWorkspace
         from ui.pdf_production_integration import open_production_workspace
+        from ui.pdf_production_workspace import PdfProductionWorkspace
         if not getattr(self, "_merge_controller", None):
             self._merge_controller = MergeController(self)
         open_production_workspace(self, PdfProductionWorkspace, section)

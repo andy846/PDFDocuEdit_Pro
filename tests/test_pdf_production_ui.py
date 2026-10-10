@@ -321,3 +321,46 @@ def test_exit_cancel_then_retry_does_not_reuse_old_permission(qt_application, tm
     assert not worker.cancelled
     worker.ended.emit()
     page.request_close()
+
+
+def test_very_narrow_large_font_actions_remain_inside_page(qt_application, tmp_path):
+    from PyQt6.QtGui import QFont
+    page = PdfProductionWorkspace()
+    try:
+        page.set_sources(paths=[source(tmp_path)], page_count=1)
+        page.setFont(QFont(page.font().family(), 18))
+        page.select_section("flatten")
+        page.resize(480, 600)
+        page.show()
+        qt_application.processEvents()
+        for button in (page.analyze_button, page.generate_button):
+            corner = button.mapTo(page, button.rect().bottomRight())
+            assert corner.x() < page.width() and corner.y() < page.height()
+        assert page.navigation.isVisible()
+    finally:
+        page.request_close()
+
+
+def test_required_signature_and_raster_confirmations_block_footer(qt_application, tmp_path):
+    from core.pdf_operations.model import PdfOperationPlan
+    page = PdfProductionWorkspace()
+    try:
+        path = source(tmp_path)
+        page.set_sources(paths=[path], page_count=1)
+        page.select_section("flatten")
+        panel = page.panels["flatten"]
+        panel.raster.setChecked(True)
+        plan = PdfOperationPlan(str(path), "hash", panel.options(), 1, signed=True)
+        panel.analysis_ready({"plan": plan.to_dict()})
+        panel.worker_ended()
+        page.sync_controls()
+        assert not page.generate_button.isEnabled()
+        assert "signature" in page.status.text()
+        panel.signature.setChecked(True)
+        assert not page.generate_button.isEnabled()
+        assert "rasterisation" in page.status.text()
+        panel.raster_ack.setChecked(True)
+        assert page.generate_button.isEnabled()
+        assert "Selected pages: 1" in panel.summary.toPlainText()
+    finally:
+        page.request_close()

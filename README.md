@@ -26,6 +26,21 @@ Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows �
 私人版使用 macOS Keychain，更新按平台及私人／公開渠道隔離。原生 Mac 安裝包驗收仍需通過 CI；OCR、Intel 及正式 Developer ID 簽署／公證另待後續。
 下載 Mac CI artifact 不代表已完成實機或打印機驗收。詳見 [macOS 開發與部署紀錄](docs/MACOS_PARITY.md)。
 
+## 最新開發更新：PDF Production Tools
+
+PDF Workspace 左側 **Utilities → PDF Production Tools** 統一開啟字體檢查、平面化及修復工具分頁。這些變更屬於開發版本，不代表已發布新的 GitHub 版本。
+
+- **Overview**：主動按 Analyze，背景檢查 PDF 結構、標註／表單及字體；各類問題分開顯示，不把未檢查項目當作正常。分析不批准或生成文件。
+- **Fonts**：查看字體及涉及頁面，雙擊返回原來源頁。Safe Embed 收起原裝字體、授權及可信參考 PDF 設定；仍只修復已驗證的 TrueType／WinAnsi 個案，不默默替換字體。批次先分析，再進入個別 PDF 設定。
+- **Flatten**：選標註／AcroForm及頁面範圍。Rasterise 屬進階設定，預設關閉；必須確認文字及向量流失。
+- **Repair / Normalise**：預設 Safe Repair；Production Normalise 的刪除、平面化與 CropBox 修改由使用者明確選取。Maximum Compatibility 需另行確認光柵化損失。
+- **Results**：保留分析及處理歷史、逐檔結果、實際輸出及報告。可開啟成品／報告資料夾，匯出 JSON／CSV；舊結果標明來源或設定已過期。
+- **一次一類處理**：Generate new copy 只作用於目前處理分區。來源、輸出資料夾及進度共用；成果通過原有驗證才原子發布，原檔及 PDF Undo 不被替換。
+- **Editor 交接**：目前文件使用包含未保存修改的快照。同一來源重開工具會聚焦原分頁；修改／關閉來源後須 Refresh source 或重新選檔。切回 PDF／Designer 不取消工作、不丟設定；關閉執行中分頁需確認取消，等安全清理完成才釋放暫存。
+- **操作**：工具分頁的 Ctrl+O 選來源，Ctrl+W 關閉工具，Ctrl+Tab／Ctrl+Shift+Tab 切換 PDF Workspace 分頁；保存／Undo 不作用於背景 PDF。舊 Flatten、Repair、Font Preflight 命令仍可直達對應分區，Workflow 原設定視窗保留。
+
+不改公開版本號、`.pdcx`／`.pdflow` 或條碼格式；本輪只有相關測試及 UI 檢查，完整回歸、原生打包與發布另行統一驗收。詳見 [操作與整合說明](docs/PDF_PRODUCTION_TOOLS.md)。
+
 ## 最新開發更新：生產覆核
 
 另有独立的 **Windows／macOS private account 測試分支**：首次登入須在線取得帳戶批准，
@@ -67,7 +82,7 @@ v3.0.4 新安裝及 Windows Managed 更新目標均為登入版；v3.0.3 舊安�
 - **Add Image／Signature Image 位置與尺寸**：新加入的圖片會自動選取並轉回 Browse，可拖動位置、拖四角縮放，右側 Manage 可輸入 X／Y／Width／Height（mm）。預設保留比例，Shift 可自由縮放；支援刪除及 Undo／Redo，保存 PDF 後重開仍可編輯。Apply 固定於設定面板底部，鍵盤移到設定欄會自動捲動至完整顯示；點頁面空白處取消選取。未修改的尺寸保留原始精度，避免顯示四捨五入造成超出頁面。圖片保持一般 PDF 頁面內容；Signature Image 是簽名圖片，不是數碼簽署。舊版插入或外部 PDF 的未標記圖片不會自動變成可編輯物件。
 - **Keyboard Shortcuts Review**：Windows 各工作區 Redo 支援 `Ctrl+Y`／`Ctrl+Shift+Z`；Designer 專案分頁可用 `Ctrl+Tab`／`Ctrl+Shift+Tab` 切換。文字欄位保留編輯快捷鍵，Save 及命令面板仍可使用；修正自訂全域鍵、連續按鍵前綴及跨模式衝突，主工具列提示與 Help → Keyboard Shortcuts 同步顯示實際綁定。詳見 [快捷鍵檢查及使用說明](docs/KEYBOARD_SHORTCUT_REVIEW.md)。
 
-- **Tools → Flatten PDF**：亦可從 PDF Workspace 左側 **Utilities → Flatten PDF** 開啟。先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
+- **Tools → Flatten PDF**：亦可從 PDF Workspace 左側 **Utilities → PDF Production Tools → Flatten** 開啟。先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
 - **Tools → PDF Repair / Production Normalise**：亦可從左側 **Utilities → PDF Repair / Normalise** 開啟；未開文件時可選擇來源 PDF。Safe Repair 重寫結構；Normalise 可明確選擇移除 JavaScript、附件、metadata、平面化及裁切異常 CropBox。Maximum Compatibility／Rasterise 是獨立、需確認的影像重建選項。
 - 兩工具共用背景處理、取消、驗證、新工作資料夾及 CSV／JSON 紀錄；可選現有 Production Preflight 前後比較。**Choose PDFs for batch processing…** 逐檔處理，保留成功結果及失敗紀錄。
 - **Visual Workflow** 新增 Flatten PDF、Repair / Normalise PDF 節點，放在 Input／Merge 之後、Extract 之前。Check to this step 的 PDF 只留在暫存工作區；正式輸出仍須 Review。需覆核的修復結果請先在 PDF Workspace 檢查。

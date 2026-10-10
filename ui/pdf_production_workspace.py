@@ -9,6 +9,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QKeySequence, QUndoStack
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -33,7 +34,7 @@ from core.io_atomic import atomic_output
 from dialogs.font_preflight import FontPreflightPanel
 from dialogs.pdf_operations import PdfOperationPanel
 from ui.combo_popup import WideComboBox
-from ui.responsive import scroll_container
+from ui.responsive import reveal_widget, scroll_container
 
 from .pdf_production_controller import PdfProductionController
 
@@ -121,6 +122,7 @@ class PdfProductionWorkspace(QWidget):
         self.password.textChanged.connect(self.controller.set_password)
         self.choose_button.clicked.connect(self.choose_sources)
         self.refresh_button.clicked.connect(self.refresh_source)
+        self.source_actions = row
         row.addWidget(self.choose_button)
         row.addWidget(self.refresh_button)
         row.addStretch()
@@ -248,7 +250,8 @@ class PdfProductionWorkspace(QWidget):
             if widget is not None:
                 widget.hide()
         if section == "fonts":
-            safe = QGroupBox("Safe Embed — original fonts and evidence")
+            safe = QGroupBox("Safe Embed")
+            safe.setToolTip("Select original fonts, authorization and trusted reference evidence.")
             safe.setCheckable(True)
             safe.setChecked(False)
             content = QWidget()
@@ -274,9 +277,17 @@ class PdfProductionWorkspace(QWidget):
             panel._root.removeWidget(panel.details)
             panel._root.insertWidget(first, panel.details)
             # Check sources is a font-only preparation action, not production.
-            panel.check_button.setParent(panel)
-            panel._root.insertWidget(first + 1, panel.check_button)
+            panel.check_button.setParent(content)
+            layout.addWidget(panel.check_button)
             panel.check_button.show()
+            configure = QPushButton("Configure Safe Embed…")
+            configure.setToolTip("Original fonts, authorization and reference PDF")
+            def open_configuration():
+                safe.setChecked(True)
+                reveal_widget(panel.font_button)
+            configure.clicked.connect(open_configuration)
+            panel._root.insertWidget(2, configure)
+            panel.configure_safe_embed = configure
         else:
             form = next(panel._root.itemAt(i).layout() for i in range(panel._root.count())
                         if isinstance(panel._root.itemAt(i).layout(), QFormLayout))
@@ -414,7 +425,7 @@ class PdfProductionWorkspace(QWidget):
         current = controller.is_current() and bool(controller.sources)
         self.source_label.setText(
             ("Source: " + controller.label +
-             (f" · {controller.source_metadata['page_count']} pages" if controller.source_metadata.get("page_count") else "") +
+             (f" · {controller.source_metadata['page_count']} " + ("page" if controller.source_metadata["page_count"] == 1 else "pages") if controller.source_metadata.get("page_count") else "") +
              (" · Editor working copy (includes unsaved changes)" if controller.editor_source else " · External PDF source"))
             if controller.sources else "Choose a PDF to begin."
         )
@@ -425,6 +436,7 @@ class PdfProductionWorkspace(QWidget):
         self.output_folder.setEnabled(not busy)
         self.output_browse.setEnabled(not busy)
         self.cancel_button.setVisible(busy)
+        self.analyze_button.setVisible(not busy)
         self.analyze_button.setEnabled(current and not busy and section != "results")
         ready = False
         for key, panel in self.panels.items():
@@ -439,7 +451,9 @@ class PdfProductionWorkspace(QWidget):
                 panel.open_button.hide()
                 panel.reports_button.hide()
             panel.footer.hide()
-        self.generate_button.setVisible(section in self.panels)
+        blocker = self.pdf_blocker(self.panels[section]) if section in {"flatten", "repair"} and ready else ""
+        ready = ready and not blocker
+        self.generate_button.setVisible(section in self.panels and not busy)
         self.generate_button.setEnabled(current and not busy and ready and section in self.panels)
         self.status.setText(
             "Source changed or closed. Results are out of date; refresh from the Editor or choose PDFs."
@@ -452,6 +466,8 @@ class PdfProductionWorkspace(QWidget):
             if ready else
             "Analysis / settings check required. Review the section details for blocking reasons."
         )
+        if blocker and not busy and not controller.stale:
+            self.status.setText(blocker)
         if not busy and not controller.stale and section == "fonts":
             self.status.setText(self.font_blocker())
         self.progress.setVisible(busy)
@@ -461,6 +477,20 @@ class PdfProductionWorkspace(QWidget):
                                               "analyze": self.analyze_button.isEnabled(), "generate": self.generate_button.isEnabled()}[key])
         self.activityChanged.emit(busy)
         self.result_buttons()
+
+    @staticmethod
+    def pdf_blocker(panel):
+        try:
+            options = panel.options()
+        except ValueError as exc:
+            return str(exc)
+        if panel.signed_hint and not options.acknowledge_signatures:
+            return "Review and acknowledge digital signature invalidation before generation."
+        if options.rasterise and not options.acknowledge_raster:
+            return "Review and accept rasterisation losses before generation."
+        if panel.recovery_hint and not options.acknowledge_recovery:
+            return "Review and accept limited recovery appearance QC before generation."
+        return ""
 
     def font_blocker(self):
         panel = self.panels["fonts"]
@@ -711,3 +741,6 @@ class PdfProductionWorkspace(QWidget):
         narrow = self.width() < max(800, sum(self.fontMetrics().horizontalAdvance(s) + 36 for s in self.SECTIONS))
         self.tabs.setVisible(not narrow)
         self.navigation.setVisible(narrow)
+        compact = self.width() < self.fontMetrics().horizontalAdvance("Analyze   Generate new copy   Cancel task") + 100
+        self.footer.layout().setDirection(QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight)
+        self.source_actions.setDirection(QBoxLayout.Direction.TopToBottom if self.width() < 580 else QBoxLayout.Direction.LeftToRight)
