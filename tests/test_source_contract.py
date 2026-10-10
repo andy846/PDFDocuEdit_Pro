@@ -77,15 +77,15 @@ def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
     )
 
 
-def test_release_metadata_is_v3_0_2() -> None:
-    assert APP_VERSION == "3.0.3"
+def test_release_metadata_is_v3_0_4() -> None:
+    assert APP_VERSION == "3.0.4"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "3.0.3"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "3.0.3"' in (
+    assert 'version = "3.0.4"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "3.0.4"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "3.0.3"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(3, 0, 3, 0)" in (
+    assert 'VERSION = "3.0.4"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(3, 0, 4, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 

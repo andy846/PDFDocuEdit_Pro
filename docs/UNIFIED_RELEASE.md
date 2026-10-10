@@ -29,6 +29,11 @@ from the same SHA. Windows reuses only native dependencies from the signed
 v3.0.3 payload; current source/runtime validators still check them.
 It runs the complete isolated Windows suite and the native Mac release plan.
 
+Intentional regression-suite maintenance for this release: source metadata
+assertions now require v3.0.4 across all build inputs; legacy UI tests use the
+existing session QApplication fixture to prevent Qt teardown/recreation
+between test cases. No test is disabled or filtered to satisfy these gates.
+
 Artifacts contain release-candidate files and candidate-<platform>.json.
 The latter records commit, source fingerprint, account project, native checks,
 and exact attachment hashes. No update private key or real account credentials
