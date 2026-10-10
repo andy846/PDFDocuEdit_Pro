@@ -79,6 +79,16 @@ Record true ONLY after the corresponding actual test, and retain its evidence
 under build. The Windows gate must use the ORIGINAL frozen v3.0.3 launcher,
 not the current source supervisor, and two different newer frozen editor
 versions. A synthetic follow-on version is QA only and is never uploaded.
+Use the isolated frozen-launcher gate with the original deployment ZIP and
+two signed compatibility updates whose embedded editor versions actually differ:
+
+```text
+python -m scripts.legacy_upgrade_smoke --baseline ORIGINAL_V303_MANAGED_PORTABLE.zip --updates SIGNED_V304_FOLDER SIGNED_QA_FOLLOW_ON_FOLDER --output build/fresh-legacy-upgrade-test
+```
+
+The gate starts only its own empty offscreen QA application, verifies each
+startup handshake, unchanged launcher and retained settings, and writes
+result.json. It never drives or terminates the operator's existing application.
 The Mac gates require an operator Mac/account; hosted synthetic tests do not
 count as real-account login or offline use.
 

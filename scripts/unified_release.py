@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from scripts.release_signing import load_signing_key, write_update_metadata
-from updates.protocol import Manifest, UpdateError, atomic_json, digest_file, version
+from updates.protocol import Manifest, UpdateError, archive_members, atomic_json, digest_file, version
 from updates.target import DEFAULT_TARGET, UpdateTarget
 from updates.trust import PUBLIC_KEY_HEX, REPOSITORY
 
@@ -34,7 +34,12 @@ def validate_candidates(folder, expected_version, expected_commit):
             raise UpdateError("Native source fingerprint is invalid.")
         checks = data["checks"]
         regression = checks.get("regression", {})
-        if (not checks.get("native_packaging") or not regression.get("passed") or not checks.get("frozen_login")
+        login = checks.get("frozen_login", {})
+        login_passed = (login.get("accepted_before_login") is True and login.get("real_frozen_launcher") is True
+                        if platform == "windows-x64" else
+                        login.get("login_shell_started") is True and login.get("managed_handshake") is True
+                        and login.get("unauthenticated_entries_blocked") is True)
+        if (checks.get("native_packaging") is not True or regression.get("passed") is not True or not login_passed
                 or regression.get("modules", 0) <= 0 or regression.get("tests", 0) <= 0):
             raise UpdateError("Native packaging, regression and frozen login gates must pass.")
         names = set()
@@ -99,6 +104,12 @@ def seal(folder, output, app_version, commit, key):
             if manifest.version != app_version:
                 raise UpdateError("Candidate manifest version differs from its native evidence.")
             manifest.verify_archive(output / manifest.asset)
+            with zipfile.ZipFile(output / manifest.asset) as archive:
+                if target.platform == "windows-x64":
+                    archive_members(archive, manifest.expanded_size)
+                else:
+                    from updates.macos_archive import bundle_members
+                    bundle_members(archive, manifest.expanded_size)
             if target.platform == "macos-arm64" and manifest.maturity != "preview":
                 raise UpdateError("Unnotarized first Mac release must be marked preview.")
             metadata, signature = write_update_metadata(output, data, key)
@@ -178,7 +189,10 @@ def publish(folder, notes, *, make_public=False):
                                       or remote[name]["size"] != rows[name]["size"] for name in names):
         raise UpdateError("Uploaded draft attachments have not all been verified.")
     if make_public:
-        approval = json.loads((folder / "operator-acceptance.json").read_text(encoding="utf-8"))
+        acceptance = folder / "operator-acceptance.json"
+        if not acceptance.is_file():
+            raise UpdateError("Real operator acceptance is missing; release remains a draft.")
+        approval = json.loads(acceptance.read_text(encoding="utf-8"))
         required = ("windows_two_upgrades", "windows_account_login", "mac_account_login", "mac_offline_restart", "mac_cross_version_update")
         if approval.get("source_commit") != data["source_commit"] or not all(approval.get(item) is True for item in required):
             raise UpdateError("Operator acceptance is incomplete; release remains a draft.")

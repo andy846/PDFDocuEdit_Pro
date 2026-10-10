@@ -131,6 +131,7 @@ def candidates(tmp_path):
             "version": "3.0.4", "source_commit": COMMIT, "source_fingerprint": "b" * 64,
         }),
         mac.executable: "native fixture",
+        "PDFDocuEdit Pro.app/Contents/Info.plist": "native plist fixture",
     }
     with zipfile.ZipFile(package, "w") as archive:
         for name, value in entries.items():
@@ -150,11 +151,24 @@ def candidates(tmp_path):
             files.append(metadata)
         data = {"version": "3.0.4", "source_commit": COMMIT, "source_fingerprint": "b" * 64,
                 "platform": platform, "channel": "private", "auth_project": "qatest",
-                "checks": {"native_packaging": True, "frozen_login": {"passed": True},
+                "checks": {"native_packaging": True, "frozen_login": (
+                    {"accepted_before_login": True, "real_frozen_launcher": True} if platform == "windows-x64" else
+                    {"login_shell_started": True, "managed_handshake": True, "unauthenticated_entries_blocked": True}),
                            "regression": {"passed": True, "modules": 1, "tests": 1}},
                 "files": [{"name": p.name, "size": p.stat().st_size, "sha256": digest_file(p)} for p in files]}
         (output / f"candidate-{platform}.json").write_text(json.dumps(data))
     return output
+
+
+def test_failed_native_handshake_cannot_be_signed(tmp_path, signing):
+    source = candidates(tmp_path)
+    record = source / "candidate-windows-x64.json"
+    data = json.loads(record.read_text())
+    data["checks"]["frozen_login"]["accepted_before_login"] = False
+    record.write_text(json.dumps(data))
+    with pytest.raises(UpdateError, match="gates must pass"):
+        seal(source, tmp_path / "sealed", "3.0.4", COMMIT, signing[0])
+    assert not (tmp_path / "sealed").exists()
 
 
 def test_seal_requires_both_platforms_same_commit_and_unchanged_payload(tmp_path, signing):

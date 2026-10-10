@@ -26,7 +26,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     selected = TESTS
     if args.auth_updates:
-        selected = TESTS[:8] + ["tests/test_mutation_transactions.py", "tests/test_io_atomic.py",
+        selected = TESTS[:9] + ["tests/test_mutation_transactions.py", "tests/test_io_atomic.py",
                                "tests/composition/test_workspace_modes.py"]
         selected += ["tests/test_private_auth_build.py", "tests/test_update_release.py"]
     raise SystemExit(run(selected, Path("build/macos-tests")))
