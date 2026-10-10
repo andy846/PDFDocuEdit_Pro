@@ -171,6 +171,30 @@ def test_failed_native_handshake_cannot_be_signed(tmp_path, signing):
     assert not (tmp_path / "sealed").exists()
 
 
+def test_draft_discovery_uses_authenticated_list_and_release_id(monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts import unified_release
+
+    calls = []
+    def listing(args, **kwargs):
+        calls.append(args)
+        assert "--paginate" in args
+        assert any("releases?per_page=100" in item for item in args)
+        return SimpleNamespace(returncode=0, stdout="123\n")
+
+    def read(args, **kwargs):
+        calls.append(args)
+        assert kwargs["encoding"] == "utf-8"
+        assert args[-1].endswith("/releases/123")
+        return json.dumps({"id": 123, "tag_name": "v3.0.4", "draft": True})
+
+    monkeypatch.setattr(unified_release.subprocess, "run", listing)
+    monkeypatch.setattr(unified_release.subprocess, "check_output", read)
+    assert unified_release.find_release("v3.0.4")["draft"] is True
+    assert len(calls) == 2
+
+
 def test_seal_requires_both_platforms_same_commit_and_unchanged_payload(tmp_path, signing):
     source = candidates(tmp_path)
     output = tmp_path / "sealed"

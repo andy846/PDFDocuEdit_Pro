@@ -150,25 +150,40 @@ def validate_sealed(folder):
     return data
 
 
+def find_release(tag):
+    # /releases/tags/{tag} retrieves published releases and returns 404 for
+    # drafts, even to the owner. The authenticated list includes drafts.
+    result = subprocess.run(["gh", "api", "--paginate", f"repos/{REPOSITORY}/releases?per_page=100",
+                             "--jq", f'.[] | select(.tag_name == {json.dumps(tag)}) | .id'],
+                            capture_output=True, text=True, encoding="utf-8", check=False)
+    if result.returncode:
+        raise UpdateError("Cannot verify existing releases; no draft was created.")
+    ids = result.stdout.split()
+    if len(ids) > 1 or any(not item.isdigit() for item in ids):
+        raise UpdateError("Release tag lookup is ambiguous.")
+    if not ids:
+        return None
+    return json.loads(subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/releases/{ids[0]}"], text=True, encoding="utf-8"))
+
+
 def publish(folder, notes, *, make_public=False):
     folder = Path(folder)
     data = validate_sealed(folder)
     tag = "v" + data["version"]
-    args = ["gh", "api", f"repos/{REPOSITORY}/releases/tags/{tag}"]
-    existing = subprocess.run(args, capture_output=True, text=True, check=False)
-    if existing.returncode == 0:
-        release = json.loads(existing.stdout)
+    release = find_release(tag)
+    if release is not None:
         if not release["draft"]:
             raise UpdateError("A published release is immutable. Use a new version.")
         if release["target_commitish"] != data["source_commit"]:
             raise UpdateError("Existing draft source commit differs.")
     else:
-        if "404" not in existing.stderr:
-            raise UpdateError("Cannot verify whether the release already exists.")
         subprocess.run(["gh", "release", "create", tag, "--repo", REPOSITORY, "--draft",
                         "--target", data["source_commit"], "--title", f"PDFDocuEdit Pro {tag}",
                         "--notes-file", str(notes)], check=True)
-    release = json.loads(subprocess.check_output(args, text=True))
+    release = find_release(tag)
+    if release is None:
+        raise UpdateError("Created draft could not be verified.")
+    args = ["gh", "api", f"repos/{REPOSITORY}/releases/{release['id']}"]
     names = [row["name"] for row in data["files"]] + ["release-index.json", "release-index.sig"]
     rows = {row["name"]: row for row in data["files"]}
     for name in ("release-index.json", "release-index.sig"):
@@ -183,7 +198,7 @@ def publish(folder, notes, *, make_public=False):
                 raise UpdateError("An existing draft attachment differs; it will not be overwritten.")
             continue
         subprocess.run(["gh", "release", "upload", tag, str(folder / name), "--repo", REPOSITORY], check=True)
-    release = json.loads(subprocess.check_output(args, text=True))
+    release = json.loads(subprocess.check_output(args, text=True, encoding="utf-8"))
     remote = {row["name"]: row for row in release["assets"]}
     if set(remote) != set(names) or any(remote[name].get("digest") != "sha256:" + rows[name]["sha256"]
                                       or remote[name]["size"] != rows[name]["size"] for name in names):

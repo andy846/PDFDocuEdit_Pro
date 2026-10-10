@@ -43,6 +43,10 @@ are explicitly marked preview in their signed update metadata.
 Download both artifacts from the SAME workflow run and merge their
 release-candidate folders into one fresh local candidates directory.
 Never add arbitrary files or sign output from a different commit.
+The release tooling on the controlled signing machine can receive fixes after
+application source is frozen. Pass the native artifacts' frozen application SHA
+explicitly; never relabel packages as the newer tooling SHA. Both application
+packages still must match each other and their actual embedded provenance.
 
 ## Sign on the owner's controlled machine
 
