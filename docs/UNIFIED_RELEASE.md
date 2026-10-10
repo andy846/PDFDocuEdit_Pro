@@ -101,6 +101,13 @@ result.json. It never drives or terminates the operator's existing application.
 The Mac gates require an operator Mac/account; hosted synthetic tests do not
 count as real-account login or offline use.
 
+Use a short QA output path on Windows. The unchanged original launcher remains
+subject to the installed OS/Python path limits; deep native dependency paths
+can exceed MAX_PATH under a long worktree directory. The helper checks this
+before starting its frozen test application. A long-path installed deployment
+may require reinstalling in a shorter managed directory; no global OS setting
+is changed by this release.
+
 ### Existing Mac v3.0.3 account testing installation
 
 A draft is not visible to the installed app's normal latest-release check.

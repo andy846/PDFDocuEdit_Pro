@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 from scripts.build_managed_installer import extract_deployment
@@ -44,6 +45,32 @@ def stop_owned(pid, code):
         api.CloseHandle(handle)
 
 
+def check_qa_paths(root, packages):
+    staging = root / "versions" / (".staging-" + "0" * 32)
+    for package in packages:
+        with zipfile.ZipFile(package) as archive:
+            if any(len(str(staging / name)) >= 260 for name in archive.namelist()):
+                raise UpdateError("Use a shorter QA output path for the original Windows launcher (for example D:/QA/v304).")
+
+
+def cleanup_test_process(process, root, versions, owned_child):
+    try:
+        if owned_child is None and process.poll() is None:
+            # A failed update can restart the prior child before the expected
+            # next version is observed. Only consider this parent's exact QA
+            # executables; never terminate an operator's normal application.
+            for value in versions:
+                owned_child = child_of(process.pid, root / "versions" / value / "PDFDocuEdit Pro.exe")
+                if owned_child:
+                    break
+        if owned_child:
+            stop_owned(owned_child, 1)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(15)
+
+
 def run(baseline, releases, output):
     if sys.platform != "win32" or len(releases) != 2:
         raise UpdateError("This gate requires Windows and exactly two newer signed frozen versions.")
@@ -73,6 +100,7 @@ def run(baseline, releases, output):
             raise UpdateError("Each QA update must be a newer account-enabled application.")
         manifests.append((folder, manifest))
         previous = manifest.version
+    check_qa_paths(root, [folder / manifest.asset for folder, manifest in manifests])
     environment = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     for name in ("PDFDOCUEDIT_UPDATE_ROOT", "PDFDOCUEDIT_LAUNCH_TOKEN"):
         environment.pop(name, None)
@@ -118,11 +146,7 @@ def run(baseline, releases, output):
         atomic_json(output / "result.json", report)
         return report
     finally:
-        if owned_child:
-            stop_owned(owned_child, 1)
-        if process.poll() is None:
-            process.terminate()
-            process.wait(15)
+        cleanup_test_process(process, root, ["3.0.3", *[m.version for _, m in manifests]], owned_child)
 
 
 def main():
