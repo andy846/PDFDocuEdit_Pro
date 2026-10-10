@@ -15,6 +15,7 @@ Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此�
 - 兩平台由同一 commit 打包。先補齊同一 Draft Release 的安裝包、更新包、manifest、簽章及校驗碼，核對完成再公開；CI 不持有更新私鑰。
 
 操作及發布門檻見 [雙平台發布流程](docs/UNIFIED_RELEASE.md)。
+已有 Mac v3.0.3 登入测试版的升級步骤及验收清单见 [Mac 候選版實測](docs/MAC_UPDATE_ACCEPTANCE.zh-HK.md)。
 
 ## macOS 對齊開發
 
