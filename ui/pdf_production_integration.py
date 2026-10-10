@@ -68,7 +68,11 @@ def open_production_workspace(window, workspace_type, section):
             if pages.get(key) is page:
                 pages.pop(key, None)
         page.closed.connect(remove)
-        page.outputReady.connect(window.load_file)
+        def open_output(path):
+            if mode:
+                mode.request_mode("pdf")
+            window.load_file(path)
+        page.outputReady.connect(open_output)
         page.activityChanged.connect(lambda _busy: window._merge_controller.sync_activity())
         window.workspace.add_tool_tab("pdf_production", page, "PDF Production Tools")
         page.select_section(section)

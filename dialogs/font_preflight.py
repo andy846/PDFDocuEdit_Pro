@@ -349,6 +349,7 @@ class FontPreflightControls:
         self.progress.setRange(0, total)
         self.progress.setValue(done)
         self.progress.setFormat(message + " %p%" if total else message)
+        self._event("progressChanged", done, total, message)
 
     def ended(self):
         self.worker = None
@@ -404,6 +405,8 @@ class FontPreflightControls:
                 or result.get("error", "Operation cancelled.")
             )
 
+        self.update_controls()
+
     def fill_table(self):
         rows = (self.inventory or {}).get("resources", [])
         if not self.inventory and self.report.get("files"):
@@ -426,10 +429,13 @@ class FontPreflightControls:
         matches = {m["font_xref"]: m for m in self.report.get("matches", [])}
         for row, resource in enumerate(rows):
             candidate = self.selections.get(str(resource["xref"]), {})
+            status = matches.get(resource["xref"], resource)["status"]
+            if isinstance(self, ProductionPanel):
+                status = {"EMBEDDED": "Embedded", "NON_EMBEDDED": "Not embedded", "BASE14_POLICY_EXEMPT": "Allowed by Print policy", "CANDIDATE_FOUND": "Candidate verified"}.get(status, status.replace("_", " ").capitalize())
             values = [
                 f"{resource['name']} / {resource['xref']}",
                 resource["subtype"],
-                matches.get(resource["xref"], resource)["status"],
+                status,
                 ", ".join(map(str, resource["pages"][:30])) + ("…" if len(resource["pages"]) > 30 else ""),
                 Path(candidate.get("path", "")).name if candidate else "Not selected",
             ]

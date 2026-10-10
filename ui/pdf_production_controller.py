@@ -42,7 +42,7 @@ class PdfProductionController(QObject):
             panel.taskResult.connect(lambda request, result, key=section: self.received(key, request, result))
             panel.taskFailed.connect(lambda request, error, key=section: self.failed(key, request, error))
             panel.taskEnded.connect(self.ended)
-            panel.progress.valueChanged.connect(lambda _value, p=panel: self.forward_progress(p))
+            panel.progressChanged.connect(self.progress)
         self.monitor = QTimer(self)
         self.monitor.setInterval(200)
         self.monitor.timeout.connect(self.check_source)
@@ -163,13 +163,12 @@ class PdfProductionController(QObject):
                 self.overview = {}
         self.changed.emit()
 
-    def forward_progress(self, panel):
-        if panel.worker:
-            self.progress.emit(panel.progress.value(), panel.progress.maximum(), panel.progress.format().replace(" %p%", ""))
-
     def started(self, section, request):
         self.active, self.active_request = section, copy.deepcopy(request)
         self.current_entry = None
+        task = request.get("task", "")
+        phase = "Generating / validating" if task in {"execute", "execute_batch", "font_repair"} else "Checking settings" if task in {"font_match", "font_catalogue"} else "Analyzing"
+        self.progress.emit(0, 0, phase)
         self.changed.emit()
 
     def received(self, section, request, result):

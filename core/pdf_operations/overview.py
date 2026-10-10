@@ -38,5 +38,8 @@ def analyze_overview(sources, *, password="", policy="print", progress=None, is_
         if row["status"] == "ANALYZED" and (row.get("pdf", {}).get("issues") or row.get("fonts", {}).get("issues") or
                 not row.get("fonts", {}).get("complete", True) or any(f["status"] not in {"EMBEDDED", "BASE14_POLICY_EXEMPT"} for f in row.get("fonts", {}).get("resources", []))):
             row["status"] = "NEEDS_REVIEW"
+        if row.get("pdf", {}).get("diagnostics", {}).get("qpdf", {}).get("status") in {"Error", "Warning", "Not checked"}:
+            if row["status"] == "ANALYZED":
+                row["status"] = "NEEDS_REVIEW"
         files.append(row)
     return {"kind": "analysis", "files": files}

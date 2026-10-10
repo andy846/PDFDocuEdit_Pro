@@ -339,6 +339,7 @@ class PdfOperationControls:
         self.progress.setRange(0, total)
         self.progress.setValue(done)
         self.progress.setFormat(message + " %p%" if total else message)
+        self._event("progressChanged", done, total, message)
 
     def analyze(self):
         if self.worker:

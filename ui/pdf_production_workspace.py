@@ -66,6 +66,7 @@ class PdfProductionWorkspace(QWidget):
             panel.taskStarted.connect(lambda _request, p=panel: p.footer.hide())
             panel.taskEnded.connect(lambda p=panel: p.footer.hide())
             panel.controlsChanged.connect(lambda key=key: self.controller.settings_changed(key))
+            panel.controlsChanged.connect(self.sync_controls)
         self.panels["fonts"].pageRequested.connect(self.pageRequested)
         self.panels["fonts"].monitor.stop()  # One shared source monitor owns invalidation.
         self.controller.changed.connect(self.sync_controls)
@@ -122,6 +123,7 @@ class PdfProductionWorkspace(QWidget):
         self.refresh_button.clicked.connect(self.refresh_source)
         row.addWidget(self.choose_button)
         row.addWidget(self.refresh_button)
+        row.addStretch()
         row.addWidget(self.password, 1)
         root.addLayout(row)
         self.tabs = QTabBar()
@@ -265,6 +267,12 @@ class PdfProductionWorkspace(QWidget):
             safe.toggled.connect(content.setVisible)
             panel._root.insertWidget(first, safe)
             panel.safe_embed = safe
+            self.compact_disclosure(safe, content)
+            panel.table.setMaximumHeight(220)
+            panel.details.setMinimumHeight(65)
+            panel.details.setMaximumHeight(100)
+            panel._root.removeWidget(panel.details)
+            panel._root.insertWidget(first, panel.details)
             # Check sources is a font-only preparation action, not production.
             panel.check_button.setParent(panel)
             panel._root.insertWidget(first + 1, panel.check_button)
@@ -293,14 +301,25 @@ class PdfProductionWorkspace(QWidget):
             advanced_layout.addWidget(content)
             content.hide()
             advanced.toggled.connect(content.setVisible)
-            form.insertRow(3, advanced)
+            form.insertRow(4, advanced)
+            self.compact_disclosure(advanced, content)
             panel.advanced = advanced
             panel.pages.currentIndexChanged.connect(lambda _index, p=panel: self.adjust_repair(p))
             panel.mode.currentIndexChanged.connect(lambda _index: self.adjust_repair(panel))
             self.adjust_repair(panel)
 
+    @staticmethod
+    def compact_disclosure(group, content):
+        def update(expanded):
+            content.setVisible(expanded)
+            group.setMinimumHeight(0)
+            group.setMaximumHeight(16777215 if expanded else group.fontMetrics().height() + 24)
+        group.toggled.connect(update)
+        update(group.isChecked())
+
     def adjust_repair(self, panel):
         if panel.operation != "repair":
+            panel.form.setRowVisible(panel.range, panel.pages.currentIndex() == 2)
             return
         normalise = panel.mode.currentData() == "normalise"
         maximum = panel.mode.currentData() == "maximum"
@@ -425,7 +444,7 @@ class PdfProductionWorkspace(QWidget):
         self.status.setText(
             "Source changed or closed. Results are out of date; refresh from the Editor or choose PDFs."
             if controller.stale else
-            f"Working: {controller.active}. You can switch sections or return to the PDF."
+            f"{self.progress.format().replace(' %p%', '')} · {controller.active}. You can switch sections or return to the PDF."
             if busy else
             "Select a processing section; analyze and review its settings before generating a copy."
             if section in {"overview", "results"} else
@@ -433,6 +452,8 @@ class PdfProductionWorkspace(QWidget):
             if ready else
             "Analysis / settings check required. Review the section details for blocking reasons."
         )
+        if not busy and not controller.stale and section == "fonts":
+            self.status.setText(self.font_blocker())
         self.progress.setVisible(busy)
         for key in ("open", "refresh", "analyze", "generate"):
             if key in self.actions:
@@ -440,6 +461,27 @@ class PdfProductionWorkspace(QWidget):
                                               "analyze": self.analyze_button.isEnabled(), "generate": self.generate_button.isEnabled()}[key])
         self.activityChanged.emit(busy)
         self.result_buttons()
+
+    def font_blocker(self):
+        panel = self.panels["fonts"]
+        if not panel.inventory:
+            return "Analyze fonts first. For a batch, inspect one PDF to configure safe embedding."
+        inventory = panel.inventory
+        if panel.scan_only or inventory.get("protected"):
+            return "This source is scan-only (signed, encrypted or restricted). Export the report to review its fonts."
+        if not inventory.get("complete"):
+            return "Font analysis is incomplete; safe embedding is blocked. Review the reported issues."
+        if all(r["status"] in {"EMBEDDED", "BASE14_POLICY_EXEMPT"} for r in inventory["resources"]):
+            return "No embedding required under the selected policy. The font report can be exported in Results."
+        if not panel.selections:
+            return "Open Safe Embed and select the affected font's authorized original file."
+        if not panel.authorized.isChecked():
+            return "Confirm authorization to embed the selected original fonts."
+        if not panel.report.get("matches") or any(m["status"] != "CANDIDATE_FOUND" for m in panel.report["matches"]):
+            return "Check sources to validate the selected fonts. Unsupported or mismatched fonts remain blocked."
+        if not panel.reference.text() or not panel.trusted.isChecked():
+            return "Select and confirm a trusted original-font reference PDF in Safe Embed."
+        return "Ready to generate a verified new copy. Original preserved."
 
     def show_progress(self, done, total, message):
         self.progress.setRange(0, total)
@@ -621,7 +663,8 @@ class PdfProductionWorkspace(QWidget):
                           row.get("status", "Analysis available"), row.get("output_pdf", ""), row.get("report_dir", result.get("report_dir", "")),
                           row.get("error", "; ".join(row.get("errors", {}).values()))]
                 writer.writerow(["'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")) else value for value in values])
-            staged.write_text(buffer.getvalue(), encoding="utf-8-sig")
+            with staged.open("w", encoding="utf-8-sig", newline="") as stream:
+                stream.write(buffer.getvalue())
 
     def finished_task(self):
         if self.pending_close or self.stopped:

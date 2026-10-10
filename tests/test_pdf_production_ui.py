@@ -219,3 +219,105 @@ def test_viewer_routes_single_entry_legacy_commands_and_snapshots(qt_application
     finally:
         window.close()
         window.deleteLater()
+
+
+def test_settings_change_marks_historical_results_and_retains_errors(qt_application, tmp_path):
+    from core.pdf_operations.model import PdfOperationPlan
+    page = PdfProductionWorkspace()
+    try:
+        path = source(tmp_path)
+        page.set_sources(paths=[path], page_count=1)
+        page.select_section("flatten")
+        panel = page.panels["flatten"]
+        plan = PdfOperationPlan(str(path), "hash", panel.options(), 1)
+        panel.analysis_ready({"plan": plan.to_dict()})
+        panel.worker_ended()
+        page.controller.received("flatten", {"task": "analyse", "options": plan.to_dict()["options"]}, {"plan": plan.to_dict()})
+        assert not page.controller.history[0]["outdated"]
+        assert page.generate_button.isEnabled()
+        panel.pages.setCurrentIndex(2)
+        panel.range.setText("invalid pages")
+        assert page.controller.history[0]["outdated"] and panel.plan is None
+        assert not page.generate_button.isEnabled()
+        page.select_section("results")
+        assert "OUT OF DATE" in page.result_details.toPlainText()
+        assert "Mode: safe" in page.result_details.toPlainText()
+        page.select_section("flatten")
+        assert panel.range.text() == "invalid pages"
+    finally:
+        page.request_close()
+
+
+def test_fonts_only_generates_the_selected_file_and_protects_security(qt_application, tmp_path, monkeypatch):
+    import dialogs.font_preflight as fonts
+    monkeypatch.setattr(fonts, "Worker", FakeWorker)
+    page = PdfProductionWorkspace()
+    try:
+        path = source(tmp_path)
+        page.set_sources(paths=[path], page_count=1)
+        page.select_section("fonts")
+        panel = page.panels["fonts"]
+        panel.inventory = {"complete": True, "protected": False, "resources": [{"status": "NON_EMBEDDED"}]}
+        panel.selections = {"10": {"path": "original.ttf"}}
+        panel.authorized.setChecked(True)
+        panel.reference.setText("reference.pdf")
+        panel.trusted.setChecked(True)
+        panel.report = {"matches": [{"status": "CANDIDATE_FOUND"}]}
+        panel.update_controls()
+        page.sync_controls()
+        assert page.generate_button.isEnabled()
+        page.output_folder.setText(str(tmp_path / "output"))
+        page.generate()
+        assert panel.worker.request["task"] == "font_repair"
+        assert panel.worker.request["source"] == str(path)
+        assert all(page.panels[key].worker is None for key in ("flatten", "repair"))
+        panel.worker.ended.emit()
+        page.set_sources(paths=[path], editor=True, scan_only=True, page_count=1)
+        panel.analysis_ready({"inventory": {"page_count": 1, "complete": True, "protected": False,
+                                           "resources": [], "issues": []}})
+        assert not page.generate_button.isEnabled()
+        assert "scan-only" in page.status.text()
+    finally:
+        page.request_close()
+
+
+def test_batch_sources_are_shared_and_font_drilldown_keeps_file_identity(qt_application, tmp_path):
+    from core.font_preflight.inventory import analyze
+    page = PdfProductionWorkspace()
+    try:
+        first, second = source(tmp_path), source(tmp_path, "other.pdf")
+        page.set_sources(paths=[first, second])
+        assert all(panel.sources == [str(first), str(second)] for panel in page.panels.values())
+        panel = page.panels["fonts"]
+        panel.analysis_ready({"files": [{"file_index": index, "status": "ANALYZED", "inventory": analyze(path).to_dict()}
+                                       for index, path in enumerate((first, second), 1)]})
+        panel.table.selectRow(1)
+        panel.inspect_selected_batch()
+        assert panel.source == str(second)
+        assert page.controller.sources == [str(first), str(second)]
+        pages = []
+        page.pageRequested.connect(pages.append)
+        panel.table.selectRow(0)
+        panel.jump_page()
+        assert not pages
+        panel.return_batch()
+        assert panel.sources == [str(first), str(second)]
+    finally:
+        page.request_close()
+
+
+def test_exit_cancel_then_retry_does_not_reuse_old_permission(qt_application, tmp_path, monkeypatch):
+    import dialogs.pdf_operations as operations
+    monkeypatch.setattr(operations, "Worker", FakeWorker)
+    page = PdfProductionWorkspace()
+    page.set_sources(paths=[source(tmp_path)], page_count=1)
+    page.select_section("flatten")
+    page.analyze()
+    worker = page.panels["flatten"].worker
+    answers = iter([QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No])
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: next(answers))
+    assert page.confirm_discard()
+    assert not page.confirm_discard()  # An application exit cancelled elsewhere must ask again.
+    assert not worker.cancelled
+    worker.ended.emit()
+    page.request_close()

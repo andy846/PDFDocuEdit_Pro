@@ -10,6 +10,7 @@ class ProductionPanel(QWidget):
     taskFailed = pyqtSignal(dict, str)
     taskEnded = pyqtSignal()
     controlsChanged = pyqtSignal()
+    progressChanged = pyqtSignal(int, int, str)
 
     def __init__(self, title, geometry_key, parent=None):
         super().__init__(parent)
