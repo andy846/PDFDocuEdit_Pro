@@ -525,6 +525,7 @@ class PDFViewer(QMainWindow):
             ("Merge PDFs…", "merge"),
             ("Compress PDF…", "compress"),
             ("Flatten PDF…", "flatten"),
+            ("Font Preflight / Safe Embed Fonts…", "font_preflight"),
             ("PDF Repair / Production Normalise…", "pdf_repair"),
             ("Deep Search…", "deep_search"),
             ("Page Count Report…", "page_report"),
@@ -3879,6 +3880,7 @@ class PDFViewer(QMainWindow):
             "compress": self._compress_pdf,
             "flatten": self._flatten_annotations,
             "pdf_repair": lambda: self._open_pdf_operation("repair"),
+            "font_preflight": self._open_font_preflight,
             "deep_search": self._deep_search,
             "ocr": self._ocr,
             "merge_sheet": self._merge_sheets,
@@ -4602,6 +4604,44 @@ class PDFViewer(QMainWindow):
             dialog.show()
         except Exception as exc:
             self.info_bar.show_message(f"Cannot open PDF production tool: {exc}", "error", 0)
+
+    def _open_font_preflight(self) -> None:
+        from dialogs.font_preflight import FontPreflightDialog
+        if not self.engine.is_loaded():
+            self.info_bar.show_message("Open a PDF before inspecting fonts.", "warning")
+            return
+        session = self._session
+        if session.form_draft is not None and session.form_draft.changed:
+            self.info_bar.show_message("Apply or discard pending form edits before font analysis.", "warning")
+            return
+        try:
+            source = self.engine.original_path or Path("document.pdf")
+            directory, snapshot = self._working_snapshot(source)
+            identity = (session.engine.document_id, session.engine.revision)
+            permissions = session.engine.copy_security_context().get("output_permissions")
+            scan_only = session.engine.is_encrypted() or (
+                permissions is not None and not permissions & fitz.PDF_PERM_MODIFY)
+            dialog = FontPreflightDialog(snapshot, parent=self, scan_only=scan_only,
+                source_current=lambda: session in self._sessions and session.engine.is_loaded()
+                    and identity == (session.engine.document_id, session.engine.revision))
+            if not hasattr(self, "_pdf_operation_dialogs"):
+                self._pdf_operation_dialogs = []
+            self._pdf_operation_dialogs.append(dialog)
+            dialog.outputReady.connect(self.load_file)
+            dialog.pageRequested.connect(lambda page: self._font_preflight_page(session, page))
+            def finished(_):
+                directory.cleanup()
+                if dialog in self._pdf_operation_dialogs:
+                    self._pdf_operation_dialogs.remove(dialog)
+                dialog.deleteLater()
+            dialog.finished.connect(finished)
+            dialog.show()
+        except Exception as exc:
+            self.info_bar.show_message(f"Cannot inspect PDF fonts: {exc}", "error", 0)
+
+    def _font_preflight_page(self, session, page):
+        if session in self._sessions and session.engine.is_loaded():
+            self._session_goto(session, page)
 
     def _show_watermark_dialog(self) -> None:
         if not self.engine.is_loaded():

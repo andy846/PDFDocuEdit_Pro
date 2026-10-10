@@ -402,3 +402,12 @@ Windows Python 3.12.14 validation: **389 passed across 35 modules**, plus Ruff a
 ## 版權
 
 Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietary software. Unauthorized copying, modification, distribution, or commercial use of this software or its source code is prohibited.
+
+
+## 開發更新：PDF Workspace 字體檢查及安全嵌入
+
+- 左側 **Utilities → Font Preflight / Safe Embed** 及 **Tools → Font Preflight / Safe Embed Fonts…** 提供唯讀檢查、相關頁面定位、原裝字體選擇及 JSON／CSV 報告。
+- 只對已核對的 Simple TrueType／WinAnsi 個案修復副本；須有授權原裝字體及含相同字體二進位的可信參考 PDF。沒有原裝字體或可信參考時會列出原因，不能靠同名字體自動換字。
+- 全部相關頁面通過結構、字體雜湊及 300 dpi 逐頁視覺核對後，才發布新 PDF 及審計資料夾；不覆蓋來源、不改現有 Editor／Designer 字體處理。
+- 批次檢查逐檔隔離；可進入個別檔案覆核。簽署、加密、未完整分析及未支援字體格式保持 scan-only／blocked。
+- 本功能仍為開發更新，未新增 GitHub Release。詳細限制及測試方法見 [Font Preflight 說明](docs/FONT_PREFLIGHT_SAFE_EMBED.md)。

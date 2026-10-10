@@ -36,6 +36,13 @@ supports Windows x64.
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
+## Development Update: Editor Font Preflight
+
+* **Tools → Font Preflight / Safe Embed Fonts…**, also in left Utilities: read-only existing-PDF font inventory, affected pages, exact original-face candidates, and JSON/CSV reports.
+* Safe native repair currently supports verified simple TrueType / WinAnsi cases only. Select authorized original fonts, Check sources, then provide the authoritative reference PDF with the same font binary. Missing proof blocks repair; family names alone are insufficient.
+* Repair Copy publishes PDF + audit together after original-object/stream checks, independent qpdf validation and exact 300 dpi reference comparisons on every page. No substitution, reflow or rasterisation. Originals and Editor Undo remain unchanged.
+* Batch scan isolates file failures; inspect individual files to configure their fonts. Signed/encrypted/restricted sources and unverified formats are scan-only. No new public release is implied.
+
 ## Development Update: PDF Production Cleanup
 
 * **Tools → Flatten PDF**: Analyse annotations/form appearances, choose all,

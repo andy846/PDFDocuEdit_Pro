@@ -209,6 +209,8 @@ _hiddenimports = [
     "core.pdf_operations.worker",
     "core.print_worker",
     "dialogs.pdf_operations",
+    "dialogs.font_preflight",
+    "core.font_preflight.worker",
     "workflow.workspace",
     "workflow.worker",
     "composition.designer.workspace",

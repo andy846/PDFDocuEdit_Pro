@@ -16,6 +16,7 @@ TESTS = [
     "tests/composition/test_inserter_production.py", "tests/composition/test_postscript.py",
     "tests/composition/test_production_review.py", "tests/composition/test_production_review_ui.py",
     "tests/composition/test_workspace_modes.py", "tests/test_workflow_production_review.py",
+    "tests/test_font_preflight.py", "tests/test_font_preflight_ui.py",
     "tests/test_workflow_branch_engine.py", "tests/test_workflow_inspection.py",
 ]
 

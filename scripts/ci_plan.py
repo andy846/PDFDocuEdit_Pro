@@ -81,6 +81,8 @@ CROSS_PLATFORM_TESTS = (
     "tests/test_deep_search.py",
     "tests/test_deep_search_detailed.py",
     "tests/test_font_inspector.py",
+    "tests/test_font_preflight.py",
+    "tests/test_font_preflight_ui.py",
     "tests/test_ocr.py",
     "tests/test_io_atomic.py",
     "tests/test_mutation_transactions.py",
