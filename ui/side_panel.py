@@ -336,12 +336,8 @@ class SidePanel(QFrame):
                 ToolItem("overlay", "PDF overlay", "layers", "overlay.png"),
                 ToolItem("batch_print", "Batch print", "printer", "Batch_print.png"),
                 ToolItem("compress", "Compress PDFs", "files", "compress.png"),
-                ToolItem("flatten", "Flatten PDF", "layers", description=
-                         "Flatten annotations and form fields on selected pages; save a new PDF copy."),
-                ToolItem("font_preflight", "Font Preflight / Safe Embed", "type", description=
-                         "Inspect existing PDF font resources; verify authorized original fonts before repairing a copy."),
-                ToolItem("pdf_repair", "PDF Repair / Normalise", "wrench", description=
-                         "PDF Repair / Production Normalise: analyse, repair, validate and report; save a new copy."),
+                ToolItem("pdf_production", "PDF Production Tools", "wrench", description=
+                         "Font Preflight / Safe Embed Fonts, Flatten PDF, PDF Repair / Production Normalise: analyze and save a new copy."),
                 ToolItem("deep_search", "Deep search", "search", "deep_search.png"),
                 ToolItem(
                     "merge_sheet",

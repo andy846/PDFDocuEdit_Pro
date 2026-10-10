@@ -524,6 +524,7 @@ class PDFViewer(QMainWindow):
         for label, key in (
             ("Merge PDFs…", "merge"),
             ("Compress PDF…", "compress"),
+            ("PDF Production Tools…", "pdf_production"),
             ("Flatten PDF…", "flatten"),
             ("Font Preflight / Safe Embed Fonts…", "font_preflight"),
             ("PDF Repair / Production Normalise…", "pdf_repair"),
@@ -3881,6 +3882,7 @@ class PDFViewer(QMainWindow):
             "flatten": self._flatten_annotations,
             "pdf_repair": lambda: self._open_pdf_operation("repair"),
             "font_preflight": self._open_font_preflight,
+            "pdf_production": self._open_pdf_production,
             "deep_search": self._deep_search,
             "ocr": self._ocr,
             "merge_sheet": self._merge_sheets,
@@ -4560,84 +4562,18 @@ class PDFViewer(QMainWindow):
         self._open_pdf_operation("flatten")
 
     def _open_pdf_operation(self, operation: str) -> None:
-        if not self.engine.is_loaded():
-            if operation == "repair":
-                source, _ = QFileDialog.getOpenFileName(self, "Analyze a PDF for Repair", "", "PDF (*.pdf)")
-                if source:
-                    from dialogs.pdf_operations import PdfOperationDialog
-                    dialog = PdfOperationDialog(source, operation, parent=self)
-                    if not hasattr(self, "_pdf_operation_dialogs"):
-                        self._pdf_operation_dialogs = []
-                    self._pdf_operation_dialogs.append(dialog)
-                    dialog.finished.connect(lambda _: self._pdf_operation_dialogs.remove(dialog))
-                    dialog.outputReady.connect(self.load_file)
-                    dialog.show()
-            else:
-                self.info_bar.show_message("Open a PDF before using this tool.", "warning")
-            return
-        if any(dialog.worker for dialog in getattr(self, "_pdf_operation_dialogs", [])):
-            self.info_bar.show_message("Wait for the current PDF production operation to finish.", "warning")
-            return
-        session = self._session
-        if session.form_draft is not None and session.form_draft.changed:
-            self.info_bar.show_message("Apply or discard pending form edits before creating a production copy.", "warning", 0)
-            return
-        from dialogs.pdf_operations import PdfOperationDialog
-        try:
-            source = self.engine.original_path or Path("document.pdf")
-            directory, snapshot = self._working_snapshot(source)
-            identity = (session.engine.document_id, session.engine.revision)
-            dialog = PdfOperationDialog(snapshot, operation, page_count=session.engine.page_count,
-                current_page=session.page, parent=self, **session.engine.copy_security_context(),
-                source_current=lambda: session in self._sessions and session.engine.is_loaded()
-                    and identity == (session.engine.document_id, session.engine.revision))
-            if not hasattr(self, "_pdf_operation_dialogs"):
-                self._pdf_operation_dialogs = []
-            self._pdf_operation_dialogs.append(dialog)
-            dialog.outputReady.connect(self.load_file)
-            def finished(_):
-                directory.cleanup()
-                if dialog in self._pdf_operation_dialogs:
-                    self._pdf_operation_dialogs.remove(dialog)
-                dialog.deleteLater()
-            dialog.finished.connect(finished)
-            dialog.show()
-        except Exception as exc:
-            self.info_bar.show_message(f"Cannot open PDF production tool: {exc}", "error", 0)
+        self._open_pdf_production(operation)
 
     def _open_font_preflight(self) -> None:
-        from dialogs.font_preflight import FontPreflightDialog
-        if not self.engine.is_loaded():
-            self.info_bar.show_message("Open a PDF before inspecting fonts.", "warning")
-            return
-        session = self._session
-        if session.form_draft is not None and session.form_draft.changed:
-            self.info_bar.show_message("Apply or discard pending form edits before font analysis.", "warning")
-            return
-        try:
-            source = self.engine.original_path or Path("document.pdf")
-            directory, snapshot = self._working_snapshot(source)
-            identity = (session.engine.document_id, session.engine.revision)
-            permissions = session.engine.copy_security_context().get("output_permissions")
-            scan_only = session.engine.is_encrypted() or (
-                permissions is not None and not permissions & fitz.PDF_PERM_MODIFY)
-            dialog = FontPreflightDialog(snapshot, parent=self, scan_only=scan_only,
-                source_current=lambda: session in self._sessions and session.engine.is_loaded()
-                    and identity == (session.engine.document_id, session.engine.revision))
-            if not hasattr(self, "_pdf_operation_dialogs"):
-                self._pdf_operation_dialogs = []
-            self._pdf_operation_dialogs.append(dialog)
-            dialog.outputReady.connect(self.load_file)
-            dialog.pageRequested.connect(lambda page: self._font_preflight_page(session, page))
-            def finished(_):
-                directory.cleanup()
-                if dialog in self._pdf_operation_dialogs:
-                    self._pdf_operation_dialogs.remove(dialog)
-                dialog.deleteLater()
-            dialog.finished.connect(finished)
-            dialog.show()
-        except Exception as exc:
-            self.info_bar.show_message(f"Cannot inspect PDF fonts: {exc}", "error", 0)
+        self._open_pdf_production("fonts")
+
+    def _open_pdf_production(self, section="overview") -> None:
+        from ui.merge_controller import MergeController
+        from ui.pdf_production_workspace import PdfProductionWorkspace
+        from ui.pdf_production_integration import open_production_workspace
+        if not getattr(self, "_merge_controller", None):
+            self._merge_controller = MergeController(self)
+        open_production_workspace(self, PdfProductionWorkspace, section)
 
     def _font_preflight_page(self, session, page):
         if session in self._sessions and session.engine.is_loaded():

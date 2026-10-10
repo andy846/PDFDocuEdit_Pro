@@ -109,25 +109,24 @@ def test_pdf_production_tools_in_sidebar_search_and_collapsed_mode(qt_applicatio
     panel = SidePanel(animations_enabled=False)
     try:
         panel.set_document_available(False)
-        assert not panel._buttons["flatten"].isEnabled()
-        assert panel._buttons["pdf_repair"].isEnabled()
-        panel.set_document_available(True)
+        assert panel._buttons["pdf_production"].isEnabled()
+        assert "flatten" not in panel._buttons and "font_preflight" not in panel._buttons and "pdf_repair" not in panel._buttons
         received = []
         panel.toolRequested.connect(received.append)
-        for key, search in (("flatten", "Flatten"), ("pdf_repair", "Production Normalise")):
-            button = panel._buttons[key]
-            assert not button.icon().isNull()
+        button = panel._buttons["pdf_production"]
+        assert not button.icon().isNull()
+        for search in ("Flatten", "Safe Embed", "Production Normalise"):
             panel._search.setText(search)
             qt_application.processEvents()
             assert not button.isHidden()
             assert panel._buttons["merge"].isHidden()
-            panel._search.clear()
-            panel.set_collapsed(True, animate=False)
-            assert button.text() == "" and "new" in button.toolTip().lower()
-            button.click()
-            assert received[-1] == key
-            panel.set_collapsed(False, animate=False)
-            assert button.text()
+        panel._search.clear()
+        panel.set_collapsed(True, animate=False)
+        assert button.text() == "" and "new" in button.toolTip().lower()
+        button.click()
+        assert received == ["pdf_production"]
+        panel.set_collapsed(False, animate=False)
+        assert button.text() == "PDF Production Tools"
     finally:
         panel.close()
         panel.deleteLater()
@@ -143,11 +142,13 @@ def test_sidebar_tools_route_to_existing_dialogs_and_commands(qt_application, tm
         window._load_file_sync(str(source(tmp_path)))
         qt_application.processEvents()
         calls = []
-        monkeypatch.setattr(window, "_open_pdf_operation", calls.append)
-        window.side_panel._buttons["flatten"].click()
-        window.side_panel._buttons["pdf_repair"].click()
-        assert calls == ["flatten", "repair"]
-        for key in ("flatten", "pdf_repair"):
+        monkeypatch.setattr(window, "_open_pdf_production", lambda section="overview": calls.append(section))
+        window.side_panel._buttons["pdf_production"].click()
+        window._open_pdf_operation("flatten")
+        window._open_pdf_operation("repair")
+        window._open_font_preflight()
+        assert calls == ["overview", "flatten", "repair", "fonts"]
+        for key in ("pdf_production", "flatten", "pdf_repair", "font_preflight"):
             assert sum(c.id == key for c in window._commands) == 1
             assert window._command_action_map[key].isEnabled()
     finally:

@@ -24,13 +24,18 @@ from composition.designer.process import Worker
 from core.pdf_operations.model import PdfOperationPlan, PdfOptions
 from core.variables import VariableContext, VariableError
 from ui.combo_popup import WideComboBox
+from ui.production_panel import ProductionPanel
 from ui.variable_name import VariableNameEdit
 
 from .base import ToolDialog
 
 
-class PdfOperationDialog(ToolDialog):
-    outputReady = pyqtSignal(str)
+class PdfOperationControls:
+
+    def _event(self, name, *args):
+        signal = getattr(self, name, None)
+        if signal is not None:
+            signal.emit(*args)
 
     def __init__(self, source, operation, *, page_count=0, current_page=0, password="",
                  output_password="", output_permissions=None, source_current=None, parent=None,
@@ -243,6 +248,8 @@ class PdfOperationDialog(ToolDialog):
         self.allow_errors.setVisible(self.preflight.isChecked())
         self.dpi.setEnabled((self.raster.isChecked() or self.mode.currentData() == "maximum") and self.worker is None)
 
+        self._event("controlsChanged")
+
     def approvals_changed(self, *_):
         # These confirmations alter permission to proceed, not the selected
         # transformations or source inventory. Do not rescan thousands of pages
@@ -261,6 +268,8 @@ class PdfOperationDialog(ToolDialog):
         self.generate_button.setEnabled(self.settings_only or bool(
             (self.plan and not self.plan.issues) or
             any(row.get("plan") and not row["plan"]["issues"] for row in self.analyses)))
+
+        self._event("controlsChanged")
 
     def browse_output(self):
         path = QFileDialog.getExistingDirectory(self, "Output root folder", self.output_folder.text())
@@ -294,8 +303,8 @@ class PdfOperationDialog(ToolDialog):
         if self.plan and self.plan.encrypted:
             self.secrets["output_password"] = self.password_edit.text()
         self.worker = Worker(Path(self.directory.name), request, self, worker_module="core.pdf_operations.worker", secrets=self.secrets)
-        self.worker.resultReady.connect(result)
-        self.worker.failed.connect(self.summary.setPlainText)
+        self.worker.resultReady.connect(lambda value: self.deliver_result(request, result, value))
+        self.worker.failed.connect(lambda message: self.deliver_failure(request, message))
         self.worker.progress.connect(self.update_progress)
         self.worker.ended.connect(self.worker_ended)
         self.cancel_button.setEnabled(True)
@@ -312,6 +321,19 @@ class PdfOperationDialog(ToolDialog):
         self.recovery_ack.setEnabled(False)
         self.password_edit.setEnabled(False)
         self.output_browse.setEnabled(False)
+        self._event("taskStarted", request)
+
+    def deliver_result(self, request, callback, value):
+        if not self.source_current():
+            self.summary.setPlainText("Source changed; result is out of date. Refresh source before processing.")
+            self._event("taskResult", request, value)
+            return
+        callback(value)
+        self._event("taskResult", request, value)
+
+    def deliver_failure(self, request, message):
+        self.summary.setPlainText(message)
+        self._event("taskFailed", request, message)
 
     def update_progress(self, done, total, message):
         self.progress.setRange(0, total)
@@ -434,6 +456,7 @@ class PdfOperationDialog(ToolDialog):
         self.reports_button.setEnabled(bool(self.last_result.get("report_dir")))
         self.open_button.setVisible(bool(self.last_result.get("output_pdf")))
         self.reports_button.setVisible(bool(self.last_result.get("report_dir")))
+        self._event("taskEnded")
         if self.close_pending:
             self.reject()
 
@@ -453,3 +476,12 @@ class PdfOperationDialog(ToolDialog):
         else:
             self.directory.cleanup()
             super().closeEvent(event)
+
+
+class PdfOperationDialog(PdfOperationControls, ToolDialog):
+    outputReady = pyqtSignal(str)
+
+
+class PdfOperationPanel(PdfOperationControls, ProductionPanel):
+    """The same controls and service adapters, without a dialog window."""
+    outputReady = pyqtSignal(str)

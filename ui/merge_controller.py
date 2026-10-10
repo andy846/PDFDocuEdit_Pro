@@ -60,7 +60,7 @@ class MergeController:
             # the user's expanded/collapsed choice. Only document tools are
             # unavailable while no PDF document tab is active.
             window.side_panel.set_document_available(False, unavailable_hint="Switch to a PDF tab to use this tool.")
-            keep = self.global_ids() | {"merge"}
+            keep = self.global_ids() | {"merge", "pdf_production"}
             for key, action in window._command_action_map.items():
                 if key not in keep:
                     action.setEnabled(False)
@@ -121,45 +121,46 @@ class MergeController:
         page = self.window.workspace.current_tool()
         active = page is not None and self.pdf_active()
         if active:
-            bar.set_shortcut_hints([Command(key, action.text(), action.shortcut().toString(), "Merge workspace",
+            bar.set_shortcut_hints([Command(key, action.text(), action.shortcut().toString(), page.menu.title().replace("&", "") + " workspace",
                                   action.trigger, alternate_shortcuts=tuple(s.toString() for s in action.shortcuts()[1:]))
                                   for key, action in page.actions.items()])
-            bar._save.setEnabled(not page.busy_state and not page.saving)
-            bar._save_as.setEnabled(not page.busy_state and not page.saving)
+            bar._save.setEnabled("save" in page.actions and not page.busy_state and not page.saving)
+            bar._save_as.setEnabled("save_as" in page.actions and not page.busy_state and not page.saving)
             bar.set_undo_redo_enabled(page.undo.canUndo() and not page.busy_state, page.undo.canRedo() and not page.busy_state)
         else:
             bar.set_shortcut_hints(self.window._commands)
 
     def sync_activity(self):
-        page = getattr(self.window, "_merge_workspace", None)
-        self.window.command_bar.mode_switcher.set_busy("pdf", bool(self.window._tasks or (page and page.busy_state)))
+        self.window.command_bar.mode_switcher.set_busy("pdf", bool(self.window._tasks or any(p.busy_state for p in self.tool_pages())))
         self.sync_controls()
 
     def commands(self, page):
-        return [Command("merge."+key, action.text(), action.shortcut().toString(), "Merge workspace",
+        return [Command(str(page.property("workspaceKind") or "merge")+"."+key, action.text(), action.shortcut().toString(), page.menu.title().replace("&", "") + " workspace",
                         action.trigger, action.isEnabled,
                         alternate_shortcuts=tuple(s.toString() for s in action.shortcuts()[1:]))
                 for key, action in page.actions.items()]
 
     def set_active(self, active):
-        page = getattr(self.window, "_merge_workspace", None)
-        if page:
+        for page in self.tool_pages():
             shared = [sequence.toString() for key, action in self.window._command_action_map.items()
                       if key in self.global_ids() for sequence in action.shortcuts()]
             shared.extend(shortcut.key().toString() for shortcut in self.window._command_shortcuts
                           if shortcut.property("commandId") in self.global_ids())
+            page_active = active and page is self.window.workspace.current_tool()
             for key, action in page.actions.items():
                 sequences = page.shortcut_defaults.get(key, [])
                 action.setShortcuts([s for s in sequences if not any(shortcut_conflict(s.toString(), value) for value in shared)]
-                                    if active else [])
-                if not active:
+                                    if page_active else [])
+                if not page_active:
                     action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
                 else:
                     action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
+    def tool_pages(self):
+        return [p for p in self.window.workspace._tool_tabs if not sip.isdeleted(p)]
+
     def confirm_exit(self):
-        page = getattr(self.window, "_merge_workspace", None)
-        return page is None or page.confirm_discard(after_save=self.window.close)
+        return all(page.confirm_discard(after_save=self.window.close) for page in self.tool_pages())
 
     def prepare_exit(self):
         if self.exit_approved:
@@ -183,8 +184,7 @@ class MergeController:
         return True
 
     def shutdown(self):
-        page = getattr(self.window, "_merge_workspace", None)
-        if not page:
-            return True
-        page.stop()
-        return not page.workers
+        pages = self.tool_pages()
+        for page in pages:
+            page.stop()
+        return all(not page.workers for page in pages)

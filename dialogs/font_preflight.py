@@ -24,13 +24,17 @@ from PyQt6.QtWidgets import (
 from composition.designer.process import Worker
 from core.font_preflight.service import export_report
 from ui.combo_popup import WideComboBox
+from ui.production_panel import ProductionPanel
 
 from .base import ToolDialog
 
 
-class FontPreflightDialog(ToolDialog):
-    outputReady = pyqtSignal(str)
-    pageRequested = pyqtSignal(int)
+class FontPreflightControls:
+
+    def _event(self, name, *args):
+        signal = getattr(self, name, None)
+        if signal is not None:
+            signal.emit(*args)
 
     def __init__(self, source, *, password="", scan_only=False, source_current=None, parent=None):
         super().__init__("Font Preflight / Safe Embed Fonts", "font_preflight", parent)
@@ -199,6 +203,8 @@ class FontPreflightDialog(ToolDialog):
         self.export_button.setEnabled(not busy and bool(self.report))
         self.open_button.setEnabled(not busy and bool(self.output))
 
+        self._event("controlsChanged")
+
     def invalidate(self, *_):
         self.inventory, self.report, self.output = None, {}, ""
         self.batch_sources, self.batch_results = [], None
@@ -320,11 +326,24 @@ class FontPreflightDialog(ToolDialog):
             worker_module="core.pdf_operations.worker",
             secrets=self.secrets,
         )
-        self.worker.resultReady.connect(callback)
-        self.worker.failed.connect(lambda message: self.details.setPlainText(message))
+        self.worker.resultReady.connect(lambda value: self.deliver_result(request, callback, value))
+        self.worker.failed.connect(lambda message: self.deliver_failure(request, message))
         self.worker.progress.connect(self.progress_changed)
         self.worker.ended.connect(self.ended)
         self.update_controls()
+        self._event("taskStarted", request)
+
+    def deliver_result(self, request, callback, value):
+        if not self.source_current():
+            self.details.setPlainText("Source changed; result is out of date. Refresh source before processing.")
+            self._event("taskResult", request, value)
+            return
+        callback(value)
+        self._event("taskResult", request, value)
+
+    def deliver_failure(self, request, message):
+        self.details.setPlainText(message)
+        self._event("taskFailed", request, message)
 
     def progress_changed(self, done, total, message):
         self.progress.setRange(0, total)
@@ -334,6 +353,7 @@ class FontPreflightDialog(ToolDialog):
     def ended(self):
         self.worker = None
         self.update_controls()
+        self._event("taskEnded")
         if self.close_pending:
             self.reject()
 
@@ -492,3 +512,14 @@ class FontPreflightDialog(ToolDialog):
         else:
             self.directory.cleanup()
             super().closeEvent(event)
+
+
+class FontPreflightDialog(FontPreflightControls, ToolDialog):
+    outputReady = pyqtSignal(str)
+    pageRequested = pyqtSignal(int)
+
+
+class FontPreflightPanel(FontPreflightControls, ProductionPanel):
+    """The same controls and service adapters, without a dialog window."""
+    outputReady = pyqtSignal(str)
+    pageRequested = pyqtSignal(int)

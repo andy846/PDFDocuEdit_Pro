@@ -35,7 +35,11 @@ def main(argv=None):
 
     try:
         secrets = json.loads(sys.stdin.readline(65536)) if request.get("stdin_secrets") else {}
-        if request["task"].startswith("font_"):
+        if request["task"] == "production_analyze":
+            from .overview import analyze_overview
+            result = analyze_overview(request["sources"], password=secrets.get("password", ""),
+                                      policy=request.get("policy", "print"), progress=progress, is_cancelled=cancelled)
+        elif request["task"].startswith("font_"):
             from core.font_preflight.worker import dispatch
             result = dispatch(request, secrets, progress=progress, is_cancelled=cancelled)
         elif request["task"] in ("analyse_batch", "execute_batch"):

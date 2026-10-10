@@ -13,7 +13,7 @@ from .workspace_modes import WorkspaceMode, WorkspaceModes
 
 class WorkspaceModeController(QObject):
     GLOBAL = {"quit", "command_palette", "main_menu", "preferences", "about", "shortcuts", "readme", "document_designer", "visual_workflow"}
-    PDF_NAVIGATION = {"toggle_tools"}
+    PDF_NAVIGATION = {"toggle_tools", "tab_next", "tab_prev"}
 
     def __init__(self, window, layout):
         super().__init__(window)
