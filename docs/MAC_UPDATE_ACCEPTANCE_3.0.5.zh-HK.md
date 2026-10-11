@@ -53,5 +53,3 @@ python3 -m venv .mac-update-test
   不要全域關閉 Gatekeeper。
 
 既有 v3.0.4 GitHub Release 保持不變。v3.0.5 按擁有人要求已公開，候選實機驗收缺項仍如實列明。
-
-

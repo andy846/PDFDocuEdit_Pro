@@ -451,4 +451,3 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
 - 全部相關頁面通過結構、字體雜湊及 300 dpi 逐頁視覺核對後，才發布新 PDF 及審計資料夾；不覆蓋來源、不改現有 Editor／Designer 字體處理。
 - 批次檢查逐檔隔離；可進入個別檔案覆核。簽署、加密、未完整分析及未支援字體格式保持 scan-only／blocked。
 - 本功能仍為開發更新，未新增 GitHub Release。詳細限制及測試方法見 [Font Preflight 說明](docs/FONT_PREFLIGHT_SAFE_EMBED.md)。
-
