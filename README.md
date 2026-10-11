@@ -20,7 +20,14 @@ Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此�
 - 更新仍由使用者確認：檢查、下載驗證、保存，再更新並重啟。取消保存不重啟；等待登入不觸發回退；真正啟動失敗可恢復上個版本及設定。
 - 兩平台由同一 commit 打包。先補齊同一 Draft Release 的安裝包、更新包、manifest、簽章及校驗碼，核對完成再公開；CI 不持有更新私鑰。
 
-操作及發布門檻見 [雙平台發布流程](docs/UNIFIED_RELEASE.md)。
+## GitHub 發布操作
+
+每次發布必須跟隨 [GitHub 發布標準流程](docs/UNIFIED_RELEASE.md)：凍結來源 →
+雙平台驗收／打包 → 候選核對 → 受控簽署 → GitHub 草稿 → 實機驗收 → 公開及下載／更新入口核對。
+同一候選不重複本機完整回歸，失敗從該階段續做；公開附件不覆蓋。
+各版本以 [驗收記錄模板](docs/RELEASE_VALIDATION_TEMPLATE.md) 保存結果、來源及耗時。
+流程文件不代表已啟動或完成新版本發布。
+
 已有 Mac v3.0.3 登入测试版的升級步骤及验收清单见 [Mac 候選版實測](docs/MAC_UPDATE_ACCEPTANCE.zh-HK.md)。
 
 ## macOS 對齊開發
