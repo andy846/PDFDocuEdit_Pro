@@ -125,7 +125,7 @@ def test_annotation_toolbar_icons_are_defined_and_unique() -> None:
     annotation_items = next(
         items
         for section_key, _title, items in SidePanel.SECTIONS
-        if section_key == "annotate"
+        if section_key == "edit"
     )
     icon_names = [item.icon_name for item in annotation_items]
     assert all(name in _PATHS for name in icon_names)

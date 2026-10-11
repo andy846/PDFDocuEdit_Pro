@@ -7079,6 +7079,14 @@ class PDFViewer(QMainWindow):
         resize_handles = getattr(self, "_resize_handles", None)
         if resize_handles is not None:
             resize_handles.update()
+        # Responsive collapse is temporary and must not overwrite user choice.
+        if getattr(self, "_auto_collapsed_sidebar", False) and self.width() >= 1050:
+            blocked = self.side_panel.blockSignals(True)
+            try:
+                self.side_panel.set_collapsed(False, animate=False)
+            finally:
+                self.side_panel.blockSignals(blocked)
+            self._auto_collapsed_sidebar = False
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls() and any(

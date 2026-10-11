@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PyQt6.QtCore import (
     QEasingCurve,
+    QEvent,
     QPropertyAnimation,
     QSettings,
     QSize,
@@ -16,13 +17,14 @@ from PyQt6.QtCore import (
     pyqtSlot,
 )
 from PyQt6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -32,8 +34,8 @@ from PyQt6.QtWidgets import (
 from core.capabilities import CapabilityId, detect_capabilities
 from styles.tokens import D, S
 
-from .icons import app_icon, app_pixmap, icon
-from .motion import MotionNavButton
+from .icons import app_icon, icon
+from .tool_navigation import FavouritesDialog, ToolNavButton, ToolPopup
 
 
 @dataclass(frozen=True)
@@ -76,8 +78,153 @@ SHORTCUT_HINTS: dict[str, str] = {
 }
 
 
+CATEGORY_LAYOUT = (
+    (
+        "search_inspect",
+        "Search & Inspect",
+        "search",
+        ("search", "deep_search", "find_file", "info", "font_inspect", "smart_detection", "compare_pdf"),
+    ),
+    (
+        "documents",
+        "Pages & Documents",
+        "files",
+        ("insert", "delete", "extract", "order", "sort", "split", "rotate", "merge"),
+    ),
+    (
+        "edit",
+        "Annotate & Edit",
+        "pen-line",
+        (
+            "highlight",
+            "underline",
+            "strikeout",
+            "squiggly",
+            "note",
+            "ink",
+            "rect",
+            "line",
+            "arrow",
+            "ellipse",
+            "polygon",
+            "freetext_typewriter",
+            "freetext_box",
+            "freetext_callout",
+            "image",
+            "signature",
+            "stamp",
+            "watermark",
+            "fill_form",
+            "redact",
+        ),
+    ),
+    (
+        "conversion",
+        "Convert",
+        "file-text",
+        ("ocr", "pdf_to_word", "office_to_pdf", "txt_to_pdf", "postscript"),
+    ),
+    (
+        "production",
+        "Production & Data",
+        "printer",
+        (
+            "pdf_production",
+            "overlay",
+            "batch_print",
+            "compress",
+            "page_report",
+            "extract_text",
+            "merge_sheet",
+            "barcode",
+            "barcode_batch",
+        ),
+    ),
+    ("protection", "Security", "lock", ("encrypt", "decrypt")),
+)
+
+SEARCH_ALIASES = {
+    "search": "find text normal search 搜尋 搜索",
+    "deep_search": "folder files cross document search 跨檔 搜尋 搜索",
+    "merge": "combine join concatenate 合併 合并",
+    "extract": "selected pages export 擷取 提取",
+    "sort": "reorder organize page arrangement 排序 整理",
+    "pdf_production": "font preflight safe embed flatten repair normalise normalize 字體 字体 平面化 修復 修复",
+    "batch_print": "printer print printing 列印 打印",
+    "font_inspect": "font typeface 字體 字体",
+    "image": "picture png jpg 圖片 图片",
+    "signature": "handwritten sign 簽名 签名",
+}
+
+
+TOOL_DESCRIPTIONS = {
+    "search": "Find text in the current PDF and work with matching pages.",
+    "deep_search": "Search text across a folder or multiple PDFs.",
+    "find_file": "Find and open a PDF by file name or location.",
+    "info": "View document metadata, page dimensions and security information.",
+    "font_inspect": "Click text to inspect its font, size and embedding status.",
+    "smart_detection": "Inspect page content and detect reusable document regions.",
+    "compare_pdf": "Compare two PDFs and review page differences.",
+    "insert": "Insert blank pages or pages from another PDF.",
+    "delete": "Delete selected pages from the current PDF.",
+    "extract": "Save selected pages as a separate PDF.",
+    "order": "Change page order using page numbers.",
+    "sort": "Visually organize, move and reorder PDF pages.",
+    "split": "Split a PDF into separate documents.",
+    "rotate": "Rotate the selected PDF pages.",
+    "merge": "Combine PDFs in a chosen order using the Merge workbench.",
+    "highlight": "Highlight selected text with a colour annotation.",
+    "underline": "Underline selected text.",
+    "strikeout": "Strike through selected text.",
+    "squiggly": "Mark text with a wavy underline.",
+    "note": "Add a sticky note comment.",
+    "ink": "Draw freehand ink annotations.",
+    "rect": "Draw a rectangle annotation.",
+    "line": "Draw a straight line annotation.",
+    "arrow": "Draw an arrow annotation.",
+    "ellipse": "Draw an ellipse or circle annotation.",
+    "polygon": "Draw a polygon annotation.",
+    "freetext_typewriter": "Place typewriter text on a PDF page.",
+    "freetext_box": "Add an editable text box annotation.",
+    "freetext_callout": "Add a text callout with a pointer.",
+    "stamp": "Place a rubber stamp annotation.",
+    "watermark": "Add a text or image watermark.",
+    "fill_form": "Enter values in supported PDF form fields.",
+    "redact": "Mark and permanently remove sensitive content.",
+    "ocr": "Recognize scanned text to make pages searchable.",
+    "pdf_to_word": "Convert a PDF to a Word document.",
+    "office_to_pdf": "Convert an Office document to PDF where supported.",
+    "txt_to_pdf": "Create a PDF from a text file.",
+    "postscript": "Convert a PostScript file to PDF.",
+    "overlay": "Overlay PDF page content using the existing PDF overlay tool.",
+    "batch_print": "Send multiple PDFs to a printer with batch settings.",
+    "compress": "Reduce PDF file sizes and compare the results.",
+    "page_report": "Create a page-count report for multiple PDFs.",
+    "extract_text": "Extract text from a selected page region.",
+    "merge_sheet": "Combine CSV or Excel data files.",
+    "barcode": "Generate a barcode or QR code.",
+    "barcode_batch": "Read and report barcodes or QR codes from PDF files.",
+    "encrypt": "Protect the current PDF with password security.",
+    "decrypt": "Remove password security from an authorized PDF.",
+}
+
+
+def _regroup_tools(sections):
+    items = {
+        item.key: replace(item, description=item.description or TOOL_DESCRIPTIONS.get(item.key, ""))
+        for _key, _title, group in sections
+        for item in group
+    }
+    assigned = [key for _key, _title, _icon, keys in CATEGORY_LAYOUT for key in keys]
+    if len(assigned) != len(set(assigned)) or set(assigned) != set(items):
+        raise ValueError("Every PDF tool must belong to exactly one navigation category.")
+    return tuple(
+        (key, title, tuple(items[item] for item in keys)) for key, title, _icon, keys in CATEGORY_LAYOUT
+    )
+
+
 class CollapsibleSection(QWidget):
-    """One animated tool group that turns into an icon-only run when collapsed."""
+    """An animated group; compact navigation uses a separate category rail."""
 
     def __init__(self, key: str, title: str, animations_enabled: bool, parent=None):
         super().__init__(parent)
@@ -85,20 +232,16 @@ class CollapsibleSection(QWidget):
         self._animations_enabled = animations_enabled
         self._sidebar_collapsed = False
         self._filtering = False
-        self._logical_expanded = bool(
-            QSettings().value(f"sidebar/section/{key}", True, bool)
-        )
+        self._logical_expanded = bool(QSettings().value(f"sidebar/v2/section/{key}", False, bool))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(S.XXS)
 
         self.header = QToolButton()
         self.header.setObjectName("sidebarSectionButton")
-        self.header.setText(title)
+        self.header.setText(title.replace("&", "&&"))
         self.header.setAccessibleName(f"{title} section")
-        self.header.setAccessibleDescription(
-            "Expanded" if self._logical_expanded else "Collapsed"
-        )
+        self.header.setAccessibleDescription("Expanded" if self._logical_expanded else "Collapsed")
         self.header.setCheckable(True)
         self.header.setChecked(self._logical_expanded)
         self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -131,21 +274,20 @@ class CollapsibleSection(QWidget):
 
     def _header_clicked(self, checked: bool) -> None:
         self._logical_expanded = checked
-        QSettings().setValue(f"sidebar/section/{self.key}", checked)
+        QSettings().setValue(f"sidebar/v2/section/{self.key}", checked)
+        self.header.setAccessibleDescription("Expanded" if checked else "Collapsed")
         self._update_header_icon()
         self._apply_expanded(True)
 
     def _update_header_icon(self) -> None:
-        self.header.setIcon(
-            icon("chevron-down" if self._logical_expanded else "chevron-right", 14)
-        )
+        self.header.setIcon(icon("chevron-down" if self._logical_expanded else "chevron-right", 14))
 
     def _natural_height(self) -> int:
         self.body.adjustSize()
         return max(0, self.body.sizeHint().height())
 
     def _should_expand(self) -> bool:
-        return self._sidebar_collapsed or self._filtering or self._logical_expanded
+        return self._filtering or self._logical_expanded
 
     def _apply_expanded(self, animate: bool) -> None:
         expanded = self._should_expand()
@@ -227,6 +369,7 @@ class SidePanel(QFrame):
         "image",
         "watermark",
         "font_inspect",
+        "fill_form",
     }
 
     SECTIONS = (
@@ -272,8 +415,18 @@ class SidePanel(QFrame):
                 ToolItem("freetext_callout", "Callout", "message-square-more"),
                 ToolItem("redact", "Redact content", "eraser"),
                 ToolItem("stamp", "Rubber stamp", "stamp"),
-                ToolItem("signature", "Signature image", "signature", description="Place a handwritten-signature image and adjust its position and size. This does not create a digital signature."),
-                ToolItem("image", "Insert image", "image", description="Insert a PNG/JPG; drag to move or resize, or enter exact position and dimensions."),
+                ToolItem(
+                    "signature",
+                    "Signature image",
+                    "signature",
+                    description="Place a handwritten-signature image and adjust its position and size. This does not create a digital signature.",
+                ),
+                ToolItem(
+                    "image",
+                    "Insert image",
+                    "image",
+                    description="Insert a PNG/JPG; drag to move or resize, or enter exact position and dimensions.",
+                ),
                 ToolItem("watermark", "Add watermark", "watermark"),
             ),
         ),
@@ -336,8 +489,12 @@ class SidePanel(QFrame):
                 ToolItem("overlay", "PDF overlay", "layers", "overlay.png"),
                 ToolItem("batch_print", "Batch print", "printer", "Batch_print.png"),
                 ToolItem("compress", "Compress PDFs", "files", "compress.png"),
-                ToolItem("pdf_production", "PDF Production Tools", "wrench", description=
-                         "Font Preflight / Safe Embed Fonts, Flatten PDF, PDF Repair / Production Normalise: analyze and save a new copy."),
+                ToolItem(
+                    "pdf_production",
+                    "PDF Production Tools",
+                    "wrench",
+                    description="Font Preflight / Safe Embed Fonts, Flatten PDF, PDF Repair / Production Normalise: analyze and save a new copy.",
+                ),
                 ToolItem("deep_search", "Deep search", "search", "deep_search.png"),
                 ToolItem(
                     "merge_sheet",
@@ -372,9 +529,31 @@ class SidePanel(QFrame):
         ),
     )
 
-    def __init__(
-        self, collapsed: bool = False, animations_enabled: bool = True, parent=None
-    ):
+    SECTIONS = _regroup_tools(SECTIONS)
+    DEFAULT_FAVOURITES = ("search", "deep_search", "merge", "extract", "pdf_production")
+    MAX_FAVOURITES = 8
+    # These remain selected while the PDF canvas is in the corresponding mode.
+    PERSISTENT_TOOLS = (DOCUMENT_TOOLS | {"fill_form"}) - {
+        "search",
+        "insert",
+        "delete",
+        "extract",
+        "order",
+        "sort",
+        "split",
+        "info",
+        "smart_detection",
+        "ocr",
+        "pdf_to_word",
+        "extract_text",
+        "flatten",
+        "font_preflight",
+        "encrypt",
+        "decrypt",
+        "watermark",
+    }
+
+    def __init__(self, collapsed: bool = False, animations_enabled: bool = True, parent=None):
         super().__init__(parent)
         self.setObjectName("leftPanel")
         self._collapsed = collapsed
@@ -384,7 +563,10 @@ class SidePanel(QFrame):
         self._document_available = False
         self._document_encrypted = False
         self._shortcut_hints = SHORTCUT_HINTS.copy()
-        self._buttons: dict[str, MotionNavButton] = {}
+        self._buttons: dict[str, ToolNavButton] = {}
+        self._favourite_buttons: dict[str, ToolNavButton] = {}
+        self._rail_buttons: dict[str, ToolNavButton] = {}
+        self._popup: ToolPopup | None = None
         self._items: dict[str, ToolItem] = {}
         self._sections: list[CollapsibleSection] = []
         self._width_animation = QPropertyAnimation(self, b"panelWidth", self)
@@ -417,168 +599,296 @@ class SidePanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
         layout.setSpacing(S.SM)
-
         self._header = QWidget()
         self._header.setObjectName("sidebarHeader")
         header_layout = QHBoxLayout(self._header)
-        header_layout.setContentsMargins(S.XS, S.XS, 0, S.XS)
-        header_layout.setSpacing(S.SM)
-        self._brand_mark = QLabel()
-        self._brand_mark.setObjectName("sidebarBrandMark")
-        self._brand_mark.setPixmap(app_pixmap("Main_menu.png", 30))
-        self._brand_mark.setFixedSize(34, 34)
-        self._brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(self._brand_mark)
-        self._brand_copy = QWidget()
-        brand_layout = QVBoxLayout(self._brand_copy)
-        brand_layout.setContentsMargins(0, 0, 0, 0)
-        brand_layout.setSpacing(0)
-        title = QLabel("PDF Workspace")
-        title.setObjectName("sidebarTitle")
-        subtitle = QLabel("Tools & automation")
-        subtitle.setObjectName("sidebarSubtitle")
-        brand_layout.addWidget(title)
-        brand_layout.addWidget(subtitle)
-        header_layout.addWidget(self._brand_copy, 1)
+        header_layout.setContentsMargins(4, 2, 0, 2)
+        self._title = QLabel("Tools")
+        self._title.setObjectName("sidebarTitle")
+        header_layout.addWidget(self._title, 1)
         self._toggle = QToolButton()
         self._toggle.setObjectName("sidebarCollapseButton")
         self._toggle.setIconSize(QSize(18, 18))
-        self._toggle.setAccessibleName("Collapse tool navigation")
         self._toggle.clicked.connect(lambda: self.set_collapsed(not self._collapsed))
         header_layout.addWidget(self._toggle)
         layout.addWidget(self._header)
-
         self._search = QLineEdit()
         self._search.setObjectName("sidebarSearch")
-        self._search.setPlaceholderText("Filter tools")
+        self._search.setPlaceholderText("Search tools…")
+        self._search.setAccessibleName("Search PDF tools")
         self._search.setClearButtonEnabled(True)
         self._search_action = self._search.addAction(
             icon("search", 16), QLineEdit.ActionPosition.LeadingPosition
         )
         self._search.textChanged.connect(self._filter_tools)
+        self._search.installEventFilter(self)
         layout.addWidget(self._search)
-
+        self._compact_search = ToolNavButton("Search tools")
+        self._compact_search.setObjectName("sidebarNavButton")
+        self._compact_search.setIcon(icon("search", 22))
+        self._compact_search.setToolTip("Search all PDF tools")
+        self._compact_search.set_compact(True)
+        self._compact_search.set_animations_enabled(self._animations_enabled)
+        self._compact_search.clicked.connect(lambda: self._open_popup(None, self._compact_search))
+        layout.addWidget(self._compact_search)
         self._scroll = QScrollArea()
         self._scroll.setObjectName("sidebarScroll")
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget()
         content.setObjectName("sidebarContent")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, S.MD)
+        content_layout.setContentsMargins(0, 0, 0, S.SM)
         content_layout.setSpacing(S.XS)
-        capabilities = detect_capabilities()
+        self._favourites = QWidget()
+        favourites_layout = QVBoxLayout(self._favourites)
+        favourites_layout.setContentsMargins(0, 0, 0, 0)
+        favourites_layout.setSpacing(2)
+        self._favourites_header = QWidget()
+        heading = QHBoxLayout(self._favourites_header)
+        heading.setContentsMargins(8, 0, 0, 0)
+        heading.addWidget(QLabel("Favourites"), 1)
+        self._edit_favourites = QToolButton()
+        self._edit_favourites.setText("Edit")
+        self._edit_favourites.setToolTip("Choose and reorder favourite tools")
+        self._edit_favourites.clicked.connect(self._configure_favourites)
+        heading.addWidget(self._edit_favourites)
+        favourites_layout.addWidget(self._favourites_header)
+        self._favourites_body = QVBoxLayout()
+        self._favourites_body.setContentsMargins(0, 0, 0, 0)
+        self._favourites_body.setSpacing(2)
+        favourites_layout.addLayout(self._favourites_body)
+        content_layout.addWidget(self._favourites)
+        self._divider = QFrame()
+        self._divider.setObjectName("sidebarDivider")
+        self._divider.setFrameShape(QFrame.Shape.HLine)
+        content_layout.addWidget(self._divider)
+        self._tool_count = QLabel("No matching tools")
+        self._tool_count.setWordWrap(True)
+        content_layout.addWidget(self._tool_count)
+        self._tool_count.hide()
         for section_key, title, items in self.SECTIONS:
             section = CollapsibleSection(section_key, title, self._animations_enabled)
             for item in items:
-                button = MotionNavButton(item.label)
+                button = ToolNavButton(item.label)
                 button.setObjectName("sidebarNavButton")
                 button.setCheckable(True)
-                button.setAutoExclusive(False)
                 button.setProperty("section", section_key)
                 button.setIcon(self._item_icon(item))
-                hint = self._shortcut_hints.get(item.key, "")
-                tooltip = f"{item.label} ({hint})" if hint else item.label
-                if item.description:
-                    tooltip += f"\n{item.description}"
-                button.setToolTip(tooltip)
-                button.setAccessibleName(item.label)
-                button.setSizePolicy(
-                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+                button.set_animations_enabled(self._animations_enabled)
+                button.clicked.connect(lambda _=False, key=item.key: self._activate_and_emit(key))
+                button.installEventFilter(self)
+                button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                button.customContextMenuRequested.connect(
+                    lambda point, key=item.key: self._pin_menu(key, point)
                 )
-                button.clicked.connect(
-                    lambda _checked=False, key=item.key: self._activate_and_emit(key)
-                )
-                if item.capability:
-                    capability = capabilities[item.capability]
-                    button.setEnabled(capability.available)
-                    if not capability.available:
-                        button.setToolTip(
-                            f"{item.label}\nUnavailable: {capability.reason}\n{capability.guidance}"
-                        )
                 section.add_button(button)
                 self._buttons[item.key] = button
                 self._items[item.key] = item
             content_layout.addWidget(section)
             self._sections.append(section)
+        self._rail = QWidget()
+        rail_layout = QVBoxLayout(self._rail)
+        rail_layout.setContentsMargins(0, 0, 0, 0)
+        rail_layout.setSpacing(4)
+        for key, title, image, _keys in CATEGORY_LAYOUT:
+            button = ToolNavButton(title)
+            button.setObjectName("sidebarNavButton")
+            button.setIcon(icon(image, 22))
+            button.setToolTip(title)
+            button.set_compact(True)
+            button.set_animations_enabled(self._animations_enabled)
+            button.clicked.connect(
+                lambda _=False, category=key, anchor=button: self._open_popup(category, anchor)
+            )
+            rail_layout.addWidget(button)
+            self._rail_buttons[key] = button
+        content_layout.addWidget(self._rail)
         content_layout.addStretch(1)
         self._scroll.setWidget(content)
         layout.addWidget(self._scroll, 1)
+        stored = QSettings().value("sidebar/v2/favourites", None)
+        self.set_favourites(self.DEFAULT_FAVOURITES if stored is None else stored, persist=False)
+        self._refresh_availability()
 
-        self._footer = QWidget()
-        self._footer.setObjectName("sidebarFooter")
-        footer_layout = QHBoxLayout(self._footer)
-        footer_layout.setContentsMargins(S.SM, S.XS, S.SM, 0)
-        footer_layout.setSpacing(S.SM)
-        status_dot = QLabel("●")
-        status_dot.setObjectName("sidebarStatusDot")
-        status_dot.setAccessibleName("Application ready")
-        self._tool_count = QLabel(f"{len(self._buttons)} tools")
-        self._tool_count.setObjectName("sidebarFooterText")
-        footer_layout.addWidget(status_dot)
-        footer_layout.addWidget(self._tool_count)
-        footer_layout.addStretch(1)
-        layout.addWidget(self._footer)
+    def set_favourites(self, keys, *, persist=True):
+        if not isinstance(keys, (tuple, list)):
+            keys = self.DEFAULT_FAVOURITES
+        valid = list(dict.fromkeys(key for key in keys if isinstance(key, str) and key in self._items))[
+            : self.MAX_FAVOURITES
+        ]
+        self._favourite_keys = valid
+        while self._favourites_body.count():
+            widget = self._favourites_body.takeAt(0).widget()
+            widget.hide()
+            widget.deleteLater()
+        self._favourite_buttons.clear()
+        for key in valid:
+            button = ToolNavButton(self._items[key].label)
+            button.setObjectName("sidebarNavButton")
+            button.setCheckable(True)
+            button.set_compact(self._collapsed)
+            button.set_animations_enabled(self._animations_enabled)
+            button.clicked.connect(lambda _=False, key=key: self._activate_and_emit(key))
+            self._favourites_body.addWidget(button)
+            self._favourite_buttons[key] = button
+        if persist:
+            QSettings().setValue("sidebar/v2/favourites", valid)
+        self._sync_views()
+        self._favourites.setVisible(
+            (self._collapsed or not self._search.text().strip()) and (bool(valid) or not self._collapsed)
+        )
+        self._divider.setVisible(bool(valid) and (self._collapsed or not self._search.text().strip()))
+
+    def _configure_favourites(self):
+        dialog = FavouritesDialog(self._items, self._favourite_keys, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_favourites(dialog.keys())
+        dialog.deleteLater()
+
+    def _pin_menu(self, key, point):
+        menu = QMenu(self)
+        pinned = key in self._favourite_keys
+        action = menu.addAction("Remove from favourites" if pinned else "Add to favourites")
+        action.setEnabled(pinned or len(self._favourite_keys) < self.MAX_FAVOURITES)
+        if not action.isEnabled():
+            action.setText("Favourites full (8) — use Edit")
+        if menu.exec(self._buttons[key].mapToGlobal(point)) is action:
+            self.set_favourites(
+                [item for item in self._favourite_keys if item != key]
+                if pinned
+                else [*self._favourite_keys, key]
+            )
+        menu.deleteLater()
+
+    def _sync_views(self):
+        for key, button in self._favourite_buttons.items():
+            source = self._buttons[key]
+            button.setIcon(source.icon())
+            button.setEnabled(source.isEnabled())
+            button.setToolTip(source.toolTip())
+            button.setAccessibleDescription(source.toolTip())
+            button.setChecked(source.isChecked())
+            button.setProperty("active", source.property("active"))
+            button.style().unpolish(button)
+            button.style().polish(button)
+        for category, _title, items in self.SECTIONS:
+            active = any(item.key == self._active_key for item in items)
+            self._rail_buttons[category].setProperty("active", active)
+            self._rail_buttons[category].style().unpolish(self._rail_buttons[category])
+            self._rail_buttons[category].style().polish(self._rail_buttons[category])
+        if self._popup is not None:
+            self._popup.refresh()
+
+    def _open_popup(self, category, anchor):
+        if self._popup is not None:
+            self._popup.hide()
+            self._popup.deleteLater()
+        title = "All PDF tools"
+        entries = list(self._items.values())
+        if category is not None:
+            _key, title, items = next(section for section in self.SECTIONS if section[0] == category)
+            entries = list(items)
+        self._popup = ToolPopup(title, entries, self._buttons, self._matches, self)
+        self._popup.toolRequested.connect(self._activate_and_emit)
+        self._popup.open_at(anchor)
+
+    def _matches(self, key, query):
+        query = query.strip().casefold()
+        if not query:
+            return True
+        item = self._items[key]
+        category = next(title for _key, title, items in self.SECTIONS if item in items)
+        text = " ".join(
+            (
+                item.label,
+                category,
+                item.description,
+                SEARCH_ALIASES.get(key, ""),
+                self._shortcut_hints.get(key, ""),
+            )
+        ).casefold()
+        return all(term in text for term in query.split())
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyPress:
+            if watched is self._search and event.key() == Qt.Key.Key_Escape:
+                self._search.clear()
+                return True
+            choices = [
+                button for button in self._buttons.values() if button.isVisible() and button.isEnabled()
+            ]
+            if (watched is self._search or watched in choices) and choices:
+                if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                    step = 1 if event.key() == Qt.Key.Key_Down else -1
+                    index = choices.index(watched) if watched in choices else (-1 if step == 1 else 0)
+                    button = choices[(index + step) % len(choices)]
+                    button.setFocus()
+                    self._scroll.ensureWidgetVisible(button)
+                    return True
+                if watched is self._search and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    choices[0].click()
+                    return True
+        return super().eventFilter(watched, event)
 
     def _item_icon(self, item: ToolItem):
-        return (
-            app_icon(item.asset_name, 24)
-            if item.asset_name
-            else icon(item.icon_name, 22)
-        )
+        return app_icon(item.asset_name, 24) if item.asset_name else icon(item.icon_name, 22)
 
     def _activate_and_emit(self, key: str) -> None:
-        self.set_active_tool(key)
-        self._buttons[key].animate_click()
+        if not self._buttons[key].isEnabled():
+            return
+        if key in self.PERSISTENT_TOOLS:
+            self.set_active_tool(key)
+        else:
+            # Dialog actions don't replace the canvas's active editing mode.
+            self.set_active_tool(self._active_key)
+        if key in self._favourite_buttons:
+            self._favourite_buttons[key].animate_click()
+        else:
+            self._buttons[key].animate_click()
         self.toolRequested.emit(key)
 
     def _filter_tools(self, value: str) -> None:
-        query = value.strip().casefold()
-        visible_count = 0
-        for section, (_key, title, items) in zip(
-            self._sections, self.SECTIONS, strict=True
-        ):
+        query = value.strip()
+        count = 0
+        for section, (_key, _title, items) in zip(self._sections, self.SECTIONS, strict=True):
             matches = 0
             for item in items:
-                searchable = (item.label, title, item.description, SHORTCUT_HINTS.get(item.key, ""))
-                visible = not query or any(query in value.casefold() for value in searchable)
+                visible = self._matches(item.key, query)
                 self._buttons[item.key].setVisible(visible)
                 matches += int(visible)
-            visible_count += matches
+            count += matches
             section.set_filtering(bool(query), matches > 0)
-        self._tool_count.setText(
-            "No matching tools"
-            if query and not visible_count
-            else f"{visible_count} matching tools"
-            if query
-            else f"{len(self._buttons)} tools"
+            if self._collapsed:
+                section.hide()
+        self._favourites.setVisible(
+            (self._collapsed or not query) and (bool(self._favourite_keys) or not self._collapsed)
         )
+        self._divider.setVisible((self._collapsed or not query) and bool(self._favourite_keys))
+        self._tool_count.setVisible(bool(query) and count == 0 and not self._collapsed)
 
     def set_collapsed(self, collapsed: bool, animate: bool = True) -> None:
         self._collapsed = collapsed
         target = D.SIDEBAR_COLLAPSED_W if collapsed else D.SIDEBAR_W
-        self._brand_mark.setVisible(not collapsed)
-        self._brand_copy.setVisible(not collapsed)
+        if self._popup is not None:
+            self._popup.hide()
+        self._title.setVisible(not collapsed)
+        self._compact_search.setVisible(collapsed)
+        self._rail.setVisible(collapsed)
+        self._favourites_header.setVisible(not collapsed)
         self._search.setVisible(not collapsed)
-        self._footer.setVisible(not collapsed)
-        self._scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            if collapsed
-            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
         self._toggle.setIcon(icon("chevron-right" if collapsed else "chevron-left", 18))
         self._toggle.setToolTip("Expand tools" if collapsed else "Collapse tools")
-        self._toggle.setAccessibleName(
-            "Expand tool navigation" if collapsed else "Collapse tool navigation"
-        )
+        self._toggle.setAccessibleName("Expand tool navigation" if collapsed else "Collapse tool navigation")
         for section in self._sections:
             section.set_sidebar_collapsed(collapsed)
-        for key, button in self._buttons.items():
-            button.setText("" if collapsed else self._items[key].label)
-            button.setProperty("collapsed", collapsed)
+        for button in (*self._buttons.values(), *self._favourite_buttons.values()):
+            button.set_compact(collapsed)
             button.style().unpolish(button)
             button.style().polish(button)
+        self._filter_tools(self._search.text())
         self._width_animation.stop()
         if animate and self._animations_enabled:
             self._width_animation.setStartValue(self.width())
@@ -598,8 +908,16 @@ class SidePanel(QFrame):
         self._animations_enabled = enabled
         for section in self._sections:
             section.set_animations_enabled(enabled)
-        for button in self._buttons.values():
+        for button in (
+            *self._buttons.values(),
+            *self._favourite_buttons.values(),
+            *self._rail_buttons.values(),
+        ):
             button.set_animations_enabled(enabled)
+        self._compact_search.set_animations_enabled(enabled)
+        if not enabled:
+            self._width_animation.stop()
+            self._finish_width_animation()
 
     def _base_tooltip(self, key: str) -> str:
         item = self._items[key]
@@ -608,16 +926,22 @@ class SidePanel(QFrame):
         return f"{text}\n{item.description}" if item.description else text
 
     def set_shortcut_hints(self, hints: dict[str, str]) -> None:
-        self._shortcut_hints = {
-            key: value for key, value in hints.items() if key in self._items and value
-        }
+        self._shortcut_hints = {key: value for key, value in hints.items() if key in self._items and value}
         self._refresh_availability()
+        self._filter_tools(self._search.text())
+        if self._popup is not None:
+            self._popup.filter_tools(self._popup.search.text())
 
     def refresh_capabilities(self) -> None:
         self._refresh_availability()
 
-    def set_document_available(self, available: bool, encrypted: bool = False,
-                               *, unavailable_hint: str = "Open a PDF to use this tool.") -> None:
+    def set_document_available(
+        self,
+        available: bool,
+        encrypted: bool = False,
+        *,
+        unavailable_hint: str = "Open a PDF to use this tool.",
+    ) -> None:
         self._document_available = available
         self._document_encrypted = encrypted
         self._document_unavailable_hint = unavailable_hint
@@ -636,9 +960,7 @@ class SidePanel(QFrame):
                 continue
             if key == "decrypt" and not self._document_encrypted:
                 button.setEnabled(False)
-                button.setToolTip(
-                    f"{self._base_tooltip(key)}\nThe open PDF has no password security."
-                )
+                button.setToolTip(f"{self._base_tooltip(key)}\nThe open PDF has no password security.")
                 continue
             if item.capability is not None:
                 capability = capabilities[item.capability]
@@ -649,23 +971,29 @@ class SidePanel(QFrame):
                     )
                 continue
             button.setEnabled(True)
+        for button in self._buttons.values():
+            button.setAccessibleDescription(button.toolTip())
+        self._sync_views()
 
     def set_active_tool(self, key: str | None) -> None:
-        self._active_key = key
+        self._active_key = key if key in self.PERSISTENT_TOOLS else None
         for item_key, button in self._buttons.items():
-            active = item_key == key
+            active = item_key == self._active_key
             button.setChecked(active)
             button.setProperty("active", active)
             button.style().unpolish(button)
             button.style().polish(button)
 
+        self._sync_views()
+
     def refresh_icons(self) -> None:
-        self._brand_mark.setPixmap(app_pixmap("Main_menu.png", 30))
-        self._toggle.setIcon(
-            icon("chevron-right" if self._collapsed else "chevron-left", 18)
-        )
+        self._toggle.setIcon(icon("chevron-right" if self._collapsed else "chevron-left", 18))
         self._search_action.setIcon(icon("search", 16))
         for section in self._sections:
             section.refresh_icon()
         for key, item in self._items.items():
             self._buttons[key].setIcon(self._item_icon(item))
+        self._compact_search.setIcon(icon("search", 22))
+        for key, _title, image, _keys in CATEGORY_LAYOUT:
+            self._rail_buttons[key].setIcon(icon(image, 22))
+        self._sync_views()

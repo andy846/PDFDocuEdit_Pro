@@ -480,9 +480,14 @@ def global_style() -> str:
             padding: 0;
             border-radius: {R.MD}px;
         }}
+        QFrame#sidebarDivider {{
+            border: none;
+            background: {c['border']};
+            max-height: 1px;
+        }}
         QToolButton#sidebarSectionButton {{
             min-height: 30px;
-            color: {c['legacy_green_text']};
+            color: {c['text_secondary']};
             font-size: {F.XS}px;
             font-weight: {F.SEMIBOLD};
             text-align: left;
@@ -491,12 +496,17 @@ def global_style() -> str:
             border-radius: {R.MD}px;
         }}
         QToolButton#sidebarSectionButton:hover {{
-            color: {c['legacy_green_text']};
-            background: {c['legacy_green_soft']};
+            color: {c['text_primary']};
+            background: {c['primary_soft']};
+        }}
+        QFrame#sidebarToolPopup {{
+            background: {c['bg_surface']};
+            border: 1px solid {c['border']};
+            border-radius: {R.LG}px;
         }}
         QPushButton#sidebarNavButton {{
-            min-height: 44px;
-            max-height: 44px;
+            min-height: 38px;
+            max-height: 38px;
             margin: 0 {S.XXS}px;
             padding: 0 {S.SM}px;
             text-align: left;
@@ -521,6 +531,9 @@ def global_style() -> str:
             border-left-color: {c['primary']};
         }}
         QPushButton#sidebarNavButton[collapsed="true"] {{
+            min-height: 36px;
+            max-height: 36px;
+            text-align: center;
             margin: 0;
             padding: 0;
             border-left: none;

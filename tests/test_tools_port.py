@@ -877,15 +877,16 @@ def test_thumbnail_panel_really_renders_last_pages_after_fast_scroll(tmp_path):
     app.processEvents()
 
 
-def test_sidebar_sections_use_legacy_names(tmp_path, monkeypatch):
+def test_sidebar_sections_use_task_categories(tmp_path, monkeypatch):
     _app()
     panel = SidePanel(animations_enabled=False)
-    titles = [section.header.text() for section in panel._sections]
+    titles = [section.header.text().replace("&&", "&") for section in panel._sections]
     assert titles == [
-        "Page Operations",
-        "Annotate",
-        "Conversion",
-        "Utilities",
+        "Search & Inspect",
+        "Pages & Documents",
+        "Annotate & Edit",
+        "Convert",
+        "Production & Data",
         "Security",
     ]
     panel.deleteLater()
@@ -894,9 +895,8 @@ def test_sidebar_sections_use_legacy_names(tmp_path, monkeypatch):
 def test_sidebar_pages_order_and_new_order_tool(tmp_path, monkeypatch):
     _app()
     panel = SidePanel(animations_enabled=False)
-    pages_items = [item.key for item in panel.SECTIONS[0][2]]
+    pages_items = [item.key for item in panel.SECTIONS[1][2]]
     assert pages_items == [
-        "search",
         "insert",
         "delete",
         "extract",
@@ -904,10 +904,10 @@ def test_sidebar_pages_order_and_new_order_tool(tmp_path, monkeypatch):
         "sort",
         "split",
         "rotate",
-        "info",
-        "smart_detection",
+        "merge",
     ]
     assert "order" in panel._buttons
+    panel.set_document_available(True)
     received: list[str] = []
     panel.toolRequested.connect(received.append)
     panel._buttons["order"].click()
