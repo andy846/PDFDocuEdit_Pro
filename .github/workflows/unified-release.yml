@@ -2,7 +2,7 @@ name: Unified account release candidates
 
 on:
   push:
-    branches: [codex/unified-release-v3.0.4]
+    branches: ['codex/unified-release-v*']
   workflow_dispatch:
 
 permissions:

@@ -8,7 +8,7 @@ from .base import ToolDialog
 
 README_CONTENT = """# PDFDocuEdit Pro
 
-PDF Editing & Print Production Suite — v3.0.2
+PDF Editing & Print Production Suite — v3.0.5
 
 **Program Developer:** Andy Leung (andy846@gmail.com)
 
@@ -20,7 +20,7 @@ PDFDocuEdit Pro combines PDF editing and print-production tools in one main
 window. PDF Workspace handles document editing; Document Designer handles
 reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
-supports Windows x64.
+supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
 ## New in v3.0.2
 
@@ -36,26 +36,34 @@ supports Windows x64.
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
-## Development Update: Startup and Sign-in
+## New in v3.0.5: PDF Workspace Tool Navigation
+
+* Six categories: Search & Inspect, Pages & Documents, Annotate & Edit, Convert, Production & Data, Security. Existing actions and commands remain available.
+* Favourites / Edit saves up to eight tools in your preferred order. Compact mode shows favourites and searchable category menus; long names have tooltips.
+* Search matches names, descriptions, old category aliases and customized shortcuts. Arrow keys select, Enter runs, Esc closes menus.
+* PDF Production Tools is in Production & Data and in the default favourites. It combines Fonts, Flatten and Repair in a persistent tool tab.
+* Template, workflow and barcode profile formats are unchanged. Both platforms retain signed Managed updates and saved offline account approval.
+
+## New in v3.0.5: Startup and Sign-in
 
 * Saved approval is read in the background while Splash is visible. Valid saved approval opens the main window directly; sign-in appears only when needed, after Splash closes.
 * Successful manual sign-in shows Opening workspace before entering the main window. No second Splash or artificial minimum delay.
 * Offline approval, background account checks and revocation behaviour are unchanged. Managed updates confirm readiness after the sign-in or main window has painted.
 * Windows/macOS share this startup flow. External PDFs wait until account access and Managed startup are ready.
 
-## Development Update: PDF Production Tools
+## New in v3.0.5: PDF Production Tools
 
-* **Left Utilities / Tools → PDF Production Tools** opens a persistent PDF Workspace tab: Overview, Fonts, Flatten, Repair / Normalise, Results.
+* **Production & Data → PDF Production Tools** opens a persistent PDF Workspace tab: Overview, Fonts, Flatten, Repair / Normalise, Results.
 * Analyze is read-only and runs in the background. Overview combines the existing inspectors without approving processing; unsupported checks remain visible. Generate new copy executes only the selected processing section.
 * Sources, output root and progress are shared. Editor input includes unsaved changes; source changes/closure invalidate results. Refresh source captures the original Editor again. Section changes preserve drafts and do not start jobs.
 * Fonts retains strict original-font / trusted-reference validation. Batch scans isolate failures; configure safe embedding per PDF. Rasterisation and destructive normalisation remain explicit choices.
 * Results separates analysis from production, keeps source/settings context and out-of-date evidence, and opens completed outputs/reports. Export JSON/CSV for review. Completed job bundles remain when a task is cancelled.
 * Switch PDF/Designer without cancelling work. Ctrl+O chooses sources, Ctrl+W safely closes the tool, Ctrl+Tab cycles PDF Workspace tabs. Save/Undo cannot change a background PDF. Running close requests wait for safe cleanup.
-* Narrow windows use a section dropdown; content scrolls while the shared action row remains visible. Old tool commands and Workflow settings remain compatible. No public version or project-format change.
+* Narrow windows use a section dropdown; content scrolls while the shared action row remains visible. Old tool commands and Workflow settings remain compatible. Project formats remain unchanged.
 
 ## Development Update: Editor Font Preflight
 
-* **Tools → Font Preflight / Safe Embed Fonts…**, under PDF Production Tools in left Utilities: read-only existing-PDF font inventory, affected pages, exact original-face candidates, and JSON/CSV reports.
+* **Tools → Font Preflight / Safe Embed Fonts…**, under PDF Production Tools in left Production & Data: read-only existing-PDF font inventory, affected pages, exact original-face candidates, and JSON/CSV reports.
 * Safe native repair currently supports verified simple TrueType / WinAnsi cases only. Select authorized original fonts, Check sources, then provide the authoritative reference PDF with the same font binary. Missing proof blocks repair; family names alone are insufficient.
 * Repair Copy publishes PDF + audit together after original-object/stream checks, independent qpdf validation and exact 300 dpi reference comparisons on every page. No substitution, reflow or rasterisation. Originals and Editor Undo remain unchanged.
 * Batch scan isolates file failures; inspect individual files to configure their fonts. Signed/encrypted/restricted sources and unverified formats are scan-only. No new public release is implied.
