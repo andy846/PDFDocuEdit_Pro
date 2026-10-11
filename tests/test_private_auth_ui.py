@@ -262,3 +262,171 @@ def test_locked_worker_can_save_template_draft_without_ipc(tmp_path, qt_applicat
     assert results[0]["project"] == str(target)
     assert load_project(target).elements[0].value == "Unsaved {{Customer}}"
     assert not (tmp_path / "ipc").exists()
+
+
+@pytest.mark.parametrize("cached", [True, False])
+def test_startup_waits_for_cache_without_login_flash(private, qt_application, monkeypatch, cached):
+    import threading
+
+    from PyQt6.QtGui import QPixmap
+
+    from auth.model import AuthResult, Outcome
+    from ui.splash import StartupSplash
+
+    entered, release = threading.Event(), threading.Event()
+    value = approved() if cached else None
+
+    def load():
+        entered.set()
+        assert release.wait(3)
+        return value
+
+    monkeypatch.setattr(private.controller.store, "load", load)
+    private.controller.client = NS(verify=lambda value: AuthResult(Outcome.UNAVAILABLE, "Offline"))
+    splash = StartupSplash(QPixmap(100, 100))
+    private.splash = splash
+    splash.show()
+    shows, ready = [], []
+    original_show = private.login.show
+
+    def show_login():
+        assert not splash.isVisible()
+        shows.append(True)
+        original_show()
+
+    monkeypatch.setattr(private.login, "show", show_login)
+    private.startupReady.connect(lambda: ready.append(True))
+    try:
+        private.start(["first.pdf"])
+        pump(qt_application, entered.is_set)
+        private.accept_paths(["second.pdf"])
+        qt_application.processEvents()
+        assert splash.isVisible() and not private.login.isVisible()
+        assert private.viewer is None and not shows and not ready
+        release.set()
+        pump(qt_application, lambda: bool(ready) and not private.controller.busy)
+        assert ready == [True] and not splash.isVisible()
+        if cached:
+            assert private.viewer.isVisible() and not shows
+            assert private.viewer.opened == []
+            private.managed_ready()
+            assert private.viewer.opened == ["first.pdf", "second.pdf"]
+            private.viewer.hide()
+            private.viewer.show()
+        else:
+            assert shows == [True] and private.login.isVisible() and private.viewer is None
+            private.login.hide()
+            private.login.show()
+        qt_application.processEvents()
+        assert ready == [True]
+    finally:
+        release.set()
+        if private.controller.busy:
+            pump(qt_application, lambda: not private.controller.busy)
+        splash.close()
+        splash.deleteLater()
+
+
+@pytest.mark.parametrize("failure", ["storage-error", "invalid", "blocked"])
+def test_unusable_cache_opens_login_after_splash(private, qt_application, monkeypatch, tmp_path, failure):
+    from PyQt6.QtGui import QPixmap
+
+    from auth.store import StorageError
+    from ui.splash import StartupSplash
+
+    if failure == "storage-error":
+        def load():
+            raise StorageError("Cannot read the system credential store.")
+        monkeypatch.setattr(private.controller.store, "load", load)
+    elif failure == "invalid":
+        private.controller.store.backend.value = "not valid approval JSON"
+    else:
+        private.controller.store.save(approved())
+        private.controller.store.blocked_path = tmp_path / "require-signin"
+        private.controller.store.blocked_path.touch()
+    splash = StartupSplash(QPixmap(100, 100))
+    private.splash = splash
+    splash.show()
+    ready = []
+    private.startupReady.connect(lambda: ready.append(True))
+    private.start()
+    pump(qt_application, lambda: bool(ready) and not private.controller.busy)
+    assert private.login.isVisible() and not splash.isVisible() and private.viewer is None
+    assert not guard.runtime_access
+    if failure == "storage-error":
+        assert "Cannot read" in private.login.status.text()
+    splash.deleteLater()
+
+
+def test_signin_opens_main_without_second_splash(private, qt_application, monkeypatch):
+    from auth.model import AuthResult, Outcome
+
+    private.start()
+    pump(qt_application, lambda: private.login.isVisible() and not private.controller.busy)
+    original_factory = private.viewer_factory
+    constructions = []
+
+    def factory():
+        assert private.login.isVisible()
+        assert private.login.status.text() == "Opening workspace…"
+        assert private.splash is None
+        constructions.append(True)
+        return original_factory()
+
+    monkeypatch.setattr(private, "viewer_factory", factory)
+    private.controller.client = NS(sign_in=lambda *args: AuthResult(Outcome.APPROVED, "OK", approved()))
+    private.controller.sign_in("test@example.invalid", "unused-test-password")
+    pump(qt_application, lambda: private.viewer is not None and not private.controller.busy)
+    assert constructions == [True] and private.viewer.isVisible() and not private.login.isVisible()
+    private.admit(private.controller.approval)
+    assert constructions == [True]
+
+
+def test_late_cache_result_after_quit_cannot_open_window(private, qt_application, monkeypatch):
+    import threading
+
+    from PyQt6.QtGui import QPixmap
+
+    from ui.splash import StartupSplash
+
+    entered, release = threading.Event(), threading.Event()
+
+    def load():
+        entered.set()
+        assert release.wait(3)
+        return approved()
+
+    monkeypatch.setattr(private.controller.store, "load", load)
+    exits = []
+    monkeypatch.setattr(qt_application, "exit", exits.append)
+    splash = StartupSplash(QPixmap(100, 100))
+    private.splash = splash
+    splash.show()
+    ready = []
+    private.startupReady.connect(lambda: ready.append(True))
+    try:
+        private.start()
+        pump(qt_application, entered.is_set)
+        private.quit()
+        assert not splash.isVisible()
+        release.set()
+        pump(qt_application, lambda: bool(exits) and not private.controller.busy)
+        assert private.viewer is None and not private.login.isVisible() and not ready
+    finally:
+        release.set()
+        if private.controller.busy:
+            pump(qt_application, lambda: not private.controller.busy)
+        splash.close()
+        splash.deleteLater()
+
+
+def test_startup_ready_ignores_deleted_paint_target(private, qt_application):
+    from PyQt6 import sip
+
+    ready = []
+    private.startupReady.connect(lambda: ready.append(True))
+    target = Window()
+    private._ready_window = target
+    sip.delete(target)
+    private._painted()
+    assert not ready and not private._startup_ready

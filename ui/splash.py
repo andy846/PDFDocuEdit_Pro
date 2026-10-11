@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import QElapsedTimer, QRectF, Qt, QTimer
+from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 
@@ -53,32 +53,22 @@ def splash_pixmap(
 
 
 class StartupSplash(QSplashScreen):
-    """Keep fast private startup visible without delaying login or readiness."""
+    """Show startup progress until the destination window is ready to open."""
 
-    def __init__(self, pixmap: QPixmap, *, minimum_ms: int = 750):
+    def __init__(self, pixmap: QPixmap):
         super().__init__(pixmap, Qt.WindowType.WindowStaysOnTopHint)
-        self._minimum_ms = max(0, minimum_ms)
-        self._shown = QElapsedTimer()
-        self._dismiss = QTimer(self)
-        self._dismiss.setSingleShot(True)
-        self._dismiss.timeout.connect(self.close)
         app = QApplication.instance()
         if app:
             app.aboutToQuit.connect(self.close)
 
-    def showEvent(self, event):
-        if not self._shown.isValid():
-            self._shown.start()
-        super().showEvent(event)
-
     def finish_startup(self) -> None:
-        """Login is ready; dismiss asynchronously, never wait for credentials."""
-        elapsed = self._shown.elapsed() if self._shown.isValid() else self._minimum_ms
-        self._dismiss.start(max(0, self._minimum_ms - elapsed))
+        """Close before showing login/main, with no artificial minimum delay."""
+        self.close()
 
-    def closeEvent(self, event):
-        self._dismiss.stop()
-        super().closeEvent(event)
+    def mousePressEvent(self, event):
+        # QSplashScreen normally hides on a click. While the credential store
+        # is being read, there is no other window to take its place yet.
+        event.accept()
 
 
 def create_splash(path: Path, version: str) -> StartupSplash:

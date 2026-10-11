@@ -6,6 +6,12 @@ v3.0.4 候選版本準備同步提供 **Windows x64 登入版**及 **macOS Apple
 現有 GitHub 正式版 v3.0.3 保留；只有兩平台原生打包、簽章及發布驗收完成後才公開新 Release。
 Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
+## 啟動體驗更新
+
+- 啟動先在背景讀取保存登入：有效批准由 Splash 直接進入主視窗，不再閃出登入畫面；需要登入時先關閉 Splash 再顯示登入。
+- 首次登入成功後，登入畫面顯示 Opening workspace，再交接主視窗；不重開 Splash。有效批准仍支援離線使用，網絡覆核在背景執行。
+- Windows／macOS 共用畫面交接流程；Managed 更新在登入或主視窗真正顯示後確認啟動成功。
+
 ## v3.0.4 登入與雙平台更新
 
 - 首次登入需連線核對已批准帳戶；離線批准分別保存於 Windows Credential Manager／macOS Keychain。帳戶入口位於 Settings／More commands，不佔用主工具列；啟動 Splash 自動顯示版本。

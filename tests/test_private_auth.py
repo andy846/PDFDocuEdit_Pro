@@ -216,14 +216,24 @@ def test_controller_revocation_clears_credential(qt_application):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows credential backend")
-def test_actual_windows_credential_manager_roundtrip():
+def test_actual_windows_credential_manager_roundtrip(qt_application):
     # Isolated QA namespace, never touches the real project approval.
     store = ApprovalStore("qa" + uuid4().hex)
     value = approval(project_ref=store.project_ref)
+    controller = AuthController(NS(verify=lambda value: AuthResult(Outcome.UNAVAILABLE, "Offline")), store)
+    admitted, finished = [], []
+    controller.approved.connect(admitted.append)
+    controller.startupFinished.connect(lambda: finished.append(True))
     try:
         store.save(value)
         assert store.load() == value
+        controller.start(asynchronous=True)
+        pump(qt_application, lambda: bool(finished) and not controller.busy)
+        assert admitted == [value] and controller.approval == value
     finally:
+        controller.stop()
+        if controller.busy:
+            pump(qt_application, lambda: not controller.busy)
         store.clear()
     assert store.load() is None
     store.blocked_path.unlink(missing_ok=True)

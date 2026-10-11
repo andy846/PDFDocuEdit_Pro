@@ -1,9 +1,8 @@
 """Startup/login routing and recovery around the existing main window."""
 from __future__ import annotations
 
-import sys
-
-from PyQt6.QtCore import QEvent, QObject, QTimer
+from PyQt6 import sip
+from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QDialog
 
@@ -17,7 +16,9 @@ from .ui import AccountDialog, LoginWindow, RecoveryDialog
 
 
 class PrivateApplication(QObject):
-    def __init__(self, app, config, viewer_factory, *, root=None, controller=None, open_paths=None):
+    startupReady = pyqtSignal()
+
+    def __init__(self, app, config, viewer_factory, *, root=None, controller=None, open_paths=None, splash=None):
         super().__init__(app)
         self.app, self.config, self.viewer_factory = app, config, viewer_factory
         self.root = root
@@ -33,7 +34,16 @@ class PrivateApplication(QObject):
         self.closing_for = None
         self.pending_approval = None
         self.exiting = False
+        self.splash = splash
+        self.startup_pending = False
+        self._startup_ready = False
+        self._ready_window = None
+        self._ready_timer = QTimer(self)
+        self._ready_timer.setSingleShot(True)
+        self._ready_timer.timeout.connect(self._painted)
         self.login = LoginWindow()
+        self.login.installEventFilter(self)
+        self.controller.startupFinished.connect(self._startup_finished)
         self.login.signIn.connect(self.controller.sign_in)
         self.login.quitRequested.connect(self.quit)
         self.controller.changed.connect(lambda: self.login.update_state(self.controller))
@@ -48,8 +58,33 @@ class PrivateApplication(QObject):
 
     def start(self, paths=()):
         self.pending_paths.extend(str(p) for p in paths)
-        self.login.show()
-        self.controller.start(asynchronous=True) if sys.platform == "darwin" else self.controller.start()
+        self.startup_pending = True
+        self.controller.start(asynchronous=True)
+
+    def _startup_finished(self):
+        if self.exiting:
+            return
+        self.startup_pending = False
+        if self.viewer is None:
+            self._present(self.login)
+
+    def _present(self, window):
+        """Dismiss startup artwork before making an interactive window visible."""
+        self.startup_pending = False
+        if self.splash is not None:
+            self.splash.finish_startup()
+            self.splash = None
+        if window is not self.login:
+            self.login.hide()
+        window.show()
+
+    def _painted(self):
+        window, self._ready_window = self._ready_window, None
+        if (self.exiting or self._startup_ready or window is None
+                or sip.isdeleted(window) or not window.isVisible()):
+            return
+        self._startup_ready = True
+        self.startupReady.emit()
 
     def managed_ready(self):
         self.ready = True
@@ -59,6 +94,8 @@ class PrivateApplication(QObject):
 
     def accept_paths(self, paths):
         self.pending_paths.extend(str(p) for p in paths)
+        if self.startup_pending or self.exiting:
+            return
         target = self.viewer if self.viewer and not self.locked else self.login
         target.showNormal() if target.isMinimized() else target.show()
         target.raise_()
@@ -89,6 +126,9 @@ class PrivateApplication(QObject):
             self.recovery.deleteLater()
             self.recovery = None
         if self.viewer is None:
+            if self.login.isVisible():
+                self.login.status.setText("Opening workspace…")
+                self.login.status.repaint()
             self.viewer = self.viewer_factory()
             self.viewer_account = approval.user_id
             self.viewer.installEventFilter(self)
@@ -103,8 +143,7 @@ class PrivateApplication(QObject):
                 update.setToolTip("Internal private build: public updates are disabled.")
         self._refresh_account_action()
         self.viewer.setEnabled(self.ready)
-        self.viewer.show()
-        self.login.hide()
+        self._present(self.viewer)
         self._drain_paths()
 
     def _refresh_account_action(self):
@@ -153,7 +192,7 @@ class PrivateApplication(QObject):
                 self.recovery.saveRequested.connect(self.save_open_work)
             self.recovery.show()
         else:
-            self.login.show()
+            self._present(self.login)
 
     def _relogin(self):
         if self.recovery:
@@ -201,6 +240,12 @@ class PrivateApplication(QObject):
             self._closed()
 
     def eventFilter(self, watched, event):
+        if (event.type() == QEvent.Type.Paint
+                and watched in (self.login, self.viewer)
+                and not self._startup_ready and not self._ready_timer.isActive()
+                and not self.startup_pending and not self.exiting):
+            self._ready_window = watched
+            self._ready_timer.start(0)
         if self.locked and self.viewer and not guard.recovery_saving and event.type() in {
             QEvent.Type.KeyPress, QEvent.Type.KeyRelease, QEvent.Type.Shortcut,
             QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
@@ -252,6 +297,9 @@ class PrivateApplication(QObject):
             self._close_viewer()
             return
         self.exiting = True
+        if self.splash is not None:
+            self.splash.close()
+            self.splash = None
         self.controller.stop()
         self.login.setEnabled(False)
         self.login.status.setText("Finishing account request…")

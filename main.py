@@ -440,18 +440,19 @@ def _run_application(root: Path | None) -> int:
             QTimer.singleShot(200, viewer._update_title_bar)
             return viewer
 
-        private = PrivateApplication(app, auth_config, private_viewer, root=root, open_paths=route_open_files)
+        private = PrivateApplication(app, auth_config, private_viewer, root=root, open_paths=route_open_files, splash=splash)
         app._private_session = private
         app.fileOpenRequested.connect(lambda path: private.accept_paths([path]))
         instance_router.pathsReceived.connect(private.accept_paths)
-        private.start(paths)
-        splash.finish_startup()
-        app.activate_file_open_handler()
         if root is not None:
             from updates.app_session import activate
-            # Login shell has painted and can acknowledge the launcher without
-            # waiting for a human password entry or a network request.
-            QTimer.singleShot(300, lambda: activate(private, private.accept_paths, on_ready=private.managed_ready))
+            # A painted login or main window confirms startup. Saved approval
+            # is resolved first; neither password entry nor network is awaited.
+            private.startupReady.connect(
+                lambda: activate(private, private.accept_paths, on_ready=private.managed_ready)
+            )
+        private.start(paths)
+        app.activate_file_open_handler()
         return app.exec()
 
     viewer = PDFViewer()

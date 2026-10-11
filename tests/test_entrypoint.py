@@ -10,12 +10,13 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("case", ["public", "private-login", "private-cache", "forwarded"])
+@pytest.mark.parametrize("case", ["public", "private-login", "private-cache", "private-login-managed", "private-cache-managed", "forwarded"])
 def test_primary_gui_startup_shows_splash_without_blocking_login(case):
     script = """
 import sys
 import traceback
 from types import SimpleNamespace as NS
+from pathlib import Path
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMainWindow
 import main
@@ -38,7 +39,7 @@ main.SingleInstanceRouter.listen = lambda self: True
 auth.config.configuration = lambda: None if case == 'public' else NS(project_ref='splashfixture')
 splashes = []
 def create():
-    splash = StartupSplash(QPixmap(100, 100), minimum_ms=100)
+    splash = StartupSplash(QPixmap(100, 100))
     splashes.append(splash)
     return splash
 main._create_splash = create
@@ -56,11 +57,12 @@ class Window(QMainWindow):
 main.PDFViewer = Window
 class Controller(AuthController):
     def start(self, **kwargs):
-        if case == 'private-cache':
+        if case.startswith('private-cache'):
             now = timestamp()
             self.approval = Approval('splashfixture', 'fixture', 'test@example.invalid', 'fixture', now, now)
             self.approved.emit(self.approval)
         self.changed.emit()
+        self.startupFinished.emit()
 class Session(auth.application.PrivateApplication):
     def __init__(self, app, config, factory, **kwargs):
         assert splashes[0].isVisible()
@@ -68,12 +70,26 @@ class Session(auth.application.PrivateApplication):
 auth.application.PrivateApplication = Session
 checks = []
 errors = []
+activations = []
+import updates.app_session
+
+def activate(private, open_paths, *, on_ready):
+    try:
+        assert not splashes[0].isVisible()
+        assert private._startup_ready and not private.ready
+        target = private.viewer if private.viewer is not None else private.login
+        assert target.isVisible()
+        activations.append(True)
+        on_ready()
+    except Exception:
+        errors.append(traceback.format_exc())
+updates.app_session.activate = activate
 def check():
     try:
         assert len(splashes) == 1 and not splashes[0].isVisible()
         if case.startswith('private'):
             private = app._private_session
-            if case == 'private-cache':
+            if case.startswith('private-cache'):
                 assert private.viewer.isVisible() and not private.login.isVisible()
             else:
                 assert private.viewer is None and private.login.isVisible()
@@ -82,10 +98,11 @@ def check():
         errors.append(traceback.format_exc())
     finally:
         app.quit()
-assert main._run_application(None) == 0
+assert main._run_application(Path.cwd() / 'unused-managed-root' if case.endswith('managed') else None) == 0
 assert not errors, errors
 assert checks == ([] if case == 'forwarded' else [True])
 assert len(splashes) == (0 if case == 'forwarded' else 1)
+assert activations == ([True] if case.endswith('managed') else [])
 """
     environment = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     result = subprocess.run(

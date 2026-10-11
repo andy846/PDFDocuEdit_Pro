@@ -36,6 +36,13 @@ supports Windows x64.
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
+## Development Update: Startup and Sign-in
+
+* Saved approval is read in the background while Splash is visible. Valid saved approval opens the main window directly; sign-in appears only when needed, after Splash closes.
+* Successful manual sign-in shows Opening workspace before entering the main window. No second Splash or artificial minimum delay.
+* Offline approval, background account checks and revocation behaviour are unchanged. Managed updates confirm readiness after the sign-in or main window has painted.
+* Windows/macOS share this startup flow. External PDFs wait until account access and Managed startup are ready.
+
 ## Development Update: PDF Production Tools
 
 * **Left Utilities / Tools → PDF Production Tools** opens a persistent PDF Workspace tab: Overview, Fonts, Flatten, Repair / Normalise, Results.

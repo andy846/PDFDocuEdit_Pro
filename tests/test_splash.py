@@ -51,32 +51,30 @@ def test_real_artwork_preserves_transparent_corner(qt_application):
     assert result.toImage().pixelColor(0, 0) == source.toImage().pixelColor(0, 0)
 
 
-def test_private_splash_dismissal_keeps_event_loop_responsive(qt_application):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtTest import QTest
+def test_private_splash_closes_before_destination(qt_application):
+    from PyQt6.QtWidgets import QWidget
 
-    splash = StartupSplash(QPixmap(100, 100), minimum_ms=100)
+    splash = StartupSplash(QPixmap(100, 100))
     splash.show()
-    splash.finish_startup()
-    events = []
-    QTimer.singleShot(0, lambda: events.append("login ready"))
-    qt_application.processEvents()
-    assert events == ["login ready"]
     assert splash.isVisible()
-    QTest.qWait(150)
+    splash.finish_startup()
     assert not splash.isVisible()
+    login = QWidget()
+    login.show()
+    qt_application.processEvents()
+    assert login.isVisible() and not splash.isVisible()
+    login.close()
     splash.deleteLater()
 
 
-def test_splash_quit_and_manual_close_stop_pending_dismissal(qt_application):
+def test_splash_click_does_not_hide_pending_startup(qt_application):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
     splash = StartupSplash(QPixmap(100, 100))
     splash.show()
-    splash.finish_startup()
-    assert splash._dismiss.isActive()
-    splash.close()
-    assert not splash._dismiss.isActive()
-    splash.show()
-    splash.finish_startup()
+    QTest.mouseClick(splash, Qt.MouseButton.LeftButton)
+    assert splash.isVisible()
     qt_application.aboutToQuit.emit()
-    assert not splash.isVisible() and not splash._dismiss.isActive()
+    assert not splash.isVisible()
     splash.deleteLater()

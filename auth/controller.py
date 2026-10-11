@@ -31,6 +31,7 @@ class AuthController(QObject):
     revoked = pyqtSignal(str)
     response = pyqtSignal(object)
     idle = pyqtSignal()
+    startupFinished = pyqtSignal()
 
     def __init__(self, client, store, parent=None):
         super().__init__(parent)
@@ -62,6 +63,7 @@ class AuthController(QObject):
             self.timer.start()
             QTimer.singleShot(0, self.check)
         self.changed.emit()
+        self.startupFinished.emit()
 
     def _start_cached_async(self):
         if self.busy or self.stopping:
@@ -69,7 +71,10 @@ class AuthController(QObject):
         generation = self.generation
 
         def load():
-            approval = self.store.load()
+            try:
+                approval = self.store.load()
+            except StorageError as error:
+                return AuthResult(Outcome.UNAVAILABLE, str(error))
             return AuthResult(Outcome.APPROVED if approval else Outcome.DENIED,
                               "Using saved offline approval." if approval else "Sign in with an approved account.", approval)
 
@@ -82,6 +87,7 @@ class AuthController(QObject):
                 self.approved.emit(self.approval)
                 self.timer.start()
             self.changed.emit()
+            self.startupFinished.emit()
 
         thread = RequestThread(load, self)
         self.thread = thread
