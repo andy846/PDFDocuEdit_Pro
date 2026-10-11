@@ -65,3 +65,7 @@
 ## Preparation
 
 Started 2026-10-11T07:45:23.368546+00:00. Public baseline v3.0.4, tag 037f89d256f8f09ae6e0796e9b19def47bff7b25 is an ancestor of this candidate. New sidebar tests are included in native Mac and Windows UI gates. No prior-version evidence is substituted for candidate acceptance.
+
+## First candidate superseded
+
+Run 38122504937 / source 9221689e0b637d4d0e4a63f54325a78190a1a533: Mac 32 modules / 529 tests passed with native packaging. Windows stopped after 143 completed modules / 1910 tests recorded, including a real Command Palette / shortcut-guide category regression after sidebar regrouping and Qt application-lifetime crash in p4 tests. General focused CI 38122504914 hit its 20-minute job limit while running 145 modules. These results are diagnostic only, not acceptance for the corrected source. Original annotation-command assertions are unchanged; command categories now use canonical annotation tool IDs. p3/p4 tests now share the real startup application/style lifetime, and Mac also exercises p4. Release branches use complete native gates without duplicate focused execution.

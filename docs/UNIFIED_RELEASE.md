@@ -261,3 +261,7 @@ python -m scripts.unified_release publish --folder <簽署目錄> --notes <RELEA
 - [ ] 本候選實機驗收及 operator-acceptance
 - [ ] 公開及公開入口/簽章核對
 - [ ] 完整版本記錄及使用者交付
+
+## CI 重複工作控制
+
+`codex/unified-release-v*` 分支由 `unified-release.yml` 執行 Windows 全部隔離回歸、Mac 原生計劃及兩邊打包。一般 `CI` 保留 Source quality，但不再重跑同分支的 focused tests；其他開發分支及 PR 的測試規則不變。這只消除重複執行，不略過正式原生 gate。

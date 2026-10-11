@@ -4999,13 +4999,15 @@ class PDFViewer(QMainWindow):
         )
 
         tool_shortcuts = {"search": "Ctrl+F", **SHORTCUT_HINTS}
-        for section_key, _title, items in SidePanel.SECTIONS:
+        for _section_key, _title, items in SidePanel.SECTIONS:
             for item in items:
                 make(
                     item.key,
                     item.label,
                     tool_shortcuts.get(item.key, ""),
-                    "Annotate" if section_key == "annotate" else "Tools",
+                    "Annotate"
+                    if item.key in self.ANNOTATION_TOOL_KEYS or item.key == "font_inspect"
+                    else "Tools",
                     lambda key=item.key: self._tool_requested(key),
                     lambda key=item.key: self._tool_available(key),
                 )

@@ -4,12 +4,19 @@ import time
 from pathlib import Path
 
 import fitz
+import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox, QTabBar
 
 import core.viewer as viewer_module
 from core.settings import SettingsManager
+
+
+@pytest.fixture(autouse=True)
+def stable_application(qt_application):
+    """Avoid recreating QApplication/style owners between PDF tab tests."""
+    return qt_application
 
 
 def make_pdf(path: Path, pages: int = 3, prefix: str = "Doc") -> Path:

@@ -62,7 +62,8 @@ jobs:
   focused:
     name: Affected tests and smoke on Windows
     needs: plan
-    if: needs.plan.outputs.full == 'false' && needs.plan.outputs.open_pr != 'true'
+    # Release branches run the complete native gates in unified-release.yml.
+    if: needs.plan.outputs.full == 'false' && needs.plan.outputs.open_pr != 'true' && !startsWith(github.ref, 'refs/heads/codex/unified-release-v')
     runs-on: windows-latest
     timeout-minutes: 20
     env:

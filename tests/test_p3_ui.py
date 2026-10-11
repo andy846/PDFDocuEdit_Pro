@@ -20,6 +20,12 @@ from core.settings import SettingsManager
 from ui.pdf_canvas import ToolMode
 
 
+@pytest.fixture(autouse=True)
+def stable_application(qt_application):
+    """Mirror startup and retain one QApplication throughout this UI module."""
+    return qt_application
+
+
 def make_pdf(path: Path, pages: int = 3) -> Path:
     with fitz.open() as document:
         for index in range(pages):
