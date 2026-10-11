@@ -237,7 +237,7 @@ Existing legacy Setup installations need a one-time transition to the managed in
 
 The Windows x64 release target is V3.0.3. Setup and Managed Portable downloads include SHA-256 files.
 
-See [repair report](PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations.
+See the historical [repair report](docs/archive/reviews/PROJECT_REVIEW_REPORT.md) and [release notes](docs/RELEASE_NOTES_2.5.4.md) for coverage and remaining limitations. Project files and local archive conventions are documented in [Project Folder 整理與封存](docs/PROJECT_HOUSEKEEPING.md).
 
 ## Background printing follow-up (2026-09-07)
 
