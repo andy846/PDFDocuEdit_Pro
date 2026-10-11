@@ -39,9 +39,19 @@ Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows �
 私人版使用 macOS Keychain，更新按平台及私人／公開渠道隔離。原生 Mac 安裝包驗收仍需通過 CI；OCR、Intel 及正式 Developer ID 簽署／公證另待後續。
 下載 Mac CI artifact 不代表已完成實機或打印機驗收。詳見 [macOS 開發與部署紀錄](docs/MACOS_PARITY.md)。
 
+## 最新開發更新：PDF Workspace 工具導航
+
+- 左側重整為 **Search & Inspect、Pages & Documents、Annotate & Edit、Convert、Production & Data、Security** 六類；保留所有原有工具及命令。
+- **Favourites → Edit** 可加入、移除及排序最多八個常用工具，重啟後保留。預設為 Search document、Deep search、Merge PDFs、Extract pages、PDF Production Tools。
+- 收窄後顯示常用圖示及分類入口；點分類開啟完整名稱清單，搜尋圖示可直接搜尋全部工具。清單及短視窗圖示列可捲動，按 Esc 關閉清單。
+- 搜尋支援名稱、用途、分類、舊分類別名及已自訂快捷鍵；方向鍵選擇、Enter 執行。無法使用的工具保留原因提示，長名稱提供完整 tooltip。
+- 移除重複品牌與固定工具數量 footer，保留畫布空間。視窗因文件詳情暫時收窄工具列後，放大會恢復原展開選擇；使用者自行收窄則保持收窄。
+
+屬開發更新，不改公開版本、PDF 或 Designer 專案格式。詳見 [工具導航操作說明](docs/PDF_TOOL_NAVIGATION.md)。
+
 ## 最新開發更新：PDF Production Tools
 
-PDF Workspace 左側 **Utilities → PDF Production Tools** 統一開啟字體檢查、平面化及修復工具分頁。這些變更屬於開發版本，不代表已發布新的 GitHub 版本。
+PDF Workspace 左側 **Production & Data → PDF Production Tools** 統一開啟字體檢查、平面化及修復工具分頁。這些變更屬於開發版本，不代表已發布新的 GitHub 版本。
 
 - **Overview**：主動按 Analyze，背景檢查 PDF 結構、標註／表單及字體；各類問題分開顯示，不把未檢查項目當作正常。分析不批准或生成文件。
 - **Fonts**：查看字體及涉及頁面，雙擊返回原來源頁。Safe Embed 收起原裝字體、授權及可信參考 PDF 設定；仍只修復已驗證的 TrueType／WinAnsi 個案，不默默替換字體。批次先分析，再進入個別 PDF 設定。
@@ -95,8 +105,8 @@ v3.0.4 新安裝及 Windows Managed 更新目標均為登入版；v3.0.3 舊安�
 - **Add Image／Signature Image 位置與尺寸**：新加入的圖片會自動選取並轉回 Browse，可拖動位置、拖四角縮放，右側 Manage 可輸入 X／Y／Width／Height（mm）。預設保留比例，Shift 可自由縮放；支援刪除及 Undo／Redo，保存 PDF 後重開仍可編輯。Apply 固定於設定面板底部，鍵盤移到設定欄會自動捲動至完整顯示；點頁面空白處取消選取。未修改的尺寸保留原始精度，避免顯示四捨五入造成超出頁面。圖片保持一般 PDF 頁面內容；Signature Image 是簽名圖片，不是數碼簽署。舊版插入或外部 PDF 的未標記圖片不會自動變成可編輯物件。
 - **Keyboard Shortcuts Review**：Windows 各工作區 Redo 支援 `Ctrl+Y`／`Ctrl+Shift+Z`；Designer 專案分頁可用 `Ctrl+Tab`／`Ctrl+Shift+Tab` 切換。文字欄位保留編輯快捷鍵，Save 及命令面板仍可使用；修正自訂全域鍵、連續按鍵前綴及跨模式衝突，主工具列提示與 Help → Keyboard Shortcuts 同步顯示實際綁定。詳見 [快捷鍵檢查及使用說明](docs/KEYBOARD_SHORTCUT_REVIEW.md)。
 
-- **Tools → Flatten PDF**：亦可從 PDF Workspace 左側 **Utilities → PDF Production Tools → Flatten** 開啟。先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
-- **Tools → PDF Repair / Production Normalise**：亦可從左側 **Utilities → PDF Repair / Normalise** 開啟；未開文件時可選擇來源 PDF。Safe Repair 重寫結構；Normalise 可明確選擇移除 JavaScript、附件、metadata、平面化及裁切異常 CropBox。Maximum Compatibility／Rasterise 是獨立、需確認的影像重建選項。
+- **Tools → Flatten PDF**：亦可從 PDF Workspace 左側 **Production & Data → PDF Production Tools → Flatten** 開啟。先 Analyse，再按選定頁面把可見標註／AcroForm 外觀轉為頁面內容；保留搜尋文字、頁面尺寸與方向。只能產生新副本，現有編輯內容與 Undo 不會被取代。
+- **Tools → PDF Repair / Production Normalise**：亦可從左側 **Production & Data → PDF Production Tools → Repair / Normalise** 開啟；未開文件時可選擇來源 PDF。Safe Repair 重寫結構；Normalise 可明確選擇移除 JavaScript、附件、metadata、平面化及裁切異常 CropBox。Maximum Compatibility／Rasterise 是獨立、需確認的影像重建選項。
 - 兩工具共用背景處理、取消、驗證、新工作資料夾及 CSV／JSON 紀錄；可選現有 Production Preflight 前後比較。**Choose PDFs for batch processing…** 逐檔處理，保留成功結果及失敗紀錄。
 - **Visual Workflow** 新增 Flatten PDF、Repair / Normalise PDF 節點，放在 Input／Merge 之後、Extract 之前。Check to this step 的 PDF 只留在暫存工作區；正式輸出仍須 Review。需覆核的修復結果請先在 PDF Workspace 檢查。
 - **共用輸出命名**：Template Designer、Mail Merge batch、PDF Workflow 及新工具可用 `{{input.stem}}_{{job.id}}.pdf`、`{{system.date}}`、`{{workflow.sequence|pad:6}}` 等。預覽會指出無效／缺失值；Windows 檔名清理只影響輸出名，不改來源資料。
@@ -256,8 +266,8 @@ See [release notes](docs/RELEASE_NOTES_2.5.14.md).
 
 ## V2.5.8 表單、比較與快捷鍵
 
-- **Utilities → Fill PDF form**：填寫既有 AcroForm、預覽常見公式計算、套用後一次 Undo；支援圖片及手寫簽名外觀。
-- **Utilities → Compare PDFs**：並排查看文字／視覺差異、插刪頁、手動配對，以及背景運算與取消。
+- **Annotate & Edit → Fill PDF form**：填寫既有 AcroForm、預覽常見公式計算、套用後一次 Undo；支援圖片及手寫簽名外觀。
+- **Search & Inspect → Compare PDFs**：並排查看文字／視覺差異、插刪頁、手動配對，以及背景運算與取消。
 - **Preferences → Keyboard shortcuts**：自訂命令按鍵及作用範圍，檢查重複與多段快捷鍵前綴衝突。
 
 簽名外觀不構成數位簽章；XFA 及未支援的腳本不會執行。詳見 [操作與實作說明](docs/IMPLEMENTATION_STAGES.md)。
@@ -434,7 +444,7 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
 
 ## 開發更新：PDF Workspace 字體檢查及安全嵌入
 
-- 左側 **Utilities → Font Preflight / Safe Embed** 及 **Tools → Font Preflight / Safe Embed Fonts…** 提供唯讀檢查、相關頁面定位、原裝字體選擇及 JSON／CSV 報告。
+- 左側 **Production & Data → PDF Production Tools → Fonts** 及 **Tools → Font Preflight / Safe Embed Fonts…** 提供唯讀檢查、相關頁面定位、原裝字體選擇及 JSON／CSV 報告。
 - 只對已核對的 Simple TrueType／WinAnsi 個案修復副本；須有授權原裝字體及含相同字體二進位的可信參考 PDF。沒有原裝字體或可信參考時會列出原因，不能靠同名字體自動換字。
 - 全部相關頁面通過結構、字體雜湊及 300 dpi 逐頁視覺核對後，才發布新 PDF 及審計資料夾；不覆蓋來源、不改現有 Editor／Designer 字體處理。
 - 批次檢查逐檔隔離；可進入個別檔案覆核。簽署、加密、未完整分析及未支援字體格式保持 scan-only／blocked。

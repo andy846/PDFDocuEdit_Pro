@@ -213,9 +213,13 @@ def test_repeated_popups_theme_refresh_and_animation_toggle(panel, qt_applicatio
         panel.set_collapsed(False, animate=False)
         qt_application.processEvents()
         assert not panel._popup.isVisible()
+    panel.set_animations_enabled(True)
+    section = panel._sections[0]
+    section.header.click()
     panel.set_collapsed(True)
     panel.set_animations_enabled(False)
     assert panel.width() == 52
+    assert section._animation.state() == section._animation.State.Stopped
 
 
 def test_compact_favourites_remain_available_with_saved_search(panel):

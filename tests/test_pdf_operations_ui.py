@@ -126,7 +126,7 @@ def test_pdf_production_tools_in_sidebar_search_and_collapsed_mode(qt_applicatio
         button.click()
         assert received == ["pdf_production"]
         panel.set_collapsed(False, animate=False)
-        assert button.text() == "PDF Production Tools"
+        assert button.full_label == "PDF Production Tools"
     finally:
         panel.close()
         panel.deleteLater()

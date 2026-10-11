@@ -4,7 +4,7 @@ Development work based on v3.0.4; no public version or project format change.
 
 ## Operator flow
 
-Open the left Utilities entry → Analyze in Overview → select Fonts, Flatten or Repair / Normalise → Analyze / Check sources → choose output root → Generate new copy → Results.
+Open the left Production & Data → PDF Production Tools entry → Analyze in Overview → select Fonts, Flatten or Repair / Normalise → Analyze / Check sources → choose output root → Generate new copy → Results.
 
 Overview is a read-only combined inspection. It does not approve a processing plan. Each operation retains its own drafts and validation. Unsupported checks are displayed, not inferred as OK. Rasterisation is separate from object flattening. Original files and Editor Undo stay intact.
 

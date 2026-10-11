@@ -46,6 +46,7 @@ class ToolItem:
     asset_name: str | None = None
     capability: CapabilityId | None = None
     description: str = ""
+    search_aliases: str = ""
 
 
 # Keyboard shortcut hints shown in tool tooltips (matches menu bar shortcuts).
@@ -211,8 +212,12 @@ TOOL_DESCRIPTIONS = {
 
 def _regroup_tools(sections):
     items = {
-        item.key: replace(item, description=item.description or TOOL_DESCRIPTIONS.get(item.key, ""))
-        for _key, _title, group in sections
+        item.key: replace(
+            item,
+            description=item.description or TOOL_DESCRIPTIONS.get(item.key, ""),
+            search_aliases=title,
+        )
+        for _key, title, group in sections
         for item in group
     }
     assigned = [key for _key, _title, _icon, keys in CATEGORY_LAYOUT for key in keys]
@@ -322,6 +327,8 @@ class CollapsibleSection(QWidget):
 
     def set_animations_enabled(self, enabled: bool) -> None:
         self._animations_enabled = enabled
+        if not enabled:
+            self._apply_expanded(False)
 
     def refresh_icon(self) -> None:
         self._update_header_icon()
@@ -806,6 +813,7 @@ class SidePanel(QFrame):
                 item.label,
                 category,
                 item.description,
+                item.search_aliases,
                 SEARCH_ALIASES.get(key, ""),
                 self._shortcut_hints.get(key, ""),
             )
