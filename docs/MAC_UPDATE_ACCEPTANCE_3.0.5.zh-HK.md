@@ -1,15 +1,15 @@
-# Mac Managed 登入版 → v3.0.5 候選版實測
+# Mac Managed 登入版 → v3.0.5 更新及實測
 
 適用於已安裝 **Apple Silicon Managed 登入版 v3.0.3／v3.0.4** 的 Mac。
-候選版仍是 GitHub 草稿，舊程式的 Check for Updates 暫時不會找到它。
-這次使用本機驗收工具安裝已簽署更新包；公開後回復使用程式內的更新入口。
+v3.0.5 已公開。優先在原有程式使用 Help → Check for Updates，下載後保存工作，再按 Update and Restart。
+以下本機驗收工具步驟保留作備用及產生更新報告；一般使用者可直接採用程式內更新。
 
-GitHub 草稿：[v3.0.5 候選版](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/untagged-0d93f6130967808d34a7)（登入 repository owner 帳戶後查看）。
+GitHub Release：[v3.0.5](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.5)。
 
 ## 準備
 
 1. 保存工作，完全退出 PDFDocuEdit Pro。
-2. 從候選草稿下載以下三個檔案，放入 `Downloads/v3.0.5-update`：
+2. 從 GitHub Release下載以下三個檔案，放入 `Downloads/v3.0.5-update`：
    - `PDFDocuEdit-Pro-v3.0.5-Update-macOS-arm64-Private.zip`
    - `update-macos-arm64-private.json`
    - `update-macos-arm64-private.sig`
@@ -47,10 +47,11 @@ python3 -m venv .mac-update-test
 
 - 顯示仍有程式執行：先正常退出，毋須強制刪除 lock 檔。
 - 顯示已有 pending update：停止操作並提供錯誤，工具會保留現有檔案。
-- 簽章、平台或帳戶項目不符：不會安裝；核對是否下載同一草稿的三個檔案。
+- 簽章、平台或帳戶項目不符：不會安裝；核對是否下載同一版本的三個檔案。
 - 啟動失敗：沿用現有更新回退，保留前一版本及設定。
 - Mac 測試版未經 Apple 公證；如系統阻擋，使用 macOS 的個別允許開啟程序，
   不要全域關閉 Gatekeeper。
 
-Windows 正式版及既有 v3.0.4 GitHub Release 保持不變；實機驗收後才公開 v3.0.5。
+既有 v3.0.4 GitHub Release 保持不變。v3.0.5 按擁有人要求已公開，候選實機驗收缺項仍如實列明。
+
 

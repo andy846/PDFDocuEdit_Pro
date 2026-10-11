@@ -1,6 +1,6 @@
 # Release Validation — 3.0.5
 
-GitHub Draft candidate; not publicly released. This record does not claim unperformed operator tests passed. Follow [UNIFIED_RELEASE.md](UNIFIED_RELEASE.md).
+Published 2026-10-11T09:27:00Z at the owner's explicit renewed request after pending operator checks were disclosed. This is a one-time owner release decision, not a permanent change to [UNIFIED_RELEASE.md](UNIFIED_RELEASE.md). Unperformed operator tests remain Pending.
 
 ## Frozen source
 
@@ -13,7 +13,7 @@ GitHub Draft candidate; not publicly released. This record does not claim unperf
 - [Native candidate run 38124417858](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38124417858): both jobs Passed at the frozen source.
 - [General CI 38124417877](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38124417877): source quality Passed; duplicate focused execution omitted only on release branches, complete native gates retained.
 - Evidence, candidate and signed files: `build/probes/release-v3.0.5-38124417858/` in the local development archive. No signing credentials are included in this record or public attachments.
-- [Verified GitHub Draft](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/untagged-0d93f6130967808d34a7), Release ID `409555935`, all 20 attachments uploaded and verified by `scripts.unified_release publish`.
+- [Published GitHub Release](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.5), Release ID `409555935`, all 20 attachments verified before and after publication. Tag resolves to the frozen artifact commit above.
 
 ## Native gates
 
@@ -49,7 +49,7 @@ Signed index SHA256: `7aff151f74931229a9d4d80ac9ce1d89509c32287a18671fd6aa4d4023
 | Mac offline reopening | Pending | Requires approved account on this candidate and actual disconnected reopening |
 | Mac cross-version update | Pending | Signed candidate helper and operator report required |
 | Draft remote name/hash/size checks | Passed | Unified publisher exited successfully; `remote-release.json` records all 20 attachments and GitHub SHA256 digests |
-| Public tag/manifests/download routes | Pending | Not public until operator gates complete |
+| Public tag/manifests/download routes | Passed | `public-verification.json`: latest v3.0.5, frozen commit, 20 assets/digests, three production manifest signatures and five primary download links (HTTP 206) |
 
 The follow-on v3.0.6 archive is a separately built/signed QA variant from the earlier preparation source. It solely exercises a second newer frozen version through the unchanged original Launcher. It is not a product release and must never be uploaded. Candidate acceptance and manifests remain bound to the actual v3.0.5 frozen source above.
 
@@ -68,6 +68,8 @@ The currently running user's application and documents were not terminated. UI i
 | Signed index written | — | 09:03:31 |
 | Draft upload / remote validation | 09:03 onward | Completed; saved in `remote-release.json` |
 | Real-machine/operator wait | — | Pending desktop unlock and Mac checks |
+| Owner one-time release instruction | — | User: “Release 吧”, after explicit pending-check disclosure |
+| Public release | — | 09:27:00, one-time owner exception; pending checks publicly disclosed |
 
 Parallel native times are not added as total elapsed time. Download/sign/upload and operator waiting are distinct from test execution. No duplicate local complete suite was run after corrected native success.
 
@@ -81,4 +83,12 @@ Run `38122504937`, source `9221689e0b637d4d0e4a63f54325a78190a1a533`, was cancel
 - Mac: Apple Silicon/macOS 13+, ad-hoc signed testing build, not Apple notarized. Intel and Mac OCR parity are outside this release.
 - No printer/DFE real-machine claims are added.
 - Template/workflow/barcode formats and the update trust key are unchanged.
-- Current release state: Draft pending concrete operator evidence. Never fill pending gates from earlier-version tests.
+- Current release state: public/latest v3.0.5. Windows candidate account/UI and three Mac candidate operator checks remain Pending; do not fill them from earlier-version tests.
+
+## One-time owner decision and publication audit
+
+The owner renewed the instruction to release (“Release 吧”) after receiving the outstanding candidate checks. The existing publisher revalidated the same signed Draft and all attachments. `owner-release-decision.json` records the exact version, frozen SHA, Release ID, owner instruction and pending checks. Publication used a controlled operation bound to that exact Draft; Release Notes disclose each outstanding check. Original `operator-acceptance.json` values remain unchanged.
+
+Automatic approval rejected permanently adding an operator-exception flag to the shared release tool: requesting publication did not authorize a lasting reduction of release gates. That experimental code, tests and SOP change were fully restored and were neither committed nor shipped. Normal release tooling and gates remain unchanged. The allowed safer alternative was this one-time controlled publication with a truthful audit record.
+
+Post-publication validation used existing production signature validators and the signed release index. Public Installer, DMG and all three update archive download endpoints responded successfully; metadata/signatures downloaded from public endpoints matched the signed source. Earlier public v3.0.4 assets were preserved. This documentation update does not change artifact provenance or rebuild the binaries.

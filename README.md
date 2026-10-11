@@ -1,9 +1,9 @@
-# PDFDocuEdit Pro V3.0.5 — Release Candidate
+# PDFDocuEdit Pro V3.0.5
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.5 候選版本準備同步提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**。
-現有 GitHub 正式版 v3.0.4 保留；只有兩平台原生打包、簽章及發布驗收完成後才公開新 Release。
+v3.0.5 已公開，同步提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**。
+現有 GitHub 正式版 v3.0.4 保留。v3.0.5 的雙平台回歸、原生打包、簽章及 20 個附件已核對；按擁有人要求即時公開，尚欠的 Windows 帳戶／畫面及 Mac 登入／離線／跨版更新實測已在發布說明列明。
 Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
 本版更新及平台限制見 [v3.0.5 Release notes](docs/RELEASE_NOTES_3.0.5.md)。
@@ -34,7 +34,7 @@ Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此�
 
 ## macOS 對齊開發
 
-Apple Silicon 對齊及登入工作已整合至 v3.0.4 候選來源；目前 Windows 正式發布為 v3.0.4。
+Apple Silicon 對齊及登入工作已整合；目前公開版本為 v3.0.5，macOS 仍為 Apple Silicon 登入測試版。
 專用 Mac CI 建置原生 qpdf、libzbar、Ghostscript 及離線 veraPDF／JRE，再檢查
 Designer、Workflow、Production Review、Barcode 與 PDF／PS 生產功能。
 Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows 共用登入批准、離線使用、撤銷覆核及簽章更新／回退核心。
@@ -49,11 +49,11 @@ Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows �
 - 搜尋支援名稱、用途、分類、舊分類別名及已自訂快捷鍵；方向鍵選擇、Enter 執行。無法使用的工具保留原因提示，長名稱提供完整 tooltip。
 - 移除重複品牌與固定工具數量 footer，保留畫布空間。視窗因文件詳情暫時收窄工具列後，放大會恢復原展開選擇；使用者自行收窄則保持收窄。
 
-納入 v3.0.5 候選，不改 PDF 或 Designer 專案格式。詳見 [工具導航操作說明](docs/PDF_TOOL_NAVIGATION.md)。
+已納入 v3.0.5，不改 PDF 或 Designer 專案格式。詳見 [工具導航操作說明](docs/PDF_TOOL_NAVIGATION.md)。
 
 ## 最新開發更新：PDF Production Tools
 
-PDF Workspace 左側 **Production & Data → PDF Production Tools** 統一開啟字體檢查、平面化及修復工具分頁。這些變更納入 v3.0.5 候選，發布狀態以 GitHub Release 為準。
+PDF Workspace 左側 **Production & Data → PDF Production Tools** 統一開啟字體檢查、平面化及修復工具分頁。這些變更已納入 v3.0.5，發布限制及未驗收項目見 GitHub Release。
 
 - **Overview**：主動按 Analyze，背景檢查 PDF 結構、標註／表單及字體；各類問題分開顯示，不把未檢查項目當作正常。分析不批准或生成文件。
 - **Fonts**：查看字體及涉及頁面，雙擊返回原來源頁。Safe Embed 收起原裝字體、授權及可信參考 PDF 設定；仍只修復已驗證的 TrueType／WinAnsi 個案，不默默替換字體。批次先分析，再進入個別 PDF 設定。
@@ -64,7 +64,7 @@ PDF Workspace 左側 **Production & Data → PDF Production Tools** 統一開啟
 - **Editor 交接**：目前文件使用包含未保存修改的快照。同一來源重開工具會聚焦原分頁；修改／關閉來源後須 Refresh source 或重新選檔。切回 PDF／Designer 不取消工作、不丟設定；關閉執行中分頁需確認取消，等安全清理完成才釋放暫存。
 - **操作**：工具分頁的 Ctrl+O 選來源，Ctrl+W 關閉工具，Ctrl+Tab／Ctrl+Shift+Tab 切換 PDF Workspace 分頁；保存／Undo 不作用於背景 PDF。舊 Flatten、Repair、Font Preflight 命令仍可直達對應分區，Workflow 原設定視窗保留。
 
-不改 `.pdcx`／`.pdflow` 或條碼格式；v3.0.5 發布前進行雙平台回歸、原生打包與統一驗收。詳見 [操作與整合說明](docs/PDF_PRODUCTION_TOOLS.md)。
+不改 `.pdcx`／`.pdflow` 或條碼格式；v3.0.5 已完成雙平台原生回歸、打包與公開更新資料核對；人工實測缺項如實保留。詳見 [操作與整合說明](docs/PDF_PRODUCTION_TOOLS.md)。
 
 ## 最新開發更新：生產覆核
 
@@ -75,7 +75,7 @@ v3.0.4 新安裝及 Windows Managed 更新目標均為登入版；v3.0.3 舊安�
 私人測試版登入畫面沿用程式圖示及深淺色主題；帳戶入口位於 More commands／Settings
 選單，顯示登入帳戶，提供核對及登出操作，不佔用主工具列。
 
-此節描述已整合的候選功能；GitHub 最新公開版本為 **3.0.4**；v3.0.5 為本次候選，發布狀態以 Release 及验收紀錄為準。
+GitHub 最新公開版本為 **3.0.5**；驗收結果及尚欠的人工實測項目見 Release 與驗收紀錄。
 
 - **Template Designer／PDF Overlay**：按 Generate PDF 或 **Review Production…**，先選輸出資料夾並進入 **Production Review**。背景檢查完整資料後，才可 **Confirm production**；覆核及預覽不生成正式 PDF／PS／JDF。
 - **Visual Workflow**：保留原有資料／分封及逐工作批准；Run Ready Jobs／Run approved branches 會再進入共用生產覆核，逐一選擇工作核對。
@@ -451,3 +451,4 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
 - 全部相關頁面通過結構、字體雜湊及 300 dpi 逐頁視覺核對後，才發布新 PDF 及審計資料夾；不覆蓋來源、不改現有 Editor／Designer 字體處理。
 - 批次檢查逐檔隔離；可進入個別檔案覆核。簽署、加密、未完整分析及未支援字體格式保持 scan-only／blocked。
 - 本功能仍為開發更新，未新增 GitHub Release。詳細限制及測試方法見 [Font Preflight 說明](docs/FONT_PREFLIGHT_SAFE_EMBED.md)。
+
