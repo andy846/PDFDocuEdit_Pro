@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 from core.capabilities import CapabilityId, detect_capabilities
 from styles.tokens import D, S
 
-from .icons import app_icon, app_pixmap, icon
+from .icons import app_icon, app_pixmap, category_header_icon, icon
 from .tool_navigation import FavouritesDialog, ToolNavButton, ToolPopup
 
 
@@ -143,6 +143,15 @@ CATEGORY_LAYOUT = (
     ),
     ("protection", "Security", "lock", ("encrypt", "decrypt")),
 )
+
+CATEGORY_ASSETS = {
+    "search_inspect": "category_search.svg",
+    "documents": "category_pages.svg",
+    "edit": "category_annotate.svg",
+    "conversion": "category_convert.svg",
+    "production": "category_production.svg",
+    "protection": "category_security.svg",
+}
 
 SEARCH_ALIASES = {
     "search": "find text normal search 搜尋 搜索",
@@ -285,7 +294,12 @@ class CollapsibleSection(QWidget):
         self._apply_expanded(True)
 
     def _update_header_icon(self) -> None:
-        self.header.setIcon(icon("chevron-down" if self._logical_expanded else "chevron-right", 14))
+        asset = CATEGORY_ASSETS.get(self.key)
+        if asset:
+            self.header.setIconSize(QSize(44, 24))
+            self.header.setIcon(category_header_icon(asset, self._logical_expanded))
+        else:
+            self.header.setIcon(icon("chevron-down" if self._logical_expanded else "chevron-right", 14))
 
     def _natural_height(self) -> int:
         self.body.adjustSize()
@@ -718,10 +732,10 @@ class SidePanel(QFrame):
         rail_layout = QVBoxLayout(self._rail)
         rail_layout.setContentsMargins(0, 0, 0, 0)
         rail_layout.setSpacing(4)
-        for key, title, image, _keys in CATEGORY_LAYOUT:
+        for key, title, _image, _keys in CATEGORY_LAYOUT:
             button = ToolNavButton(title)
             button.setObjectName("sidebarNavButton")
-            button.setIcon(icon(image, 22))
+            button.setIcon(app_icon(CATEGORY_ASSETS[key], 24))
             button.setToolTip(title)
             button.set_compact(True)
             button.set_animations_enabled(self._animations_enabled)
@@ -1024,6 +1038,6 @@ class SidePanel(QFrame):
         for key, item in self._items.items():
             self._buttons[key].setIcon(self._item_icon(item))
         self._compact_search.setIcon(icon("search", 22))
-        for key, _title, image, _keys in CATEGORY_LAYOUT:
-            self._rail_buttons[key].setIcon(icon(image, 22))
+        for key, _title, _image, _keys in CATEGORY_LAYOUT:
+            self._rail_buttons[key].setIcon(app_icon(CATEGORY_ASSETS[key], 24))
         self._sync_views()

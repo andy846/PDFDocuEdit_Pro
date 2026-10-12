@@ -193,6 +193,21 @@ def app_icon(filename: str, size: int = 24) -> QIcon:
     return QIcon(str(path)) if path.exists() else QIcon(app_pixmap(filename, size))
 
 
+def category_header_icon(filename: str, expanded: bool) -> QIcon:
+    """Keep a directional disclosure arrow beside a full-colour category icon."""
+    dpr = _screen_dpr()
+    canvas = QPixmap(round(44 * dpr), round(24 * dpr))
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.drawPixmap(
+        0, 5, _pixmap("chevron-down" if expanded else "chevron-right", 14, get_color("text_secondary"))
+    )
+    painter.drawPixmap(20, 0, app_icon(filename, 24).pixmap(24, 24))
+    painter.end()
+    return QIcon(canvas)
+
+
 def clear_icon_cache() -> None:
     _pixmap.cache_clear()
     app_pixmap.cache_clear()

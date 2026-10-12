@@ -118,7 +118,7 @@ def global_style() -> str:
         /* App-wide chrome: rounded translucent cards in the sidebar's design
            language. Margins float each bar over the window background. */
         QWidget#commandBar {{
-            background: {_rgba(c['bg_surface'], 245)};
+            background: {c['bg_surface']};
             border: 1px solid {c['border']};
             border-radius: 12px;
             margin: {S.SM}px {S.SM}px 0 {S.SM}px;
@@ -385,7 +385,7 @@ def global_style() -> str:
             border: none;
         }}
         QFrame#leftPanel {{
-            background: {_rgba(c['bg_surface'], 235)};
+            background: {c['bg_surface']};
         }}
         QFrame#contextPanel {{
             background: {_rgba(c['bg_surface'], 235)};
