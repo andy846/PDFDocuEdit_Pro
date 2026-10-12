@@ -38,6 +38,46 @@ def test_categories_preserve_all_tools_exactly_once(panel):
     assert panel._favourite_keys == list(panel.DEFAULT_FAVOURITES)
 
 
+def test_branded_header_and_keyboard_toggle_fit_both_panel_widths(panel, qt_application):
+    assert panel._title.text() == "PDF Workspace"
+    assert panel._brand_mark.isVisible() and panel._subtitle.isVisible()
+    assert not panel._brand_mark.pixmap().isNull()
+    panel._toggle.setFocus()
+    changes = []
+    panel.collapsedChanged.connect(changes.append)
+    QTest.keyClick(panel._toggle, Qt.Key.Key_Space)
+    qt_application.processEvents()
+    assert panel.is_collapsed() and changes == [True]
+    assert panel.width() == 52
+    assert not panel._brand_mark.isVisible() and not panel._brand_copy.isVisible()
+    assert panel._header.rect().contains(panel._toggle.geometry())
+    assert "Expand" in panel._toggle.accessibleName()
+    QTest.keyClick(panel._toggle, Qt.Key.Key_Space)
+    qt_application.processEvents()
+    assert not panel.is_collapsed() and changes == [True, False]
+    assert panel.width() == 272 and panel._brand_copy.isVisible()
+    assert panel._header.rect().contains(panel._toggle.geometry())
+    assert "Collapse" in panel._toggle.accessibleName()
+
+
+def test_header_mark_has_foreground_contrast_when_theme_changes(panel, qt_application):
+    from styles.theme import apply_theme, get_color
+    from ui.icons import clear_icon_cache
+
+    try:
+        for theme in ("dark", "light"):
+            apply_theme(qt_application, theme)
+            clear_icon_cache()
+            panel.refresh_icons()
+            image = panel._brand_mark.pixmap().toImage()
+            opaque = [image.pixelColor(x, y) for x in range(image.width()) for y in range(image.height())
+                      if image.pixelColor(x, y).alpha() == 255]
+            assert opaque and all(pixel.name() == get_color("text_primary") for pixel in opaque)
+    finally:
+        apply_theme(qt_application, "system")
+        clear_icon_cache()
+
+
 def test_favourites_persist_order_ignore_unknown_and_keep_empty(panel, qt_application):
     panel.set_favourites(["rotate", "merge", "rotate", "unknown", None])
     second = SidePanel(animations_enabled=False)

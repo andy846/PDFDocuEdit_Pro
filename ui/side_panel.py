@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 from core.capabilities import CapabilityId, detect_capabilities
 from styles.tokens import D, S
 
-from .icons import app_icon, icon
+from .icons import app_icon, app_pixmap, icon
 from .tool_navigation import FavouritesDialog, ToolNavButton, ToolPopup
 
 
@@ -609,15 +609,32 @@ class SidePanel(QFrame):
         self._header = QWidget()
         self._header.setObjectName("sidebarHeader")
         header_layout = QHBoxLayout(self._header)
-        header_layout.setContentsMargins(4, 2, 0, 2)
-        self._title = QLabel("Tools")
+        header_layout.setContentsMargins(S.XS, S.XS, 0, S.XS)
+        header_layout.setSpacing(S.SM)
+        self._brand_mark = QLabel()
+        self._brand_mark.setObjectName("sidebarBrandMark")
+        self._brand_mark.setPixmap(app_pixmap("Main_menu.png", 30, monochrome=True))
+        self._brand_mark.setFixedSize(34, 34)
+        self._brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(self._brand_mark)
+        self._brand_copy = QWidget()
+        self._brand_copy.setObjectName("sidebarBrandCopy")
+        brand_layout = QVBoxLayout(self._brand_copy)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(0)
+        self._title = QLabel("PDF Workspace")
         self._title.setObjectName("sidebarTitle")
-        header_layout.addWidget(self._title, 1)
+        self._subtitle = QLabel("Tools & automation")
+        self._subtitle.setObjectName("sidebarSubtitle")
+        brand_layout.addWidget(self._title)
+        brand_layout.addWidget(self._subtitle)
+        header_layout.addWidget(self._brand_copy, 1)
         self._toggle = QToolButton()
         self._toggle.setObjectName("sidebarCollapseButton")
         self._toggle.setIconSize(QSize(18, 18))
         self._toggle.clicked.connect(lambda: self.set_collapsed(not self._collapsed))
-        header_layout.addWidget(self._toggle)
+        self._toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        header_layout.addWidget(self._toggle, 0, Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._header)
         self._search = QLineEdit()
         self._search.setObjectName("sidebarSearch")
@@ -882,7 +899,10 @@ class SidePanel(QFrame):
         target = D.SIDEBAR_COLLAPSED_W if collapsed else D.SIDEBAR_W
         if self._popup is not None:
             self._popup.hide()
-        self._title.setVisible(not collapsed)
+        self._brand_mark.setVisible(not collapsed)
+        self._brand_copy.setVisible(not collapsed)
+        # Keep the 30px control centred and entirely inside the 52px rail.
+        self._header.layout().setContentsMargins(0 if collapsed else S.XS, S.XS, 0, S.XS)
         self._compact_search.setVisible(collapsed)
         self._rail.setVisible(collapsed)
         self._favourites_header.setVisible(not collapsed)
@@ -995,6 +1015,7 @@ class SidePanel(QFrame):
         self._sync_views()
 
     def refresh_icons(self) -> None:
+        self._brand_mark.setPixmap(app_pixmap("Main_menu.png", 30, monochrome=True))
         self._toggle.setIcon(icon("chevron-right" if self._collapsed else "chevron-left", 18))
         self._search_action.setIcon(icon("search", 16))
         for section in self._sections:

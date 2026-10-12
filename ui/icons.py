@@ -128,11 +128,12 @@ def icon(name: str, size: int = 20, color: str | None = None) -> QIcon:
 
 
 @lru_cache(maxsize=256)
-def app_pixmap(filename: str, size: int) -> QPixmap:
+def app_pixmap(filename: str, size: int, *, monochrome: bool = False) -> QPixmap:
     """Load one of the original high-resolution feature icons at UI scale.
 
     In dark themes the bitmap is recolored to the text colour so pre-rendered
     raster icons keep contrast, matching the monochrome SVG icons.
+    Explicit monochrome artwork is tinted in light themes as well.
     """
     source = QPixmap(str(resource_path("App_icon", filename)))
     if source.isNull():
@@ -146,8 +147,8 @@ def app_pixmap(filename: str, size: int) -> QPixmap:
         Qt.TransformationMode.SmoothTransformation,
     )
     foreground = QColor(get_color("text_primary"))
-    if foreground.lightness() > 128:
-        # Dark theme: tint the bitmap to the light text colour.
+    if monochrome or foreground.lightness() > 128:
+        # Preserve the original alpha/shape; only change the foreground colour.
         tinted = QPixmap(scaled.size())
         tinted.fill(Qt.GlobalColor.transparent)
         painter = QPainter(tinted)

@@ -422,7 +422,7 @@ def global_style() -> str:
             border: 1px solid {c['border']};
             border-radius: {R.LG}px;
         }}
-        QWidget#sidebarContent, QWidget#sidebarSectionBody {{
+        QWidget#sidebarContent, QWidget#sidebarSectionBody, QWidget#sidebarBrandCopy {{
             background: transparent;
         }}
         QLabel#sidebarBrandMark {{
@@ -479,6 +479,16 @@ def global_style() -> str:
             max-height: 30px;
             padding: 0;
             border-radius: {R.MD}px;
+            background: {c['bg_surface']};
+            border: 1px solid {c['primary_glow']};
+        }}
+        QToolButton#sidebarCollapseButton:hover, QToolButton#sidebarCollapseButton:focus {{
+            background: {c['primary_soft']};
+            border-color: {c['primary']};
+        }}
+        QToolButton#sidebarCollapseButton:pressed {{
+            background: {c['primary_glow']};
+            border-color: {c['primary']};
         }}
         QFrame#sidebarDivider {{
             border: none;
