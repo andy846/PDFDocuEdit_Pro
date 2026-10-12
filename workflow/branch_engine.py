@@ -460,7 +460,7 @@ def approve_routes(spec,run,identities,*,acknowledge=False):
     return run
 
 
-def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,on_state=None):
+def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,on_state=None,authorization=None):
     _location(directory,run)
     _check_current(spec,run)
     if run.get("target_id"):
@@ -471,6 +471,9 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
         raise CompositionError("Approve at least one checked branch before production.")
     if not output:
         raise CompositionError("Choose a production output folder.")
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    authorization.require_workflow(spec, [j["id"] for j in run["jobs"] if j["status"] == "Ready" and j["approved"]])
     root=production_root(output,run)
     root.mkdir(parents=True,exist_ok=True)
     run["report_dir"]=str(root)
@@ -486,7 +489,7 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
             _check_current(spec,run)
             batch=BatchRun.from_dict(entry["batch"])
             batch=execute_batch(WorkflowSpec_from(entry["spec"]),batch,production_root(output,run,entry),
-                                progress=progress,is_cancelled=is_cancelled,on_state=on_state,_direct_root=True)
+                                progress=progress,is_cancelled=is_cancelled,on_state=on_state,_direct_root=True,authorization=authorization.for_jobs([entry["id"]]))
             job=batch.jobs[0]
             entry.update(batch=batch.to_dict(),approved=False,status=job.status,error=job.error)
             if job.status=="Failed":

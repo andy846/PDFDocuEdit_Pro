@@ -179,7 +179,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
 def generate(
     job: ProductionJob, *, progress: Callable | None = None, is_cancelled: Callable | None = None,
     additional_reports: Callable | None = None,
-    _defer_media_ticket: bool = False,
+    _defer_media_ticket: bool = False, authorization=None,
 ) -> JobResult:
     """Compose a disk-backed imported snapshot without loading all rendered pages."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job.job_id):
@@ -194,9 +194,14 @@ def generate(
     validate_output_template(job.output_name)
     template = Template.from_dict(job.template)
     template._barcode_job_id = job.job_id
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    authorization.require_job("template", job, is_cancelled=is_cancelled)
+    from core.output_safety import contained_path, validate_identifier
+    validate_identifier(job.job_id)
     output_root = Path(job.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    final = output_root / job.job_id
+    final = contained_path(output_root, job.job_id)
     if final.exists() or (output_root / f"{job.job_id}-failed").exists():
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))

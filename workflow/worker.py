@@ -15,14 +15,15 @@ from .model import WorkflowRun, WorkflowSpec
 from .registry import EXTRA_KINDS
 
 
-def dispatch(request, progress, cancelled, emit_state=None):
+def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
     operation=request["operation"]
     if operation == "production_review_prepare":
         from .production_review import prepare_contexts
         return prepare_contexts(request, progress=progress, is_cancelled=cancelled)
-    if request.get("production_reviews"):
+    authorization = None
+    if operation in ("batch_run", "branch_run") or (operation == "run" and request.get("until", "review") == "output"):
         from .production_review import validate_receipts
-        validate_receipts(request, is_cancelled=cancelled)
+        authorization = validate_receipts(request, is_cancelled=cancelled, session=session)
     if operation.startswith("branch_"):
         from .branch_engine import approve_routes, execute_routes, prepare_routes, rows
         spec=WorkflowSpec.from_dict(request["spec"])
@@ -48,7 +49,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
             return {"run":approve_routes(spec,request["run"],request["identities"],acknowledge=request.get("acknowledge",False))}
         if operation=="branch_run":
             return {"run":execute_routes(spec,request["run"],request["directory"],request["output_dir"],
-                                         progress=progress,is_cancelled=cancelled,on_state=emit_state)}
+                                         progress=progress,is_cancelled=cancelled,on_state=emit_state,authorization=authorization)}
         if operation=="branch_rows":
             return rows(spec,request["run"],request["directory"],source_id=request.get("source_id",""),
                         branch_id=request.get("branch_id",""),view=request.get("view","output"),offset=request.get("offset",0),
@@ -85,7 +86,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
         return inspection_preview(request["directory"],request["run_id"],request["node_id"],spec,request["target"],
                                   **options,record=request.get("record",1),page=request.get("page",1))
     if operation.startswith("batch_"):
-        from .batch import BatchRun, approve, execute_batch, load_record, prepare, save_record
+        from .batch import BatchRun, execute_batch, load_record, prepare, save_record
         if operation=="batch_load":
             return {"batch":load_record(request["path"]).to_dict()}
         run=BatchRun.from_dict(request["batch"])
@@ -101,8 +102,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
         if operation=="batch_check":
             return {"batch":prepare(spec,run,request["directory"],progress=progress,is_cancelled=cancelled).to_dict()}
         if operation=="batch_run":
-            approve(run,request["approved"])
-            return {"batch":execute_batch(spec,run,request["output_dir"],progress=progress,is_cancelled=cancelled,on_state=emit_state).to_dict()}
+            return {"batch":execute_batch(spec,run,request["output_dir"],progress=progress,is_cancelled=cancelled,on_state=emit_state,authorization=authorization).to_dict()}
         if operation=="batch_preview":
             from composition.data.sequences import open_records
             from composition.engine.preview_raster import save_preview
@@ -124,7 +124,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
         return asdict(execute(WorkflowSpec.from_dict(request["spec"]),WorkflowRun(**request["run"]),
                               request["directory"],until=request.get("until","review"),
                               progress=progress,is_cancelled=cancelled,
-                              review_context=request["production_reviews"][0]["context"] if request.get("production_reviews") else None))
+                              review_context=request["production_reviews"][0]["context"] if request.get("production_reviews") else None, authorization=authorization))
     if operation=="save":
         from .serializer import save_workflow
         return {"path":save_workflow(WorkflowSpec.from_dict(request["spec"]),request["path"],is_cancelled=cancelled)}

@@ -626,6 +626,10 @@ class ReviewController:
             result = self.results[index]
             receipt = {"directory": str(self.owner.directory), "snapshot_id": result["snapshot_id"],
                        "context": context, "acknowledge": self.pane.acknowledge.isChecked()}
-            self._request("validate", lambda _: (receipts.append(receipt), next_receipt(index + 1)),
+            def approved(value):
+                receipt["authorization"] = value["authorization"]
+                receipts.append(receipt)
+                next_receipt(index + 1)
+            self._request("approve", approved,
                           checking=True, context=context, snapshot_id=result["snapshot_id"], acknowledge=receipt["acknowledge"])
         next_receipt(0)

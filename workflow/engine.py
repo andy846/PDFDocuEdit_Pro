@@ -43,17 +43,22 @@ def context_fingerprint(spec, *, include_overlay=True):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None, review_context=None):
+def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None, review_context=None, authorization=None):
     spec.chain()
+    if until == "output":
+        from composition.review.authorization import require_authorization
+        authorization = require_authorization(authorization)
+        authorization.require_workflow(spec)
+        review_context = authorization.contexts[0]
     if review_context is not None and until == "output":
         from .pdf_pipeline import execute_pdf
         return execute_pdf(spec, run, directory, until=until, progress=progress,
-                           is_cancelled=is_cancelled, review_context=review_context)
+                           is_cancelled=is_cancelled, review_context=review_context, authorization=authorization)
     if spec.workflow_version>=3:
         from .registry import EXTRA_KINDS
         if any(n.kind in EXTRA_KINDS for n in spec.nodes):
             from .pdf_pipeline import execute_pdf
-            return execute_pdf(spec,run,directory,until=until,progress=progress,is_cancelled=is_cancelled)
+            return execute_pdf(spec,run,directory,until=until,progress=progress,is_cancelled=is_cancelled,authorization=authorization)
     if spec.project_kind!="pdf_workflow":
         raise CompositionError("Use the Mail Merge batch executor for this workflow type.")
     root=Path(directory)
@@ -246,7 +251,7 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                                 "source_sha256":store.metadata()["sha256"],"output_pages":result.generated_pages,
                                 "pdf_operations": run.pdf_operation_reports},
                                 ensure_ascii=False,indent=2),encoding="utf-8")
-                    result=generate(job,progress=progress,is_cancelled=is_cancelled,external_values=store.production_values,
+                    result=generate(job,progress=progress,is_cancelled=is_cancelled,external_values=store.production_values,authorization=authorization,
                                     additional_reports=reports)
                     run.output=asdict(result)
                     if result.status!="completed":

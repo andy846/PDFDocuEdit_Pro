@@ -235,8 +235,13 @@ def apply_page_data(store,current,*,is_cancelled=None):
         store.db.execute("UPDATE meta SET value='false' WHERE key='accepted'")
 
 
-def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=None,review_context=None):
+def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=None,review_context=None,authorization=None):
     from .engine import context_fingerprint, execute
+    if until == "output":
+        from composition.review.authorization import require_authorization
+        authorization = require_authorization(authorization)
+        authorization.require_workflow(spec)
+        review_context = authorization.contexts[0]
     root=Path(directory)
     root.mkdir(parents=True,exist_ok=True)
     run.error=""
@@ -247,7 +252,7 @@ def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=N
             if not run.accepted or run.fingerprint!=fingerprint:
                 raise CompositionError("Source or workflow changed. Check and accept review before production.")
             run.statuses[spec.node("output").id]="Running"
-            return _produce(spec,run,root,progress=progress,is_cancelled=is_cancelled,review_context=review_context)
+            return _produce(spec,run,root,progress=progress,is_cancelled=is_cancelled,review_context=review_context,authorization=authorization)
         legacy=_legacy(spec)
         target=next((n for n in spec.chain() if n.id==until or n.kind==until),None)
         if target and target.kind in ("input","merge","extract"):
@@ -306,8 +311,13 @@ def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=N
             temp.write_text(json.dumps(asdict(run),ensure_ascii=False,indent=2),encoding="utf-8")
 
 
-def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,review_context=None):
+def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,review_context=None,authorization=None):
     from .engine import detection_audit, external_fields
+    if not _review_only:
+        from composition.review.authorization import require_authorization
+        authorization = require_authorization(authorization)
+        authorization.require_workflow(spec)
+        review_context = authorization.contexts[0]
     with ExtractionStore(run.database) as store:
         if store.metadata()["accepted"]!="true" or store.metadata()["sha256"]!=file_hash(Path(run.source)):
             raise CompositionError("Extracted data or source changed since acceptance.")
@@ -360,6 +370,13 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,
                 "binding":{"owner_spec":spec.to_dict(),"selected":selected,"data_summary":copy.deepcopy(run.data_summary),
                     "files":[*spec.node("input").params.get("paths",[]),
                              *([spec.node("overlay").params["path"]] if spec.node("overlay") else [])]}}
+        # Runtime page spans must not mutate the frozen, signed data snapshot.
+        from core.output_safety import validate_identifier
+        runtime_id = validate_identifier(review_context["job"]["job_id"])
+        runtime_data = root / ("production-data-" + runtime_id + ".sqlite")
+        with closing(sqlite3.connect(data.path)) as source_db, closing(sqlite3.connect(runtime_data)) as copied_db:
+            source_db.backup(copied_db)
+        data = DataSet(runtime_data)
         with closing(sqlite3.connect(data.path)) as db:
             db.executescript("DROP TABLE IF EXISTS page_spans; CREATE TABLE page_spans(ordinal INTEGER PRIMARY KEY,start INTEGER,end INTEGER);")
             for i,start in enumerate(plan.output_starts):
@@ -385,11 +402,12 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,
                 context=tempfile.TemporaryDirectory(prefix="wf-overlay-") if partitions else nullcontext(folder)
                 with context as generation_root:
                     job=OverlayJob(**review_context["job"]) if review_context else OverlayJob(composed.to_dict(),str(generation_root))
+                    child = authorization.for_staging("overlay", job, generation_root) if partitions else authorization
                     job.output_dir=str(generation_root)
-                    result=asdict(generate(job,progress=progress,is_cancelled=is_cancelled,
+                    result=asdict(generate(job,progress=progress,is_cancelled=is_cancelled,authorization=child,
                                            external_values=values,additional_reports=reports,_defer_media_ticket=bool(partitions)))
                     if result["status"]=="completed" and partitions:
-                        result=split_composed(result,data,partitions,folder,0,is_cancelled=is_cancelled,progress=progress)
+                        result=split_composed(result,data,partitions,folder,0,is_cancelled=is_cancelled,progress=progress,authorization=authorization)
                     elif partitions and result.get("report_dir"):
                         report=Path(folder)/(result["job_id"]+"-failed")
                         shutil.copytree(result["report_dir"],report)

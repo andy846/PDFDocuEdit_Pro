@@ -5,6 +5,7 @@ from pathlib import Path
 import fitz
 import pytest
 
+from composition.review.authorization import ReviewSession, approve_snapshot
 from composition.review.service import create_review, review_rows
 from composition.template.model import CompositionError
 from tests.test_mail_merge_workflow import pair, recipe
@@ -17,14 +18,22 @@ from workflow.engine import execute
 from workflow.extraction import ExtractionStore
 from workflow.model import WorkflowRun
 from workflow.production_review import prepare_contexts, validate_receipts
-from workflow.worker import dispatch
+from workflow.worker import dispatch as raw_dispatch
 
+SESSION = ReviewSession.new()
+
+def dispatch(request, progress, cancelled):
+    return raw_dispatch(request, progress, cancelled, session=SESSION)
+
+def checked_receipt(request, context, result):
+    receipt = {"directory": request["directory"], "snapshot_id": result["snapshot_id"], "context": context, "acknowledge": True}
+    receipt["authorization"] = approve_snapshot(receipt["directory"], receipt["snapshot_id"], context, session=SESSION, acknowledge=True)
+    return receipt
 
 def receipts(request, contexts):
-    results = [create_review(request["directory"], c) for c in contexts]
+    results = [create_review(request["directory"], c, session=SESSION) for c in contexts]
     assert all(r["status"] == "checked" for r in results), [r["issues"] for r in results]
-    return [{"directory": request["directory"], "snapshot_id": r["snapshot_id"],
-             "context": r["context"], "acknowledge": True} for r in results]
+    return [checked_receipt(request, r["context"], r) for r in results]
 
 
 def test_batch_review_uses_prepared_identity_and_checks_all_selected_jobs(tmp_path):
@@ -37,13 +46,13 @@ def test_batch_review_uses_prepared_identity_and_checks_all_selected_jobs(tmp_pa
     contexts = prepare_contexts(request)["contexts"]
     reviews = receipts(request, contexts)
     assert not (tmp_path / "out").exists()
-    validate_receipts({**request, "production_reviews": reviews})
+    validate_receipts({**request, "production_reviews": reviews}, session=SESSION)
     with pytest.raises(CompositionError, match="selection"):
-        validate_receipts({**request, "production_reviews": reviews[:1]})
+        validate_receipts({**request, "production_reviews": reviews[:1]}, session=SESSION)
     changed = copy.deepcopy(request)
     changed["batch"]["jobs"][0]["sequence_starts"] = {"Seq": 31}
     with pytest.raises(CompositionError, match="settings"):
-        validate_receipts({**changed, "production_reviews": reviews})
+        validate_receipts({**changed, "production_reviews": reviews}, session=SESSION)
     result = dispatch({**request, "production_reviews": reviews}, lambda *_: None, lambda: False)
     assert result["batch"]["status"] == "Completed", result
     for job, receipt in zip(result["batch"]["jobs"], reviews, strict=True):
@@ -61,7 +70,7 @@ def test_branch_review_does_not_approve_and_handles_all_template_routes(tmp_path
     contexts = prepare_contexts(request)["contexts"]
     assert len(contexts) == 6
     reviews = receipts(request, contexts)
-    validate_receipts({**request, "production_reviews": reviews})
+    validate_receipts({**request, "production_reviews": reviews}, session=SESSION)
     assert not (tmp_path / "out").exists()
     result = dispatch({**request, "production_reviews": reviews}, lambda *_: None, lambda: False)
     assert result["run"]["status"] == "Completed", result

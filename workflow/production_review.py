@@ -25,7 +25,7 @@ def batch_context(spec, job, root, *, owner_spec=None):
         variable_context=copy.deepcopy(job.variable_context))
     return {"kind": "template", "job": asdict(prepared), "label": job.name, "identity": job.id,
         "outputs": job.data_summary.get("outputs", []),
-        "binding": {"owner_spec": (owner_spec or spec).to_dict(), "job_signature": signature,
+        "binding": {"owner_spec": (owner_spec or spec).to_dict(), "execution_spec": spec.to_dict(), "job_signature": signature,
                     "data_summary": copy.deepcopy(job.data_summary),
                     "files": [job.template_path, job.data_path, *job.snapshot_hashes]}}
 
@@ -67,11 +67,14 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
     raise CompositionError("Unknown workflow production review kind.")
 
 
-def validate_receipts(request, *, is_cancelled=None):
+def validate_receipts(request, *, is_cancelled=None, session=None):
     """Validate settings/source bindings without changing any workflow approval."""
+    from composition.review.authorization import ProductionAuthorization
+
     from .batch import BatchRun, _signature
     from .model import WorkflowSpec
     receipts = request.get("production_reviews", [])
+    authorization = ProductionAuthorization(receipts, session)
     spec = WorkflowSpec.from_dict(request["spec"])
     expected = {}
     output_node = spec.node("output")
@@ -109,7 +112,9 @@ def validate_receipts(request, *, is_cancelled=None):
         elif Path(context["job"]["output_dir"]).resolve() != output:
             raise CompositionError("Output folder changed. Review production again.")
         validate_snapshot(receipt["directory"], receipt["snapshot_id"], context,
-                          warnings_acknowledged=receipt.get("acknowledge", False), is_cancelled=is_cancelled)
+                          warnings_acknowledged=receipt.get("acknowledge", False), is_cancelled=is_cancelled, session=session)
+
+    return authorization
 
 
 def workflow_state(window):

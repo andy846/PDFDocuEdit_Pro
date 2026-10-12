@@ -48,7 +48,7 @@ def _error_page(result, page):
     result.error_output_page=page.output_page
 
 
-def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None,_defer_media_ticket=False):
+def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None,_defer_media_ticket=False,authorization=None):
     spec=EnvelopeSpec.from_dict(job.project)
     if spec.external_fields and external_values is None:
         raise CompositionError("This overlay requires reviewed Workflow extraction data. Generate it from Workflow.")
@@ -65,9 +65,14 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
     values = context.to_dict()
     values["namespaces"].setdefault("job", {}).update(id=job.job_id)
     naming = resolve_filename(job.output_name, VariableContext(**values), extension=".pdf")
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    authorization.require_job("overlay", job, is_cancelled=is_cancelled)
+    from core.output_safety import contained_path, validate_identifier
+    validate_identifier(job.job_id)
     output_root=Path(job.output_dir).resolve()
     output_root.mkdir(parents=True,exist_ok=True)
-    final=output_root/job.job_id
+    final=contained_path(output_root,job.job_id)
     failure=output_root/(job.job_id+"-failed")
     if final.exists() or failure.exists():
         raise CompositionError("That production job already exists. Use a new job ID.")

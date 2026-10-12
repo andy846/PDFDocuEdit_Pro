@@ -106,8 +106,11 @@ def load_snapshot(directory, identity, *, full=False, is_cancelled=None):
     return folder, packet
 
 
-def validate_snapshot(directory, identity, raw, *, warnings_acknowledged=False, is_cancelled=None):
-    _, packet = load_snapshot(directory, identity)
+def validate_snapshot(directory, identity, raw, *, warnings_acknowledged=False, is_cancelled=None, session=None):
+    folder, packet = load_snapshot(directory, identity)
+    if session is not None:
+        from composition.template.serializer import file_hash
+        session.verify_snapshot(packet, file_hash(folder / "rows.sqlite"))
     if not packet["complete"] or packet["status"] != "checked":
         raise CompositionError("Complete the full production check before confirming.")
     load_snapshot(directory, identity, full=True, is_cancelled=is_cancelled)
@@ -182,7 +185,7 @@ def _summary(context, plan, media, output_name, source):
         "outputs": context.outputs, "expected_barcodes": 0, "source": source or "Generated records"}
 
 
-def create_review(directory, raw, *, progress=None, is_cancelled=None):
+def create_review(directory, raw, *, progress=None, is_cancelled=None, session=None):
     context = _context(raw)
     identity = uuid.uuid4().hex
     folder = _folder(directory, identity)
@@ -330,7 +333,12 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None):
             db.commit()
     result = asdict(ReviewSnapshot(identity, digest, status, summary, issues, complete))
     packet = {**result, "context": asdict(context), "stats": stats}
-    (folder / "snapshot.json").write_text(json.dumps(packet, ensure_ascii=True), encoding="utf-8")
+    if session is not None:
+        from composition.template.serializer import file_hash
+        packet["seal"] = session.seal_snapshot(packet, file_hash(folder / "rows.sqlite"))
+    from core.io_atomic import atomic_output
+    with atomic_output(folder / "snapshot.json") as target:
+        target.write_text(json.dumps(packet, ensure_ascii=True), encoding="utf-8")
     return {**result, "context": asdict(context)}
 
 

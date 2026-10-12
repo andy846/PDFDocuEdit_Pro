@@ -26,7 +26,7 @@ def emit(event, **values):
         print(line, end="", flush=True)
 
 
-def dispatch(request: dict) -> dict:
+def dispatch(request: dict, *, session=None) -> dict:
     task = request["task"]
     def cancelled():
         return bool(request.get("cancel_file") and Path(request["cancel_file"]).exists())
@@ -37,29 +37,32 @@ def dispatch(request: dict) -> dict:
     if task.startswith("production_review_"):
         from composition.review.service import create_review, preview_sheet, review_rows, validate_snapshot
         if task == "production_review_check":
-            return create_review(request["directory"], request["context"], progress=progress, is_cancelled=cancelled)
+            return create_review(request["directory"], request["context"], progress=progress, is_cancelled=cancelled, session=session)
         if task == "production_review_rows":
             return review_rows(request["directory"], request["snapshot_id"], offset=request.get("offset", 0),
                 search=request.get("search", ""), envelope=request.get("envelope", 0), output_page=request.get("output_page", 0))
         if task == "production_review_preview":
             return preview_sheet(request["directory"], request["snapshot_id"], request["output_page"], scale=request.get("scale", 2))
+        if task == "production_review_approve":
+            from composition.review.authorization import approve_snapshot
+            token = approve_snapshot(request["directory"], request["snapshot_id"], request["context"], session=session,
+                                     acknowledge=request.get("acknowledge", False), is_cancelled=cancelled)
+            return {"authorization": token}
         if task == "production_review_validate":
             validate_snapshot(request["directory"], request["snapshot_id"], request["context"],
                               warnings_acknowledged=request.get("acknowledge", False), is_cancelled=cancelled)
             return {"valid": True}
         raise ValueError("Unknown production review operation.")
 
-    if request.get("production_review"):
-        from composition.review.service import validate_snapshot
-        receipt = request["production_review"]
-        context = dict(receipt["context"])
-        context["job"] = request["job"]
-        validate_snapshot(receipt["directory"], receipt["snapshot_id"], context,
-                          warnings_acknowledged=receipt.get("acknowledge", False), is_cancelled=cancelled)
+    authorization = None
+    if task in ("generate", "overlay_generate"):
+        from composition.review.authorization import ProductionAuthorization
+        receipt = request.get("production_review")
+        authorization = ProductionAuthorization([receipt] if isinstance(receipt, dict) else [], session)
 
     if task == "workflow":
         from workflow.worker import dispatch as workflow_dispatch
-        return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state))
+        return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state),session=session)
     if task == "media_paper_test":
         from composition.media.postscript import export_paper_test
         return export_paper_test(request["target"],request["media"],is_cancelled=cancelled,progress=progress)
@@ -213,7 +216,7 @@ def dispatch(request: dict) -> dict:
 
         from composition.overlay.generator import generate as overlay_generate
         from composition.overlay.model import OverlayJob
-        return asdict(overlay_generate(OverlayJob(**request["job"]), progress=progress, is_cancelled=cancelled))
+        return asdict(overlay_generate(OverlayJob(**request["job"]), progress=progress, is_cancelled=cancelled, authorization=authorization))
     if task == "overlay_save":
         from composition.overlay.model import EnvelopeSpec
         from composition.overlay.serializer import load_project, save_project
@@ -313,7 +316,7 @@ def dispatch(request: dict) -> dict:
         target = save_project(Template.from_dict(request["template"]), request["target"])
         return {"project": str(target), "template": load_project(target).to_dict()}
     if task == "generate":
-        result = generate(ProductionJob(**request["job"]), progress=progress, is_cancelled=cancelled)
+        result = generate(ProductionJob(**request["job"]), progress=progress, is_cancelled=cancelled, authorization=authorization)
         return result.to_dict()
     raise ValueError("Unknown composition worker task.")
 
@@ -334,7 +337,12 @@ def main(argv=None):
         request = json.loads(request_path.read_text(encoding="utf-8"))
         if request.get("events_file"):
             EVENTS_FILE = Path(request["events_file"])
-        result = dispatch(request)
+        session = None
+        if request.get("stdin_secrets"):
+            from composition.review.authorization import ReviewSession
+            private = json.loads(sys.stdin.readline(16384))
+            session = ReviewSession.from_private(private["production_session"])
+        result = dispatch(request, session=session)
         emit("result", result=result)
         return 0
     except Exception as exc:

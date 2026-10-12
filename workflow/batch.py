@@ -435,10 +435,14 @@ def _reports(run, root):
             writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in values])
 
 
-def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on_state=None, _direct_root=False):
+def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on_state=None, _direct_root=False, authorization=None):
     spec.chain()
     if not output_dir:
         raise CompositionError("Choose a batch output folder.")
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    BatchRun.from_dict(run.to_dict())
+    authorization.require_workflow(spec, [j.id for j in run.jobs if j.status == "Ready" and j.approved])
     root=Path(output_dir).resolve()
     if not _direct_root:
         root=root/("batch-"+run.batch_id)
@@ -491,7 +495,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                     "warnings":["No records selected. No empty PDF was generated."]}
                 (report/"job.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
             else:
-                result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled)
+                result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled,authorization)
             if job.data_summary:
                 result.update(source_records=job.data_summary["input"],excluded_records=job.data_summary["excluded"],
                               retained_records=job.data_summary["retained"])
@@ -523,7 +527,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
     return run
 
 
-def _compose_item(spec,job,root,partitions,progress,is_cancelled):
+def _compose_item(spec,job,root,partitions,progress,is_cancelled,authorization):
     identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id") or new_job_id()
     if (root / identity).exists() or (root / (identity + "-failed")).exists():
         # A retry retains the prepared clock, job identity and filename. Prior
@@ -542,16 +546,18 @@ def _compose_item(spec,job,root,partitions,progress,is_cancelled):
                     "input":job.data_summary["input"],"retained":job.data_summary["retained"],
                     "excluded":job.data_summary["excluded"],"errors":job.data_summary["errors"],
                     "warnings":job.data_summary["warnings"]},indent=2),encoding="utf-8")
-        result=generate(ProductionJob(job.prepared_template,job.record_store,str(directory),
-            job_id=identity,
+        production_job=ProductionJob(job.prepared_template,job.record_store,str(root),job_id=identity,
             auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name,
-            variable_context=job.variable_context),
+            variable_context=copy.deepcopy(job.variable_context))
+        child = authorization.for_staging("template", production_job, directory) if partitions else authorization
+        production_job.output_dir = str(directory)
+        result=generate(production_job, authorization=child,
             progress=progress,is_cancelled=is_cancelled,additional_reports=reports,_defer_media_ticket=bool(partitions)).to_dict()
         if result["status"]=="completed" and partitions:
             from .splitter import split_composed
             from .transforms import DataSet
             result=split_composed(result,DataSet(job.record_store),partitions,root,job.pages_per_record,
-                                  is_cancelled=is_cancelled,progress=progress)
+                                  is_cancelled=is_cancelled,progress=progress,authorization=authorization)
         elif partitions and result.get("report_dir"):
             report=root/(result["job_id"]+"-failed")
             shutil.copytree(result["report_dir"],report)
