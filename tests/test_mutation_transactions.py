@@ -209,3 +209,39 @@ def test_rollback_close_failure_keeps_restored_document(document, monkeypatch):
         engine.save()
     finally:
         close(damaged)
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3])
+@pytest.mark.parametrize("scaling", [False, True])
+def test_direct_repeat_failure_is_atomic_and_saveable(document, monkeypatch, fail_at, scaling):
+    engine, stack, source = document
+    import core.pdf_engine as module
+    target = module if scaling else fitz.Document
+    name = "copy_page_scale" if scaling else "insert_pdf"
+    original = getattr(target, name)
+    calls = 0
+    def fail(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == fail_at:
+            raise RuntimeError("injected repeat failure")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(target, name, fail)
+    before = [p.get_text() for p in engine.document]
+    with pytest.raises(PdfEngineError, match="restored"):
+        engine.repeat_insert_pages(str(source), [0], 1)
+    assert [p.get_text() for p in engine.document] == before
+    assert engine.page_count == 3 and engine.revision == 0 and not engine.is_modified
+    assert stack.undo_count == 0
+    engine.save()
+    engine.save_as(source.with_name("after-failure.pdf"))
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_repeat_success_commits_once_with_duplicate_pages(document, nested):
+    from contextlib import nullcontext
+    engine, stack, source = document
+    with engine.mutation_transaction("Outer") if nested else nullcontext():
+        engine.repeat_insert_pages(str(source), [1, 1], 2)
+    assert [p.get_text().strip() for p in engine.document] == ["Page 0", "Page 1", "Page 1", "Page 1", "Page 2"]
+    assert engine.revision == 1 and stack.undo_count == 1 and engine.is_modified
