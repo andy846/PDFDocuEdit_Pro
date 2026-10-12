@@ -7,15 +7,15 @@ import pytest
 from composition.data.source import import_records
 from composition.engine.barcode_profiles import BarcodeProfile
 from composition.engine.generic_layout import BarcodeSegment
-from composition.overlay.generator import generate as generate_overlay
 from composition.overlay.model import EnvelopeSpec, OverlayJob, OverlayObject
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import DataConfig, Element, PageSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
 from tests.composition.test_pdf_overlay_models import make_source
+from tests.production_approval import expect_blocked, generate
+from tests.production_approval import overlay_generate as generate_overlay
 
 
 def counter_profile(cycle=False, scope="record"):
@@ -48,11 +48,10 @@ def test_1000_records_real_decode_and_cycle_report(tmp_path):
 
 
 def test_overflow_blocks_before_composition(tmp_path):
-    result = generate(ProductionJob(model(101).to_dict(), "", str(tmp_path)))
-    assert result.status == "failed" and result.error_record == 101
-    assert result.generated_pages == result.generated_files == result.processed_records == 0
-    assert not result.output_pdf and not list(Path(result.report_dir).glob("*.pdf"))
-    assert "Counter" in result.error and "needs 3 digits" in result.error and "output page 101" in result.error
+    review = expect_blocked(lambda: generate(ProductionJob(model(101).to_dict(), "", str(tmp_path))))
+    assert review.packet["issues"][0]["envelope"] == 101
+    assert "Counter" in str(review) and "needs 3 digits" in str(review) and "output page 101" in str(review)
+    assert not list(tmp_path.rglob("*.pdf"))
 
 
 @pytest.mark.parametrize("bad", ["00001", "１２３４", "", "-001"])
@@ -64,9 +63,10 @@ def test_all_imported_values_checked_without_truncation(tmp_path, bad):
     template = model()
     template.record_mode = "imported"
     template.elements[0].barcode_profile = p.to_dict()
-    result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "output")))
-    assert result.status == "failed" and result.error_record == 2 and result.generated_pages == 0
-    assert "Customer ID" in result.error or "I25" in result.error
+    review = expect_blocked(lambda: generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "output"))))
+    assert review.packet["issues"][0]["envelope"] == 2
+    assert "Customer ID" in str(review) or "I25" in str(review)
+    assert not (tmp_path / "output").exists()
 
 
 def test_data_system_collision_and_existing_sequence_actual_pdf(tmp_path):
@@ -223,7 +223,7 @@ def test_workflow_data_segment_issue_keeps_field_identity(tmp_path):
 def test_overlay_worker_preview_remains_json_serializable(tmp_path):
     import json
 
-    from composition.worker import dispatch
+    from tests.production_approval import dispatch
     source = make_source(tmp_path / "source.pdf", 2)
     cfg = EnvelopeSettings(pages_per_envelope=1)
     spec = EnvelopeSpec(inspect_source(source, cfg), cfg,

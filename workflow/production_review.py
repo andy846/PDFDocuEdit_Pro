@@ -30,6 +30,15 @@ def batch_context(spec, job, root, *, owner_spec=None):
                     "files": [job.template_path, job.data_path, *job.snapshot_hashes]}}
 
 
+def branch_approval_binding(run):
+    from .branch_engine import validate_branch_run
+    validate_branch_run(run)
+    return {"run_id":run["id"], "batch_id":run["batch_id"], "signature":run["signature"],
+        "exceptions":run.get("exceptions",0), "acknowledged":run.get("acknowledged",False),
+        "sources":[{k:s.get(k) for k in ("id","status","error","input","candidates")} for s in run.get("sources",[])],
+        "jobs":[{k:j.get(k) for k in ("id","source_id","branch_id","signature","records","approved","status")} for j in run["jobs"]]}
+
+
 def prepare_contexts(request, *, progress=None, is_cancelled=None):
     from .batch import BatchRun
     from .model import WorkflowRun, WorkflowSpec
@@ -50,13 +59,16 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
             if entry["approved"] and entry["status"] == "Ready":
                 child = WorkflowSpec.from_dict(entry["spec"])
                 batch = BatchRun.from_dict(entry["batch"])
-                contexts.append(batch_context(child, batch.jobs[0],
-                    production_root(output, run, entry), owner_spec=spec))
+                context = batch_context(child, batch.jobs[0], production_root(output, run, entry), owner_spec=spec)
+                context["binding"]["branch_approval"] = branch_approval_binding(run)
+                contexts.append(context)
         return {"contexts": contexts}
     if kind == "pdf":
         from .engine import context_fingerprint
         from .pdf_pipeline import _produce
         run = WorkflowRun(**request["run"])
+        if not run.database or not Path(run.database).is_file() or not run.source or not Path(run.source).is_file():
+            raise CompositionError("Checked source data is unavailable. Run Check & Preview again.")
         if not run.accepted or run.fingerprint != context_fingerprint(spec, include_overlay=False):
             raise CompositionError("Check and accept the PDF workflow review first.")
         if Path(spec.node("output").params.get("directory", "")).resolve() != output:
@@ -90,6 +102,7 @@ def validate_receipts(request, *, is_cancelled=None, session=None):
         from .branch_engine import _check_current, production_root
         run = request["run"]
         _check_current(spec, run)
+        authorization.require_branch(run)
         for entry in run["jobs"]:
             if entry["approved"] and entry["status"] == "Ready":
                 child = WorkflowSpec.from_dict(entry["spec"])

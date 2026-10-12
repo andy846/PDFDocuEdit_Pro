@@ -12,7 +12,6 @@ from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
 from composition.media.model import default_media
 from composition.media.planner import build_print_plan
-from composition.overlay.generator import generate
 from composition.overlay.model import OverlayJob
 from composition.overlay.serializer import load_project, save_project
 from composition.pdf_source.model import EnvelopeSettings
@@ -21,6 +20,7 @@ from composition.template.model import Element, PageSpec, Template
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import close_window, wait_until
+from tests.production_approval import overlay_generate as generate
 from workflow.workspace import WorkflowWindow
 
 

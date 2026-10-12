@@ -5,14 +5,14 @@ import fitz
 import pytest
 
 from composition.engine.barcode_profiles import BarcodeProfile
-from composition.overlay.generator import generate as generate_overlay
 from composition.overlay.model import EnvelopeSpec, OverlayJob, OverlayObject
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import Element, PageSpec, SequenceSpec, Template
 from tests.composition.test_pdf_overlay_models import make_source
+from tests.production_approval import expect_blocked, generate
+from tests.production_approval import overlay_generate as generate_overlay
 
 
 def template_for(pages=4, count=2, duplex=True):
@@ -44,17 +44,15 @@ def test_template_preflight_missing_duplicate_size_and_data(tmp_path):
         if case == "missing":
             template.pages[2].elements.clear()
         elif case == "duplicate":
-            template.pages[0].elements.append(Element(type="i25", y_mm=50, width_mm=100,
-                barcode_profile=BarcodeProfile.inserter().to_dict()))
+            template.pages[0].elements.append(Element(type="i25", y_mm=50, width_mm=100, barcode_profile=BarcodeProfile.inserter().to_dict()))
         elif case == "width":
             template.pages[0].elements[0].width_mm = 20
         else:
             for element in template.all_elements():
                 element.barcode_profile["customer_field"] = "MissingCustomer"
-        result = generate(ProductionJob(template.to_dict(), "", str(tmp_path/case)))
-        assert result.status == "failed" and not result.output_pdf
-        assert result.generated_pages == 0 and result.error_record == 1
-        assert "Barcode preflight" in result.error
+        review = expect_blocked(lambda template=template, case=case: generate(ProductionJob(template.to_dict(), "", str(tmp_path / case))))
+        assert "Barcode preflight" in str(review) or "Missing" in str(review)
+        assert not (tmp_path / case).exists()
 
 
 def test_overlay_preset_uses_exact_physical_sheet_codes(tmp_path):
@@ -125,7 +123,8 @@ def test_variable_envelope_sizes_and_odd_blank_backs(tmp_path):
 
 def test_workflow_reuses_profile_and_physical_counts_without_media(tmp_path):
     from composition.template.serializer import save_project
-    from workflow.batch import BatchJob, BatchRun, approve, execute_batch, prepare
+    from tests.production_approval import execute_batch
+    from workflow.batch import BatchJob, BatchRun, approve, prepare
     from workflow.model import WorkflowSpec
     model = template_for(pages=3)
     model.record_mode = "imported"
@@ -177,23 +176,23 @@ def test_imported_200_single_page_records_have_continuous_sheet_sequence(tmp_pat
 def test_two_page_template_only_front_barcode_uses_explicit_printing(tmp_path, duplex):
     model = template_for(pages=2, duplex=duplex)
     model.pages[1].elements.clear()
-    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
     if duplex:
+        result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
         assert result.status == "completed", result.error
         assert result.printing == "duplex" and result.sheets == result.decoded_barcodes == 2
         assert result.generated_pages == 4 and result.inserted_blanks == 0
     else:
-        assert result.status == "failed" and result.generated_pages == 0
-        assert "Simplex: template page 2" in result.error and "choose Duplex" in result.error
+        review = expect_blocked(lambda: generate(ProductionJob(model.to_dict(), "", str(tmp_path))))
+        assert "Simplex: template page 2" in str(review) and "choose Duplex" in str(review)
+        assert not list(tmp_path.rglob("*.pdf"))
 
 
 def test_legacy_inserter_cannot_silently_generate(tmp_path):
     model = template_for(pages=1, duplex=False)
-    profile = model.elements[0].barcode_profile
-    profile.update(version=2, sheet_sequence_scope="envelope")
-    result = generate(ProductionJob(model.to_dict(), "", str(tmp_path)))
-    assert result.status == "failed" and result.generated_pages == 0
-    assert "confirm Update I25" in result.error
+    model.elements[0].barcode_profile.update(version=2, sheet_sequence_scope="envelope")
+    review = expect_blocked(lambda: generate(ProductionJob(model.to_dict(), "", str(tmp_path))))
+    assert "confirm Update I25" in str(review)
+    assert not list(tmp_path.rglob("*.pdf"))
 
 
 def test_media_job_sheet_sequence_counts_inserted_backs_once_across_records(tmp_path):
@@ -217,7 +216,8 @@ def test_media_job_sheet_sequence_counts_inserted_backs_once_across_records(tmp_
 
 def test_workflow_jobs_reset_independently_and_legacy_blocks_review(tmp_path):
     from composition.template.serializer import save_project
-    from workflow.batch import BatchJob, BatchRun, approve, execute_batch, prepare
+    from tests.production_approval import execute_batch
+    from workflow.batch import BatchJob, BatchRun, approve, prepare
     from workflow.model import WorkflowSpec
     model = template_for(pages=2)
     model.pages[1].elements.clear()

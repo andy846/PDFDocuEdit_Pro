@@ -12,7 +12,7 @@ from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayObjec
 from composition.overlay.serializer import load_project, save_project
 from composition.production.generator import JobCancelled
 from composition.template.model import MM_TO_PT, CompositionError, Element
-from workflow.engine import execute
+from tests.production_approval import execute
 from workflow.extraction import ExtractionSpec, ExtractionStore, Region, extract_page, scan_pdf
 from workflow.model import WorkflowNode, WorkflowRun, WorkflowSpec
 from workflow.serializer import load_workflow, save_workflow
@@ -112,7 +112,10 @@ def test_end_to_end_review_gate_and_no_barcode_production(tmp_path):
     source=fixture_pdf(tmp_path/"source.pdf")
     digest=hashlib.sha256(source.read_bytes()).hexdigest()
     spec=configured(source,tmp_path/"output")
-    run=execute(spec,WorkflowRun(),tmp_path/"run",until="output")
+    from workflow.engine import execute as production_engine
+    with pytest.raises(CompositionError, match="confirm production"):
+        production_engine(spec, WorkflowRun(), tmp_path/"run", until="output")
+    run=execute(spec,WorkflowRun(),tmp_path/"run",until="review")
     assert not run.error
     assert run.groups==[[1,3],[4,6]]
     assert not run.output and not run.accepted
@@ -149,6 +152,7 @@ def test_extracted_field_drives_real_barcode_and_preview(tmp_path):
     with ExtractionStore(run.database) as store:
         store.accept()
     run.accepted=True
+    run=execute(spec,run,tmp_path/"run",until="review")
     result=execute(spec,run,tmp_path/"run",until="output")
     assert not result.error,result.error
     assert result.output["decoded_barcodes"]==6
@@ -170,7 +174,9 @@ def test_source_change_invalidates_acceptance_and_output_folder_does_not_rescan(
     with fitz.open(source) as doc:
         doc[0].insert_text((50,200),"Changed")
         doc.saveIncr()
-    result=execute(spec,result,tmp_path/"run",until="output")
+    with pytest.raises(CompositionError, match="Check and accept"):
+        execute(spec,result,tmp_path/"run",until="output")
+    result=execute(spec,result,tmp_path/"run",until="review")
     assert not result.error and not result.accepted and not result.output
 
 
@@ -284,8 +290,9 @@ def test_missing_overlay_does_not_block_upstream_review(tmp_path):
     with ExtractionStore(run.database) as store:
         store.accept()
     run.accepted=True
-    run=execute(spec,run,tmp_path/"run",until="output")
-    assert run.error and run.statuses[overlay.id]=="Failed" and not run.output
+    with pytest.raises(FileNotFoundError):
+        execute(spec,run,tmp_path/"run",until="output")
+    assert not run.output
 
 
 def test_missing_database_rebuilds_and_requires_new_review(tmp_path):
@@ -296,7 +303,9 @@ def test_missing_database_rebuilds_and_requires_new_review(tmp_path):
         store.accept()
     run.accepted=True
     Path(run.database).unlink()
-    run=execute(spec,run,tmp_path/"run",until="output")
+    with pytest.raises(CompositionError, match="unavailable"):
+        execute(spec,run,tmp_path/"run",until="output")
+    run=execute(spec,run,tmp_path/"run",until="review")
     assert not run.error and Path(run.database).exists()
     assert not run.accepted and not run.output
 
@@ -309,8 +318,9 @@ def test_production_rejects_boundaries_different_from_reviewed_database(tmp_path
         store.accept()
     run.accepted=True
     run.groups=[[1,6]]
-    run=execute(spec,run,tmp_path/"run",until="output")
-    assert "boundaries differ" in run.error and not run.output
+    with pytest.raises(CompositionError, match="grouping differs"):
+        execute(spec,run,tmp_path/"run",until="output")
+    assert not run.output
 
 
 @pytest.mark.parametrize("action",["groups","correct"])
@@ -366,7 +376,7 @@ def test_overlay_binding_keeps_design_and_sequence_and_preview_checks_groups(tmp
     bound=type(project).from_dict(result["spec"])
     assert bound.settings.groups==groups and bound.settings.start==20
     assert bound.to_dict()["objects"][0]==old_object
-    from composition.worker import dispatch as composition_dispatch
+    from tests.production_approval import dispatch as composition_dispatch
     # The GUI preview must never combine new envelope geometry with old envelope values.
     with pytest.raises(ValueError,match="boundaries changed"):
         composition_dispatch({"task":"overlay_preview","project":bound.to_dict(),"external_database":run.database,

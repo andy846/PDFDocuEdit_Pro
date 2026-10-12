@@ -229,6 +229,15 @@ def _signature(spec, job):
 
 def _finished_valid(job):
     result=job.result
+    report = Path(result.get("report_dir", ""))
+    if (report / "completion.json").is_file():
+        from composition.production.journal import verify_package
+        try:
+            packet = json.loads((report / "completion.json").read_text(encoding="utf-8"))
+            if verify_package(report, result.get("job_id"), packet.get("binding")) is None:
+                return False
+        except (ValueError, OSError):
+            return False
     if result.get("status")=="completed" and result.get("generated_files")==0 and result.get("input_records")==0:
         return Path(result.get("report_dir",""),"job.json").is_file()
     if result.get("output_files"):
@@ -446,94 +455,107 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
     root=Path(output_dir).resolve()
     if not _direct_root:
         root=root/("batch-"+run.batch_id)
-    root.mkdir(parents=True,exist_ok=True)
     run.report_dir=str(root)
     run.status="Running"
     run.started_at=run.started_at or now()
-    _reports(run,root)
-    if on_state:
-        on_state({"status":run.status,"jobs":[]})
-    for index,job in enumerate(run.jobs,1):
-        if is_cancelled and is_cancelled():
-            run.status="Cancelled"
-            break
-        if job.status!="Ready" or not job.approved:
-            continue
-        try:
-            job.stage="Recheck inputs"
-            signature,_,_,_=_signature(spec,job)
-            if signature!=job.signature or not job.prepared_template:
-                job.approved=False
-                job.status="Needs review"
-                job.error="Inputs/settings changed. Check and approve this item again."
-                _reports(run,root)
-                if on_state:
-                    on_state({"status":run.status,"jobs":[job.record()]})
-                continue
-            if not job.snapshot_hashes or any(not Path(p).is_file() or file_hash(Path(p))!=digest for p,digest in job.snapshot_hashes.items()):
-                raise CompositionError("Checked snapshot changed or is unavailable. Check this item again.")
-            check_cancel(is_cancelled)
-            job.status="Running"
-            job.stage="Compose"
-            _reports(run,root)
-            if on_state:
-                on_state({"status":run.status,"jobs":[job.record()]})
-            def job_progress(done,total,message,current_job=job,current_index=index):
-                current_job.stage=message
-                if progress:
-                    progress(done,total,f"Job {current_index}/{len(run.jobs)} · {current_job.name} · {message}")
-            partitions=job.data_summary.get("outputs",[])
-            if job.input_records==0:
-                from .transforms import DataSet, export_audit
-                empty_id=new_job_id()
-                report=root/empty_id
-                report.mkdir()
-                export_audit(DataSet(job.record_store),report)
-                result={"job_id":empty_id,"status":"completed","input_records":0,"successful_records":0,
-                    "generated_pages":0,"generated_files":0,"output_pdf":"","report_dir":str(report),"error":"",
-                    "source_records":job.data_summary.get("input",0),"excluded_records":job.data_summary.get("excluded",0),
-                    "warnings":["No records selected. No empty PDF was generated."]}
-                (report/"job.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
-            else:
-                result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled,authorization)
-            if job.data_summary:
-                result.update(source_records=job.data_summary["input"],excluded_records=job.data_summary["excluded"],
-                              retained_records=job.data_summary["retained"])
-            job.result=result
-            job.error=result["error"]
-            job.status={"completed":"Completed","cancelled":"Cancelled"}.get(result["status"],"Failed")
-            if job.status=="Completed":
-                if result["output_pdf"]:
-                    job.result["output_sha256"]=file_hash(Path(result["output_pdf"]))
-                job.warnings=list(result.get("warnings",[]))
-            job.stage="Finished"
-        except JobCancelled:
-            job.status="Cancelled"
-            job.error="Cancellation requested."
-        except Exception as exc:
-            job.status="Failed"
-            job.error=str(exc)
-        job.approved=False
-        _reports(run,root)
+    def notify(state):
         if on_state:
-            on_state({"status":run.status,"jobs":[job.record()]})
-        if job.status=="Cancelled":
-            run.status="Cancelled"
-            break
-    if run.status!="Cancelled":
+            try:
+                on_state(state)
+            except Exception as exc:
+                for item in run.jobs:
+                    message = "Progress notification failed: " + str(exc)
+                    if message not in item.warnings:
+                        item.warnings.append(message)
+    try:
+        root.mkdir(parents=True,exist_ok=True)
+        _reports(run,root)
+        notify({"status":run.status,"jobs":[]})
+        for index,job in enumerate(run.jobs,1):
+            if is_cancelled and is_cancelled():
+                run.status="Cancelled"
+                break
+            if job.status!="Ready" or not job.approved:
+                continue
+            try:
+                job.stage="Recheck inputs"
+                signature,_,_,_=_signature(spec,job)
+                if signature!=job.signature or not job.prepared_template:
+                    job.approved=False
+                    job.status="Needs review"
+                    job.error="Inputs/settings changed. Check and approve this item again."
+                    _reports(run,root)
+                    notify({"status":run.status,"jobs":[job.record()]})
+                    continue
+                if not job.snapshot_hashes or any(not Path(p).is_file() or file_hash(Path(p))!=digest for p,digest in job.snapshot_hashes.items()):
+                    raise CompositionError("Checked snapshot changed or is unavailable. Check this item again.")
+                check_cancel(is_cancelled)
+                job.status="Running"
+                job.stage="Compose"
+                _reports(run,root)
+                notify({"status":run.status,"jobs":[job.record()]})
+                def job_progress(done,total,message,current_job=job,current_index=index):
+                    current_job.stage=message
+                    if progress:
+                        progress(done,total,f"Job {current_index}/{len(run.jobs)} · {current_job.name} · {message}")
+                partitions=job.data_summary.get("outputs",[])
+                if job.input_records==0:
+                    from composition.production.journal import publish_empty_report
+
+                    from .transforms import DataSet
+                    context = next(c for c in authorization.contexts if c.get("identity") == job.id)
+                    result = publish_empty_report(ProductionJob(**context["job"]), DataSet(job.record_store), job.data_summary, authorization)
+                else:
+                    result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled,authorization)
+                if job.data_summary:
+                    result.update(source_records=job.data_summary["input"],excluded_records=job.data_summary["excluded"],
+                                  retained_records=job.data_summary["retained"])
+                job.result=result
+                job.error=result["error"]
+                job.status={"completed":"Completed","cancelled":"Cancelled"}.get(result["status"],"Failed")
+                if job.status=="Completed":
+                    if result["output_pdf"]:
+                        job.result["output_sha256"]=file_hash(Path(result["output_pdf"]))
+                    job.warnings=list(result.get("warnings",[]))
+                job.stage="Finished"
+            except JobCancelled:
+                job.status="Cancelled"
+                job.error="Cancellation requested."
+            except Exception as exc:
+                job.status="Failed"
+                job.error=str(exc)
+            job.approved=False
+            _reports(run,root)
+            notify({"status":run.status,"jobs":[job.record()]})
+            if job.status=="Cancelled":
+                run.status="Cancelled"
+                break
+    except JobCancelled:
+        run.status = "Cancelled"
+    except Exception as exc:
+        run.status = "Partial / needs attention" if any(j.status == "Completed" for j in run.jobs) else "Failed"
+        for item in run.jobs:
+            if item.status in ("Ready", "Running"):
+                item.status, item.error = "Needs review", str(exc)
+    finally:
+        for item in run.jobs:
+            item.approved = False
+            if item.status in ("Ready", "Running"):
+                item.status, item.error = "Needs review", "Production stopped. Check and review a new attempt."
+    if run.status not in ("Cancelled", "Failed"):
         run.status="Completed" if run.jobs and all(j.status=="Completed" for j in run.jobs) else "Partial / needs attention"
     run.finished_at=now()
-    _reports(run,root)
+    try:
+        _reports(run,root)
+    except Exception as exc:
+        for item in run.jobs:
+            item.warnings.append("State/report could not be saved: " + str(exc))
+    notify({"status":run.status,"jobs":[j.record() for j in run.jobs]})
     return run
 
 
 def _compose_item(spec,job,root,partitions,progress,is_cancelled,authorization):
     identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id") or new_job_id()
-    if (root / identity).exists() or (root / (identity + "-failed")).exists():
-        # A retry retains the prepared clock, job identity and filename. Prior
-        # attempts remain auditable; the core no-overwrite guard stays intact.
-        root = root / ("retry-" + new_job_id())
-        root.mkdir()
     from contextlib import nullcontext
     # Short owned scratch paths avoid Windows MAX_PATH failures in nested font caches.
     context=tempfile.TemporaryDirectory(prefix="wf-prod-") if partitions else nullcontext(str(root))

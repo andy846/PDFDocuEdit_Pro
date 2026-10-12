@@ -11,6 +11,7 @@ from pathlib import Path
 
 from composition.engine.assets import qpdf_executable
 from composition.production.generator import check_cancel
+from composition.production.journal import publish_package, split_claim
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
@@ -48,6 +49,7 @@ def qpdf_select(source, ranges, target, is_cancelled=None):
         args.unlink(missing_ok=True)
 
 
+@split_claim
 def split_composed(result, source, partitions, output_dir, pages_per_record, *, is_cancelled=None, progress=None, authorization=None):
     from composition.review.authorization import require_authorization
     authorization = require_authorization(authorization)
@@ -161,7 +163,7 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
             "retained":source.count,"excluded":updated["excluded_records"],"outputs":files},indent=2),encoding="utf-8")
         (staging/"job.json").write_text(json.dumps(updated,ensure_ascii=False,indent=2),encoding="utf-8")
         check_cancel(is_cancelled)
-        os.rename(staging,final)
+        updated = publish_package(staging, final, updated, authorization)
         return updated
     finally:
         if staging.exists() and staging.resolve().parent==root and staging.name.startswith(".split-"+job_id+"-"):

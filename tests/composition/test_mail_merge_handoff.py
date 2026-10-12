@@ -12,11 +12,11 @@ from composition.data.source import import_records
 from composition.engine.renderer import render_preview
 from composition.handoff import capture_template_pdf, detach_template_page
 from composition.overlay.qc import check_mark
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
 from core.pdf_engine import PdfEngine
+from tests.production_approval import generate
 
 
 @pytest.fixture

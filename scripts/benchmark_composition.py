@@ -72,14 +72,22 @@ def one_case(count, directory, fixture, pages=1):
         for element in copied:
             element.id = uuid.uuid4().hex
         model.pages.append(PageSpec(name=f"Page {index+1}", elements=copied))
-    result = generate(ProductionJob(model.to_dict(), str(store.path) if store else "", str(directory), auto_repair=fixture == "fallback"))
+    from dataclasses import asdict
+
+    from composition.review.headless import approve_checked_contexts
+    job = ProductionJob(model.to_dict(), str(store.path) if store else "", str(directory), auto_repair=fixture == "fallback")
+    review_started = time.perf_counter()
+    authorization = approve_checked_contexts([{"kind":"template", "job":asdict(job)}], directory / "review",
+                                            confirm=lambda _: True, warnings_acknowledged=True)
+    reviewed = time.perf_counter()
+    result = generate(job, authorization=authorization)
     end = time.perf_counter()
     if result.status != "completed":
         raise RuntimeError(result.error)
     values = {"records": count, "pages_per_record": pages, "generated_pages": result.generated_pages, "fixture": fixture, "import_seconds": imported-start,
-              "generation_seconds": end-imported, "total_seconds": end-start,
-              "records_per_second": count/(end-imported),
-              "pages_per_second": result.generated_pages/(end-imported), "output_size_bytes": result.output_size,
+              "review_seconds": reviewed-review_started, "generation_seconds": end-reviewed, "total_seconds": end-start,
+              "records_per_second": count/(end-reviewed),
+              "pages_per_second": result.generated_pages/(end-reviewed), "output_size_bytes": result.output_size,
               "composer_peak_memory_bytes": result.composer_peak_memory_bytes,
               "assembler_peak_memory_bytes": result.assembler_peak_memory_bytes,
               "job_log": str(Path(result.report_dir)/"job.json")}

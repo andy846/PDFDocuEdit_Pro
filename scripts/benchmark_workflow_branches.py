@@ -52,7 +52,12 @@ def run(count,production=False):
         if production:
             approve_routes(model,checked,[j["id"] for j in checked["jobs"]])
             started=time.perf_counter()
-            completed=execute_routes(model,checked,root/"work",root/"output")
+            from composition.review.headless import approve_checked_contexts
+            from workflow.production_review import prepare_contexts
+            request={"review_kind":"branch","spec":model.to_dict(),"run":checked,"directory":str(root/"work"),"output_dir":str(root/"output")}
+            authorization=approve_checked_contexts(prepare_contexts(request)["contexts"],root/"review",
+                                                   confirm=lambda _:True,warnings_acknowledged=True)
+            completed=execute_routes(model,checked,root/"work",root/"output",authorization=authorization)
             generation_seconds=time.perf_counter()-started
             if completed["status"]!="Completed":
                 raise RuntimeError("Benchmark production failed")

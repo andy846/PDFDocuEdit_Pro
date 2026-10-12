@@ -10,7 +10,6 @@ from PIL import Image
 from pyzbar.pyzbar import ZBarSymbol, decode
 
 from composition.engine.renderer import render_preview
-from composition.overlay.generator import generate as generate_overlay
 from composition.overlay.model import OverlayJob
 from composition.template.model import (
     AlternativeContent,
@@ -25,6 +24,7 @@ from composition.template.model import (
 from composition.template.serializer import load_project, save_project
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_production import job_for
+from tests.production_approval import overlay_generate as generate_overlay
 
 
 def decoded_i25(page):
@@ -80,7 +80,7 @@ def test_saved_template_keeps_variable_and_alternative_rule(tmp_path):
 
 
 def test_data_production_keeps_font_preflight_and_counts(tmp_path):
-    from composition.production.generator import generate
+    from tests.production_approval import generate
     job = job_for(tmp_path, values=["000001", "000002"], chunk=1)
     template = Template.from_dict(job.template)
     template.elements[0] = Element(type="i25", value="{{Name}}", width_mm=100,

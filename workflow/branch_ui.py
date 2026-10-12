@@ -385,6 +385,10 @@ class BranchWorkflowWindow(QMainWindow):
             button.clicked.connect(callback)
             row.addWidget(button)
         layout.addLayout(row)
+        self.recover_button=QPushButton("Recover previous run…")
+        self.recover_button.setToolTip("Verify an earlier batch folder; retain completed PDFs and recheck remaining jobs.")
+        self.recover_button.clicked.connect(self.recover_previous)
+        layout.addWidget(self.recover_button)
         self.tabs.addTab(self.production_page,"Production")
 
     def message(self,text):
@@ -1054,9 +1058,18 @@ class BranchWorkflowWindow(QMainWindow):
             return
         self.request({"operation":"branch_approve","identities":identities,"acknowledge":self.acknowledge.isChecked()},self.receive_run)
 
+    def recover_previous(self):
+        if self.active_worker or self.draft_error:
+            return
+        folder=QFileDialog.getExistingDirectory(self,"Choose previous batch folder (batch-…)")
+        if folder:
+            self.request({"operation":"branch_recover","output_dir":folder}, self.receive_run)
+
     def receive_run(self,result):
         self.run=result["run"]
         self.refresh_results()
+        if self.run.get("recovery_warnings") or self.run.get("stale"):
+            self.message("Recovered output verified. Run Check & Preview before processing remaining jobs.")
 
     def generate(self,*,production_reviews=None,output_dir=None):
         if not self.templates_saved():
@@ -1168,6 +1181,12 @@ class BranchWorkflowWindow(QMainWindow):
         return worker
 
     def worker_state(self,state):
+        if state.get("branch_run"):
+            self.run = state["branch_run"]
+            self.refresh_results()
+            errors = [self.run.get(k) for k in ("error", "state_save_error", "report_error") if self.run.get(k)]
+            if errors:
+                self.message(" | ".join(errors))
         entry=state.get("branch_job")
         if entry:
             for index,job in enumerate(self.run.get("jobs",[])):
@@ -1181,6 +1200,8 @@ class BranchWorkflowWindow(QMainWindow):
         if not hasattr(self,"canvas"):
             return
         busy=bool(self.active_worker or self.close_pending)
+        if hasattr(self,"recover_button"):
+            self.recover_button.setEnabled(not busy and not self.draft_error)
         for key,action in self.actions.items():
             enabled=not busy
             if key=="cancel":

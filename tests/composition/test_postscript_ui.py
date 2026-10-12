@@ -143,8 +143,8 @@ def test_designer_result_shows_ps_and_no_jdf_instruction(app,tmp_path,monkeypatc
     monkeypatch.setattr(CompositionWindow,"_render_preview",lambda self:None)
     window=CompositionWindow()
     try:
-        from composition.production.generator import generate
         from composition.production.model import ProductionJob
+        from tests.production_approval import generate
         result=generate(ProductionJob(model(ps_media(),1).to_dict(),"",str(tmp_path)))
         assert result.status=="completed",result.error
         window._production_ready(result.to_dict())

@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 from contextlib import ExitStack
+from dataclasses import asdict
 from itertools import islice
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from composition.engine.assets import qpdf_executable
 from composition.media.planner import PrintPlan, overlay_plan
 from composition.pdf_source.source import inspect_source, snapshot_source
 from composition.production.generator import JobCancelled, _assemble, check_cancel
+from composition.production.journal import production_claim, publish_package
 from composition.production.model import now
 from composition.production.resources import peak_memory
 from composition.template.model import CompositionError
@@ -48,6 +50,7 @@ def _error_page(result, page):
     result.error_output_page=page.output_page
 
 
+@production_claim("overlay")
 def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None,_defer_media_ticket=False,authorization=None):
     spec=EnvelopeSpec.from_dict(job.project)
     if spec.external_fields and external_values is None:
@@ -67,7 +70,15 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
     naming = resolve_filename(job.output_name, VariableContext(**values), extension=".pdf")
     from composition.review.authorization import require_authorization
     authorization = require_authorization(authorization)
-    authorization.require_job("overlay", job, is_cancelled=is_cancelled)
+    reviewed_context = authorization.require_job("overlay", job, is_cancelled=is_cancelled)
+    provider_audit = None
+    expected_provider = reviewed_context.get("binding", {}).get("external_provider_sha256")
+    if expected_provider:
+        if external_values is None:
+            raise CompositionError("Reviewed external values provider is missing.")
+        from composition.review.providers import ProviderAudit
+        provider_audit = ProviderAudit(external_values)
+        external_values = provider_audit
     from core.output_safety import contained_path, validate_identifier
     validate_identifier(job.job_id)
     output_root=Path(job.output_dir).resolve()
@@ -152,6 +163,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             row(pages_writer,["Source page","Output page","Envelope sequence","Letter page","Print page","Sheet no","Side","Inserted blank", "Original PDF page"])
             row(env_writer,["Envelope index","Envelope sequence","Source start","Source end","Output start","Output end","Source pages","Output pages","Sheets","Status"])
             chunks=[]
+            if provider_audit is not None:
+                provider_audit.capture = True
             pending = iter(plan.pages())
             per_envelope = plan.settings_for(1).output_pages_per_envelope
             batch_size = job.chunk_size if spec.settings.groups else ((job.chunk_size + per_envelope-1)//per_envelope)*per_envelope
@@ -237,6 +250,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             raise CompositionError("An overlay image or font changed during production. Review and run again.")
         result.unverified_envelopes=plan.envelopes-result.successful_envelopes
         result.generated_files=1
+        if provider_audit is not None and provider_audit.digest.hexdigest() != expected_provider:
+            raise CompositionError("External values changed after review; production was not published.")
         reconcile(result)
         if isinstance(plan,PrintPlan) and not _defer_media_ticket:
             from composition.media.postscript import export_postscript
@@ -267,7 +282,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                     raise CompositionError("Unsafe overlay asset cleanup path.")
                 shutil.rmtree(directory)
         check_cancel(is_cancelled)
-        os.rename(staging,final)
+        published = publish_package(staging, final, asdict(result), authorization)
+        result.warnings = published.get("warnings", result.warnings)
         return result
     except Exception as exc:
         for document in (chunk,layers):

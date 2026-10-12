@@ -16,12 +16,12 @@ from composition.data.excel_source import cell_text, workbook_info
 from composition.data.source import import_records, sample_records, suggest_import
 from composition.designer.data_dialog import DataDialog
 from composition.designer.workspace import CompositionWindow
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
 from scripts.composition_excel_fixture import make_xls, make_xlsx
 from tests.composition.test_designer_controls import cleanup, wait
+from tests.production_approval import generate
 
 
 def write_rows(path, rows):

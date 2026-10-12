@@ -8,12 +8,14 @@ from dataclasses import asdict
 import fitz
 import pytest
 
-from composition.overlay.generator import generate, reconcile
+from composition.overlay.generator import reconcile
 from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayJob
 from composition.overlay.renderer import render_preview
 from composition.pdf_source.source import inspect_source
 from composition.template.model import CompositionError
 from tests.composition.test_pdf_overlay_models import make_source, sample_spec
+from tests.production_approval import expect_blocked
+from tests.production_approval import overlay_generate as generate
 
 
 def run_job(tmp_path, spec, chunk=4):
@@ -70,16 +72,16 @@ def test_crop_rotation_same_preview_and_output(tmp_path,rotation):
 
 
 def test_required_barcode_cannot_disappear_and_bounds_checked(tmp_path):
-    spec=sample_spec(tmp_path)
-    spec.objects[1].scope="first"
-    result=run_job(tmp_path,spec)
-    assert result.status=="failed" and "Required barcode" in result.error
-    assert result.error_source_page==2 and not result.output_pdf
-    spec.objects[1].scope="all_source"
-    spec.objects[1].element.x_mm=200
-    result=run_job(tmp_path,spec)
-    assert result.status=="failed" and "outside" in result.error
-    assert not list((tmp_path/"output").rglob("*.pdf"))
+    spec = sample_spec(tmp_path)
+    spec.objects[1].scope = "first"
+    review = expect_blocked(lambda: run_job(tmp_path, spec))
+    assert "Required barcode" in str(review)
+    assert review.packet["issues"][0]["source_page"] == 2
+    spec.objects[1].scope = "all_source"
+    spec.objects[1].element.x_mm = 200
+    review = expect_blocked(lambda: run_job(tmp_path, spec))
+    assert "outside" in str(review)
+    assert not list((tmp_path / "output").rglob("*.pdf"))
 
 
 def test_duplex_front_qr_profile_and_blank_control(tmp_path):
@@ -141,28 +143,27 @@ def test_qc_failure_and_reconciliation_mismatch_never_publish(tmp_path,monkeypat
 
 
 def test_changed_source_and_invalid_glyph_report(tmp_path):
-    spec=sample_spec(tmp_path)
-    make_source(spec.source.path,9)
-    result=run_job(tmp_path,spec)
-    assert result.status=="failed" and "changed since preview" in result.error
-    with pytest.raises(CompositionError,match="changed since inspection"):
-        render_preview(spec,1,1)
-    spec=sample_spec(tmp_path)
-    spec.objects[0].element.value="\u4e2d\u6587\u7530 {{EnvelopeSeq}}"
-    result=run_job(tmp_path,spec)
-    assert result.status=="completed",result.error
-    assert result.font_scan["automatic_occurrences"]==18
-    log=json.loads(__import__("pathlib").Path(result.report_dir,"job.json").read_text())
-    assert log["job_type"]=="pdf_overlay"
-    assert asdict(result)["source_pages"]==6
+    spec = sample_spec(tmp_path)
+    make_source(spec.source.path, 9)
+    review = expect_blocked(lambda: run_job(tmp_path, spec))
+    assert "Source PDF changed" in str(review)
+    with pytest.raises(CompositionError, match="changed since inspection"):
+        render_preview(spec, 1, 1)
+    spec = sample_spec(tmp_path)
+    spec.objects[0].element.value = "中文田 {{EnvelopeSeq}}"
+    result = run_job(tmp_path, spec)
+    assert result.status == "completed", result.error
+    assert result.font_scan["automatic_occurrences"] == 18
+    log = json.loads(__import__("pathlib").Path(result.report_dir, "job.json").read_text())
+    assert log["job_type"] == "pdf_overlay" and asdict(result)["source_pages"] == 6
 
 
 def test_saved_geometry_or_count_cannot_omit_source_pages(tmp_path):
     spec = sample_spec(tmp_path)
     spec.source.pages = 3
-    result = run_job(tmp_path, spec)
-    assert result.status == "failed" and "does not match" in result.error
-    assert not result.output_pdf
+    review = expect_blocked(lambda: run_job(tmp_path, spec))
+    assert "Source PDF changed" in str(review)
+    assert not (tmp_path / "output").exists()
 
 
 def test_original_embedded_font_and_annotation_preserved(tmp_path):

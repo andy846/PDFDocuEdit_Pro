@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.review.service import create_review, preview_sheet, review_rows, validate_snapshot
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, PageSpec, Template
 from tests.composition.test_inserter_production import template_for
 from tests.composition.test_pdf_overlay_models import make_source
+from tests.production_approval import generate
 
 
 def context(tmp_path, template):

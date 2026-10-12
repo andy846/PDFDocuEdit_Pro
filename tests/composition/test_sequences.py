@@ -12,7 +12,6 @@ from composition.data.source import import_records
 from composition.designer.sequence_dialog import SequenceDialog
 from composition.designer.workspace import CompositionWindow
 from composition.engine.renderer import render_preview
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import (
     CompositionError,
@@ -26,8 +25,8 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
-from composition.worker import dispatch
 from tests.composition.test_designer_controls import cleanup, wait
+from tests.production_approval import dispatch, expect_blocked, generate
 
 
 def model(count=4):
@@ -122,9 +121,9 @@ def test_imported_sequences_preserve_source_fields_and_block_collision(tmp_path)
         CompositionRecords(template, store)
     with pytest.raises(CompositionError, match="conflict"):
         render_preview(template, {"Name": "Bob"})
-    result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path/"out")))
-    assert result.status == "failed" and result.generated_files == 0
-    assert "conflict" in result.error
+    review = expect_blocked(lambda: generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path/"out"))))
+    assert "conflict" in str(review)
+    assert not (tmp_path / "out").exists()
 
 
 def test_preview_random_access_and_chunked_output_share_exact_values(tmp_path):

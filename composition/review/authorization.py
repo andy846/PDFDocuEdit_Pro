@@ -68,6 +68,8 @@ class ReviewSession:
 
 def approve_snapshot(directory, identity, context, *, session, acknowledge=False, is_cancelled=None):
     from .service import validate_snapshot
+    if type(acknowledge) is not bool:
+        raise CompositionError("Production warning acknowledgement must be a boolean.")
     if not isinstance(session, ReviewSession):
         raise CompositionError("A private production approval session is required.")
     packet = validate_snapshot(directory, identity, context, warnings_acknowledged=acknowledge,
@@ -104,8 +106,12 @@ class ProductionAuthorization:
         from .service import validate_snapshot
         if self.parent is not None:
             return self.parent.validate(is_cancelled=is_cancelled)
-        for receipt in self.receipts:
+        if len(self.contexts) != len(self.receipts):
+            raise CompositionError("Approval context changed.")
+        for context, receipt in zip(self.contexts, self.receipts, strict=True):
             body = self.session.verify(receipt["authorization"], "approval")
+            if context != body["context"]:
+                raise CompositionError("Approval context changed.")
             if not self.started and not body["issued"] <= self.session.clock() < body["expires"]:
                 raise CompositionError("Production approval expired. Review again.")
             packet = validate_snapshot(body["directory"], body["snapshot_id"], body["context"],
@@ -140,6 +146,13 @@ class ProductionAuthorization:
             raise CompositionError("Approved production selection changed. Review every selected job again.")
         self.validate()
         self.started = True
+
+    def require_branch(self, run):
+        from workflow.production_review import branch_approval_binding
+        expected = branch_approval_binding(run)
+        if any(c.get("binding", {}).get("branch_approval") != expected for c in self.contexts):
+            raise CompositionError("Branch selection or partial-production acknowledgement changed. Review again.")
+        self.validate()
 
     def require_output_plan(self, job_id, directory, outputs):
         from pathlib import Path

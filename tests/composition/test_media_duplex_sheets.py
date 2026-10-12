@@ -11,11 +11,11 @@ from composition.designer.media_dialog import MediaDialog
 from composition.designer.media_sheet_dialog import DuplexSheetDialog
 from composition.media.model import default_media
 from composition.media.planner import build_print_plan
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, Element, PageSpec, Template
 from tests.composition.test_postscript import ps_media
 from tests.composition.test_workspace import wait_until
+from tests.production_approval import generate
 
 
 def four_page_template(backend="canon_prismasync",stocks=2):

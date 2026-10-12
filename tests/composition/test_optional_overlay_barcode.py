@@ -10,7 +10,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 from composition.designer.overlay_workspace import OverlayWindow
-from composition.overlay.generator import generate, reconcile
+from composition.overlay.generator import reconcile
 from composition.overlay.model import BarcodeProfile, EnvelopeSpec, OverlayJob, OverlayObject
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
@@ -18,6 +18,8 @@ from composition.template.model import Element
 from tests.composition.test_pdf_overlay_models import make_source, sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import wait_until
+from tests.production_approval import expect_blocked
+from tests.production_approval import overlay_generate as generate
 
 
 @pytest.mark.parametrize("kind", ["copy", "sequence", "non_control_barcode"])
@@ -59,13 +61,11 @@ def test_optional_barcode_production_16_pages_8_envelopes(tmp_path, monkeypatch,
 
 def test_duplicate_control_barcodes_still_fail(tmp_path):
     spec = sample_spec(tmp_path)
-    spec.objects.append(OverlayObject(Element(type="code128", x_mm=115, y_mm=35, width_mm=70, height_mm=14),
-                                      control=True, profile=BarcodeProfile()))
+    spec.objects.append(OverlayObject(Element(type="code128", x_mm=115, y_mm=35, width_mm=70, height_mm=14), control=True, profile=BarcodeProfile()))
     assert spec.requires_control_barcode
-    result = generate(OverlayJob(spec.to_dict(), str(tmp_path / "output")))
-    assert result.status == "failed"
-    assert "found 2" in result.error
-    assert not result.output_pdf and result.generated_files == 0
+    review = expect_blocked(lambda: generate(OverlayJob(spec.to_dict(), str(tmp_path / "output"))))
+    assert "found 2" in str(review)
+    assert not (tmp_path / "output").exists()
 
 
 @pytest.fixture(scope="module")

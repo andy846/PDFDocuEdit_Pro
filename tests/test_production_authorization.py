@@ -129,3 +129,54 @@ def test_private_worker_key_never_appears_in_request_file(qt_application, tmp_pa
         worker.poll.stop()
         worker.request_file.unlink()
         worker.deleteLater()
+
+
+def test_windowed_worker_private_approval_channel(qt_application, tmp_path, monkeypatch):
+    import sys
+
+    from composition.designer.process import Worker
+    from tests.composition.test_designer_controls import wait
+    windowed = Path(sys.executable).with_name("pythonw.exe")
+    if not windowed.exists():
+        pytest.skip("Windowed Windows runtime unavailable")
+    job = ProductionJob(Template(record_mode="generated").to_dict(), "", str(tmp_path / "out"))
+    context = {"kind": "template", "job": asdict(job)}
+    monkeypatch.setattr(sys, "executable", str(windowed))
+    worker = Worker(tmp_path, {"task": "production_review_check", "directory": str(tmp_path), "context": context})
+    results, errors, ended = [], [], []
+    worker.ended.connect(lambda: ended.append(True))
+    worker.resultReady.connect(results.append)
+    worker.failed.connect(errors.append)
+    wait(lambda: bool(results or errors))
+    assert not errors, errors
+    assert results[0]["status"] == "checked"
+    wait(lambda: bool(ended))
+
+
+def test_changed_headless_external_values_cannot_publish(tmp_path):
+    from composition.engine.barcode_profiles import BarcodeProfile
+    from composition.engine.generic_layout import BarcodeSegment
+    from composition.overlay.generator import generate as overlay_engine
+    from composition.overlay.model import EnvelopeSpec, OverlayJob, OverlayObject
+    from composition.pdf_source.model import EnvelopeSettings
+    from composition.pdf_source.source import inspect_source
+    from tests.composition.test_pdf_overlay_models import make_source
+    source = make_source(tmp_path / "source.pdf", 2)
+    settings = EnvelopeSettings(pages_per_envelope=1)
+    profile = BarcodeProfile.fixed_layout(4, [BarcodeSegment(name="Customer", length=4, source="data", value="Account")])
+    project = EnvelopeSpec(inspect_source(source, settings), settings,
+        [OverlayObject(Element(type="i25", width_mm=90, height_mm=14), profile=profile)], external_fields=["Account"])
+    job = OverlayJob(project.to_dict(), str(tmp_path / "output"))
+    value = ["0001"]
+    def provider(page):
+        return {"Account": value[0]}
+    session = ReviewSession.new()
+    context = {"kind":"overlay", "job":asdict(job)}
+    result = create_review(tmp_path / "work", context, session=session, external_values=provider)
+    assert result["status"] == "checked", result["issues"]
+    receipt = {"directory":str(tmp_path / "work"), "snapshot_id":result["snapshot_id"], "context":result["context"], "acknowledge":True}
+    receipt["authorization"] = approve_snapshot(receipt["directory"], receipt["snapshot_id"], receipt["context"], session=session, acknowledge=True)
+    value[0] = "0002"
+    output = overlay_engine(job, authorization=ProductionAuthorization([receipt], session), external_values=provider)
+    assert output.status == "failed" and "changed after review" in output.error
+    assert not Path(job.output_dir, job.job_id).exists()

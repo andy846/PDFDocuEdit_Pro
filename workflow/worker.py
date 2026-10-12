@@ -50,6 +50,9 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
         if operation=="branch_run":
             return {"run":execute_routes(spec,request["run"],request["directory"],request["output_dir"],
                                          progress=progress,is_cancelled=cancelled,on_state=emit_state,authorization=authorization)}
+        if operation=="branch_recover":
+            from .branch_engine import recover_public_run
+            return {"run":recover_public_run(spec, request["output_dir"])}
         if operation=="branch_rows":
             return rows(spec,request["run"],request["directory"],source_id=request.get("source_id",""),
                         branch_id=request.get("branch_id",""),view=request.get("view","output"),offset=request.get("offset",0),

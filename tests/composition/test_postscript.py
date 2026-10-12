@@ -18,15 +18,15 @@ from composition.media.postscript import (
     ps_string,
     selection_request,
 )
-from composition.overlay.generator import generate as overlay_generate
 from composition.overlay.model import OverlayJob
-from composition.production.generator import JobCancelled, generate
+from composition.production.generator import JobCancelled
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, Element, FontSpec, PageSpec, Template
 from composition.template.serializer import load_project, save_project
 from tests.composition.test_pdf_overlay_models import sample_spec
+from tests.production_approval import execute_batch, generate, overlay_generate
 from tests.test_mail_merge_workflow import pair, recipe
-from workflow.batch import BatchRun, approve, execute_batch, prepare
+from workflow.batch import BatchRun, approve, prepare
 from workflow.model import WorkflowNode
 
 

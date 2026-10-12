@@ -11,7 +11,6 @@ import fitz
 import pytest
 
 from composition.handoff import capture_pdf, validate_link
-from composition.overlay.generator import generate
 from composition.overlay.model import EnvelopeSpec, OverlayJob
 from composition.overlay.serializer import load_project, save_project
 from composition.pdf_source.model import EnvelopeSettings
@@ -20,6 +19,7 @@ from composition.template.serializer import load_project as load_template
 from composition.template.serializer import save_project as save_template
 from core.pdf_engine import PdfEngine
 from tests.composition.test_pdf_overlay_models import make_source
+from tests.production_approval import overlay_generate as generate
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def test_background_flattens_annotations_and_survives_save(engine, tmp_path):
 def test_managed_overlay_saved_source_durable_and_headless_review_gate(engine, tmp_path):
     source, link = capture(engine, tmp_path / "handoff", pages=[0, 2, 4])
     spec = EnvelopeSpec(source, EnvelopeSettings(pages_per_envelope=1), source_link=link)
-    with pytest.raises(CompositionError, match="Confirm grouping"):
+    with pytest.raises(CompositionError, match="Accept source and mailpiece boundaries"):
         generate(OverlayJob(spec.to_dict(), str(tmp_path / "outputs")))
     spec.source_link["review_required"] = False
     spec.settings = replace(spec.settings, duplex=True)

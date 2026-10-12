@@ -15,9 +15,9 @@ from composition.engine.assets import asset_root
 from composition.engine.renderer import render_preview
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError, Element, Template
-from composition.worker import dispatch
 from styles.components import global_style
 from tests.composition.test_workspace import close_window, wait_until
+from tests.production_approval import dispatch
 
 FIELD="Customer_Reference_Number_For_Print_Production"
 

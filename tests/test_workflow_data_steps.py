@@ -6,10 +6,10 @@ import fitz
 import pytest
 
 from composition.production.generator import JobCancelled
+from tests.production_approval import execute, execute_batch
 from tests.test_mail_merge_workflow import pair, recipe
 from tests.test_workflow_core import configured, fixture_pdf
-from workflow.batch import BatchRun, approve, execute_batch, prepare
-from workflow.engine import execute
+from workflow.batch import BatchRun, approve, prepare
 from workflow.extraction import ExtractionStore
 from workflow.model import WorkflowNode, WorkflowRun, WorkflowSpec
 from workflow.pipeline import split_names, summary

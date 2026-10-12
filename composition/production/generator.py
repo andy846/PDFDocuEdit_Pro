@@ -22,6 +22,7 @@ from composition.engine.assets import qpdf_executable
 from composition.engine.fonts import RecordFontError
 from composition.engine.renderer import Renderer
 from composition.engine.rules import RecordRuleError
+from composition.production.journal import production_claim, publish_package
 from composition.template.model import CompositionError, Template, required_fields
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
@@ -176,6 +177,7 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         writer.writerow([_csv_value(value) for value in columns.values()])
 
 
+@production_claim("template")
 def generate(
     job: ProductionJob, *, progress: Callable | None = None, is_cancelled: Callable | None = None,
     additional_reports: Callable | None = None,
@@ -370,7 +372,8 @@ def generate(
             additional_reports(staging,result)
         check_cancel(is_cancelled)
         # A unique, same-parent directory rename publishes the PDF and both reports together.
-        os.rename(staging, final)
+        published = publish_package(staging, final, asdict(result), authorization)
+        result.warnings = published.get("warnings", result.warnings)
         return result
     except Exception as exc:
         from composition.engine.inserter_production import BarcodeRecordError

@@ -14,8 +14,8 @@ from composition.engine.preview_raster import (
     screen_scale,
 )
 from composition.template.model import Element, Template
-from composition.worker import dispatch
 from tests.composition.test_pdf_overlay_models import sample_spec
+from tests.production_approval import dispatch
 
 
 def test_screen_zoom_and_high_dpi_use_more_pixels():

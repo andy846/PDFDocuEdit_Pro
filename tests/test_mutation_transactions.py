@@ -245,3 +245,22 @@ def test_repeat_success_commits_once_with_duplicate_pages(document, nested):
         engine.repeat_insert_pages(str(source), [1, 1], 2)
     assert [p.get_text().strip() for p in engine.document] == ["Page 0", "Page 1", "Page 1", "Page 1", "Page 2"]
     assert engine.revision == 1 and stack.undo_count == 1 and engine.is_modified
+
+
+def test_failed_restore_is_explicit_and_never_keeps_damaged_document(document, monkeypatch):
+    engine, _, source = document
+    original = fitz.open
+    def fail(*args, **kwargs):
+        if kwargs.get("stream") is not None:
+            raise OSError("injected restore failure")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(fitz, "open", fail)
+    with pytest.raises(PdfEngineError):
+        with engine.mutation_transaction("Failed restore"):
+            engine.delete_pages([2])
+            raise RuntimeError("injected mutation failure")
+    assert not engine.is_loaded()
+    with pytest.raises(PdfEngineError, match="No PDF"):
+        engine.save()
+    with original(source) as pdf:
+        assert pdf.page_count == 3

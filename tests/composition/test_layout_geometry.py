@@ -15,7 +15,6 @@ from composition.designer.canvas import Canvas
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
 from composition.engine.renderer import render_preview
-from composition.overlay.generator import generate
 from composition.overlay.model import EnvelopeSpec, OverlayJob
 from composition.overlay.renderer import render_preview as overlay_preview
 from composition.template.geometry import element_bounds
@@ -24,6 +23,7 @@ from composition.template.serializer import load_project, save_project
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import close_window
+from tests.production_approval import overlay_generate as generate
 
 
 @pytest.fixture(scope="session")

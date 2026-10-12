@@ -48,13 +48,15 @@ def _folder(directory, identity):
 
 def _context(raw):
     context = ReviewContext(**copy.deepcopy(raw))
-    if context.kind not in ("template", "overlay"):
+    if context.kind not in ("template", "overlay", "report"):
         raise CompositionError("Unknown production review kind.")
     return context
 
 
 def _resources(context):
     job = context.job
+    if context.kind == "report":
+        return sorted(set(str(Path(p).resolve()) for p in [context.external_data, context.external_database, *context.binding.get("files", [])] if p))
     project = job["template" if context.kind == "template" else "project"]
     paths = [context.external_data, context.external_database, job.get("record_store", "")]
     if context.kind == "template":
@@ -69,6 +71,12 @@ def _resources(context):
         elements = [o.element for o in value.objects]
     for e in elements:
         paths += [e.image, e.font.file, *(f.file for f in e.glyph_repairs.values())]
+        if e.type == "text" or e.show_barcode_text:
+            from composition.engine.fonts import load_font
+            for font in (e.font, *e.glyph_repairs.values()):
+                resolved = load_font(font)[1]
+                if resolved:
+                    paths.append(str(resolved))
         if e.rules.alternative:
             paths.append(e.rules.alternative.image)
     paths += context.binding.get("files", [])
@@ -134,7 +142,7 @@ def _external(stack, context, spec):
     return None
 
 
-def _issue(exc, envelope=0, page=0):
+def _issue(exc, envelope=0, page=0, *, source_page=0):
     reason = str(exc)
     field = re.search(r"field ([^:\n]+):", reason, re.I)
     def number(pattern):
@@ -145,7 +153,7 @@ def _issue(exc, envelope=0, page=0):
         getattr(exc, "record_ordinal", 0) or number(r"(?:Record|Envelope) (\d+)") or envelope,
         number(r"output page (\d+)") or page, number(r"template page (\d+)"),
         obj[1] if obj else "", getattr(exc, "field", getattr(exc, "source_field", field[1] if field else "")),
-        "object" if obj else "media" if "media" in reason.lower() else "settings"))
+        "object" if obj else "media" if "media" in reason.lower() else "settings", source_page=source_page))
 
 
 def _barcodes(elements, plans, values):
@@ -185,8 +193,22 @@ def _summary(context, plan, media, output_name, source):
         "outputs": context.outputs, "expected_barcodes": 0, "source": source or "Generated records"}
 
 
-def create_review(directory, raw, *, progress=None, is_cancelled=None, session=None):
+def _save_review(folder, context, identity, digest, stats, status, summary, issues, complete, session):
+    result = asdict(ReviewSnapshot(identity, digest, status, summary, issues, complete))
+    packet = {**result, "context": asdict(context), "stats": stats}
+    if session is not None:
+        from composition.template.serializer import file_hash
+        packet["seal"] = session.seal_snapshot(packet, file_hash(folder / "rows.sqlite"))
+    from core.io_atomic import atomic_output
+    with atomic_output(folder / "snapshot.json") as target:
+        target.write_text(json.dumps(packet, ensure_ascii=True), encoding="utf-8")
+    return {**result, "context": asdict(context)}
+
+
+def create_review(directory, raw, *, progress=None, is_cancelled=None, session=None, external_values=None):
     context = _context(raw)
+    from core.output_safety import validate_identifier
+    validate_identifier(context.job.get("job_id"))
     identity = uuid.uuid4().hex
     folder = _folder(directory, identity)
     folder.mkdir()
@@ -201,13 +223,33 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
                         "CREATE INDEX envelope_pages ON pages(envelope,output_page);")
         try:
             check_cancel(is_cancelled)
+            if context.kind == "report":
+                from workflow.transforms import DataSet
+                if not context.external_data or DataSet(context.external_data).count != 0:
+                    raise CompositionError("Report-only production requires zero retained records.")
+                summary = {"job_id": context.job["job_id"], "label": context.label,
+                    "input_records": context.binding.get("data_summary", {}).get("input", 0), "records": 0,
+                    "pages": 0, "sheets": 0, "inserted_blanks": 0, "expected_barcodes": 0, "printing": "No PDF",
+                    "output_dir": context.job["output_dir"], "output_name": "Reports only", "backend": "reports", "outputs": []}
+                issues = [asdict(ReviewIssue("warning", "No envelopes selected. Only reconciliation reports will be produced; no empty PDF."))]
+                db.commit()
+                return _save_review(folder, context, identity, digest, stats, "checked", summary, issues, True, session)
             if context.kind == "template":
                 job = ProductionJob(**context.job)
                 template = Template.from_dict(job.template)
                 template._barcode_job_id = job.job_id
                 records = open_records(template, job.record_store)
                 if not records.count:
-                    raise CompositionError("No retained records. There is no production PDF to review.")
+                    job.variable_context["namespaces"].setdefault("job", {}).update(id=job.job_id, records=0)
+                    context.job = asdict(job)
+                    raw = asdict(context)
+                    digest, stats = fingerprint(raw, cancelled=is_cancelled)
+                    summary = {"job_id": job.job_id, "label": context.label, "input_records": context.binding.get("data_summary", {}).get("input", 0),
+                        "records": 0, "pages": 0, "sheets": 0, "inserted_blanks": 0, "expected_barcodes": 0,
+                        "printing": "No PDF", "output_dir": job.output_dir, "output_name": "Reports only", "backend": "reports", "outputs": []}
+                    issues = [asdict(ReviewIssue("warning", "No records selected. Only reconciliation reports will be produced; no empty PDF."))]
+                    db.commit()
+                    return _save_review(folder, context, identity, digest, stats, "checked", summary, issues, True, session)
                 missing = required_fields(template) - set(records.fields)
                 if missing:
                     raise CompositionError("Missing mapped fields: " + ", ".join(sorted(missing)))
@@ -244,6 +286,11 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
                 renderer = stack.enter_context(OverlayRenderer(spec, auto_repair=context.job.get("auto_repair", True),
                     fallback_directory=folder / "fallback", is_cancelled=is_cancelled))
                 external = _external(stack, context, spec)
+                provider_audit = None
+                if external_values is not None:
+                    from .providers import ProviderAudit
+                    provider_audit = ProviderAudit(external_values)
+                    external = provider_audit
                 with tempfile.TemporaryDirectory(prefix="review-font-") as fonts:
                     renderer.renderer.prepare_fonts(page_records(spec, plan, context.job["job_id"], is_cancelled, external),
                         fonts, progress, is_cancelled, audit_path=folder / "glyph-repairs.csv")
@@ -257,6 +304,8 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
             provenance_db = (stack.enter_context(closing(sqlite3.connect(context.external_database)))
                              if context.external_database else None)
             for envelope in range(1, plan.envelopes + 1):
+                if context.kind == "overlay" and provider_audit is not None:
+                    provider_audit.capture = False
                 check_cancel(is_cancelled)
                 record = (records.record(envelope) if context.kind == "template" else
                           page_values(spec, plan.page(envelope, 1), context.job["job_id"], external))
@@ -270,6 +319,8 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
                     "values": record, "status": "Checked"}
                 db.execute("INSERT INTO envelopes VALUES(?,?,?)", (envelope, json.dumps(row, ensure_ascii=False),
                     json.dumps(record, ensure_ascii=False)))
+                if context.kind == "overlay" and provider_audit is not None:
+                    provider_audit.capture = True
                 for index in range(1, cfg.output_pages_per_envelope + 1):
                     check_cancel(is_cancelled)
                     current = plan.page(envelope, index)
@@ -311,12 +362,17 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
             if engine.repair_summary.get("occurrences"):
                 summary["font_report"] = str(folder / "glyph-repairs.csv")
                 issues.append(asdict(ReviewIssue("warning", f"Automatic font substitutions: {engine.repair_summary['occurrences']} occurrence(s). Review glyph-repairs.csv.", action="font")))
+            branch = context.binding.get("branch_approval", {})
+            if branch.get("exceptions") or any(s.get("status") == "Blocked" for s in branch.get("sources", [])):
+                issues.append(asdict(ReviewIssue("warning", "Partial production: some source records or files are blocked/excluded. Review the branch exception report before confirming.")))
             media = template.media if context.kind == "template" else spec.media
             if media.get("enabled"):
                 summary["printer_profile"] = media.get("printer_profile", {}).get("profile_name", "Unnamed profile")
                 issues.append(asdict(ReviewIssue("warning", "Printer profile requires physical stock/tray/duplex verification.", action="media")))
             if any(p.get("validation", "pending") == "pending" for p in profile_objects):
                 issues.append(asdict(ReviewIssue("warning", "Barcode machine acceptance is pending. Preview is not final-PDF decoding or inserter certification.", action="barcode")))
+            if context.kind == "overlay" and provider_audit is not None:
+                context.binding["external_provider_sha256"] = provider_audit.digest.hexdigest()
             # Normalize the resolved job context before binding the approval.
             raw = asdict(context)
             final_hashes = {}
@@ -328,18 +384,17 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
             status = "cancelled"
         except (ValueError, OSError, KeyError, TypeError) as exc:
             status = "blocked"
-            issues.append(_issue(exc, current.envelope if current else 0, current.output_page if current else 0))
+            issues.append(_issue(exc, current.envelope if current else 0, current.output_page if current else 0,
+                                 source_page=getattr(current, "source_page", 0)))
+            if "renderer" in locals():
+                engine = renderer if context.kind == "template" else renderer.renderer
+                summary["font_scan"] = dict(engine.repair_summary)
+                summary["rule_summary"] = dict(engine.rule_summary)
+            if (folder / "glyph-repairs.csv").is_file():
+                summary["font_report"] = str(folder / "glyph-repairs.csv")
         finally:
             db.commit()
-    result = asdict(ReviewSnapshot(identity, digest, status, summary, issues, complete))
-    packet = {**result, "context": asdict(context), "stats": stats}
-    if session is not None:
-        from composition.template.serializer import file_hash
-        packet["seal"] = session.seal_snapshot(packet, file_hash(folder / "rows.sqlite"))
-    from core.io_atomic import atomic_output
-    with atomic_output(folder / "snapshot.json") as target:
-        target.write_text(json.dumps(packet, ensure_ascii=True), encoding="utf-8")
-    return {**result, "context": asdict(context)}
+    return _save_review(folder, context, identity, digest, stats, status, summary, issues, complete, session)
 
 
 def review_rows(directory, identity, *, offset=0, search="", envelope=0, output_page=0):

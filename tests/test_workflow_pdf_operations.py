@@ -5,9 +5,9 @@ from pathlib import Path
 import fitz
 import pytest
 
+from tests.production_approval import execute
 from tests.test_pdf_operations import source_file
 from tests.test_workflow_core import configured
-from workflow.engine import execute
 from workflow.extraction import ExtractionSpec, Region
 from workflow.inspection import inspect_step, inspection_rows
 from workflow.model import WorkflowNode, WorkflowRun, WorkflowSpec

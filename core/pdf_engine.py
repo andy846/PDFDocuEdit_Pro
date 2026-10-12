@@ -551,6 +551,8 @@ class PdfEngine:
             raise PdfEngineError(
                 "A repeat interval and at least one source page are required."
             )
+        if interval > doc.page_count:
+            raise PdfEngineError("The repeat interval does not create any insertion points.")
         with self.mutation_transaction("Repeat Insert Pages"):
             original_count = doc.page_count
             inserted = 0

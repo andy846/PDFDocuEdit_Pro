@@ -474,3 +474,10 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
   windows. External PDF opens use the last active PDF window, focusing an existing
   document when the same absolute path is already open.
 * These changes do not change PDF/project formats or the public version number.
+
+
+### Production reliability and recovery
+
+Production generation requires current, explicitly confirmed review evidence. Repeated page insertion is transactional, and rollback/Undo documents remain saveable. Branch output names are validated and contained within the selected production folder.
+
+Completed production packages include checksum/completion evidence. **Visual Workflow → Production → Recover previous run…** verifies earlier batches and retains completed output; remaining work must be checked and reviewed again. Failed attempts are not silently republished into retry folders. See [P0 reliability and headless approval](docs/P0_RELIABILITY.md).

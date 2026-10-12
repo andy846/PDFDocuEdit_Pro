@@ -12,7 +12,7 @@ from PIL import Image
 from composition.data.source import RecordStore, import_records
 from composition.engine.renderer import render_preview
 from composition.engine.rules import CompiledGroup, ElementPlan
-from composition.production.generator import generate, reconcile
+from composition.production.generator import reconcile
 from composition.production.model import JobResult, ProductionJob
 from composition.template.model import (
     AlternativeContent,
@@ -28,7 +28,7 @@ from composition.template.model import (
     required_fields,
 )
 from composition.template.serializer import load_project, save_project
-from composition.worker import dispatch
+from tests.production_approval import dispatch, expect_blocked, generate
 
 
 def group(field="Scheme_Code", value="GS", operator="eq", data_type="text", mode="all"):
@@ -294,14 +294,13 @@ def test_invalid_numeric_record_stops_before_composition_and_identifies_record(t
     source = tmp_path / "bad.csv"
     source.write_text("Name,Scheme_Code,Balance\nFirst,IS,0\nSecond,IS,private-bad-value\n", encoding="utf-8")
     bad = import_records(DataConfig(path=str(source)), tmp_path / "bad.db")
-    result = generate(ProductionJob(model.to_dict(), str(bad.path), str(tmp_path / "output")))
-    assert result.status == "failed" and result.error_record == 2
-    assert result.successful_records == result.generated_pages == result.generated_files == 0
-    assert result.failed_records == result.processed_records == 1
-    assert "Record 2" in result.error and "Balance" in result.error
-    assert "private-bad-value" not in result.error
-    assert result.rule_summary["records_checked"] == 1 and not result.rule_summary["complete"]
-    assert not list(Path(result.report_dir).glob("*.pdf"))
+    review = expect_blocked(lambda: generate(ProductionJob(model.to_dict(), str(bad.path), str(tmp_path / "output"))))
+    assert review.packet["issues"][0]["envelope"] == 2
+    assert "Record 2" in str(review) and "Balance" in str(review)
+    assert "private-bad-value" not in str(review)
+    assert review.packet["summary"]["rule_summary"]["records_checked"] == 1
+    assert not review.packet["summary"]["rule_summary"]["complete"]
+    assert not (tmp_path / "output").exists()
     assert store.count == 8
 
 

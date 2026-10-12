@@ -330,14 +330,13 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,
             raise CompositionError("Choose an output folder.")
         if data.count==0:
             if _review_only:
-                raise CompositionError("No retained envelopes. There is no PDF to review; no empty PDF will be generated.")
-            report=Path(folder)/new_job_id()
-            report.mkdir(parents=True)
-            export_audit(data,report)
-            run.output={"job_id":report.name,"status":"completed","input_envelopes":0,"generated_pages":0,
-                "generated_files":0,"output_pdf":"","report_dir":str(report),"original_envelopes":len(run.groups),
-                "excluded_envelopes":len(run.groups),"error":""}
-            (report/"job.json").write_text(json.dumps(run.output,indent=2),encoding="utf-8")
+                context = {"kind":"report", "job":{"job_id":new_job_id(),"output_dir":folder}, "label":spec.name,
+                    "external_database":run.database, "external_data":str(data.path),
+                    "binding":{"owner_spec":spec.to_dict(),"data_summary":{"input":len(run.groups),"excluded":len(run.groups)},
+                        "files":spec.node("input").params.get("paths", [])}}
+                return context
+            from composition.production.journal import publish_empty_report
+            run.output = publish_empty_report(review_context["job"], data, review_context["binding"]["data_summary"], authorization, kind="report")
             run.statuses[spec.node("output").id]="Completed"
             return run
         if review_context:
@@ -356,7 +355,8 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,
                 required_scope=project.required_scope if project else "all_source",name=spec.name,external_fields=external_fields(spec))
             media=spec.node("media_assignment")
             composed.media=copy.deepcopy(media.params if media else project.media if project else {})
-            composed.detection_review=detection_audit(composed)
+            prior_detection = store.metadata().get("mailpiece_review")
+            composed.detection_review=detection_audit(composed, json.loads(prior_detection) if prior_detection else None)
         composed.validate()
         plan=overlay_plan(composed,is_cancelled=is_cancelled)
         if _review_only:

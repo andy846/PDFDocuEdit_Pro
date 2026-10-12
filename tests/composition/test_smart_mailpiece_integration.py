@@ -30,7 +30,7 @@ from composition.template.model import CompositionError
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_smart_mailpieces import fixture_pdf
 from tests.composition.test_workspace import wait_until
-from workflow.engine import execute
+from tests.production_approval import execute
 from workflow.extraction import ExtractionSpec, ExtractionStore, Region
 from workflow.model import WorkflowRun, WorkflowSpec
 from workflow.serializer import load_workflow, save_workflow
@@ -107,6 +107,7 @@ def test_reviewed_detection_workflow_preserves_upstream_and_actual_audit(tmp_pat
     spec.edges.append([spec.node("review").id, spec.node("output").id])
     spec.node("output").params = {"directory": str(tmp_path/"output")}
     run.accepted = True
+    run = execute(spec, run, tmp_path/"run", until="review")
     run = execute(spec, run, tmp_path/"run", until="output")
     assert not run.error and run.output["status"] == "completed"
     report_folder = Path(run.output["report_dir"])

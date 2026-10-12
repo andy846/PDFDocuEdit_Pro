@@ -321,7 +321,7 @@ def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,i
                             continue
                         entry["signature"]=branch_signature(spec,signature,r["id"])
                         prior=old.get((item["id"],r["id"]))
-                        if prior and prior["signature"]==entry["signature"] and prior["status"]=="Completed" and _finished_valid(BatchJob(**prior["batch"]["jobs"][0])):
+                        if prior and prior["signature"]==entry["signature"] and prior["status"]=="Completed" and prior.get("batch") and _finished_valid(BatchJob(**prior["batch"]["jobs"][0])):
                             entry.update(copy.deepcopy(prior))
                             continue
                         try:
@@ -340,6 +340,15 @@ def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,i
                             job.data_options.pop("path",None)
                             batch=prepare(linear,BatchRun(jobs=[job],batch_id=run["batch_id"]),root/f"j{len(run['jobs']):04d}",
                                           progress=progress,is_cancelled=is_cancelled)
+                            if prior and prior["signature"]==entry["signature"] and prior["status"]=="Completed" and prior.get("result"):
+                                restored=BatchJob(result=prior["result"])
+                                if _finished_valid(restored):
+                                    job.status,job.result,job.approved="Completed",copy.deepcopy(prior["result"]),False
+                                    if prior.get("recovered_variables"):
+                                        job.variable_context=copy.deepcopy(prior["recovered_variables"])
+                                        from .batch import _signature
+                                        job.signature=_signature(linear,job)[0]
+                                    job.warnings.append("Recovered verified output. Completed production is retained and skipped.")
                             entry.update(batch=batch.to_dict(),spec=linear.to_dict(),status=job.status,error=job.error)
                             if job.status=="Needs review":
                                 _preflight(job,linear,folder/(r["id"][:8]+"-qc"),progress,is_cancelled)
@@ -474,22 +483,34 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
     from composition.review.authorization import require_authorization
     authorization = require_authorization(authorization)
     authorization.require_workflow(spec, [j["id"] for j in run["jobs"] if j["status"] == "Ready" and j["approved"]])
+    authorization.require_branch(run)
     root=production_root(output,run)
-    root.mkdir(parents=True,exist_ok=True)
     run["report_dir"]=str(root)
     run["status"]="Running"
+    active = None
+    batch = None
+    def notify(state):
+        if on_state:
+            try:
+                on_state(state)
+            except Exception as exc:
+                run.setdefault("notification_errors", []).append(str(exc))
     try:
+        _write_manifest(_location(directory,run),run)
+        root.mkdir(parents=True,exist_ok=True)
+        _write_manifest(root,public_run(run))
         for entry in run["jobs"]:
             check_cancel(is_cancelled)
             if not entry["approved"] or entry["status"]!="Ready":
                 continue
+            active, batch = entry, None
             if branch_signature(spec,run["signature"],entry["branch_id"])!=entry["signature"]:
                 entry.update(approved=False,status="Needs review",error="Branch inputs changed. Check again.")
                 continue
             _check_current(spec,run)
             batch=BatchRun.from_dict(entry["batch"])
             batch=execute_batch(WorkflowSpec_from(entry["spec"]),batch,production_root(output,run,entry),
-                                progress=progress,is_cancelled=is_cancelled,on_state=on_state,_direct_root=True,authorization=authorization.for_jobs([entry["id"]]))
+                                progress=progress,is_cancelled=is_cancelled,on_state=notify,_direct_root=True,authorization=authorization.for_jobs([entry["id"]]))
             job=batch.jobs[0]
             entry.update(batch=batch.to_dict(),approved=False,status=job.status,error=job.error)
             if job.status=="Failed":
@@ -502,15 +523,48 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
                         db.execute("INSERT INTO issues VALUES(?,?,?,?,?,?,?,?)",(entry["source_id"],source[0],source[1],node.id,"","error",job.error,source[2]))
                         db.commit()
             _write_manifest(_location(directory,run),run)
-            if on_state:
-                on_state({"branch_job":entry})
+            notify({"branch_job":entry})
         complete=all(j["status"] in ("Completed","No records") for j in run["jobs"])
         run["status"]=("Completed with exceptions" if run["exceptions"] or any(s["status"]=="Blocked" for s in run["sources"])
                        else "Completed") if complete else "Partial / needs attention"
     except JobCancelled:
         run["status"]="Cancelled"
-    export_results(directory,run,root)
-    _write_manifest(_location(directory,run),run)
+        run["error"]="Production cancelled. Review remaining jobs before retry."
+    except Exception as exc:
+        run["status"]="Partial / needs attention" if any(j["status"] == "Completed" for j in run["jobs"]) else "Failed"
+        run["error"]=str(exc)
+    finally:
+        if active is not None and batch is not None:
+            job = batch.jobs[0]
+            active.update(batch=batch.to_dict(), approved=False, status=job.status, error=job.error)
+        for entry in run["jobs"]:
+            entry["approved"] = False
+            if entry["status"] in ("Ready", "Running"):
+                entry.update(status="Needs review", error="Production stopped. Check and review this job before a new attempt.")
+            if entry.get("batch"):
+                for job in entry["batch"]["jobs"]:
+                    job["approved"] = False
+                    if job["status"] in ("Ready", "Running"):
+                        job.update(status="Needs review", error=entry["error"])
+        try:
+            _write_manifest(_location(directory,run),run)
+        except Exception as exc:
+            run["state_save_error"] = "State could not be saved: " + str(exc)
+        try:
+            _write_manifest(root,public_run(run))
+        except Exception as exc:
+            run["state_save_error"] = "Output state could not be saved: " + str(exc)
+        try:
+            export_results(directory,run,root)
+        except Exception as exc:
+            run["report_error"] = "Production report could not be written: " + str(exc)
+            if run["status"] in ("Completed", "Completed with exceptions"):
+                run["status"] = "Completed with report warnings"
+        try:
+            _write_manifest(_location(directory,run),run)
+        except Exception as exc:
+            run["state_save_error"] = "State could not be saved: " + str(exc)
+        notify({"branch_run":run})
     return run
 
 
@@ -617,6 +671,71 @@ def _page(source,offset,search):
             yield ordinal,{k:v[:256] for k,v in list(json.loads(value).items())[:12]},identity
 
 
+def public_run(run):
+    public={k:v for k,v in run.items() if k not in ("directory","jobs","stages","sources")}
+    public["sources"]=[{k:v for k,v in source.items() if k!="import_store"} for source in run["sources"]]
+    public["jobs"]=[{k:v for k,v in entry.items() if k not in ("batch","spec")}| 
+        {"result":entry.get("batch",{}).get("jobs",[{}])[0].get("result",{}) if entry.get("batch") else entry.get("result",{})} for entry in run["jobs"]]
+    return public
+
+
+def recover_public_run(spec, root):
+    from composition.production.journal import JobBusyError, JobJournal
+    from core.output_safety import contained_path
+    root=Path(root).resolve()
+    file=contained_path(root,"run.json")
+    if file.stat().st_size > 16 * 1024 * 1024:
+        raise CompositionError("Recovery manifest is too large.")
+    run=validate_branch_run(json.loads(file.read_text(encoding="utf-8")))
+    if root.name != "batch-" + run["batch_id"]:
+        raise CompositionError("Recovery folder does not match its batch identity.")
+    _check_current(spec,run)
+    warnings=[]
+    busy=False
+    for entry in run["jobs"]:
+        entry["approved"]=False
+        if entry["status"] == "No records":
+            continue
+        folder=contained_path(root,entry["id"])
+        state=contained_path(folder,".production-state")
+        found=False
+        live=False
+        if state.is_dir():
+            files=list(state.glob("*.json"))
+            if len(files)>10000:
+                raise CompositionError("Too many recovery journals.")
+            for file in files:
+                try:
+                    record=json.loads(file.read_text(encoding="utf-8"))
+                    journal=JobJournal(folder,record["job_id"],record["binding"])
+                    if journal.path != file.resolve():
+                        raise CompositionError("Recovery identity does not match the journal file.")
+                    with journal.claim():
+                        result=journal.existing
+                        if result:
+                            result=copy.deepcopy(result)
+                            if result.get("output_pdf"):
+                                result["output_sha256"]=file_hash(Path(result["output_pdf"]))
+                            packet=json.loads((journal.final/"completion.json").read_text(encoding="utf-8"))
+                            entry.update(status="Completed",result=result,recovered_variables=packet.get("variable_context",{}),error="")
+                            found=True
+                except JobBusyError as exc:
+                    live=busy=True
+                    entry.update(status="Running",error=str(exc))
+                    warnings.append(entry["id"]+": "+str(exc))
+                except (ValueError,OSError) as exc:
+                    warnings.append(entry["id"]+": "+str(exc))
+        if not found and not live:
+            entry.update(status="Needs review",error="Unfinished or unverifiable output. Check and review a new attempt.")
+    run["report_dir"]=str(root)
+    run["status"]="Completed" if all(j["status"] in ("Completed","No records") for j in run["jobs"]) else "Needs recovery / review"
+    run["stale"]=True
+    run["recovery_warnings"]=warnings
+    if not busy:
+        _write_manifest(root,run)
+    return run
+
+
 def export_results(directory,run,root):
     folder=_location(directory,run)
     with closing(sqlite3.connect(folder/"evidence.sqlite")) as db:
@@ -646,10 +765,7 @@ def export_results(directory,run,root):
                 for row in cursor:
                     writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in row])
     # Public log includes identities/counts/output metadata, not temporary snapshots or record contents.
-    public={k:v for k,v in run.items() if k not in ("directory","jobs","stages","sources")}
-    public["sources"]=[{k:v for k,v in source.items() if k!="import_store"} for source in run["sources"]]
-    public["jobs"]=[{k:v for k,v in entry.items() if k not in ("batch","spec")}|
-                    {"result":entry.get("batch",{}).get("jobs",[{}])[0].get("result",{}) if entry.get("batch") else {}} for entry in run["jobs"]]
+    public=public_run(run)
     _write_manifest(root,public)
     with atomic_output(Path(root)/"batch-summary.csv") as temp,temp.open("w",encoding="utf-8-sig",newline="") as stream:
         writer=csv.writer(stream)

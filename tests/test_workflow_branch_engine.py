@@ -8,7 +8,8 @@ import pytest
 
 from composition.template.model import CompositionError, Element, PageSpec, Template
 from composition.template.serializer import save_project
-from workflow.branch_engine import approve_routes, execute_routes, prepare_routes, rows
+from tests.production_approval import execute_routes
+from workflow.branch_engine import approve_routes, prepare_routes, rows
 from workflow.branch_graph import add_route, edge
 from workflow.model import WorkflowNode, WorkflowSpec
 
@@ -262,5 +263,8 @@ def test_cancel_production_retains_first_output_and_manually_continues(tmp_path)
     assert cancelled["status"]=="Cancelled" and cancelled["jobs"][0]["status"]=="Completed"
     first_pdf=Path(cancelled["jobs"][0]["batch"]["jobs"][0]["result"]["output_pdf"])
     first_content=first_pdf.read_bytes()
-    completed=execute_routes(model,cancelled,tmp_path/"work",tmp_path/"output")
+    assert all(not j["approved"] for j in cancelled["jobs"])
+    checked=prepare_routes(model,tmp_path/"work",previous=cancelled)
+    approve_routes(model,checked,[j["id"] for j in checked["jobs"] if j["status"]=="Needs review"])
+    completed=execute_routes(model,checked,tmp_path/"work",tmp_path/"output")
     assert completed["status"]=="Completed" and first_pdf.read_bytes()==first_content

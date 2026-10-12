@@ -1,9 +1,8 @@
-from pathlib import Path
 
 import pytest
 
-from core.output_safety import contained_path, validate_identifier
 from composition.template.model import CompositionError
+from core.output_safety import contained_path, validate_identifier
 from workflow.branch_engine import validate_branch_run
 
 

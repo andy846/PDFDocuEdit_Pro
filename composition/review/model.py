@@ -24,6 +24,7 @@ class ReviewIssue:
     object_id: str = ""
     field: str = ""
     action: str = "settings"
+    source_page: int = 0
 
 
 @dataclass
