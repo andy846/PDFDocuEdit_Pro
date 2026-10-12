@@ -15,6 +15,139 @@ from core.overlay import (
 from core.tools import ToolError, overlay_pdf, overlay_pdfs
 
 
+@pytest.mark.parametrize("scale", ["fit", "actual"])
+@pytest.mark.parametrize("page_size", ["target", "template"])
+def test_a4_template_letter_target_output_size_and_preview_match(tmp_path, scale, page_size):
+    a4 = (210 * 72 / 25.4, 297 * 72 / 25.4)
+    template, target = tmp_path / "a4.pdf", tmp_path / "letter.pdf"
+    for path, size, content in ((template, a4, "Template"), (target, (612, 792), "Target")):
+        with fitz.open() as doc:
+            doc.new_page(width=size[0], height=size[1]).insert_text((30, 80), content)
+            doc.save(path)
+    original = target.read_bytes(), template.read_bytes()
+    options = OverlayOptions(scale_mode=scale, output_page_size=page_size)
+    output = overlay_pdf(template, target, tmp_path / "result.pdf", options=options)
+    before, after, count, geometry = render_overlay_preview(template, target, 0, options, include_geometry=True)
+    expected = a4 if page_size == "template" else (612, 792)
+    with fitz.open(output) as result:
+        page = result[0]
+        assert (page.rect.width, page.rect.height) == pytest.approx(expected, abs=0.001)
+        assert "Target" in page.get_text() and "Template" in page.get_text()
+        zoom = min(1.5, 1100 / max(612, 792, *expected))
+        assert after == page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False).tobytes("png")
+    assert count == 1 and before != after
+    assert geometry["after_mm"] == pytest.approx([v * 25.4 / 72 for v in expected], abs=0.001)
+    assert (target.read_bytes(), template.read_bytes()) == original
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("cropped", [False, True])
+def test_template_size_keeps_visible_target_positions_and_document_features(tmp_path, rotation, cropped):
+    template, target = tmp_path / "template.pdf", tmp_path / "target.pdf"
+    with fitz.open() as doc:
+        doc.new_page(width=1000, height=1100).insert_text((30, 40), "Overlay")
+        doc.save(template)
+    with fitz.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((110, 200), "Target marker")
+        page.add_rect_annot(fitz.Rect(110, 240, 200, 260)).update()
+        widget = fitz.Widget()
+        widget.field_name, widget.field_value = "Name", "Customer"
+        widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+        widget.rect = fitz.Rect(110, 300, 220, 320)
+        page.add_widget(widget)
+        page.insert_link({"kind": fitz.LINK_URI, "from": fitz.Rect(110, 360, 220, 380), "uri": "https://example.test/"})
+        if cropped:
+            page.set_cropbox(fitz.Rect(50, 80, 550, 720))
+        page.set_rotation(rotation)
+        doc.set_metadata({"title": "Original target"})
+        doc.set_toc([[1, "Target top", 1]])
+        doc.save(target)
+    with fitz.open(target) as doc:
+        page = doc[0]
+        marker = page.search_for("Target marker")[0] * page.rotation_matrix
+        annotation = next(page.annots()).rect * page.rotation_matrix
+        field = next(page.widgets()).rect * page.rotation_matrix
+        link = page.get_links()[0]["from"]
+    output = overlay_pdf(template, target, tmp_path / "result.pdf", options=OverlayOptions(output_page_size="template"))
+    with fitz.open(output) as doc:
+        page = doc[0]
+        assert tuple(page.rect) == pytest.approx((0, 0, 1000, 1100), abs=0.001)
+        assert tuple(page.search_for("Target marker")[0] * page.rotation_matrix) == pytest.approx(tuple(marker), abs=0.001)
+        assert tuple(next(page.annots()).rect * page.rotation_matrix) == pytest.approx(tuple(annotation), abs=0.001)
+        field_after = next(page.widgets())
+        assert field_after.field_value == "Customer"
+        assert tuple(field_after.rect * page.rotation_matrix) == pytest.approx(tuple(field), abs=0.001)
+        assert page.get_links()[0]["uri"] == "https://example.test/"
+        assert tuple(page.get_links()[0]["from"]) == pytest.approx(tuple(link), abs=0.001)
+        assert doc.metadata["title"] == "Original target" and doc.get_toc() == [[1, "Target top", 1]]
+
+
+@pytest.mark.parametrize("mapping,expected", [
+    ("repeat_last", [(200, 300), (300, 400), (300, 400)]),
+    ("cycle", [(200, 300), (300, 400), (200, 300)]),
+    ("matching_only", [(200, 300), (300, 400), (612, 792)]),
+])
+def test_output_size_uses_each_paired_template_page(tmp_path, mapping, expected):
+    template, target = tmp_path / "template.pdf", tmp_path / "target.pdf"
+    with fitz.open() as doc:
+        for w, h in ((200, 300), (300, 400)):
+            doc.new_page(width=w, height=h).insert_text((20, 50), "Overlay")
+        doc.save(template)
+    with fitz.open() as doc:
+        for _ in range(3):
+            doc.new_page(width=612, height=792).insert_text((20, 60), "Target")
+        doc.save(target)
+    outputs = overlay_pdfs(template, [target], tmp_path, options=OverlayOptions(mapping=mapping, output_page_size="template"))
+    with fitz.open(outputs[0]) as doc:
+        assert doc.page_count == 3
+        assert [(page.rect.width, page.rect.height) for page in doc] == expected
+
+
+def test_larger_canvas_clips_old_content_without_clipping_the_new_overlay(tmp_path):
+    template, target = tmp_path / "a4.pdf", tmp_path / "letter.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page(width=210 * 72 / 25.4, height=297 * 72 / 25.4)
+        page.draw_rect(fitz.Rect(10, 810, 30, 830), color=None, fill=(0, 0, 1))
+        doc.save(template)
+    with fitz.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        page.draw_rect(fitz.Rect(60, 810, 80, 830), color=None, fill=(1, 0, 0))
+        doc.save(target)
+    output = overlay_pdf(template, target, tmp_path / "result.pdf", options=OverlayOptions(output_page_size="template"))
+    with fitz.open(output) as doc:
+        image = doc[0].get_pixmap(alpha=False)
+        assert image.pixel(20, 820) == (0, 0, 255)
+        assert image.pixel(70, 820) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+def test_resizing_does_not_reveal_clipped_appearances_or_publish_partial_output(tmp_path, hidden):
+    template, target = tmp_path / "a4.pdf", tmp_path / "letter.pdf"
+    with fitz.open() as doc:
+        doc.new_page(width=210 * 72 / 25.4, height=297 * 72 / 25.4).insert_text((30, 50), "Template")
+        doc.save(template)
+    with fitz.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((30, 60), "Target")
+        annotation = page.add_rect_annot(fitz.Rect(60, 810, 80, 830))
+        if hidden:
+            annotation.set_flags(annotation.flags | fitz.PDF_ANNOT_IS_HIDDEN)
+        annotation.update()
+        doc.save(target)
+    original = target.read_bytes()
+    output = tmp_path / "result.pdf"
+    if hidden:
+        overlay_pdf(template, target, output, options=OverlayOptions(output_page_size="template"))
+        with fitz.open(output) as doc:
+            assert next(doc[0].annots()).flags & fitz.PDF_ANNOT_IS_HIDDEN
+        assert target.read_bytes() == original
+        return
+    with pytest.raises(ValueError, match="clipped annotation or form"):
+        overlay_pdf(template, target, output, options=OverlayOptions(output_page_size="template"))
+    assert target.read_bytes() == original and not output.exists()
+
+
 def make_pdf(path: Path, pages: int = 1, *, color: tuple[float, float, float] | None = None) -> Path:
     with fitz.open() as document:
         for _ in range(pages):
