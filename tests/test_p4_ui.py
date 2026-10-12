@@ -223,60 +223,39 @@ def test_split_view_same_document(tmp_path: Path, monkeypatch) -> None:
     window.close()
 
 
-def test_split_view_compares_another_open_document_read_only(
+def test_split_view_selects_another_open_document_for_editing(
     tmp_path: Path, monkeypatch
 ) -> None:
+    # Intentional change: choosing another PDF now pairs its live editor,
+    # rather than creating a read-only comparison canvas.
     window, app = _window(tmp_path, monkeypatch)
     first = make_pdf(tmp_path / "contract.pdf", pages=3, prefix="Contract")
     second = make_pdf(tmp_path / "revision.pdf", pages=2, prefix="Revision")
     window._load_file_sync(str(first))
     host = window._session
     source = window._open_in_new_tab_sync(str(second))
-    assert host is not None and source is not None
     _wait_renders(app, source.canvas)
-
     window.workspace.set_current_session(host)
     window._toggle_split_view()
-    app.processEvents()
-    assert host.split_pane is not None
     selector = host.split_pane.source_selector
     assert selector.count() == 2
     selector.setCurrentIndex(1)
     selector.activated.emit(1)
     app.processEvents()
-
-    split = host.split_canvas
-    assert split is not None
-    _wait_renders(app, split)
-    assert host.split_source_session is source
-    assert split._doc is source.engine.document
-    assert split._doc is not host.engine.document
-    assert not split.annotations_editable
-    assert split.tool_mode.value == "browse"
-    assert host.split_pane.mode_badge.text() == "Read-only comparison"
-
-    split.set_page(1)
-    assert host.canvas.current_page == 0
-    window._activate_font_inspector()
-    assert host.canvas.tool_mode.value == "font_inspect"
-    assert split.tool_mode.value == "font_inspect"
-    split.fontInspectionRequested.emit(0, fitz.Point(80, 90))
-    app.processEvents()
-    assert window.context_panel._font_inspection is not None
-    assert str(window.context_panel._font_inspection["text"]).startswith(
-        "Revision content"
-    )
+    pair = window.workspace._pair
+    assert pair is not None
+    assert source.canvas.annotations_editable
+    pair.activate(source)
+    assert window.engine is source.engine
+    assert window.workspace.canvas is source.canvas
     window._activate_annotation_tool("rect")
-    assert host.canvas.tool_mode.value == "rect"
-    assert split.tool_mode.value == "browse"
-
+    assert source.canvas.tool_mode.value == "rect"
+    assert host.canvas.tool_mode.value != "rect"
     window.close_document(source)
     app.processEvents()
-    _wait_renders(app, split)
-    assert host.split_source_session is None
-    assert split._doc is host.engine.document
-    assert split.annotations_editable
-    assert host.split_pane.mode_badge.text() == "Same document"
+    assert window.workspace._pair is None
+    assert not host.has_split
+    assert window.workspace.current_session() is host
     window.close()
 
 

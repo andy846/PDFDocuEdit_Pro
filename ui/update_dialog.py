@@ -146,6 +146,12 @@ class UpdateDialog(ResponsiveDialog):
             request_restart(self.root)
             if self.viewer.close():
                 self.viewer._update_restart = True
+            elif getattr(getattr(self.viewer, "document_windows", None), "pending_exit", False):
+                # All windows approved exit; closeEvent is waiting for safe cleanup.
+                # Keep the supervisor request until the final window closes.
+                self.viewer._update_restart = True
+                self.action.setEnabled(False)
+                self.status.setText("Finishing background tasks before restarting…")
             else:
                 (self.root / "restart.json").unlink(missing_ok=True)
                 self.show()

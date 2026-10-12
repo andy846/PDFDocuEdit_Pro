@@ -114,6 +114,8 @@ class DocumentSession(QObject):
         self.engine = PdfEngine(on_commit=self.undo_stack.push_bytes)
         self.form_draft = None
         self.form_mode_active = False
+        self.window_owner = parent
+        self.editable_split = None
         self.display_path: Path | None = None
         self.page = 0
         self.split_orientation = "horizontal"
@@ -288,7 +290,7 @@ class DocumentSession(QObject):
 
     @property
     def has_split(self) -> bool:
-        return self.split_canvas is not None
+        return self.split_canvas is not None or self.editable_split is not None
 
     # --- chrome ----------------------------------------------------------
     @property

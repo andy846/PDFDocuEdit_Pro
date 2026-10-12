@@ -9,6 +9,7 @@ from pathlib import Path
 from PyQt6.QtCore import (
     QEvent,
     QObject,
+    QSignalBlocker,
     QSize,
     Qt,
     QTimer,
@@ -354,6 +355,8 @@ class DocumentWorkspace(QFrame):
     tabCloseAllRequested = pyqtSignal()
     tabChanged = pyqtSignal(object)  # DocumentSession
     toolTabChanged = pyqtSignal(object)  # QWidget or None, independent of PDF sessions
+    splitWithRequested = pyqtSignal(object, object)
+    moveWindowRequested = pyqtSignal(object, object)
     toolTabCloseRequested = pyqtSignal(object)
 
     def __init__(self, recent_files: list[str] | None = None, animations_enabled: bool = True, parent=None, recent_info: dict | None = None):
@@ -362,6 +365,9 @@ class DocumentWorkspace(QFrame):
         self._animations_enabled = animations_enabled
         self._sessions: dict[int, DocumentSession] = {}
         self._tool_tabs = {}
+        self._tab_pages = {}
+        self._pair = None
+        self.window_targets = lambda: []
         # The tab close buttons are Python subclasses (TabCloseButton). The
         # C++ QTabBar owns the underlying QToolButton, but nothing else keeps
         # the Python wrapper alive — without this reference the wrapper gets
@@ -425,7 +431,7 @@ class DocumentWorkspace(QFrame):
     def _reindex_tabs(self):
         sessions = list(self._sessions.values())
         self._sessions = {index: session for index in range(self._tabs.count())
-                          for session in sessions if self._tabs.widget(index) is session.tab_widget}
+                          for session in sessions if self._tabs.widget(index) is self._tab_pages.get(session, session.tab_widget)}
         self._close_buttons = {index: button for index in range(self._tabs.count())
                                if isinstance(button := self._tabs.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide), TabCloseButton)}
 
@@ -468,6 +474,7 @@ class DocumentWorkspace(QFrame):
         self._update_tab_navigation()
 
     def create_tab(self, session: DocumentSession) -> None:
+        self._tab_pages[session] = session.tab_widget
         index = self._tabs.addTab(session.tab_widget, session.tab_title)
         close_button = TabCloseButton()
         close_button.set_animations_enabled(self._animations_enabled)
@@ -486,7 +493,9 @@ class DocumentWorkspace(QFrame):
         self._on_current_changed(index)
 
     def close_tab(self, session: DocumentSession) -> None:
-        index = self._tabs.indexOf(session.tab_widget)
+        if self._pair is not None and session in self._pair.sessions:
+            self.end_pair()
+        index = self._tabs.indexOf(self._tab_pages.get(session, session.tab_widget))
         if index < 0:
             return
         self._sessions = {i: candidate for i, candidate in self._sessions.items() if candidate is not session}
@@ -498,6 +507,7 @@ class DocumentWorkspace(QFrame):
             bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
             button.deleteLater()
         self._tabs.removeTab(index)
+        self._tab_pages.pop(session, None)
         self._reindex_tabs()
         self._on_current_changed(self._tabs.currentIndex())
         if not self._tabs.count():
@@ -514,15 +524,32 @@ class DocumentWorkspace(QFrame):
         return len(self._sessions)
 
     def current_session(self) -> DocumentSession | None:
-        return self.session_at(self._tabs.currentIndex())
+        current = self.session_at(self._tabs.currentIndex())
+        if self._pair is not None and current in self._pair.sessions:
+            return self._pair.active
+        return current
 
     def set_current_session(self, session: DocumentSession) -> None:
+        if self._pair is not None and session in self._pair.sessions:
+            self._pair.active = session
+            self._pair.refresh_headers()
+            host = self._pair.sessions[0]
+            for index, candidate in self._sessions.items():
+                if candidate is host:
+                    blocker = QSignalBlocker(self._tabs)
+                    self._tabs.setCurrentIndex(index)
+                    del blocker
+                    self.toolTabChanged.emit(None)
+                    self.tabChanged.emit(session)
+                    return
         for index, candidate in self._sessions.items():
             if candidate is session:
                 self._tabs.setCurrentIndex(index)
                 return
 
     def update_tab_title(self, session: DocumentSession) -> None:
+        if self._pair is not None:
+            self._pair.refresh_headers()
         for index, candidate in self._sessions.items():
             if candidate is session:
                 self._tabs.setTabText(index, session.tab_title)
@@ -602,6 +629,23 @@ class DocumentWorkspace(QFrame):
                 menu.exec(bar.mapToGlobal(position))
             return
         menu = QMenu(self)
+        split = menu.addMenu("Split with…")
+        candidates = [s for s in self._sessions.values() if s is not session and s.engine.is_loaded()]
+        names = [s.document_name for s in candidates]
+        for other in candidates:
+            label = other.document_name if names.count(other.document_name) == 1 else str(other.display_path or other.engine.original_path)
+            action = split.addAction(label.replace("&", "&&"))
+            action.triggered.connect(lambda checked=False, other=other: self.splitWithRequested.emit(session, other))
+        split.setEnabled(session.engine.is_loaded() and bool(candidates))
+        if self._pair is not None and session in self._pair.sessions:
+            menu.addAction("Close Split View", self.end_pair)
+        menu.addAction("Move to New Window", lambda: self.moveWindowRequested.emit(session, None))
+        targets = self.window_targets()
+        if targets:
+            move = menu.addMenu("Move to Window…")
+            for label, target in targets:
+                move.addAction(label.replace("&", "&&"), lambda checked=False, target=target: self.moveWindowRequested.emit(session, target))
+        menu.addSeparator()
         close = menu.addAction("Close Tab")
         close.triggered.connect(lambda: self.tabCloseRequested.emit(session))
         close_others = menu.addAction("Close Other Tabs")
@@ -679,7 +723,85 @@ class DocumentWorkspace(QFrame):
         self.toolTabChanged.emit(widget if widget in self._tool_tabs else None)
         session = self.session_at(index)
         if session is not None:
-            self.tabChanged.emit(session)
+            if self._pair is not None and session in self._pair.sessions:
+                self.set_current_session(session)
+            else:
+                self.tabChanged.emit(session)
+
+    def _replace_page(self, index, widget):
+        blocker = QSignalBlocker(self._tabs)
+        bar = self._tabs.tabBar()
+        text = self._tabs.tabText(index)
+        tip = self._tabs.tabToolTip(index)
+        button = bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+        if button:
+            button.removeEventFilter(self)
+            bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
+        button = TabCloseButton()
+        button.set_animations_enabled(self._animations_enabled)
+        button.installEventFilter(self)
+        self._close_buttons[index] = button
+        current = self._tabs.currentIndex()
+        self._tabs.removeTab(index)
+        self._tabs.insertTab(index, widget, text)
+        self._tabs.setTabToolTip(index, tip)
+        if button:
+            bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, button)
+            button.show()
+        self._tabs.setCurrentIndex(current)
+        del blocker
+
+    def pair_sessions(self, first, second):
+        if first is second or first not in self._sessions.values() or second not in self._sessions.values():
+            return False
+        self.end_pair()
+        for session in (first, second):
+            session.set_split(False)
+        indices = {s: next(i for i, v in self._sessions.items() if v is s) for s in (first, second)}
+        for session, index in indices.items():
+            placeholder = QWidget()
+            self._replace_page(index, placeholder)
+            self._tab_pages[session] = placeholder
+        from .editable_split import EditableSplit
+        pair = EditableSplit(self, first, second)
+        self._pair = pair
+        self._replace_page(indices[first], pair)
+        self._tab_pages[first] = pair
+        self._reindex_tabs()
+        self.set_current_session(first)
+        return True
+
+    def end_pair(self):
+        pair = self._pair
+        if pair is None:
+            return
+        active = pair.active
+        indices = {s: next(i for i, v in self._sessions.items() if v is s) for s in pair.sessions}
+        self._pair = None
+        pair.release()
+        for session, index in indices.items():
+            old = self._tab_pages[session]
+            self._replace_page(index, session.tab_widget)
+            self._tab_pages[session] = session.tab_widget
+            if old is not pair:
+                old.deleteLater()
+        self._reindex_tabs()
+        self.set_current_session(active)
+        self.tabChanged.emit(active)
+
+    def take_session(self, session):
+        """Remove presentation only: never close the engine or clear undo."""
+        index = next((i for i, s in self._sessions.items() if s is session), -1)
+        if index < 0:
+            raise ValueError("Document is not in this workspace")
+        self.close_tab(session)
+        session.tab_widget.setParent(None)
+        return index
+
+    def attach_session(self, session, index=None):
+        self.create_tab(session)
+        if index is not None:
+            self._tabs.tabBar().moveTab(self._tabs.count() - 1, min(index, self._tabs.count() - 1))
 
     def activate_next(self) -> None:
         count = self._tabs.count()

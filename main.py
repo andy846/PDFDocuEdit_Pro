@@ -334,8 +334,10 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
 
 def route_open_files(viewer, paths):
     """Finder projects use the existing host; PDF requests retain their queue."""
+    manager = getattr(viewer, "document_windows", None)
+    pdf_viewer = manager.active_window() if manager else viewer
     if sys.platform != "darwin":
-        viewer.queue_open_files(paths)
+        pdf_viewer.queue_open_files(paths)
         return
     for path in paths:
         if Path(path).suffix.casefold() in {".pdcx", ".pdflow"}:
@@ -345,7 +347,7 @@ def route_open_files(viewer, paths):
                 if host.open_project(path):
                     controller.request_mode("designer")
         else:
-            viewer.queue_open_files([path])
+            pdf_viewer.queue_open_files([path])
 
 
 def main() -> int:

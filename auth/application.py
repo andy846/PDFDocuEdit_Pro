@@ -90,6 +90,9 @@ class PrivateApplication(QObject):
         self.ready = True
         if self.viewer and not self.locked:
             self.viewer.setEnabled(True)
+            manager = getattr(self.viewer, "document_windows", None)
+            if manager:
+                manager.set_locked(False)
         self._drain_paths()
 
     def accept_paths(self, paths):
@@ -143,6 +146,9 @@ class PrivateApplication(QObject):
                 update.setToolTip("Internal private build: public updates are disabled.")
         self._refresh_account_action()
         self.viewer.setEnabled(self.ready)
+        manager = getattr(self.viewer, "document_windows", None)
+        if manager:
+            manager.set_locked(not self.ready)
         self._present(self.viewer)
         self._drain_paths()
 
@@ -167,6 +173,9 @@ class PrivateApplication(QObject):
         self.locked = True
         if self.viewer:
             self.viewer.setEnabled(False)
+            manager = getattr(self.viewer, "document_windows", None)
+            if manager:
+                manager.set_locked(True)
             self.viewer._queued_open_paths.clear()
             self.viewer._pending_searches.clear()
             self.viewer._cancel_tasks()
@@ -206,9 +215,13 @@ class PrivateApplication(QObject):
         # The modal recovery screen keeps the underlying workspace inaccessible.
         # Save-only serializers may run in-process after secure approval is gone.
         guard.recovery_saving = True
-        self.viewer.setEnabled(True)
+        manager = getattr(self.viewer, "document_windows", None)
+        windows = manager.live_windows() if manager else [self.viewer]
+        for window in windows:
+            window.setEnabled(True)
         try:
-            self.viewer.save_all_files()
+            for window in windows:
+                window.save_all_files()
             host = getattr(getattr(self.viewer, "_mode_controller", None), "host", None)
             if host:
                 for project in list(host.projects):
@@ -216,7 +229,8 @@ class PrivateApplication(QObject):
                         break
         finally:
             guard.recovery_saving = False
-            self.viewer.setEnabled(False)
+            for window in windows:
+                window.setEnabled(False)
 
     def logout(self):
         self.closing_for = "logout"
@@ -233,6 +247,9 @@ class PrivateApplication(QObject):
                 guard.recovery_saving = False
                 if self.locked and self.viewer and self.viewer.isVisible():
                     self.viewer.setEnabled(False)
+                    manager = getattr(self.viewer, "document_windows", None)
+                    if manager:
+                        manager.set_locked(True)
             # closeEvent may arrange asynchronous worker cleanup; visibility is
             # checked after the event has completed, never inside the event filter.
             QTimer.singleShot(0, self._closed)
@@ -253,7 +270,9 @@ class PrivateApplication(QObject):
         }:
             owner = watched
             while owner is not None:
-                if owner is self.viewer:
+                manager = getattr(self.viewer, "document_windows", None)
+                windows = manager.live_windows() if manager else [self.viewer]
+                if owner in windows:
                     return True
                 owner = owner.parent()
         if watched is self.viewer and event.type() == QEvent.Type.Close:

@@ -295,7 +295,7 @@ def _perform_document_analysis(
 
 
 class PDFViewer(QMainWindow):
-    def __init__(self, initial_path: str | None = None):
+    def __init__(self, initial_path: str | None = None, *, pdf_only=False, document_windows=None):
         self._startup_trace = PerformanceTrace("startup")
         super().__init__()
         self._integrated_chrome = os.name == "nt"
@@ -304,6 +304,9 @@ class PDFViewer(QMainWindow):
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         with self._startup_trace.span("settings"):
             self.settings = SettingsManager()
+        self._pdf_only_window = pdf_only
+        self._window_closed = False
+        self._window_exit_approved = False
         self._sessions: list[DocumentSession] = []
         self._session: DocumentSession | None = None
         self._idle_engine = PdfEngine()
@@ -326,6 +329,9 @@ class PDFViewer(QMainWindow):
             self._restore_window_state()
         with self._startup_trace.span("theme"):
             self._apply_theme(self.settings.get_theme())
+        from ui.document_windows import DocumentWindows
+        self.document_windows = document_windows or DocumentWindows(self)
+        self.document_windows.register(self)
         if initial_path:
             self.queue_open_files([initial_path])
 
@@ -419,7 +425,7 @@ class PDFViewer(QMainWindow):
         self._build_command_registry()
         self._install_shortcuts()
         from composition.enabled import is_enabled
-        if is_enabled():
+        if is_enabled() and not self._pdf_only_window:
             from ui.workspace_mode_controller import WorkspaceModeController
             self._mode_controller = WorkspaceModeController(self, layout)
         self._set_motion_enabled(bool(self.settings.get("animations_enabled", True)))
@@ -867,6 +873,8 @@ class PDFViewer(QMainWindow):
         return session
 
     def _wire_session(self, session: DocumentSession) -> None:
+        from ui.editable_split import SessionOwnerRoute
+        self = SessionOwnerRoute(session)
         self._wire_canvas(session, session.canvas)
         self._wire_navigation(session)
         session.splitSourceRequested.connect(
@@ -880,6 +888,8 @@ class PDFViewer(QMainWindow):
         )
 
     def _wire_canvas(self, session: DocumentSession, canvas) -> None:
+        from ui.editable_split import SessionOwnerRoute
+        self = SessionOwnerRoute(session)
         canvas.pageChanged.connect(
             lambda page, s=session, c=canvas: self._canvas_page_changed(s, c, page)
         )
@@ -1070,6 +1080,8 @@ class PDFViewer(QMainWindow):
                 canvas.invalidate_pages(pages)
 
     def _wire_navigation(self, session: DocumentSession) -> None:
+        from ui.editable_split import SessionOwnerRoute
+        self = SessionOwnerRoute(session)
         nav = session.nav_panel
         nav.thumbnails.pageSelected.connect(
             lambda page, s=session: self._session_goto(s, page)
@@ -1139,6 +1151,7 @@ class PDFViewer(QMainWindow):
 
     def _session_page_changed(self, session: DocumentSession, page: int) -> None:
         if session is not self._session:
+            session.page = page
             return
         page_changed = session.page != page
         session.page = page
@@ -1378,6 +1391,17 @@ class PDFViewer(QMainWindow):
             self._queued_open_finished()
             return
         source = Path(os.path.abspath(os.path.expanduser(path)))
+        existing = self.document_windows.find_path(source)
+        if existing is not None and existing[1] is not target:
+            window, opened = existing
+            if target is not None and not target.engine.is_loaded():
+                callback = getattr(target, "_after_open", None)
+                self.close_document(target)
+                if callback and window is self:
+                    callback(opened)
+            self.document_windows.focus(window, opened)
+            self._queued_open_finished()
+            return
         current = target or self._session
         session = (
             target if target is not None else
@@ -1484,12 +1508,24 @@ class PDFViewer(QMainWindow):
         else:
             self._open_queue_scheduled = False
 
+    def _split_documents(self, first, second):
+        if first not in self._sessions or second not in self._sessions:
+            return False
+        if not first.engine.is_loaded() or not second.engine.is_loaded():
+            return False
+        self.workspace.pair_sessions(first, second)
+        self.info_bar.show_message("Both documents are editable. Click a pane to choose the active document.", "success")
+        return True
+
     def _toggle_split_view(self) -> None:
         session = self._session
         if not session or not session.engine.is_loaded():
             self.info_bar.show_message(
                 "Open a PDF before splitting the view.", "warning"
             )
+            return
+        if session.editable_split is not None:
+            self.workspace.end_pair()
             return
         session.set_split(not session.has_split)
         if session.split_canvas is not None:
@@ -1513,6 +1549,9 @@ class PDFViewer(QMainWindow):
         )
 
     def _close_split_view(self, session: DocumentSession) -> None:
+        if session.editable_split is not None:
+            self.workspace.end_pair()
+            return
         if not session.has_split:
             return
         session.set_split(False)
@@ -1527,6 +1566,9 @@ class PDFViewer(QMainWindow):
         source: DocumentSession | None,
     ) -> None:
         if host not in self._sessions or not host.has_split:
+            return
+        if source is not None and source is not host and source in self._sessions:
+            self._split_documents(host, source)
             return
         if source is host or source not in self._sessions:
             source = None
@@ -1597,32 +1639,42 @@ class PDFViewer(QMainWindow):
         value = "vertical" if orientation == "vertical" else "horizontal"
         self.settings.set("split_orientation", value)
         if self._session is not None:
+            pair = self._session.editable_split
+            if pair is not None:
+                pair.set_orientation(value)
             self._session.set_split_orientation(value)
             self._sync_split_actions(self._session)
 
     def _set_split_sync_page(self, checked: bool) -> None:
         self.settings.set("split_sync_page", bool(checked))
         if self._session is not None:
+            if self._session.editable_split is not None:
+                self._session.editable_split.sync_page = bool(checked)
             self._session.set_split_sync(page=bool(checked))
             self._sync_split_actions(self._session)
 
     def _set_split_sync_zoom(self, checked: bool) -> None:
         self.settings.set("split_sync_zoom", bool(checked))
         if self._session is not None:
+            if self._session.editable_split is not None:
+                self._session.editable_split.sync_zoom = bool(checked)
             self._session.set_split_sync(zoom=bool(checked))
             self._sync_split_actions(self._session)
 
     def _reset_split_sizes(self) -> None:
         if self._session is not None:
+            if self._session.editable_split is not None:
+                self._session.editable_split.reset_sizes()
             self._session.reset_split_sizes()
 
     def _sync_split_actions(self, session: DocumentSession) -> None:
         for action in self._split_orientation_actions:
             action.setChecked(action.data() == session.split_orientation)
-        self.split_sync_page_action.setChecked(session.split_sync_page)
-        self.split_sync_zoom_action.setChecked(session.split_sync_zoom)
+        pair = session.editable_split
+        self.split_sync_page_action.setChecked(pair.sync_page if pair else session.split_sync_page)
+        self.split_sync_zoom_action.setChecked(pair.sync_zoom if pair else session.split_sync_zoom)
         self.split_reset_action.setEnabled(session.has_split)
-        self.split_open_document_action.setEnabled(session.has_split)
+        self.split_open_document_action.setEnabled(session.has_split and pair is None)
 
     # --- Theme and window state -----------------------------------------
     def apply_theme(self, value: str) -> None:
@@ -2518,6 +2570,11 @@ class PDFViewer(QMainWindow):
             self._pending_welcome_tool = None
 
     def _open_composition(self):
+        if self._pdf_only_window:
+            primary = self.document_windows.primary
+            self.document_windows.focus(primary)
+            primary._open_composition()
+            return
         from composition.enabled import is_enabled
         if not is_enabled():
             return
@@ -2858,6 +2915,8 @@ class PDFViewer(QMainWindow):
             # session pointing at a tab that is not the visible one.
             self._session = previous
             return
+        if target.editable_split is not None:
+            self.workspace.end_pair()
         for host in self._sessions:
             if host is not target and host.split_source_session is target:
                 host.set_split_source(None)
@@ -2947,6 +3006,7 @@ class PDFViewer(QMainWindow):
         )
         self.split_open_document_action.setEnabled(
             available and self._session is not None and self._session.has_split
+            and self._session.editable_split is None
         )
         if not available:
             self.split_action.setChecked(False)
@@ -7032,6 +7092,9 @@ class PDFViewer(QMainWindow):
             self._set_default_app()
 
     def _check_for_updates(self) -> None:
+        if self._pdf_only_window:
+            self.document_windows.primary._check_for_updates()
+            return
         from auth.config import configuration
         from updates.target import build_target
         if configuration() is not None and build_target().channel != "private":
@@ -7117,6 +7180,10 @@ class PDFViewer(QMainWindow):
             self.open_in_new_tab(extra)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        manager = getattr(self, "document_windows", None)
+        if manager and self is manager.primary and not manager.prepare_application_close():
+            event.ignore()
+            return
         controller = getattr(self, "_mode_controller", None)
         merge_only = getattr(self, "_merge_controller", None) if controller is None else None
         if controller:
@@ -7127,6 +7194,7 @@ class PDFViewer(QMainWindow):
             if not controller.prepare_exit():
                 event.ignore()
                 return
+            self.workspace.end_pair()
             if not controller.shutdown_workspaces():
                 event.ignore()
                 QTimer.singleShot(150, self.close)
@@ -7156,13 +7224,14 @@ class PDFViewer(QMainWindow):
                 QTimer.singleShot(150, self.close)
                 return
         self._closing = True
-        for session in ([] if controller or merge_only else list(self._sessions)):
+        for session in ([] if controller or merge_only or self._window_exit_approved else list(self._sessions)):
             self._session = session
             if not self._confirm_discard_changes():
                 event.ignore()
                 self._closing = False
                 self._session = self.workspace.current_session()
                 return
+        self.workspace.end_pair()
         pdf_operations = list(getattr(self, "_pdf_operation_dialogs", []))
         for operation in pdf_operations:
             operation.reject()
@@ -7171,14 +7240,15 @@ class PDFViewer(QMainWindow):
             event.ignore()
             QTimer.singleShot(150, self.close)
             return
-        self.settings.update(
-            {
-                "window_size": [self.width(), self.height()],
-                "window_position": [self.x(), self.y()],
-                "window_maximized": self.isMaximized(),
-                "left_panel_collapsed": False if getattr(self, "_auto_collapsed_sidebar", False) else self.side_panel.is_collapsed(),
-            }
-        )
+        if not self._pdf_only_window:
+            self.settings.update(
+                {
+                    "window_size": [self.width(), self.height()],
+                    "window_position": [self.x(), self.y()],
+                    "window_maximized": self.isMaximized(),
+                    "left_panel_collapsed": False if getattr(self, "_auto_collapsed_sidebar", False) else self.side_panel.is_collapsed(),
+                }
+            )
         for task in list(self._tasks):
             task.cancel()
         self._pending_searches.clear()
@@ -7188,4 +7258,7 @@ class PDFViewer(QMainWindow):
             return
         for session in ([] if controller else list(self._sessions)):
             session.close()
+        self._window_closed = True
+        if manager:
+            manager.window_closed(self)
         event.accept()
