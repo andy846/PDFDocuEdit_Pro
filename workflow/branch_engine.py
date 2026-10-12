@@ -55,7 +55,48 @@ def branch_signature(spec,common,branch_id):
     return digest({"common":common,"branch":branch_id,"nodes":[{"id":n.id,"kind":n.kind,"params":n.params} for n in path],"files":files})
 
 
+def validate_branch_run(run):
+    """Serialized branch records are untrusted, including prior checked runs."""
+    from core.output_safety import validate_identifier
+    try:
+        if not isinstance(run, dict):
+            raise ValueError("Invalid branch run.")
+        validate_identifier(run.get("id"), label="branch run")
+        validate_identifier(run.get("batch_id"), label="batch")
+        jobs = run.get("jobs")
+        if not isinstance(jobs, list) or len(jobs) > 10000:
+            raise ValueError("Invalid branch job list.")
+        seen = set()
+        for entry in jobs:
+            identity = validate_identifier(entry.get("id"), limit=64)
+            if identity in seen or type(entry.get("approved")) is not bool:
+                raise ValueError("Invalid or duplicate branch job identity/approval.")
+            seen.add(identity)
+            validate_identifier(entry.get("source_id"), label="source")
+            validate_identifier(entry.get("branch_id"), label="branch")
+            if entry.get("batch"):
+                batch = BatchRun.from_dict(entry["batch"])
+                if batch.batch_id != run["batch_id"] or len(batch.jobs) != 1 or batch.jobs[0].id != identity:
+                    raise ValueError("Branch and batch job identities do not match.")
+        return run
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise CompositionError(str(exc)) from exc
+
+
+def production_root(output, run, entry=None):
+    from core.output_safety import contained_path
+    validate_branch_run(run)
+    parts = ["batch-" + run["batch_id"]]
+    if entry is not None:
+        parts.append(entry["id"])
+    try:
+        return contained_path(output, *parts)
+    except ValueError as exc:
+        raise CompositionError(str(exc)) from exc
+
+
 def _location(directory,run):
+    validate_branch_run(run)
     root=Path(directory).resolve()/"branch-runs"
     location=Path(run.get("directory","")).resolve()
     if location.parent!=root or not location.is_dir():
@@ -138,6 +179,8 @@ def _findings(current,folder,plan):
 
 
 def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,is_cancelled=None,on_state=None):
+    if previous:
+        validate_branch_run(previous)
     plan=spec.execution_plan(target_id)
     source_node=spec.node("for_each")
     items=source_node.params.get("items",[])
@@ -396,6 +439,7 @@ def _batch_unique(plan,sources,root,cancelled):
 
 
 def approve_routes(spec,run,identities,*,acknowledge=False):
+    validate_branch_run(run)
     _check_current(spec,run)
     if run.get("target_id") or run["status"]=="Cancelled":
         raise CompositionError("Run Check & Preview for the entire graph before approving production.")
@@ -427,7 +471,7 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
         raise CompositionError("Approve at least one checked branch before production.")
     if not output:
         raise CompositionError("Choose a production output folder.")
-    root=Path(output).resolve()/("batch-"+run["batch_id"])
+    root=production_root(output,run)
     root.mkdir(parents=True,exist_ok=True)
     run["report_dir"]=str(root)
     run["status"]="Running"
@@ -441,7 +485,7 @@ def execute_routes(spec,run,directory,output,*,progress=None,is_cancelled=None,o
                 continue
             _check_current(spec,run)
             batch=BatchRun.from_dict(entry["batch"])
-            batch=execute_batch(WorkflowSpec_from(entry["spec"]),batch,root/entry["id"],
+            batch=execute_batch(WorkflowSpec_from(entry["spec"]),batch,production_root(output,run,entry),
                                 progress=progress,is_cancelled=is_cancelled,on_state=on_state,_direct_root=True)
             job=batch.jobs[0]
             entry.update(batch=batch.to_dict(),approved=False,status=job.status,error=job.error)

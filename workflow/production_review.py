@@ -41,7 +41,7 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
         return {"contexts": [batch_context(spec, job, output / ("batch-" + batch.batch_id)) for job in batch.jobs
                              if job.approved and job.status == "Ready"]}
     if kind == "branch":
-        from .branch_engine import _check_current, _location
+        from .branch_engine import _check_current, _location, production_root
         run = request["run"]
         _location(request["directory"], run)
         _check_current(spec, run)
@@ -51,7 +51,7 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
                 child = WorkflowSpec.from_dict(entry["spec"])
                 batch = BatchRun.from_dict(entry["batch"])
                 contexts.append(batch_context(child, batch.jobs[0],
-                    output / ("batch-" + run["batch_id"]) / entry["id"], owner_spec=spec))
+                    production_root(output, run, entry), owner_spec=spec))
         return {"contexts": contexts}
     if kind == "pdf":
         from .engine import context_fingerprint
@@ -84,14 +84,14 @@ def validate_receipts(request, *, is_cancelled=None):
         if set(request.get("approved", expected)) != set(expected):
             raise CompositionError("The approved job selection changed. Review every selected job again.")
     elif request["operation"] == "branch_run":
-        from .branch_engine import _check_current
+        from .branch_engine import _check_current, production_root
         run = request["run"]
         _check_current(spec, run)
         for entry in run["jobs"]:
             if entry["approved"] and entry["status"] == "Ready":
                 child = WorkflowSpec.from_dict(entry["spec"])
                 job = BatchRun.from_dict(entry["batch"]).jobs[0]
-                expected[job.id] = (_signature(child, job)[0], output / ("batch-" + run["batch_id"]) / entry["id"])
+                expected[job.id] = (_signature(child, job)[0], production_root(output, run, entry))
     if expected and ({r["context"].get("identity") for r in receipts} != set(expected) or len(receipts) != len(expected)):
         raise CompositionError("The approved job selection changed. Review every selected job again.")
     if request["operation"] in ("batch_run", "branch_run") and not expected:

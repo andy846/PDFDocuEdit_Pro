@@ -103,6 +103,11 @@ class BatchJob:
         return resolve_output_name(self.output_name, self.variable_context)
 
     def validate(self):
+        from core.output_safety import validate_identifier
+        try:
+            validate_identifier(self.id, limit=64, label="batch item")
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
         if not isinstance(self.id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",self.id):
             raise CompositionError("Invalid batch item identity.")
         if not isinstance(self.name,str) or not 1<=len(self.name)<=200:
@@ -162,8 +167,11 @@ class BatchRun:
             if len(raw.get("jobs",[]))>10000:
                 raise CompositionError("Use at most 10,000 batch items.")
             run=cls(**{**raw,"jobs":[BatchJob(**j) for j in raw.get("jobs",[])]})
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",run.batch_id):
-                raise CompositionError("Invalid batch identity.")
+            from core.output_safety import validate_identifier
+            try:
+                validate_identifier(run.batch_id, label="batch")
+            except ValueError as exc:
+                raise CompositionError(str(exc)) from exc
             ids=set()
             for job in run.jobs:
                 job.validate()
