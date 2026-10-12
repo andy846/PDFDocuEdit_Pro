@@ -477,7 +477,7 @@ class SidePanel(QFrame):
             "Utilities",
             (
                 ToolItem("fill_form", "Fill PDF form", "file-text"),
-                ToolItem("compare_pdf", "Compare PDFs", "files"),
+                ToolItem("compare_pdf", "Compare PDFs", "files", "compare_pdf.svg"),
                 ToolItem("find_file", "Find and open PDF", "search", "search_pdf.png"),
                 ToolItem(
                     "page_report",
@@ -500,6 +500,7 @@ class SidePanel(QFrame):
                     "pdf_production",
                     "PDF Production Tools",
                     "wrench",
+                    "pdf_production.svg",
                     description="Font Preflight / Safe Embed Fonts, Flatten PDF, PDF Repair / Production Normalise: analyze and save a new copy.",
                 ),
                 ToolItem("deep_search", "Deep search", "search", "deep_search.png"),
