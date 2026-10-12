@@ -36,6 +36,19 @@ supports Windows x64, with an account-enabled Apple Silicon Mac testing build (n
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
+## PDF tabs and separate windows
+
+* Right-click a PDF tab → Split with… to edit two open documents side by side.
+  Click either pane to route tools, Save, Print and Undo/Redo to that PDF.
+* Swap sides, switch to stacked layout, or close the split without closing PDFs.
+  Both tabs keep their own content, page, zoom and undo history.
+* Move to New Window / Move to Window… preserve live edits. Drag outside a window
+  to detach a PDF tab; drop onto another tab strip to move it there. Escape cancels.
+* Busy PDF tasks must finish before moving. Separate windows provide PDF editing;
+  Designer and tool/project tabs stay in their original window.
+* Main-window exit, sign-out and updates include all windows' unsaved documents.
+  Closing a separate window only closes its documents. Account lock applies to all.
+
 ## New in v3.0.5: PDF Workspace Tool Navigation
 
 * Six categories: Search & Inspect, Pages & Documents, Annotate & Edit, Convert, Production & Data, Security. Existing actions and commands remain available.

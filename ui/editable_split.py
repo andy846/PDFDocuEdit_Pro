@@ -3,7 +3,30 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QSplitter, QToolButton, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QSplitter,
+    QToolButton,
+    QVBoxLayout,
+)
+
+from .icons import icon
+
+
+class PaneTitleButton(QToolButton):
+    def set_title(self, title):
+        self.full_title = title
+        self.setText(
+            self.fontMetrics().elidedText(title, Qt.TextElideMode.ElideMiddle, max(16, self.width() - 20))
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.set_title(getattr(self, "full_title", ""))
 
 
 class EditableSplit(QFrame):
@@ -20,14 +43,19 @@ class EditableSplit(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         header = QHBoxLayout()
-        header.addWidget(QLabel("Split View · click either document to edit"), 1)
-        for text, tip, callback in (
-            ("⇄", "Swap documents", self.swap),
-            ("▥ / ▤", "Switch between side by side and stacked", self.toggle_orientation),
-            ("×", "Close split view; keep both documents open", workspace.end_pair),
+        label = QLabel("Split View")
+        label.setToolTip("Click either document to edit it")
+        header.addWidget(label, 1)
+        self.header_buttons = []
+        for name, tip, callback in (
+            ("arrow-left-right", "Swap documents", self.swap),
+            ("panels-top-bottom", "Switch between side by side and stacked", self.toggle_orientation),
+            ("x", "Close split view; keep both documents open", workspace.end_pair),
         ):
             button = QToolButton()
-            button.setText(text)
+            button.setIcon(icon(name))
+            button.setAutoRaise(True)
+            self.header_buttons.append((button, name))
             button.setToolTip(tip)
             button.setAccessibleName(tip)
             button.clicked.connect(callback)
@@ -45,11 +73,15 @@ class EditableSplit(QFrame):
             frame.setObjectName("editablePdfPane")
             pane = QVBoxLayout(frame)
             pane.setContentsMargins(2, 2, 2, 2)
-            title = QToolButton()
+            title = PaneTitleButton()
+            title.setMinimumWidth(0)
+            title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             title.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             title.clicked.connect(lambda checked=False, s=session: self.activate(s))
             pane.addWidget(title)
             pane.addWidget(session.tab_widget, 1)
+            # QTabWidget hides removed pages; reparenting alone does not show them.
+            session.tab_widget.show()
             self.frames[session] = frame
             self.labels[session] = title
             self.splitter.addWidget(frame)
@@ -81,8 +113,10 @@ class EditableSplit(QFrame):
         self.workspace.tabChanged.emit(session)
 
     def refresh_headers(self):
+        for button, name in self.header_buttons:
+            button.setIcon(icon(name))
         for session, title in self.labels.items():
-            title.setText(("● " if session is self.active else "○ ") + session.tab_title)
+            title.set_title(("● " if session is self.active else "○ ") + session.tab_title)
             title.setToolTip(str(session.display_path or session.engine.original_path or "Untitled"))
             title.setAccessibleName(f"Edit {session.document_name}")
             frame = self.frames[session]

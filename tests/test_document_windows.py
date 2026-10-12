@@ -32,7 +32,16 @@ def editor(tmp_path, monkeypatch, qt_application):
         qt_application.processEvents()
         time.sleep(0.01)
     window.close()
+    wait_closed(window)
     qt_application.processEvents()
+
+
+def wait_closed(window):
+    deadline = time.monotonic() + 10
+    while window.isVisible() and time.monotonic() < deadline:
+        QApplication.instance().processEvents()
+        time.sleep(0.01)
+    assert not window.isVisible()
 
 
 def documents(window, tmp_path, count=3):
@@ -52,6 +61,9 @@ def test_pair_focus_edit_and_undo_are_isolated(editor, tmp_path):
     editor.workspace.set_current_session(first)
     assert editor._split_documents(first, second)
     pair = editor.workspace._pair
+    QApplication.instance().processEvents()
+    assert first.tab_widget.isVisible() and second.tab_widget.isVisible()
+    assert first.canvas.isVisible() and second.canvas.isVisible()
     assert first.canvas.annotations_editable and second.canvas.annotations_editable
     assert first.canvas._doc is first.engine.document
     assert second.canvas._doc is second.engine.document
@@ -169,7 +181,8 @@ def test_close_secondary_does_not_close_main(editor, tmp_path):
     first, second, _ = documents(editor, tmp_path)
     assert editor.document_windows.move(second)
     detached = second.window_owner
-    assert detached.close()
+    detached.close()
+    wait_closed(detached)
     assert editor.isVisible()
     assert editor.engine.is_loaded()
     assert first in editor._sessions
@@ -214,3 +227,141 @@ def test_pair_sync_uses_each_document_limits(editor, tmp_path):
     assert second.canvas.current_page == 2
     assert second.page == 2
     assert second.canvas.zoom_ratio == 1.3
+
+
+def test_locked_secondary_cannot_move_and_unlock_restores(editor, tmp_path):
+    _, second, _ = documents(editor, tmp_path)
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    editor.document_windows.set_locked(True)
+    assert not child.isEnabled()
+    assert not editor.document_windows.move(second, editor)
+    editor.document_windows.set_locked(False)
+    assert child.isEnabled()
+    assert editor.document_windows.move(second, editor)
+
+
+def test_cancel_drag_keeps_session_in_original_window(editor, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QEvent, QPoint
+    from PyQt6.QtGui import QKeyEvent
+
+    from ui import document_windows as module
+
+    first, _, _ = documents(editor, tmp_path)
+    manager = editor.document_windows
+
+    class CancelDrag:
+        def __init__(self, parent):
+            pass
+
+        def setMimeData(self, mime):
+            pass
+
+        def exec(self, action):
+            event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+            QApplication.sendEvent(editor, event)
+            return Qt.DropAction.IgnoreAction
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(module, "QDrag", CancelDrag)
+    monkeypatch.setattr(
+        module.QCursor, "pos", lambda: editor.frameGeometry().bottomRight() + QPoint(100, 100)
+    )
+    manager.start_drag(first, editor.workspace._tabs.tabBar())
+    assert first.window_owner is editor
+    assert len(manager.live_windows()) == 1
+    assert manager._drag_session is None
+
+
+def test_drop_authenticated_live_tab_into_existing_window(editor, tmp_path):
+    from PyQt6.QtCore import QMimeData
+    from PyQt6.QtGui import QDropEvent
+
+    from ui.document_windows import TAB_MIME
+
+    first, second, _ = documents(editor, tmp_path)
+    manager = editor.document_windows
+    assert manager.move(second)
+    child = second.window_owner
+    manager._drag_session, manager._drag_token = first, "local-test-token"
+    mime = QMimeData()
+    mime.setData(TAB_MIME, b"local-test-token")
+    event = QDropEvent(
+        QPointF(2, 2),
+        Qt.DropAction.MoveAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert manager.eventFilter(child.workspace._tabs.tabBar(), event)
+    assert event.isAccepted()
+    assert first.window_owner is child
+    manager._drag_session = manager._drag_token = None
+
+
+def test_pair_with_designer_mode_keeps_documents_on_return(editor, tmp_path, monkeypatch):
+    from composition.designer.workspace import CompositionWindow
+    from ui.workspace_mode_controller import WorkspaceModeController
+
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda self: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda self: None)
+
+    # The normal primary window has the mode controller; secondary windows do not.
+    controller = WorkspaceModeController(editor, editor.centralWidget().layout())
+    editor._mode_controller = controller
+    first, second, _ = documents(editor, tmp_path)
+    editor._split_documents(first, second)
+    controller.request_mode("designer")
+    controller.request_mode("pdf")
+    QApplication.instance().processEvents()
+    assert editor.workspace._pair is not None
+    assert first.engine.is_loaded() and second.engine.is_loaded()
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    assert not hasattr(child, "_mode_controller")
+    editor.close()
+    wait_closed(editor)
+    assert not child.isVisible()
+
+
+def test_save_action_writes_only_active_pane_and_moved_document(editor, tmp_path):
+    first, second, _ = documents(editor, tmp_path)
+    editor._split_documents(first, second)
+    editor.workspace._pair.activate(second)
+    editor._snapshot_before("Rotate second PDF")
+    second.engine.rotate_page(0, 90)
+    editor.save_action.trigger()
+    with fitz.open(first.display_path) as original:
+        assert original[0].rotation == 0
+    with fitz.open(second.display_path) as saved:
+        assert saved[0].rotation == 90
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    child._snapshot_before("Rotate moved PDF")
+    second.engine.rotate_page(0, 90)
+    child.save_action.trigger()
+    with fitz.open(second.display_path) as saved:
+        assert saved[0].rotation == 180
+    with fitz.open(first.display_path) as original:
+        assert original[0].rotation == 0
+
+
+def test_no_new_documents_during_approved_exit(editor, tmp_path):
+    first, _, _ = documents(editor, tmp_path)
+    editor.document_windows.pending_exit = True
+    editor.queue_open_files([str(first.display_path)])
+    assert not editor._queued_open_paths
+    editor.document_windows.pending_exit = False
+
+
+def test_external_route_uses_last_active_pdf_window(editor, tmp_path, monkeypatch):
+    from main import route_open_files
+    _, second, _ = documents(editor, tmp_path)
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    requests = []
+    monkeypatch.setattr(child, "queue_open_files", lambda paths: requests.extend(paths))
+    route_open_files(editor, [str(tmp_path / "new.pdf")])
+    assert requests == [str(tmp_path / "new.pdf")]

@@ -100,6 +100,10 @@ class PrivateApplication(QObject):
         if self.startup_pending or self.exiting:
             return
         target = self.viewer if self.viewer and not self.locked else self.login
+        if target is self.viewer:
+            manager = getattr(self.viewer, "document_windows", None)
+            if manager:
+                target = manager.active_window()
         target.showNormal() if target.isMinimized() else target.show()
         target.raise_()
         target.activateWindow()

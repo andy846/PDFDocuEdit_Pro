@@ -126,3 +126,20 @@ def test_qt_startup_disables_editor_until_matching_acceptance(app, tmp_path, mon
     assert not list((tmp_path / "requests").glob("*.json"))
     viewer._update_requests_timer.stop()
     viewer.close()
+
+
+def test_all_windows_approved_cleanup_keeps_restart_request(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+    monkeypatch.setenv(TOKEN_ENV, "test-launch-token")
+    viewer = Viewer(False)
+    viewer.document_windows = SimpleNamespace(pending_exit=True)
+    dialog = UpdateDialog(viewer)
+    dialog.root = tmp_path
+    dialog.restart()
+    assert viewer._update_restart
+    assert read_json(tmp_path / "restart.json")["token"] == "test-launch-token"
+    assert "Finishing background tasks" in dialog.status.text()
+    viewer.allow_close = True
+    dialog.close()
+    viewer.close()

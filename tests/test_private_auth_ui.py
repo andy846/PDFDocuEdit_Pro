@@ -430,3 +430,18 @@ def test_startup_ready_ignores_deleted_paint_target(private, qt_application):
     sip.delete(target)
     private._painted()
     assert not ready and not private._startup_ready
+
+
+def test_forwarded_paths_activate_existing_pdf_window(private, qt_application, monkeypatch):
+    root, child = Window(), Window()
+    private.viewer = root
+    root.document_windows = NS(active_window=lambda: child)
+    activated = []
+    monkeypatch.setattr(root, "activateWindow", lambda: activated.append("main"))
+    monkeypatch.setattr(child, "activateWindow", lambda: activated.append("pdf"))
+    private.accept_paths(["incoming.pdf"])
+    assert activated == ["pdf"]
+    assert private.pending_paths == ["incoming.pdf"]
+    child.allow_close = True
+    child.close()
+    child.deleteLater()

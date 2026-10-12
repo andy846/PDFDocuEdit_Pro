@@ -306,6 +306,8 @@ class DocumentSession(QObject):
         self.nav_panel.set_animations_enabled(enabled)
 
     def refresh_icons(self) -> None:
+        if self.editable_split is not None:
+            self.editable_split.refresh_headers()
         self.canvas.update_theme()
         self.nav_panel.refresh_icons()
         if self.split_canvas is not None:

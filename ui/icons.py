@@ -44,6 +44,8 @@ _PATHS: dict[str, str] = {
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     "chevron-up": '<path d="m6 15 6-6 6 6"/>',
+    "arrow-left-right": '<path d="M8 3 4 7l4 4M4 7h16M16 13l4 4-4 4M20 17H4"/>',
+    "panels-top-bottom": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/>',
     "panel-left": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
     "panel-right": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',

@@ -28,6 +28,11 @@ class DocumentWindows(QObject):
 
     def register(self, window):
         self.windows.append(window)
+        window.workspace.move_reason = lambda session: (
+            self.busy_reason(window)
+            or ("Document access is currently locked." if not window.isEnabled() or self.pending_exit else "")
+            or ("Open a PDF before moving this tab." if not session.engine.is_loaded() else "")
+        )
         window.workspace.window_targets = lambda: [
             (
                 ("Main window" if w is self.primary else "PDF window")
@@ -58,7 +63,15 @@ class DocumentWindows(QObject):
                 alias = QAction(account.icon(), account.text(), window)
                 alias.setObjectName("privateAccountAction")
                 alias.triggered.connect(account.trigger)
-                account.changed.connect(lambda: alias.setText(account.text()))
+
+                def mirror_account():
+                    if not sip.isdeleted(alias):
+                        alias.setText(account.text())
+                        alias.setToolTip(account.toolTip())
+                        alias.setEnabled(account.isEnabled())
+
+                account.changed.connect(mirror_account)
+                mirror_account()
                 window.command_bar.add_settings_action(alias)
             window.command_bar.mode_switcher.hide()
 
@@ -76,11 +89,11 @@ class DocumentWindows(QObject):
         return self.last_active if self.last_active in self.live_windows() else self.primary
 
     def find_path(self, path):
-        identity = os.path.normcase(os.path.realpath(os.path.expanduser(str(path))))
+        identity = os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
         for window in self.live_windows():
             for session in window._sessions:
                 source = session.display_path or session.engine.original_path
-                if source and os.path.normcase(os.path.realpath(str(source))) == identity:
+                if source and os.path.normcase(os.path.abspath(str(source))) == identity:
                     return window, session
         return None
 
@@ -228,6 +241,8 @@ class DocumentWindows(QObject):
                     merge.exit_approved = True
                 approved.append(window)
             self.pending_exit = True
+            for window in approved:
+                window.setEnabled(False)
         for window in others:
             window.close()
         if any(w.isVisible() for w in others):

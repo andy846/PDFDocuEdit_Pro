@@ -343,6 +343,8 @@ def route_open_files(viewer, paths):
         if Path(path).suffix.casefold() in {".pdcx", ".pdflow"}:
             controller = getattr(viewer, "_mode_controller", None)
             if controller:
+                if manager:
+                    manager.focus(viewer)
                 host = controller.ensure_host(create_default=False)
                 if host.open_project(path):
                     controller.request_mode("designer")
@@ -464,11 +466,8 @@ def _run_application(root: Path | None) -> int:
     app.activate_file_open_handler()
 
     def accept_forwarded_paths(forwarded: list[str]) -> None:
-        if viewer.isMinimized():
-            viewer.showNormal()
-        viewer.show()
-        viewer.raise_()
-        viewer.activateWindow()
+        target = viewer.document_windows.active_window()
+        viewer.document_windows.focus(target)
         if forwarded:
             route_open_files(viewer, forwarded)
 

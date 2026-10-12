@@ -368,6 +368,7 @@ class DocumentWorkspace(QFrame):
         self._tab_pages = {}
         self._pair = None
         self.window_targets = lambda: []
+        self.move_reason = lambda session: ""
         # The tab close buttons are Python subclasses (TabCloseButton). The
         # C++ QTabBar owns the underlying QToolButton, but nothing else keeps
         # the Python wrapper alive — without this reference the wrapper gets
@@ -639,10 +640,16 @@ class DocumentWorkspace(QFrame):
         split.setEnabled(session.engine.is_loaded() and bool(candidates))
         if self._pair is not None and session in self._pair.sessions:
             menu.addAction("Close Split View", self.end_pair)
-        menu.addAction("Move to New Window", lambda: self.moveWindowRequested.emit(session, None))
+        menu.setToolTipsVisible(True)
+        reason = self.move_reason(session)
+        move_new = menu.addAction("Move to New Window", lambda: self.moveWindowRequested.emit(session, None))
+        move_new.setEnabled(not reason)
+        move_new.setToolTip(reason or "Move this PDF with its unsaved changes and undo history")
         targets = self.window_targets()
         if targets:
             move = menu.addMenu("Move to Window…")
+            move.setEnabled(not reason)
+            move.setToolTip(reason)
             for label, target in targets:
                 move.addAction(label.replace("&", "&&"), lambda checked=False, target=target: self.moveWindowRequested.emit(session, target))
         menu.addSeparator()

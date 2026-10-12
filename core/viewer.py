@@ -1366,6 +1366,8 @@ class PDFViewer(QMainWindow):
         controller = getattr(self, "_mode_controller", None)
         if paths and controller:
             controller.request_mode("pdf")
+        if self._closing or self.document_windows.pending_exit:
+            return
         self._queued_open_paths.extend((path, None, None, perf_counter()) for path in paths if path)
         self._schedule_queued_open()
 
@@ -1380,6 +1382,10 @@ class PDFViewer(QMainWindow):
         QTimer.singleShot(0, self._drain_open_queue)
 
     def _drain_open_queue(self) -> None:
+        if self._closing or self.document_windows.pending_exit:
+            self._queued_open_paths.clear()
+            self._queued_open_finished()
+            return
         if not self._queued_open_paths:
             self._open_queue_scheduled = False
             return
@@ -1694,6 +1700,9 @@ class PDFViewer(QMainWindow):
         self.info_bar.refresh_icons()
         self.context_panel.refresh_icons()
         self.workspace.refresh_icons()
+        manager = getattr(self, "document_windows", None)
+        if manager:
+            manager.sync_theme(self, value)
         merge = getattr(self, "_merge_workspace", None)
         if merge:
             merge.refresh_theme()
@@ -1784,7 +1793,7 @@ class PDFViewer(QMainWindow):
                 self.move(area.center() - self.rect().center())
         else:
             self.resize(width, height)
-        if self.settings.get("window_maximized", False):
+        if self.settings.get("window_maximized", False) and not self._pdf_only_window:
             self.showMaximized()
 
     def _side_panel_state_changed(self, value):
@@ -7231,6 +7240,7 @@ class PDFViewer(QMainWindow):
                 self._closing = False
                 self._session = self.workspace.current_session()
                 return
+        self.setEnabled(False)
         self.workspace.end_pair()
         pdf_operations = list(getattr(self, "_pdf_operation_dialogs", []))
         for operation in pdf_operations:
@@ -7256,8 +7266,20 @@ class PDFViewer(QMainWindow):
             event.ignore()
             QTimer.singleShot(150, self.close)
             return
-        for session in ([] if controller else list(self._sessions)):
-            session.close()
+        if not controller:
+            if not hasattr(self, "_window_reader_events"):
+                self._window_reader_events = []
+                self._window_exit_approved = True
+                for session in self._sessions:
+                    self._window_reader_events.extend(session.canvas.reader_events())
+                    self._window_reader_events.extend(session.nav_panel.thumbnails.reader_events())
+                    if session.split_canvas is not None:
+                        self._window_reader_events.extend(session.split_canvas.reader_events())
+                    session.close()
+            if not all(reader.is_set() for reader in self._window_reader_events):
+                event.ignore()
+                QTimer.singleShot(150, self.close)
+                return
         self._window_closed = True
         if manager:
             manager.window_closed(self)

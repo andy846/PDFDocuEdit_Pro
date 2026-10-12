@@ -451,3 +451,26 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
 - 全部相關頁面通過結構、字體雜湊及 300 dpi 逐頁視覺核對後，才發布新 PDF 及審計資料夾；不覆蓋來源、不改現有 Editor／Designer 字體處理。
 - 批次檢查逐檔隔離；可進入個別檔案覆核。簽署、加密、未完整分析及未支援字體格式保持 scan-only／blocked。
 - 本功能仍為開發更新，未新增 GitHub Release。詳細限制及測試方法見 [Font Preflight 說明](docs/FONT_PREFLIGHT_SAFE_EMBED.md)。
+
+
+### PDF tabs, editable Split View and separate windows
+
+* Right-click a PDF tab → **Split with…** → choose another open PDF. Both sides
+  are editable. Click a pane or its document header to choose the document for
+  tools, search, Save, Print and Undo/Redo. Each PDF keeps its own editing history.
+* Both original tabs remain available. Use the **Swap documents** button to swap sides and the **layout** button for
+  side-by-side/stacked layout, or **×** / **Close Split View** to restore normal tabs.
+  Page and zoom synchronization are optional; new pairs start independently.
+* **Move to New Window** / **Move to Window…** transfer the live PDF, including
+  unsaved changes, undo history, page and zoom. They do not reopen a disk copy.
+  Drag within the tab strip to reorder; drag outside the window to detach, or
+  drop onto another PDF window's tab strip. Escape cancels the drag.
+* Separate windows contain PDF Workspace editing tools. Document Designer remains
+  in the main window. Busy printing/import/tool tasks must finish before moving a
+  document. Tool/project tabs are not detachable.
+* Closing a separate window affects its own documents. Quit, main-window close,
+  sign-out and update restart review documents across all windows before cleanup.
+  Cancelled confirmation keeps the documents open; account lock also locks separate
+  windows. External PDF opens use the last active PDF window, focusing an existing
+  document when the same absolute path is already open.
+* These changes do not change PDF/project formats or the public version number.
