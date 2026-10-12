@@ -323,7 +323,7 @@ class PdfEngine:
                     clean=False,
                     encryption=fitz.PDF_ENCRYPT_KEEP,
                 )
-            elif self._doc.can_save_incrementally():
+            elif self._can_save_working_incrementally():
                 # The working document is an isolated copy of the source.
                 # Append annotation changes there, then atomically copy it to
                 # the destination. Existing page, font, image and barcode
@@ -349,6 +349,18 @@ class PdfEngine:
         self._original_path = target
         self._is_modified = False
         return target
+
+    def _can_save_working_incrementally(self) -> bool:
+        """Stream restores may report incremental support without a backing file."""
+        doc = self._doc
+        if doc is None or not self._temp_dir or not isinstance(doc.name, (str, Path)) or not str(doc.name):
+            return False
+        try:
+            backing = Path(doc.name).resolve(strict=True)
+            owned = Path(self._temp_dir.name).resolve(strict=True)
+            return backing.is_file() and backing.is_relative_to(owned) and bool(doc.can_save_incrementally())
+        except (OSError, ValueError):
+            return False
 
     @_locked
     def save_as(self, path: str | os.PathLike[str]) -> Path:

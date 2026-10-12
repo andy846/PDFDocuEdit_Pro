@@ -151,3 +151,61 @@ def test_repeat_insert_partial_failure_rolls_back(document, monkeypatch):
     assert engine.page_count == 3
     assert not stack.can_undo
     assert not engine.is_modified
+
+
+@pytest.mark.parametrize("full", [False, True])
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_rollback_remains_saveable_and_editable(tmp_path, full, encrypted):
+    source = tmp_path / "encrypted.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page().insert_text((72, 72), "Preserved content")
+        options = dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="test-user", owner_pw="test-owner") if encrypted else {}
+        pdf.save(source, **options)
+    stack = UndoStack()
+    engine = PdfEngine(on_commit=stack.push_bytes)
+    engine.open(source, password="test-user" if encrypted else None)
+    engine._requires_full_save = full
+    identity = engine.document_id
+    try:
+        with pytest.raises(PdfEngineError, match="restored"):
+            with engine.mutation_transaction("Injected failure"):
+                engine.rotate_pages([0], 90)
+                raise RuntimeError("failure")
+        assert engine.is_loaded() and engine.document_id == identity
+        assert engine.revision == 0 and not engine.is_modified
+        assert engine._requires_full_save is full
+        assert not engine._can_save_working_incrementally()
+        for target in (engine.save(), engine.save_as(tmp_path / "saved-copy.pdf")):
+            with fitz.open(target) as pdf:
+                assert bool(pdf.needs_pass) is encrypted
+                if encrypted:
+                    assert pdf.authenticate("test-user")
+                assert pdf.page_count == 1 and pdf[0].rotation == 0
+                assert "Preserved content" in pdf[0].get_text()
+        with engine.mutation_transaction("Edit after restore"):
+            engine.rotate_pages([0], 90)
+        assert engine.revision == 1 and stack.undo_count == 1
+        engine.save()
+    finally:
+        engine.close()
+        stack.clear()
+
+
+def test_rollback_close_failure_keeps_restored_document(document, monkeypatch):
+    engine, _, _ = document
+    damaged = engine.document
+    close = fitz.Document.close
+    def fail(doc):
+        if doc is damaged:
+            raise OSError("injected close failure")
+        return close(doc)
+    monkeypatch.setattr(fitz.Document, "close", fail)
+    try:
+        with pytest.raises(PdfEngineError, match="restored"):
+            with engine.mutation_transaction("Failed"):
+                engine.rotate_pages([0], 90)
+                raise RuntimeError("failure")
+        assert engine.document is not damaged and engine.document[0].rotation == 0
+        engine.save()
+    finally:
+        close(damaged)
