@@ -12,7 +12,6 @@ from time import perf_counter
 import fitz
 from PyQt6.QtCore import (
     QEvent,
-    QEventLoop,
     QObject,
     QPoint,
     QPointF,
@@ -36,7 +35,7 @@ from core.annotations import (
 from core.diagnostics import connect_interrupts, log_failure
 from core.measurement import PageScale, page_scale, saved_measurements
 from core.pdf_engine import DOCUMENT_LOCK
-from core.reader_lifetime import ReaderLease
+from core.reader_lifetime import ReaderBusyError, ReaderLease, wait_for_readers
 from core.tasks import FunctionTask
 from styles.theme import get_colors
 from styles.tokens import S
@@ -394,27 +393,9 @@ class PdfCanvas(QScrollArea):
         self.rulers.reset_pointer()
 
     def wait_for_renders(self, timeout_ms: int = 3000) -> None:
-        """Drain readers for explicit mutations while Qt continues dispatching.
-
-        Close/open use asynchronous retirement instead. The legacy timeout
-        argument is accepted, but cannot authorize closing a still-read document.
-        """
-        self._generation += 1  # discard results of in-flight tasks
-        readers = self.reader_events()
-        if all(reader.is_set() for reader in readers):
-            return
-        loop = QEventLoop(self)
-        poll = QTimer(self)
-        poll.setInterval(20)
-
-        def check() -> None:
-            if all(reader.is_set() for reader in readers):
-                poll.stop()
-                loop.quit()
-
-        poll.timeout.connect(check)
-        poll.start()
-        loop.exec()
+        """Bounded drain; timeout must never authorize mutation or reader release."""
+        if not wait_for_readers(self.reader_events(), timeout_ms):
+            raise ReaderBusyError("PDF readers are still running. No edit was applied; wait and retry.")
 
     def refresh(self) -> None:
         """Re-render everything after the document content changed."""
@@ -1413,10 +1394,9 @@ class PdfCanvas(QScrollArea):
         for page_num in sorted(self._page_views, key=lambda page: (page not in focused, page)):
             self._request_render(page_num, page_num in focused)
 
-    @_document_locked
     def _request_render(self, page_num: int, high: bool = False) -> None:
         token = (self._generation, page_num)
-        if not self._doc or token in self._pending:
+        if getattr(self, "_reader_pause_count", 0) or not self._doc or token in self._pending:
             return
         dpr = self.devicePixelRatioF()
         key = (id(self._doc), page_num, round(self._zoom * dpr, 3), round(dpr, 3))
@@ -1716,8 +1696,12 @@ class PdfCanvas(QScrollArea):
         local = overlay.mapFrom(self.viewport(), position)
         return page_num, pager_pos, overlay.widget_to_pdf(local)
 
-    @_document_locked
     def _update_magnifier(self, position: QPoint) -> None:
+        if not getattr(self, "_reader_pause_count", 0):
+            self._update_magnifier_locked(position)
+
+    @_document_locked
+    def _update_magnifier_locked(self, position: QPoint) -> None:
         if self._magnifier_task is not None:
             self._pending_magnifier_position = QPoint(position)
             return

@@ -67,12 +67,8 @@ def prepare():
             if prefix.exists():
                 raise RuntimeError(f"Refusing to overwrite existing native runtime: {prefix}")
             if name == "qpdf":
-                run(["cmake", "-S", source, "-B", folder / "cmake", "-DCMAKE_BUILD_TYPE=Release",
-                     "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
-                     f"-DCMAKE_INSTALL_PREFIX={prefix}", "-DBUILD_SHARED_LIBS=OFF", "-DBUILD_STATIC_LIBS=ON",
-                     "-DUSE_IMPLICIT_CRYPTO=OFF", "-DREQUIRE_CRYPTO_NATIVE=ON", "-DBUILD_TESTING=OFF"], source, env)
-                run(["cmake", "--build", folder / "cmake", "--parallel", jobs], source, env)
-                run(["cmake", "--install", folder / "cmake"], source, env)
+                from scripts.prepare_qpdf import build_qpdf
+                build_qpdf(source, prefix, folder, env)
             else:
                 if name == "zbar":
                     env = {**env, "LIBS": "-liconv"}
@@ -95,15 +91,9 @@ def prepare():
                         shutil.copy2(license_file, license_dir / license_file.name)
 
     composition = ROOT / "build_assets" / "composition"
-    manifest = json.loads((composition / "BUNDLE_INFO.json").read_text())
-    manifest["assets"] = [e for e in manifest["assets"] if e["path"].startswith("fonts/")]
+    from scripts.prepare_qpdf import stage_qpdf
     target = composition / "qpdf"
-    target.mkdir(exist_ok=True)
-    shutil.copy2(NATIVE / "qpdf" / "bin" / "qpdf", target / "qpdf")
-    manifest["platform"] = "macos-arm64"
-    manifest["assets"].append({"path": "qpdf/qpdf", "sha256": digest(target / "qpdf"),
-                              "source": sources["sources"]["qpdf"]["url"]})
-    (composition / "BUNDLE_INFO.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    stage_qpdf(NATIVE / "qpdf/bin/qpdf", NATIVE / "licenses/qpdf", sources["sources"]["qpdf"])
     from scripts.prepare_composition_assets import prepare as prepare_fonts
     prepare_fonts(fonts_only=True)
     for executable in (target / "qpdf", NATIVE / "ghostscript/bin/gs"):

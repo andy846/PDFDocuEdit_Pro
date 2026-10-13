@@ -209,8 +209,8 @@ class OverlayFiles:
         if result.get("media_summary"):
             summary=result["media_summary"]
             text+="\n\nMedia: "+" · ".join(f"{k}: {v:,} sheets" for k,v in summary.get("stock_sheets",{}).items())
-            text+=("\nPostScript selection embedded · device validation pending" if summary.get("backend")=="postscript"
-                   else "\nOffline default_ticket.jdf · Canon device validation pending")
+            from composition.media.model import media_output_description
+            text+="\n"+media_output_description(summary, published=bool(result.get("generated_files")))
         self.production_text.setPlainText(text)
         self.pdf_button.setEnabled(result["status"] == "completed")
         self.report_button.setEnabled(bool(result["report_dir"]))

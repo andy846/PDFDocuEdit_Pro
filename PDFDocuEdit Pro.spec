@@ -139,7 +139,7 @@ if _composition_enabled:
         _asset = _composition_root / _relative
         if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
             raise RuntimeError(f"Invalid composition asset: {_relative}. Run scripts/prepare_composition_assets.py.")
-        if sys.platform != "darwin" or not _relative.startswith("qpdf/"):
+        if sys.platform != "darwin" or _relative != "qpdf/qpdf":
             datas.append((str(_asset), str(Path("build_assets/composition") / Path(_relative).parent)))
     datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
     _enabled_file = ROOT / "build" / "composition-enabled" / "enabled.json"
@@ -148,6 +148,10 @@ if _composition_enabled:
     datas.append((str(_enabled_file), "build_assets/composition"))
     for _package in ("segno", "python-barcode"):
         datas.extend(copy_metadata(_package))
+
+# Fail closed on wrong-platform/incomplete runtimes before packaging either mode.
+from core.pdf_runtime import qpdf_executable as _verified_qpdf
+_verified_qpdf()
 
 # PDF Workspace repair also uses the same runtime when Designer is disabled.
 if not _composition_enabled:
@@ -161,7 +165,8 @@ if not _composition_enabled:
         _asset = _composition_root / _entry["path"]
         if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
             raise RuntimeError("Invalid qpdf runtime. Run scripts/prepare_composition_assets.py.")
-        datas.append((str(_asset), str(Path("build_assets/composition") / Path(_entry["path"]).parent)))
+        if sys.platform != "darwin" or _entry["path"] != "qpdf/qpdf":
+            datas.append((str(_asset), str(Path("build_assets/composition") / Path(_entry["path"]).parent)))
     datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
 
 # pyzbar ships the zbar native library as DLLs inside its package on Windows.

@@ -218,6 +218,8 @@ Compose／Output 的試跑只檢查及提供單筆預覽，不發布生產檔案
 
 **Profile library…** 可按設備篩選本機設定、預覽完整選紙規則或單獨 printer 對應表，並在背景匯入 JSON／資料夾。取消載入保留目前草稿；設備 profile 仍需實機選紙驗證。詳見 [使用指引](docs/POSTSCRIPT_USER_GUIDE.md#profile-library)。
 
+PS 生產覆核會先檢查 Ghostscript；缺少元件時不能批准生成，可在 Settings 指定執行檔。失敗摘要區分「要求的輸出」與「已發布成果」，不會把 PS 誤顯示成 JDF。
+
 PS 模式保留核對 PDF，另產生 PS、逐頁選紙 CSV、機器可讀報告及 Job log；分檔後每個套件有自己的 PS。程式會解譯 PS 核對頁數及尺寸，失敗／取消不發布半成品。
 
 實際紙匣編號、紙張屬性及 DFE 佇列覆蓋行為需要實機確認；通用 profile 不包含未驗證的機型 preset。PS 透明效果可能平面化，提供 300／600／1200 dpi 設定。詳見 [PS / Profile 操作指南](docs/POSTSCRIPT_USER_GUIDE.md)。
@@ -494,3 +496,9 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
 Production generation requires current, explicitly confirmed review evidence. Repeated page insertion is transactional, and rollback/Undo documents remain saveable. Branch output names are validated and contained within the selected production folder.
 
 Completed production packages include checksum/completion evidence. **Visual Workflow → Production → Recover previous run…** verifies earlier batches and retains completed output; remaining work must be checked and reviewed again. Failed attempts are not silently republished into retry folders. See [P0 reliability and headless approval](docs/P0_RELIABILITY.md).
+
+### qpdf runtime parity
+
+Native macOS/Linux preparation and packaging use the same pinned qpdf source and strict runtime integrity checks. See [qpdf preparation and acceptance](docs/QPDF_RUNTIME_PARITY.md).
+
+Symantec WS.Reputation.1 quarantine review: [verified qpdf identity and support procedure](docs/QPDF_SYMANTEC_REVIEW.md). Antivirus vendor clearance remains unconfirmed.

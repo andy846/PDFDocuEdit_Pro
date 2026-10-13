@@ -266,7 +266,7 @@ class WorkspaceModeController(QObject):
             window._mode_exit_preflight = False
             self.exit_preparing = False
         self.exit_approved = True
-        window.setEnabled(False)
+        window._close_lifecycle.begin()
         return True
 
     def shutdown_workspaces(self):
@@ -284,11 +284,6 @@ class WorkspaceModeController(QObject):
         if window._tasks:
             return False
         if not self.pdf_closed:
-            self.pdf_closed = True
-            for session in list(window._sessions):
-                self.pdf_readers.extend(session.canvas.reader_events())
-                self.pdf_readers.extend(session.nav_panel.thumbnails.reader_events())
-                if session.split_canvas is not None:
-                    self.pdf_readers.extend(session.split_canvas.reader_events())
-                session.close()
-        return designer_ready and merge_ready and all(event.is_set() for event in self.pdf_readers)
+            self.pdf_closed = window._retire_pdf_sessions()
+            self.pdf_readers = window._window_reader_events
+        return designer_ready and merge_ready and self.pdf_closed

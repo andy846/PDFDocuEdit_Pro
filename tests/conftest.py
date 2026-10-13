@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -23,8 +24,18 @@ def qt_application():
 
 
 @pytest.fixture(autouse=True)
-def flush_qt_deferred_deletions():
-    """processEvents alone does not perform event-loop DeferredDelete teardown."""
+def flush_qt_deferred_deletions(request):
+    """Retain one application for GUI tests, then flush deferred deletions.
+
+    Some older UI modules construct QApplication inside each test. Use the
+    existing CI UI group to acquire the session fixture before any widget is
+    created, matching the real entry point. Other modules keep their existing
+    explicit application/headless setup; no second GUI test registry is needed.
+    """
+    from scripts.ci_plan import UI_TESTS
+    path = request.node.path.relative_to(Path(__file__).resolve().parent.parent).as_posix()
+    if path in UI_TESTS:
+        request.getfixturevalue("qt_application")
     yield
     from PyQt6.QtCore import QCoreApplication, QEvent
 

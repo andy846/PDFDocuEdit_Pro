@@ -13,6 +13,11 @@ import core.viewer as viewer_module
 from core.settings import SettingsManager
 from styles.tokens import D
 
+# Match the real entry point: one QApplication and installed theme live for
+# the entire process. Recreating Qt between tests leaves native/style callbacks
+# referring to an already-destroyed application and can cause access violations.
+pytestmark = pytest.mark.usefixtures("qt_application")
+
 
 def make_pdf(path: Path) -> Path:
     with fitz.open() as document:
