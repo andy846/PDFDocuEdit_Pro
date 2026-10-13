@@ -423,3 +423,99 @@ def test_closed_secondary_releases_qt_widgets_after_safe_cleanup(editor, tmp_pat
     assert sip.isdeleted(child)
     assert editor.isVisible()
     assert editor.document_windows.live_windows() == [editor]
+
+
+def sized_documents(window, tmp_path):
+    sessions = []
+    for name, sizes in (
+        ("a4", [(595, 842)]),
+        ("mixed", [(842, 1191), (432, 612)]),
+    ):
+        path = tmp_path / f"{name}.pdf"
+        with fitz.open() as doc:
+            for width, height in sizes:
+                doc.new_page(width=width, height=height)
+            doc.save(path)
+        sessions.append(window._open_in_new_tab_sync(str(path)))
+    return sessions
+
+
+def assert_active_page_size(window, session):
+    assert window._session is window.workspace.current_session() is session
+    width, height = session.engine.get_page_size(session.page)
+    expected = f"{width * 25.4 / 72:.1f} × {height * 25.4 / 72:.1f} mm"
+    assert window.bottom_bar._size.text() == expected
+    assert window.bottom_bar._current_page == session.page
+
+
+def test_page_size_follows_tab_activation_without_navigation(editor, tmp_path):
+    first, second = sized_documents(editor, tmp_path)
+    assert_active_page_size(editor, second)
+    for session in (first, second, first, second, first):
+        editor.workspace.set_current_session(session)
+        assert_active_page_size(editor, session)
+
+
+def test_page_size_restores_mixed_page_and_ignores_inactive_navigation(editor, tmp_path):
+    first, second = sized_documents(editor, tmp_path)
+    editor.goto_page(1)
+    assert second.page == 1
+    assert_active_page_size(editor, second)
+    editor.workspace.set_current_session(first)
+    assert_active_page_size(editor, first)
+    second.canvas.set_page(0)
+    assert second.page == 0
+    assert_active_page_size(editor, first)
+    second.canvas.set_page(1)
+    assert_active_page_size(editor, first)
+    editor.workspace.set_current_session(second)
+    assert second.page == 1
+    assert_active_page_size(editor, second)
+    editor.goto_page(0)
+    assert_active_page_size(editor, second)
+
+
+def test_page_size_refreshes_remaining_tab_and_clears_last_close(editor, tmp_path):
+    first, second = sized_documents(editor, tmp_path)
+    assert_active_page_size(editor, second)
+    editor.close_document(second)
+    assert_active_page_size(editor, first)
+    editor.close_document(first)
+    assert editor.workspace.current_session() is None
+    assert editor.bottom_bar._size.text() == ""
+
+
+def test_page_size_clears_unloaded_placeholder_and_restores_loaded_tab(editor, tmp_path):
+    first, _ = sized_documents(editor, tmp_path)
+    placeholder = editor._create_session()
+    assert editor._session is placeholder
+    assert not placeholder.engine.is_loaded()
+    assert editor.bottom_bar._size.text() == ""
+    editor.workspace.set_current_session(first)
+    assert_active_page_size(editor, first)
+    editor.workspace.set_current_session(placeholder)
+    assert editor.bottom_bar._size.text() == ""
+
+
+def test_page_size_follows_split_focus_and_restores_after_split(editor, tmp_path):
+    first, second = sized_documents(editor, tmp_path)
+    editor.goto_page(1)
+    assert editor._split_documents(first, second)
+    pair = editor.workspace._pair
+    assert_active_page_size(editor, first)
+    for session in (second, first, second):
+        pair.activate(session)
+        assert_active_page_size(editor, session)
+    editor.workspace.end_pair()
+    assert_active_page_size(editor, second)
+
+
+def test_page_size_follows_live_document_move_between_windows(editor, tmp_path):
+    first, second = sized_documents(editor, tmp_path)
+    editor.goto_page(1)
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    assert_active_page_size(child, second)
+    assert_active_page_size(editor, first)
+    assert editor.document_windows.move(second, editor)
+    assert_active_page_size(editor, second)

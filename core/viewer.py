@@ -1283,6 +1283,7 @@ class PDFViewer(QMainWindow):
                 action.setChecked(True)
                 break
         if not session.engine.is_loaded():
+            self.bottom_bar.set_page_size(0, 0)
             return
         self._update_undo_actions()
         self._sync_modified_state()
@@ -1292,8 +1293,7 @@ class PDFViewer(QMainWindow):
             session.engine.page_count,
             str(session_path) if session_path else "",
         )
-        self.bottom_bar.set_current_page(session.page)
-        self.bottom_bar.set_zoom_percent(round(session.canvas.zoom_ratio * 100))
+        self._update_page_state()
         self.bottom_bar.set_layout_mode(str(session.canvas.layout_mode.value))
         self.context_panel.set_page_count(session.engine.page_count)
         session.nav_panel.search.set_page_count(session.engine.page_count)
