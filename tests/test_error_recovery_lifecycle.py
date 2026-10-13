@@ -318,3 +318,51 @@ def test_failed_exit_preflight_revokes_partial_approvals_and_keeps_work_enabled(
     editor.close()
     wait_closed(editor)
     assert confirmations
+
+
+def test_failed_mode_exit_preflight_preserves_independent_window_lock(editor, tmp_path, monkeypatch):
+    from ui.workspace_mode_controller import WorkspaceModeController
+    controller = WorkspaceModeController(editor, editor.centralWidget().layout())
+    editor._mode_controller = controller
+    documents(editor, tmp_path, count=1)
+    def failed_confirmation():
+        raise OSError("Controlled save prompt failure")
+    monkeypatch.setattr(editor, "_confirm_discard_changes", failed_confirmation)
+    editor.setEnabled(False)  # Independent account/access lock, not shutdown.
+    try:
+        assert not editor.close()
+        assert not editor.isEnabled()
+        assert not controller.exit_approved and not editor._closing
+    finally:
+        editor.setEnabled(True)
+        monkeypatch.setattr(editor, "_confirm_discard_changes", lambda: True)
+
+
+def test_temporary_work_lock_restores_explicit_child_state_under_disabled_window(editor):
+    assert editor.workspace.isEnabled()
+    editor.setEnabled(False)
+    try:
+        with editor._close_lifecycle.lock_ui():
+            assert not editor.workspace.isEnabled()
+        assert not editor.isEnabled()
+        editor.setEnabled(True)
+        assert editor.workspace.isEnabled()
+    finally:
+        editor.setEnabled(True)
+
+
+def test_failed_pdf_only_exit_preflight_leaves_document_operable(editor, tmp_path, monkeypatch):
+    session = documents(editor, tmp_path, count=1)[0]
+    def failed_confirmation():
+        raise OSError("Controlled save prompt failure")
+    monkeypatch.setattr(editor, "_confirm_discard_changes", failed_confirmation)
+    try:
+        assert not editor.close()
+        assert not editor._closing
+        assert editor.workspace.isEnabled()
+        with editor._mutation_transaction("After failed save confirmation") as allowed:
+            assert allowed
+            session.engine.rotate_pages([0], 90)
+    finally:
+        monkeypatch.setattr(editor, "_confirm_discard_changes", lambda: True)
+        session.engine._is_modified = False

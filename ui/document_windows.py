@@ -209,7 +209,6 @@ class DocumentWindows(QObject):
         if not self.pending_exit:
             approved = []
             for window in [self.primary, *others]:
-                window._exit_previous_enabled = window.isEnabled()
                 dialog = getattr(window, "_update_dialog", None)
                 if window._printing or (dialog is not None and dialog.busy()):
                     self.primary.info_bar.show_message(
@@ -263,7 +262,6 @@ class DocumentWindows(QObject):
             merge = getattr(window, "_merge_controller", None)
             if merge:
                 merge.exit_approved = False
-            window.setEnabled(getattr(window, "_exit_previous_enabled", True))
 
     def sync_theme(self, source, value):
         if getattr(self, "_theme_syncing", False):

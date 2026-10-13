@@ -7402,13 +7402,20 @@ class PDFViewer(QMainWindow):
                 self._defer_close("tool_workers")
                 return
         self._closing = True
-        for session in ([] if controller or merge_only or self._window_exit_approved else list(self._sessions)):
-            self._session = session
-            if not self._confirm_discard_changes():
-                event.ignore()
-                self._closing = False
-                self._session = self.workspace.current_session()
-                return
+        try:
+            for session in ([] if controller or merge_only or self._window_exit_approved else list(self._sessions)):
+                self._session = session
+                if not self._confirm_discard_changes():
+                    event.ignore()
+                    self._closing = False
+                    self._session = self.workspace.current_session()
+                    return
+        except Exception:
+            # Save/confirmation failed before retirement began. Restore normal
+            # document routing rather than leaving every operation "closing".
+            self._closing = False
+            self._session = self.workspace.current_session()
+            raise
         self._close_lifecycle.begin()
         self.workspace.end_pair()
         pdf_operations = list(getattr(self, "_pdf_operation_dialogs", []))

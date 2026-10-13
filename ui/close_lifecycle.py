@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from time import monotonic
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtGui import QAction
 
 from core.diagnostics import log_failure, log_lifecycle
@@ -39,7 +39,13 @@ class CloseLifecycle(QObject):
                     widgets.append(widget)
             actions = [a for a in window.findChildren(QAction)
                        if a is not window._command_action_map.get("quit")]
-            self._saved = [(item, item.isEnabled()) for item in (*widgets, *actions) if item is not None]
+            # isEnabled() includes ancestor locks (e.g. account access).
+            # Restore the widget's own flag, never the inherited disabled state.
+            self._saved = [
+                (item, item.isEnabled() if isinstance(item, QAction)
+                 else not item.testAttribute(Qt.WidgetAttribute.WA_ForceDisabled))
+                for item in (*widgets, *actions) if item is not None
+            ]
             for item, _enabled in self._saved:
                 item.setEnabled(False)
         self._locks += 1

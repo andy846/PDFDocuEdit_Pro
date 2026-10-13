@@ -137,3 +137,16 @@ callback subprocess now drains its sole pool with a bounded asserted wait and
 deletes its root widget while QApplication/Python slots remain alive; the earlier
 teardown-only access violation is recorded, not conflated with the original
 Qt-slot abort. No tests were removed, filtered or weakened.
+
+
+### Independent lock and single-window preflight verification
+
+Final controlled checks found and fixed three close-state edges: approval reset
+must not enable a root disabled independently by account access; a temporary UI
+lock must restore each child's explicit enabled flag rather than an ancestor's
+disabled state; and a failed single-PDF save confirmation must reset closing and
+current-session routing before any retirement starts. New tests failed before
+these corrections. The reset now touches only shutdown locks/approvals, never
+independent root locks. Final verification passed 111 recovery, duplicate-open,
+account UI, document-window and workspace-mode tests in five fresh processes.
+No auth policy, template format, public version or engine implementation changed.
