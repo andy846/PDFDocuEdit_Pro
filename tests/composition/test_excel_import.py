@@ -16,12 +16,12 @@ from composition.data.excel_source import cell_text, workbook_info
 from composition.data.source import import_records, sample_records, suggest_import
 from composition.designer.data_dialog import DataDialog
 from composition.designer.workspace import CompositionWindow
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
 from scripts.composition_excel_fixture import make_xls, make_xlsx
 from tests.composition.test_designer_controls import cleanup, wait
+from tests.production_approval import generate
 
 
 def write_rows(path, rows):
@@ -183,7 +183,7 @@ def test_excel_data_sequence_pdf_and_schema5_migration(tmp_path):
         raw["data"].pop(key)
     before = copy.deepcopy(raw)
     migrated = Template.from_dict(raw)
-    assert migrated.template_version == 10 and raw == before and migrated.sequences == template.sequences
+    assert migrated.template_version == 12 and raw == before and migrated.sequences == template.sequences
     assert migrated.data.sheet == "" and migrated.data.excel_formulas == "reject"
 
 
@@ -244,6 +244,8 @@ def test_gui_excel_sheet_header_alias_preview_save_reopen_and_production(app, tm
         wait(lambda: "Record 3" in w.preview_state.text() and not w.workers)
         saved = save_project(w.template, tmp_path/"excel-project.pdcx")
         w.start_production(str(tmp_path/"production"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(w)
         wait(lambda: not w.production_worker and bool(w.last_output))
         with fitz.open(w.last_output) as pdf:
             assert "000003" in pdf[-1].get_text() and "003" in pdf[-1].get_text()

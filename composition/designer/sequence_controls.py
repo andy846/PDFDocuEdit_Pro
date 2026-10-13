@@ -13,8 +13,10 @@ class SequenceOperations:
             return None
         if not self.template.sequences and self.template.record_mode == "imported":
             return raw
+        from composition.engine.barcode_profiles import has_profiles
         key = (self._config_key(), id(raw), self.template.record_mode, self.template.generated_count,
-               repr([asdict(seq) for seq in self.template.sequences]), len(self.template.pages))
+               repr([asdict(seq) for seq in self.template.sequences]), len(self.template.pages),
+               repr(self.template.media), has_profiles(self.template))
         if getattr(self, "_sequence_cache_key", None) == key:
             return self._sequence_cache
         generated = self.template.record_mode == "generated"
@@ -25,6 +27,7 @@ class SequenceOperations:
             self.message.setText(str(exc))
             return None
         count = self.template.generated_count if generated else raw["metadata"]["record_count"]
+        self.template._barcode_record_count = count
         names = [seq.name for seq in self.template.sequences]
         samples = [{} for _ in range(min(5, count))] if generated else raw["sample"]
         info = {

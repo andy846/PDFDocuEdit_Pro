@@ -37,7 +37,13 @@ def one_case(pages, directory, duplex, chunk):
         OverlayObject(Element(value="{{EnvelopeSeq}}", x_mm=20, y_mm=20)),
         OverlayObject(Element(type="code128", x_mm=20, y_mm=35, width_mm=90, height_mm=14),
                       control=True, profile=BarcodeProfile())])
-    result = generate(OverlayJob(project.to_dict(), str(directory), chunk_size=chunk))
+    from dataclasses import asdict
+
+    from composition.review.headless import approve_checked_contexts
+    job = OverlayJob(project.to_dict(), str(directory), chunk_size=chunk)
+    authorization = approve_checked_contexts([{"kind":"overlay", "job":asdict(job)}], directory / "review",
+                                            confirm=lambda _: True, warnings_acknowledged=True)
+    result = generate(job, authorization=authorization)
     end = time.perf_counter()
     if result.status != "completed":
         raise RuntimeError(result.error)

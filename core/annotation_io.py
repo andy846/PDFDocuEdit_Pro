@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import fitz
@@ -62,7 +63,7 @@ def annotation_payload(doc: fitz.Document) -> dict:
             "version": SCHEMA_VERSION,
             "page_count": doc.page_count,
             "annotations": [
-                _json_record(entry) for entry in list_document_annotations(doc)
+                _json_record(entry) for entry in list_document_annotations(doc, include_page_images=False)
             ],
         }
 
@@ -203,7 +204,7 @@ def export_annotation_summary(
 ) -> Path:
     target = Path(output_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    records = list_document_annotations(doc)
+    records = list_document_annotations(doc, include_page_images=False)
     lines = [
         "# Annotation Summary",
         "",
@@ -236,15 +237,18 @@ def flatten_annotations(
     """Bake annotations into a separate PDF, never replacing the live document."""
 
     target = Path(output_path).expanduser().resolve()
+    from core.pdf_operations.appearances import flatten_page
+    if doc.name and Path(doc.name).resolve() == target:
+        raise ValueError("Flatten must create a separate PDF, not overwrite its source.")
     with atomic_output(target, suffix=".pdf") as staged:
-        temp_name = str(staged)
-        with DOCUMENT_LOCK:
-            source = doc.tobytes(garbage=0, deflate=False)
-            expected_page_count = doc.page_count
-        with fitz.open(stream=source, filetype="pdf") as flattened:
-            flattened.bake(annots=True, widgets=widgets)
-            flattened.save(temp_name, garbage=4, deflate=True)
-        validate_pdf_file(
-            temp_name, expected_page_count=expected_page_count
-        )
+        with tempfile.TemporaryDirectory(prefix="pdf-flatten-") as directory:
+            source = Path(directory) / "snapshot.pdf"
+            with DOCUMENT_LOCK:
+                doc.save(source, garbage=0, deflate=False, encryption=fitz.PDF_ENCRYPT_NONE)
+                expected_page_count = doc.page_count
+            with fitz.open(source) as flattened:
+                for index in range(flattened.page_count):
+                    flatten_page(flattened, index, widgets=widgets)
+                flattened.save(staged, garbage=1, deflate=True)
+            validate_pdf_file(staged, expected_page_count=expected_page_count)
     return target

@@ -7,9 +7,10 @@ import pytest
 
 from composition.data.source import import_records
 from composition.engine.assets import asset_root
-from composition.production.generator import generate, reconcile
+from composition.production.generator import reconcile
 from composition.production.model import JobResult, ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, Template
+from tests.production_approval import expect_blocked, generate
 
 pytestmark = pytest.mark.skipif(
     not (asset_root() / "qpdf" / "qpdf.exe").exists(),
@@ -40,18 +41,16 @@ def test_production_reconciliation_and_order(tmp_path, count):
     assert log["source"]["sha256"]
     assert log["status"] == "completed"
     assert (tmp_path / "output" / job.job_id / "control.csv").exists()
-    assert not list((tmp_path / "output").glob(".*"))
+    assert [p.name for p in (tmp_path / "output").glob(".*")] == [".production-state"]
+    assert json.loads((tmp_path / "output" / ".production-state" / (job.job_id + ".json")).read_text())["state"] == "Committed"
 
 
 def test_record_error_publishes_only_diagnostics(tmp_path):
-    job = job_for(tmp_path, values=["Customer 1", "\u9999\u6e2f"])
-    result = generate(job)
-    assert result.status == "failed"
-    assert result.error_record == 2
-    assert result.failed_records == 1
-    assert result.generated_files == 0
-    assert not list((tmp_path / "output").rglob("*.pdf"))
-    assert (tmp_path / "output" / f"{job.job_id}-failed" / "job.json").exists()
+    job = job_for(tmp_path, values=["Customer 1", "香港"])
+    review = expect_blocked(lambda: generate(job))
+    assert review.packet["issues"][0]["envelope"] == 2
+    assert "Font preflight" in str(review)
+    assert not (tmp_path / "output").exists()
 
 
 def test_cancellation_and_duplicate_identity(tmp_path):
@@ -66,7 +65,7 @@ def test_cancellation_and_duplicate_identity(tmp_path):
     assert result.status == "cancelled"
     assert result.generated_files == 0
     assert not list((tmp_path / "output").rglob("*.pdf"))
-    with pytest.raises(CompositionError, match="already exists"):
+    with pytest.raises(CompositionError, match="already has output|already exists|new attempt"):
         generate(job)
 
 
@@ -143,25 +142,19 @@ def test_font_preflight_finds_record_two_before_rendering(tmp_path, monkeypatch)
     from composition.engine.renderer import Renderer
     rendered = []
     monkeypatch.setattr(Renderer, "render", lambda *args: rendered.append(True))
-    result = generate(job_for(tmp_path, values=["Customer 1", "\u7530"]))
-    assert result.status == "failed"
-    assert result.error_record == 2
-    assert "Font preflight: Record 2" in result.error
-    assert "field Name" in result.error
-    assert "U+7530" in result.error
+    review = expect_blocked(lambda: generate(job_for(tmp_path, values=["Customer 1", "田"])))
+    assert review.packet["issues"][0]["envelope"] == 2
+    assert "Font preflight: Record 2" in str(review) and "field Name" in str(review) and "U+7530" in str(review)
     assert not rendered, "Check all record glyphs before composing even the first page"
-    assert result.successful_records == result.generated_pages == result.generated_files == 0
-    assert result.processed_records == result.failed_records == 1
-    assert not list((tmp_path / "output").rglob("*.pdf"))
+    assert not (tmp_path / "output").exists()
 
 
 def test_font_preflight_also_checks_no_subsetting_faces(tmp_path, monkeypatch):
     from composition.engine import subsets
     monkeypatch.setattr(subsets, "permits_subsetting", lambda path: False)
-    result = generate(job_for(tmp_path, values=["Customer 1", "\u7530"]))
-    assert result.status == "failed"
-    assert result.error_record == 2
-    assert "U+7530" in result.error
+    review = expect_blocked(lambda: generate(job_for(tmp_path, values=["Customer 1", "田"])))
+    assert review.packet["issues"][0]["envelope"] == 2 and "U+7530" in str(review)
+    assert not (tmp_path / "output").exists()
 
 
 def test_398_records_after_explicit_cjk_font_selection(tmp_path):

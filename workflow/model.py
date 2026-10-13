@@ -1,4 +1,4 @@
-"""Strict linear graphs: canvas positions are separate from executable settings."""
+"""Declarative workflow graphs; canvas positions are separate from execution."""
 from __future__ import annotations
 
 import copy
@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 
 from composition.template.model import CompositionError
 
-from .registry import EXTRA_KINDS, MEDIA_KINDS, REGISTRY, validate_chain
+from .registry import EXTRA_KINDS, MEDIA_KINDS, PDF_OPERATION_KINDS, REGISTRY, validate_chain
 
 KINDS = ("input", "merge", "extract", "group", "review", "overlay", "output")
 MAIL_KINDS = ("data", "mapping", "template", "sequences", "mail_review", "compose", "reports")
@@ -21,6 +21,8 @@ LABELS = {"input":"PDF Input", "merge":"Merge PDFs", "extract":"Extract Regions"
           "sequences":"Fields & Sequences", "mail_review":"Preview & Review", "compose":"Compose",
           "reports":"Validate & Reports"}
 LABELS.update({k: REGISTRY[k].label for k in EXTRA_KINDS})
+LABELS.update({k: REGISTRY[k].label for k in PDF_OPERATION_KINDS})
+LABELS.update({k: REGISTRY[k].label for k in ("for_each","batch_sequence","route","exceptions","collect")})
 
 
 @dataclass
@@ -36,7 +38,7 @@ class WorkflowNode:
 class WorkflowSpec:
     name: str = "Untitled workflow"
     nodes: list[WorkflowNode] = field(default_factory=list)
-    edges: list[list[str]] = field(default_factory=list)
+    edges: list[list[str] | dict[str,str]] = field(default_factory=list)
     workflow_version: int = 1
     project_kind: str = "pdf_workflow"
 
@@ -57,11 +59,14 @@ class WorkflowSpec:
 
     @property
     def kinds(self):
+        if self.workflow_version==5:
+            from .branch_graph import BRANCH_KINDS
+            return BRANCH_KINDS
         base=MAIL_KINDS if self.project_kind=="mail_merge_workflow" else KINDS
         if self.workflow_version<3:
             return base
         extra=EXTRA_KINDS if self.workflow_version>=4 else tuple(k for k in EXTRA_KINDS if k not in MEDIA_KINDS)
-        return base+extra
+        return base+extra+(PDF_OPERATION_KINDS if self.workflow_version == 6 else ())
 
     def upgraded(self,version=3):
         result=copy.deepcopy(self)
@@ -69,6 +74,12 @@ class WorkflowSpec:
         return result
 
     def allowed_next(self, kind):
+        if self.workflow_version==5:
+            from .branch_graph import COMMON
+            return {"for_each":set(COMMON),"route":{"template","exceptions"},
+                    "template":{"media_assignment","mail_review"},"media_assignment":{"mail_review"},
+                    "mail_review":{"compose"},"compose":{"reports"},"reports":{"collect"},
+                    "exceptions":{"collect"},"collect":set()}.get(kind,set(COMMON)|{"route"})
         if self.workflow_version>=3:
             if kind in ("output","reports"):
                 return set()
@@ -76,10 +87,12 @@ class WorkflowSpec:
             outputs=(definition.output,) if definition.output else definition.inputs
             compatible={k for k in self.kinds if k not in ("input","data") and
                         any(REGISTRY[k].accepts(t) for t in outputs)}
+            if kind in PDF_OPERATION_KINDS:
+                return compatible & (set(PDF_OPERATION_KINDS) | {"extract"})
             if kind not in EXTRA_KINDS:
                 legacy=copy.copy(self)
                 legacy.workflow_version=2 if self.project_kind=="mail_merge_workflow" else 1
-                compatible&=legacy.allowed_next(kind)|set(EXTRA_KINDS)
+                compatible&=legacy.allowed_next(kind)|set(EXTRA_KINDS)|set(PDF_OPERATION_KINDS)
             return compatible
         if self.project_kind=="mail_merge_workflow":
             index=MAIL_KINDS.index(kind)
@@ -97,7 +110,11 @@ class WorkflowSpec:
             raise CompositionError("Invalid workflow structure") from exc
 
     def validate(self):
-        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3,4)
+        if self.workflow_version==5:
+            from .branch_graph import validate
+            validate(self)
+            return
+        if (type(self.workflow_version) is not int or self.workflow_version not in (1,2,3,4,6)
                 or self.project_kind not in ("pdf_workflow","mail_merge_workflow")
                 or (self.project_kind=="mail_merge_workflow" and self.workflow_version not in (2,3,4))
                 or not isinstance(self.name,str) or len(self.name)>200 or not isinstance(self.nodes,list)
@@ -152,6 +169,8 @@ class WorkflowSpec:
                 validate_chain(path,self.project_kind)
 
     def chain(self):
+        if self.workflow_version==5:
+            raise CompositionError("Use the branched execution plan for a v5 workflow.")
         self.validate()
         kinds={n.kind:n for n in self.nodes}
         required=set(MAIL_KINDS) if self.project_kind=="mail_merge_workflow" else {"input","extract","group","review","output"}
@@ -174,6 +193,8 @@ class WorkflowSpec:
 
     def execution_prefix(self, node_id):
         """A connected, typed source-to-target path; no terminal node required."""
+        if self.workflow_version==5:
+            return self.execution_plan(node_id)
         self.validate()
         root=self.node("data" if self.project_kind=="mail_merge_workflow" else "input")
         if root is None:
@@ -219,6 +240,15 @@ class WorkflowSpec:
     def node(self, kind):
         return next((n for n in self.nodes if n.kind==kind),None)
 
+    def execution_plan(self,node_id=None):
+        from .branch_graph import execution_plan
+        return execution_plan(self,node_id)
+
+    @classmethod
+    def branched_mail_merge(cls):
+        from .branch_graph import default
+        return default()
+
     def to_dict(self):
         return asdict(self)
 
@@ -245,3 +275,5 @@ class WorkflowRun:
     data_steps: list = field(default_factory=list)
     data_summary: dict = field(default_factory=dict)
     page_pipeline_signature: str = ""
+    pdf_sources: dict = field(default_factory=dict)
+    pdf_operation_reports: dict = field(default_factory=dict)

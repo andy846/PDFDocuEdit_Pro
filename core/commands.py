@@ -18,6 +18,7 @@ class Command:
     enabled: Callable[[], bool] | None = field(default=None, compare=False)
     default_shortcut: str = ""
     scope: str = "window"
+    alternate_shortcuts: tuple[str, ...] = ()
 
     def is_enabled(self) -> bool:
         return self.enabled is None or self.enabled()
@@ -46,7 +47,8 @@ def filter_commands(commands: list[Command], query: str) -> list[Command]:
     return [
         command
         for command in commands
-        if matches(command.label) or matches(command.shortcut)
+        if matches(command.label) or matches(command.shortcut) or matches(command.section)
+        or any(matches(value) for value in command.alternate_shortcuts)
     ]
 
 
@@ -63,10 +65,20 @@ def shortcut_conflict(left: str, right: str) -> bool:
     return a.matches(b) != QKeySequence.SequenceMatch.NoMatch or b.matches(a) != QKeySequence.SequenceMatch.NoMatch
 
 
+def command_shortcuts(command, values=None):
+    primary = (values or {}).get(command.id, command.shortcut)
+    if not primary:
+        return ()
+    alternatives = command.alternate_shortcuts if primary == command.shortcut else ()
+    return (primary, *alternatives)
+
+
 def find_shortcut_conflict(commands, values):
     for index, command in enumerate(commands):
         for other in commands[index + 1:]:
-            if scopes_overlap(command.scope, other.scope) and shortcut_conflict(
-                    values.get(command.id, command.shortcut), values.get(other.id, other.shortcut)):
+            if scopes_overlap(command.scope, other.scope) and any(
+                    shortcut_conflict(left, right)
+                    for left in command_shortcuts(command, values)
+                    for right in command_shortcuts(other, values)):
                 return command, other
     return None

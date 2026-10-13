@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "platform": "macos-arm64",
+  "sources": {
+    "qpdf": {
+      "version": "12.4.2",
+      "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2.tar.gz",
+      "sha256": "8a58af5b6141319287c1883bec8bd1bd545b7567b7fc5e6ce5d25a1c85f36397",
+      "license": "Apache-2.0"
+    },
+    "zbar": {
+      "version": "0.23.93",
+      "url": "https://codeload.github.com/mchehab/zbar/tar.gz/refs/tags/0.23.93",
+      "sha256": "212dfab527894b8bcbcc7cd1d43d63f5604a07473d31a5f02889e372614ebe28",
+      "license": "LGPL-2.1-or-later"
+    },
+    "ghostscript": {
+      "version": "10.05.1",
+      "url": "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/ghostscript-10.05.1.tar.xz",
+      "sha256": "22f2bdca15c28830c9715cddc5c296ea66898bfdab0b604a4e0bcfeb03af6cad",
+      "license": "AGPL-3.0-or-later"
+    }
+  }
+}

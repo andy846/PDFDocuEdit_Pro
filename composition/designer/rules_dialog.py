@@ -7,7 +7,6 @@ from dataclasses import replace
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -38,6 +37,7 @@ from composition.template.model import (
     ElementRules,
     RuleCondition,
 )
+from ui.combo_popup import WideComboBox as QComboBox
 
 LABELS = {
     "eq": "Equals",

@@ -3,7 +3,8 @@
 from pathlib import Path
 import os
 import sys
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from core.resources import APP_VERSION
 
 ROOT = Path(SPECPATH)
 APP_NAME = "PDFDocuEdit Pro"
@@ -11,6 +12,19 @@ MAC_ICON = ROOT / "build_assets" / "icon.icns"
 _win_icon_alt = ROOT / "icon_2.ico"
 WIN_ICON = _win_icon_alt if _win_icon_alt.exists() else ROOT / "icon.ico"
 WIN_VERSION = ROOT / "installer" / "PDFDocuEditPro.version.txt"
+_auth_enabled = os.environ.get("PDFDOCUEDIT_BUILD_AUTH") == "1"
+_auth_pathex = []
+if _auth_enabled:
+    if sys.platform not in {"win32", "darwin"}:
+        raise RuntimeError("Private account builds require Windows or macOS.")
+    import json as _auth_json
+    from auth.config import AuthConfig
+    _project = _auth_json.loads((ROOT / "build_assets/auth/PROJECT.json").read_text(encoding="utf-8"))
+    AuthConfig.from_dict(_project)
+    _auth_folder = ROOT / "build/auth-config"
+    _auth_folder.mkdir(parents=True, exist_ok=True)
+    (_auth_folder / "pdfdocuedit_auth_build.py").write_text("PROJECT = " + repr(_project) + "\n", encoding="utf-8")
+    _auth_pathex = [str(_auth_folder)]
 
 datas = [
     (str(ROOT / "Splash.png"), "."),
@@ -18,6 +32,17 @@ datas = [
     (str(ROOT / "icon.png"), "."),
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
 ]
+if sys.platform == "darwin" or _auth_enabled:
+    import json as _update_json
+    _update_target = {"platform": "macos-arm64" if sys.platform == "darwin" else "windows-x64",
+                      "channel": "private" if _auth_enabled else "public",
+                      "auth_project": _project["project_ref"] if _auth_enabled else ""}
+    _update_folder = ROOT / "build/update-config"
+    _update_folder.mkdir(parents=True, exist_ok=True)
+    (_update_folder / "pdfdocuedit_update_build.py").write_text("TARGET = " + repr(_update_target) + "\n", encoding="utf-8")
+    (_update_folder / "update-target.json").write_text(_update_json.dumps(_update_target), encoding="utf-8")
+    _auth_pathex.append(str(_update_folder))
+    datas.append((str(_update_folder / "update-target.json"), "."))
 for _package in ("cryptography", "cffi", "pycparser"):
     datas.extend(copy_metadata(_package))
 if (ROOT / "build_assets" / "update_build.json").exists():
@@ -38,7 +63,7 @@ if sys.platform == "win32":
     if not _gs_license.is_file():
         raise RuntimeError("Bundled Ghostscript licence is missing: Ghostscript/doc/COPYING")
     datas.append((str(_gs_license), "ghostscript/doc"))
-for _rel in ("bin", "lib", "Resource", "iccprofiles"):
+for _rel in (("bin", "lib", "Resource", "iccprofiles") if sys.platform == "win32" else ()):
     _src = _GS_ROOT / _rel
     if _src.is_dir():
         for _file in _src.rglob("*"):
@@ -100,8 +125,11 @@ for _file in _VERA_ROOT.rglob("*"):
 from composition.enabled import is_enabled
 _composition_enabled = is_enabled()
 if _composition_enabled:
-    if sys.platform != "win32":
-        raise RuntimeError("Initial Document Designer production builds target Windows x64.")
+    if sys.platform == "darwin":
+        from scripts.prepare_macos import require_arm64
+        require_arm64()
+    elif sys.platform != "win32":
+        raise RuntimeError("Document Designer production builds require Windows x64 or macOS arm64.")
     import json as _json
     import hashlib as _hashlib
     _composition_root = ROOT / "build_assets" / "composition"
@@ -111,7 +139,8 @@ if _composition_enabled:
         _asset = _composition_root / _relative
         if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
             raise RuntimeError(f"Invalid composition asset: {_relative}. Run scripts/prepare_composition_assets.py.")
-        datas.append((str(_asset), str(Path("build_assets/composition") / Path(_relative).parent)))
+        if sys.platform != "darwin" or _relative != "qpdf/qpdf":
+            datas.append((str(_asset), str(Path("build_assets/composition") / Path(_relative).parent)))
     datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
     _enabled_file = ROOT / "build" / "composition-enabled" / "enabled.json"
     _enabled_file.parent.mkdir(parents=True, exist_ok=True)
@@ -120,8 +149,45 @@ if _composition_enabled:
     for _package in ("segno", "python-barcode"):
         datas.extend(copy_metadata(_package))
 
+# Fail closed on wrong-platform/incomplete runtimes before packaging either mode.
+from core.pdf_runtime import qpdf_executable as _verified_qpdf
+_verified_qpdf()
+
+# PDF Workspace repair also uses the same runtime when Designer is disabled.
+if not _composition_enabled:
+    import json as _json
+    import hashlib as _hashlib
+    _composition_root = ROOT / "build_assets" / "composition"
+    _manifest = _json.loads((_composition_root / "BUNDLE_INFO.json").read_text(encoding="utf-8"))
+    for _entry in _manifest["assets"]:
+        if not _entry["path"].startswith("qpdf/"):
+            continue
+        _asset = _composition_root / _entry["path"]
+        if not _asset.is_file() or _hashlib.sha256(_asset.read_bytes()).hexdigest() != _entry["sha256"]:
+            raise RuntimeError("Invalid qpdf runtime. Run scripts/prepare_composition_assets.py.")
+        if sys.platform != "darwin" or _entry["path"] != "qpdf/qpdf":
+            datas.append((str(_asset), str(Path("build_assets/composition") / Path(_entry["path"]).parent)))
+    datas.append((str(_composition_root / "BUNDLE_INFO.json"), "build_assets/composition"))
+
 # pyzbar ships the zbar native library as DLLs inside its package on Windows.
 binaries = []
+if sys.platform == "darwin":
+    _native = ROOT / "build_assets/macos"
+    _qpdf = ROOT / "build_assets/composition/qpdf/qpdf"
+    _zbar = _native / "zbar/lib/libzbar.dylib"
+    _gs = _native / "ghostscript/bin/gs"
+    for _required in (_qpdf, _zbar, _gs):
+        if not _required.is_file():
+            raise RuntimeError(f"Missing Mac native asset: {_required}. Run python -m scripts.prepare_macos.")
+    binaries.extend([(str(_qpdf), "build_assets/composition/qpdf"),
+                     (str(_zbar.resolve()), "pyzbar"), (str(_gs), "ghostscript/bin")])
+    # Force the public name irrespective of the versioned install filename.
+    binaries[-2] = (str(_zbar), "pyzbar")
+    for _folder, _destination in ((_native / "ghostscript/share/ghostscript/10.05.1", "ghostscript-resources"),
+                                  (_native / "licenses", "native-licenses")):
+        for _file in _folder.rglob("*"):
+            if _file.is_file():
+                datas.append((str(_file), str(Path(_destination) / _file.relative_to(_folder).parent)))
 try:
     import pyzbar as _pyzbar
 
@@ -145,30 +211,50 @@ _hiddenimports = [
     "numpy",
     "fontTools",
     "composition.worker",
+    "core.pdf_operations.worker",
+    "core.print_worker",
+    "dialogs.pdf_operations",
+    "dialogs.font_preflight",
+    "core.font_preflight.worker",
+    "ui.pdf_production_workspace",
+    "ui.pdf_production_integration",
+    "core.pdf_operations.overview",
     "workflow.workspace",
     "workflow.worker",
     "composition.designer.workspace",
     "barcode.codex",
     "segno",
 ]
+if sys.platform == "darwin" or _auth_enabled:
+    _hiddenimports.append("pdfdocuedit_update_build")
+if _auth_enabled:
+    _hiddenimports += ["pdfdocuedit_auth_build", "certifi"]
+    _hiddenimports += (["keyring.backends.macOS", "keyring.backends.macOS.api"] if sys.platform == "darwin"
+                       else ["keyring.backends.Windows", "win32ctypes.pywin32"])
+    for _package in ("supabase", "supabase_auth", "postgrest", "storage3", "supabase_functions", "realtime", "jaraco"):
+        _hiddenimports.extend(collect_submodules(_package))
+    for _package in ("supabase", "supabase-auth", "postgrest", "storage3", "supabase-functions", "realtime", "keyring", "certifi", "httpx", "httpcore", "jaraco.classes", "jaraco.context", "jaraco.functools"):
+        datas.extend(copy_metadata(_package))
 if _composition_enabled:
     _hiddenimports.append("scripts.composition_smoke")
+if sys.platform == "darwin":
+    _hiddenimports.append("scripts.macos_smoke")
 if sys.platform == "win32":
     # Microsoft Office COM backend for Office-to-PDF conversion.
     _hiddenimports += ["comtypes", "comtypes.client"]
 
 a = Analysis(
     [str(ROOT / "main.py")],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT), *_auth_pathex],
     binaries=binaries,
     datas=datas,
     hiddenimports=_hiddenimports,
     hookspath=[str(ROOT / "scripts" / "pyinstaller_hooks")],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(ROOT / "scripts/pyinstaller_hooks/runtime_macos.py")] if sys.platform == "darwin" else [],
     # Keep builds deterministic even when they run in a broad Conda environment.
     # None of these optional pandas/test/notebook integrations are used by the app.
-    excludes=[
+    excludes=([] if _auth_enabled else ["supabase", "supabase_auth", "keyring", "pdfdocuedit_auth_build"]) + [
         "PyQt5",
         "tkinter",
         "pandas",
@@ -228,8 +314,8 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=sys.platform == "darwin",
-    target_arch=None,
+    argv_emulation=False,
+    target_arch="arm64" if sys.platform == "darwin" else None,
     codesign_identity=os.environ.get("PDFDOCUEDIT_CODESIGN_IDENTITY") or None,
     entitlements_file=None,
     icon=str(WIN_ICON) if sys.platform == "win32" and WIN_ICON.exists() else None,
@@ -254,16 +340,22 @@ if sys.platform == "darwin":
         coll,
         name=f"{APP_NAME}.app",
         icon=str(MAC_ICON) if MAC_ICON.exists() else None,
-        bundle_identifier="com.pdfdocuedit.pro",
-        version="3.0.1",
+        bundle_identifier="com.pdfdocuedit.pro.private" if _auth_enabled else "com.pdfdocuedit.pro",
+        version=APP_VERSION,
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "3.0.1",
-            "CFBundleVersion": "256",
-            "CFBundleGetInfoString": "PDFDocuEdit Pro V3.0.1",
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "CFBundleGetInfoString": f"PDFDocuEdit Pro V{APP_VERSION}",
             "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [
+                {
+                    "CFBundleTypeName": "Document Designer project",
+                    "CFBundleTypeRole": "Editor",
+                    "LSHandlerRank": "Alternate",
+                    "CFBundleTypeExtensions": ["pdcx", "pdflow"],
+                },
                 {
                     "CFBundleTypeName": "PDF document",
                     "CFBundleTypeRole": "Editor",

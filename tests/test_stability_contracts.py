@@ -53,6 +53,9 @@ def test_build_accepts_python_312(monkeypatch):
 
 def test_macos_ocr_contract(monkeypatch, capsys):
     monkeypatch.setattr(capabilities.platform, "system", lambda: "Darwin")
+    # The build now also checks CPU architecture before validator provisioning.
+    # This fixture models the supported Mac; separate tests reject Windows.
+    monkeypatch.setattr(capabilities.platform, "machine", lambda: "arm64")
     assert capabilities.bundled_tesseract_runtime() == (
         None, None, "OCR is not bundled in the macOS build."
     )

@@ -194,9 +194,10 @@ def test_arrow_drag_uses_directional_endpoints_instead_of_a_marquee() -> None:
 
 def test_bundled_verapdf_uses_private_java_environment(tmp_path, monkeypatch) -> None:
     runtime_root = tmp_path / "VeraPDF"
-    java = runtime_root / "jre" / "bin" / "java.exe"
+    java = runtime_root / "jre" / "bin" / ("java.exe" if PlatformService.WINDOWS else "java")
     java.parent.mkdir(parents=True)
     java.write_bytes(b"runtime")
+    java.chmod(0o755)
     jar = runtime_root / "bin" / "cli-1.30.2.jar"
     jar.parent.mkdir(parents=True)
     jar.write_bytes(b"cli")
@@ -242,14 +243,16 @@ def _png_stream(mode: str = "RGB", size: tuple[int, int] = (300, 200)) -> bytes:
 
 def _fake_verapdf_runtime(tmp_path: Path, *, with_java: bool = True) -> VeraPdfRuntime:
     root = tmp_path / "veraPDF runtime"
-    launcher = root / "verapdf.bat"
+    launcher = root / ("verapdf.bat" if PlatformService.WINDOWS else "verapdf")
     launcher.parent.mkdir(parents=True, exist_ok=True)
     launcher.write_text("@echo off", encoding="utf-8")
+    launcher.chmod(0o755)
     java_home = root / "jre"
     if with_java:
-        java = java_home / "bin" / "java.exe"
+        java = java_home / "bin" / ("java.exe" if PlatformService.WINDOWS else "java")
         java.parent.mkdir(parents=True, exist_ok=True)
         java.write_bytes(b"java")
+        java.chmod(0o755)
         jar = root / "bin" / "cli-1.30.2.jar"
         jar.parent.mkdir(parents=True, exist_ok=True)
         jar.write_bytes(b"jar")
@@ -483,9 +486,10 @@ def test_windows_process_output_falls_back_from_utf8(monkeypatch) -> None:
 
 def test_packaged_verapdf_path_resolution(tmp_path, monkeypatch) -> None:
     root = tmp_path / "dist internal"
-    launcher = root / "verapdf" / "verapdf.bat"
+    launcher = root / "verapdf" / ("verapdf.bat" if PlatformService.WINDOWS else "verapdf")
     launcher.parent.mkdir(parents=True)
     launcher.write_text("@echo off", encoding="utf-8")
+    launcher.chmod(0o755)
     monkeypatch.setattr(verapdf_module, "bundle_root", lambda: root)
     monkeypatch.setattr(verapdf_module.shutil, "which", lambda _name: None)
 
@@ -502,7 +506,7 @@ def test_direct_java_command_preserves_unicode_and_spaces(tmp_path) -> None:
 
     command = command_for(runtime, ["--format", "xml", str(source)])
 
-    assert command[0].endswith("java.exe")
+    assert command[0].endswith("java.exe" if PlatformService.WINDOWS else "java")
     assert command[1] == "-jar"
     assert command[-1] == str(source)
     assert "cmd.exe" not in command

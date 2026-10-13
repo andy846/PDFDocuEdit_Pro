@@ -12,7 +12,6 @@ from time import perf_counter
 import fitz
 from PyQt6.QtCore import (
     QEvent,
-    QEventLoop,
     QObject,
     QPoint,
     QPointF,
@@ -36,7 +35,7 @@ from core.annotations import (
 from core.diagnostics import connect_interrupts, log_failure
 from core.measurement import PageScale, page_scale, saved_measurements
 from core.pdf_engine import DOCUMENT_LOCK
-from core.reader_lifetime import ReaderLease
+from core.reader_lifetime import ReaderBusyError, ReaderLease, wait_for_readers
 from core.tasks import FunctionTask
 from styles.theme import get_colors
 from styles.tokens import S
@@ -229,6 +228,7 @@ class PdfCanvas(QScrollArea):
     noteRequested = pyqtSignal(int, object)  # (page, fitz.Point)
     contextMenuRequested = pyqtSignal(object)  # global QPoint
     annotationSelected = pyqtSignal(int, int)
+    annotationSelectionCleared = pyqtSignal()
     annotationContextRequested = pyqtSignal(int, int, object)
     annotationGeometryChanged = pyqtSignal(int, int, object)
     annotationTextChanged = pyqtSignal(int, int, str)
@@ -332,10 +332,13 @@ class PdfCanvas(QScrollArea):
         self.viewport().setMouseTracking(True)
         self.viewport().installEventFilter(self)
         self.viewport().setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        from .pdf_rulers import PdfRulers
+        self.rulers = PdfRulers(self)
         self.update_theme()
 
     # --- document lifecycle ----------------------------------------------
     def load_doc(self, doc: fitz.Document, zoom: float = 1.0) -> None:
+        self.rulers.clear_guides()
         self._doc = doc
         self._measurements.clear()
         self._selected_measurement = None
@@ -386,29 +389,13 @@ class PdfCanvas(QScrollArea):
         self._font_inspection = None
         self._teardown_views()
         self._pager.setFixedSize(QSize(0, 0))
+        self.rulers.clear_guides()
+        self.rulers.reset_pointer()
 
     def wait_for_renders(self, timeout_ms: int = 3000) -> None:
-        """Drain readers for explicit mutations while Qt continues dispatching.
-
-        Close/open use asynchronous retirement instead. The legacy timeout
-        argument is accepted, but cannot authorize closing a still-read document.
-        """
-        self._generation += 1  # discard results of in-flight tasks
-        readers = self.reader_events()
-        if all(reader.is_set() for reader in readers):
-            return
-        loop = QEventLoop(self)
-        poll = QTimer(self)
-        poll.setInterval(20)
-
-        def check() -> None:
-            if all(reader.is_set() for reader in readers):
-                poll.stop()
-                loop.quit()
-
-        poll.timeout.connect(check)
-        poll.start()
-        loop.exec()
+        """Bounded drain; timeout must never authorize mutation or reader release."""
+        if not wait_for_readers(self.reader_events(), timeout_ms):
+            raise ReaderBusyError("PDF readers are still running. No edit was applied; wait and retry.")
 
     def refresh(self) -> None:
         """Re-render everything after the document content changed."""
@@ -472,6 +459,10 @@ class PdfCanvas(QScrollArea):
         self.select_annotation(page, xref)
         self.annotationSelected.emit(page, xref)
 
+    def _on_annotation_selection_cleared(self, _page: int) -> None:
+        self.clear_annotation_selection()
+        self.annotationSelectionCleared.emit()
+
     def _configure_annotation_preview(self, overlay: PageOverlay) -> None:
         overlay.set_annotation_preview_style(
             self._tool_mode.value,
@@ -516,6 +507,7 @@ class PdfCanvas(QScrollArea):
     # --- tool modes ------------------------------------------------------
     def set_tool_mode(self, mode: ToolMode | str) -> None:
         self._tool_mode = mode if isinstance(mode, ToolMode) else ToolMode(str(mode))
+        self.rulers.set_enabled(self._tool_mode == ToolMode.MEASURE)
         if self._tool_mode != ToolMode.FONT_INSPECT:
             self.clear_font_inspection()
         if self._magnifier_popup:
@@ -532,6 +524,7 @@ class PdfCanvas(QScrollArea):
         self._measure_unit = unit
         for page_num in self._page_views:
             self._sync_page_measurements(page_num)
+        self.rulers.refresh()
 
     def selected_measurement(self):
         selection = self._selected_measurement
@@ -1138,6 +1131,7 @@ class PdfCanvas(QScrollArea):
 
     # --- layout engine ---------------------------------------------------
     def _teardown_views(self) -> None:
+        self.rulers.cancel_guide()
         for view in self._page_views.values():
             view.setParent(None)
             view.deleteLater()
@@ -1279,6 +1273,8 @@ class PdfCanvas(QScrollArea):
         focused = set(self._visible_pages(buffer_pages=0))
         for page_num in list(self._page_views):
             if page_num not in needed:
+                if self.rulers.guide_drag is not None and self.rulers.guide_drag["page"] == page_num:
+                    self.rulers.cancel_guide()
                 view = self._page_views.pop(page_num)
                 view.setParent(None)
                 view.deleteLater()
@@ -1359,6 +1355,7 @@ class PdfCanvas(QScrollArea):
             view.overlay.fontInspectClicked.connect(self._on_font_inspect)
             view.overlay.formClicked.connect(self._on_form_click)
             view.overlay.annotationSelected.connect(self._on_annotation_selected)
+            view.overlay.annotationSelectionCleared.connect(self._on_annotation_selection_cleared)
             view.overlay.annotationContextRequested.connect(
                 self.annotationContextRequested.emit
             )
@@ -1383,10 +1380,12 @@ class PdfCanvas(QScrollArea):
                 selected[1] if selected is not None and selected[0] == page_num else None
             )
             self._page_views[page_num] = view
+            self.rulers.register(view.overlay)
             self._sync_page_measurements(page_num)
         self._fill_render_queue(focused)
         self._apply_search_hits()
         self._apply_font_inspection()
+        self.rulers.refresh()
 
     @_document_locked
     def _fill_render_queue(self, focused: set[int] | None = None) -> None:
@@ -1395,10 +1394,9 @@ class PdfCanvas(QScrollArea):
         for page_num in sorted(self._page_views, key=lambda page: (page not in focused, page)):
             self._request_render(page_num, page_num in focused)
 
-    @_document_locked
     def _request_render(self, page_num: int, high: bool = False) -> None:
         token = (self._generation, page_num)
-        if not self._doc or token in self._pending:
+        if getattr(self, "_reader_pause_count", 0) or not self._doc or token in self._pending:
             return
         dpr = self.devicePixelRatioF()
         key = (id(self._doc), page_num, round(self._zoom * dpr, 3), round(dpr, 3))
@@ -1499,6 +1497,8 @@ class PdfCanvas(QScrollArea):
         )
         for view in self._page_views.values():
             view.update_theme()
+        if hasattr(self, "rulers"):
+            self.rulers.refresh()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -1511,7 +1511,8 @@ class PdfCanvas(QScrollArea):
         if not self._doc:
             return
         scroll_pending = self._scroll_timer.isActive()
-        anchor = self._view_anchor()
+        anchor = getattr(self, "_ruler_view_anchor", None) or self._view_anchor()
+        self._ruler_view_anchor = None
         self._relayout()
         self._restore_view_anchor(anchor)
         self._scroll_timer.stop()
@@ -1695,8 +1696,12 @@ class PdfCanvas(QScrollArea):
         local = overlay.mapFrom(self.viewport(), position)
         return page_num, pager_pos, overlay.widget_to_pdf(local)
 
-    @_document_locked
     def _update_magnifier(self, position: QPoint) -> None:
+        if not getattr(self, "_reader_pause_count", 0):
+            self._update_magnifier_locked(position)
+
+    @_document_locked
+    def _update_magnifier_locked(self, position: QPoint) -> None:
         if self._magnifier_task is not None:
             self._pending_magnifier_position = QPoint(position)
             return

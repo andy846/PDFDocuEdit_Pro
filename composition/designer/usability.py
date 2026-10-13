@@ -172,7 +172,7 @@ class DesignerUsability:
         editable = not (busy or self.content_invalid)
         for key, action in self.actions.items():
             if not editable and (key.startswith(("insert_", "arrange_")) or
-                                 key in {"variable", "cut", "paste", "duplicate", "delete", "cjk", "repair_glyph", "edit_rules", "clear_rules"}):
+                                 key in {"variable", "cut", "paste", "paste_in_place", "repeat_pages", "duplicate", "delete", "cjk", "repair_glyph", "edit_rules", "clear_rules"}):
                 action.setEnabled(False)
         self.actions["preview"].setEnabled(not self.content_invalid)
         self.remap_button.setEnabled(not (busy or self.content_invalid))

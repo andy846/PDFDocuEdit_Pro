@@ -13,20 +13,25 @@ from composition.engine.renderer import render_preview
 from composition.media.model import MediaSpec, default_media
 from composition.media.planner import PrintPlan, build_print_plan, overlay_plan
 from composition.media.ticket import NS, export_print_package, validate_ticket
-from composition.overlay.generator import generate as overlay_generate
 from composition.overlay.model import OverlayJob
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.planner import EnvelopePlan
-from composition.production.generator import JobCancelled, generate
+from composition.production.generator import JobCancelled
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, Element, PageSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
-from composition.worker import dispatch
 from tests.composition.test_pdf_overlay_models import sample_spec
+from tests.production_approval import (
+    dispatch,
+    execute,
+    execute_batch,
+    expect_blocked,
+    generate,
+    overlay_generate,
+)
 from tests.test_mail_merge_workflow import pair, recipe
 from tests.test_workflow_core import configured, fixture_pdf
-from workflow.batch import BatchRun, approve, execute_batch, prepare
-from workflow.engine import execute
+from workflow.batch import BatchRun, approve, prepare
 from workflow.extraction import ExtractionStore
 from workflow.model import WorkflowNode, WorkflowRun, WorkflowSpec
 from workflow.registry import default_options
@@ -159,10 +164,9 @@ def test_generation_matches_preview_and_reports(tmp_path,duplex,policy,pages):
 
 
 def test_media_failure_and_cancel_publish_diagnostics_only(tmp_path):
-    result=generate(ProductionJob(template(3,True).to_dict(),"",str(tmp_path)))
-    assert result.status=="failed" and "Media conflict" in result.error
-    assert result.successful_records==result.generated_files==0
-    assert Path(result.report_dir,"job.json").exists()
+    review=expect_blocked(lambda:generate(ProductionJob(template(3,True).to_dict(),"",str(tmp_path))))
+    assert "Media conflict" in str(review)
+    assert not list(tmp_path.rglob("*.pdf"))
     cancelled=generate(ProductionJob(template().to_dict(),"",str(tmp_path)),is_cancelled=lambda:True)
     assert cancelled.status=="cancelled"
     assert not list(tmp_path.rglob("*.pdf")) and not list(tmp_path.rglob("*.jdf"))
@@ -186,9 +190,8 @@ def test_overlay_barcode_scope_and_print_page_counts_follow_media(tmp_path):
         for index in range(6):
             assert source[index].get_pixmap(clip=fitz.Rect(0,180,595,842)).samples==output[index*2].get_pixmap(clip=fitz.Rect(0,180,595,842)).samples
     spec.media["blank_policy"]="block"
-    failure=overlay_generate(OverlayJob(spec.to_dict(),str(tmp_path/"out")))
-    assert failure.status=="failed" and "Media conflict" in failure.error
-    assert Path(failure.report_dir,"job.json").exists()
+    failure=expect_blocked(lambda:overlay_generate(OverlayJob(spec.to_dict(),str(tmp_path/"out"))))
+    assert "Media conflict" in str(failure)
 
 
 def test_versions_keep_legacy_media_disabled_and_reject_downgrade(tmp_path):

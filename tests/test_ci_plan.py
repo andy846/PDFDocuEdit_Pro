@@ -87,10 +87,56 @@ def test_composition_changes_are_selected_recursively() -> None:
 
 
 def test_focused_runner_accepts_composition_test_paths(monkeypatch) -> None:
-    from scripts import ci_plan
+    from scripts import ci_plan, regression_suite
 
     calls = []
-    monkeypatch.setattr(ci_plan.subprocess, "call",
-                        lambda command, **kwargs: calls.append(command) or 0)
+    monkeypatch.setattr(regression_suite, "run",
+                        lambda paths, output: calls.append((paths, output)) or 0)
     assert run_tests("focused", "tests/composition/test_renderer.py") == 0
-    assert calls[0][3:] == ["tests/composition/test_renderer.py"]
+    assert calls == [(["tests/composition/test_renderer.py"], ci_plan.ROOT / "build/ci-focused")]
+
+
+def test_focused_isolation_keeps_every_selected_module_and_failure(monkeypatch):
+    from scripts import regression_suite
+    calls = []
+    monkeypatch.setattr(regression_suite, "run", lambda paths, output: calls.append(paths) or 1)
+    paths = ["tests/composition/test_designer_entry.py", "tests/composition/test_workspace_modes.py"]
+    assert run_tests("focused", " ".join(paths)) == 1
+    assert calls == [paths]
+
+
+def test_mac_release_invokes_current_integrity_and_production_gates(monkeypatch):
+    import runpy
+    import sys
+
+    import pytest
+
+    import scripts.regression_suite as runner
+
+    selected = []
+    def capture(paths, output):
+        selected.extend(paths)
+        return 0
+
+    monkeypatch.setattr(runner, "run", capture)
+    monkeypatch.setattr(sys, "argv", ["macos_test_plan"])
+    with pytest.raises(SystemExit) as result:
+        runpy.run_module("scripts.macos_test_plan", run_name="__main__")
+    assert result.value.code == 0
+    assert {
+        "tests/test_mutation_transactions.py", "tests/test_production_authorization.py",
+        "tests/test_production_output_safety.py", "tests/test_production_recovery.py",
+        "tests/test_workflow_branch_ui.py", "tests/test_document_windows.py",
+        "tests/test_overlay_ui.py",
+    } <= set(selected)
+    assert len(selected) == len(set(selected))
+
+
+
+def test_qpdf_runtime_changes_require_platform_and_ui_gates():
+    result = plan("pull_request", "refs/pull/14/merge", ["core/pdf_runtime.py"])
+    assert result["full"] == result["ui"] == result["cross_platform"] == "true"
+    for path in ("scripts/prepare_qpdf.py", "scripts/prepare_macos.py", "build_assets/composition/BUNDLE_INFO.json"):
+        assert plan("pull_request", "refs/pull/14/merge", [path])["cross_platform"] == "true"
+    assert "tests/test_pdf_runtime.py" in CROSS_PLATFORM_TESTS
+    assert "tests/test_font_preflight.py" in CROSS_PLATFORM_TESTS

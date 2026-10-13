@@ -30,7 +30,7 @@ def rgb(value: str):
     return tuple(int(value[index:index + 2], 16) / 255 for index in (1, 3, 5))
 
 
-def wrap_text(text: str, font: fitz.Font, size: float, width: float) -> list[str]:
+def wrap_text(text: str, font: fitz.Font, size: float, width: float, *, allow_narrow=False) -> list[str]:
     """Wrap at words, splitting long tokens/CJK sequences at glyph boundaries."""
     result = []
     for paragraph in text.replace("\r\n", "\n").replace("\r", "\n").expandtabs(4).split("\n"):
@@ -44,7 +44,7 @@ def wrap_text(text: str, font: fitz.Font, size: float, width: float) -> list[str
                 line = ""
                 word = word.lstrip()
             for character in word:
-                if font.text_length(character, fontsize=size) > width + 0.001:
+                if not allow_narrow and font.text_length(character, fontsize=size) > width + 0.001:
                     raise CompositionError("Text box is narrower than a character.")
                 if line and font.text_length(line + character, fontsize=size) > width + 0.001:
                     result.append(line)
@@ -65,7 +65,9 @@ class Renderer:
         self.preview_page_index = page_index
         self.template = template
         self.media_plan = None
+        self.barcode_marks = []
         self.design = design
+        self.layout_issues = []
         self.plans = {element.id: ElementPlan(element) for spec in self.resource_pages for element in spec.elements}
         self.tokens = {key: plan.tokens for key, plan in self.plans.items() if plan.tokens}
         self.rule_summary = {"configured_objects": sum(plan.has_rules for plan in self.plans.values()),
@@ -197,9 +199,11 @@ class Renderer:
         if self.resource_document is not document:
             self.resource_document = document
             self.font_xrefs.clear()
+        self.barcode_marks = []
         indices = range(len(self.template.pages)) if page_index is None else [page_index]
         media_plan=None
-        if page_index is None and self.template.media.get("enabled"):
+        from .barcode_profiles import has_profiles
+        if page_index is None and (self.template.media.get("enabled") or self.template.media.get("duplex") or has_profiles(self.template)):
             from composition.media.planner import build_print_plan
             if self.media_plan is None:
                 self.media_plan=build_print_plan(self.template,1,is_cancelled=is_cancelled)
@@ -227,6 +231,16 @@ class Renderer:
         for element in elements:
             try:
                 self._render_element(page, element, values)
+                plan = self.plans[element.id]
+                if plan.profile and plan.profile.preset == "inserter_i25_18" and plan.resolve(values, design=self.design).visible:
+                    from .barcode_profiles import profile_values
+                    from .inserter_production import mark_for
+                    self.barcode_marks.append(mark_for(element, plan.profile, profile_values(values)))
+                elif plan.profile and plan.profile.layout_mode == "fixed" and not self.design:
+                    selected = plan.resolve(values)
+                    if selected.visible:
+                        from .generic_production import mark_for
+                        self.barcode_marks.append(mark_for(element, plan.profile, values, selected.value))
             except Exception as exc:
                 fields = sorted(self.plans[element.id].fields)
                 raise CompositionError(
@@ -288,23 +302,37 @@ class Renderer:
         font, font_path = self.fonts[element.id]
         selector = self.selectors[element.id]
         used = [font] + [face for _value, face, _path in selector.runs(text)]
-        lines = wrap_text(text, selector, element.font.size_pt, rect.width)
+        lines = wrap_text(text, selector, element.font.size_pt, rect.width, allow_narrow=self.design)
         ascender = max(face.ascender for face in used) if self.auto_repair else font.ascender
         descender = min(face.descender for face in used) if self.auto_repair else font.descender
         glyph_height = (ascender - descender) * element.font.size_pt
         step = element.font.size_pt * element.line_spacing
         height = glyph_height + max(0, len(lines) - 1) * step
-        if height > rect.height + 0.01:
+        too_high = height > rect.height + 0.01
+        too_narrow = self.design and any(selector.text_length(line, fontsize=element.font.size_pt) > rect.width + 0.001 for line in lines)
+        if too_high and not self.design:
             raise CompositionError(f"Text overflows its box ({height / MM_TO_PT:.2f} mm required).")
-        offset = 0 if element.vertical_align == "top" else (
+        offset = 0 if element.vertical_align == "top" or (self.design and too_high) else (
             (rect.height - height) / 2 if element.vertical_align == "center" else rect.height - height
         )
         baseline = rect.y0 + offset + ascender * element.font.size_pt
-        if baseline - max(face.ascender for face in used) * element.font.size_pt < rect.y0 - 0.01:
+        above = baseline - max(face.ascender for face in used) * element.font.size_pt < rect.y0 - 0.01
+        below = baseline + max(0, len(lines)-1) * step - min(face.descender for face in used) * element.font.size_pt > rect.y1 + 0.01
+        if above and not self.design:
             raise CompositionError("Repair font extends above the original baseline box. Choose compatible metrics or adjust the box alignment.")
-        if baseline + max(0, len(lines)-1) * step - min(face.descender for face in used) * element.font.size_pt > rect.y1 + 0.01:
+        if below and not self.design:
             raise CompositionError("Repair font extends below the original text box. Adjust the box or choose compatible metrics.")
+        if self.design and (too_high or too_narrow or above or below):
+            self.layout_issues.append({"object":element.id,"fields":sorted(self.plans[element.id].fields),
+                "reason":"Design text is clipped to this box. Enlarge it to see the full placeholder; check actual data in Record Preview."})
+        # A design-only clip preserves the page/background and all other objects.
+        # Production and record preview keep the strict checks above.
+        if self.design:
+            page.wrap_contents()
+            previous = page.get_contents()
         for index, line in enumerate(lines):
+            if self.design and baseline + index * step - max(face.ascender for face in used) * element.font.size_pt >= rect.y1:
+                break
             length = selector.text_length(line, fontsize=element.font.size_pt)
             x = rect.x0
             if element.align == "center":
@@ -318,6 +346,16 @@ class Renderer:
                     fontname=fontname, fontsize=element.font.size_pt, color=rgb(element.colour),
                 )
                 x += face.text_length(value, fontsize=element.font.size_pt)
+        if self.design:
+            document = page.parent
+            appended = [xref for xref in page.get_contents() if xref not in previous]
+            if appended:
+                begin, end = document.get_new_xref(), document.get_new_xref()
+                document.update_object(begin,"<<>>")
+                document.update_stream(begin,f"q {rect.x0:.8f} {page.rect.height-rect.y1:.8f} {rect.width:.8f} {rect.height:.8f} re W n\n".encode())
+                document.update_object(end,"<<>>")
+                document.update_stream(end,b"Q\n")
+                document.xref_set_key(page.xref,"Contents","["+" ".join(f"{xref} 0 R" for xref in previous+[begin]+appended+[end])+"]")
 
     def _embed_font(self, page, font_path):
         # A non-reserved font name embeds the exact selected TTF/OTF.
@@ -380,7 +418,7 @@ class Renderer:
                 ))
                 start = end
         else:
-            qr = segno.make_qr(value, error=element.qr_error, boost_error=False, encoding="utf-8")
+            qr = segno.make_qr(value, error=element.qr_error, boost_error=False, encoding="utf-8", eci=not value.isascii())
             matrix = list(qr.matrix)
             count = len(matrix) + 8
             module = min(rect.width, rect.height) / count
@@ -421,13 +459,16 @@ class Renderer:
 
 def render_preview(template: Template, record: dict[str, str], ordinal: int = 1,
                    repair_details: list | None = None, *, page_index: int | None = None,
-                   design=False, rule_details: list | None = None, auto_repair=False) -> bytes:
+                   design=False, rule_details: list | None = None, auto_repair=False,
+                   layout_details: list | None = None) -> bytes:
     with Renderer(template, page_index=page_index, design=design, auto_repair=auto_repair) as renderer, fitz.open() as document:
         renderer.render(document, record, ordinal, page_index=page_index)
         if repair_details is not None:
             repair_details.extend(renderer.glyph_usage(record, page_index, ordinal))
         if rule_details is not None:
             rule_details.extend(renderer.rule_usage(record, page_index, ordinal))
+        if layout_details is not None:
+            layout_details.extend(renderer.layout_issues)
         renderer.finalize(document)
         return document.tobytes(deflate=True, garbage=1)
 

@@ -12,7 +12,6 @@ from composition.data.source import import_records
 from composition.designer.sequence_dialog import SequenceDialog
 from composition.designer.workspace import CompositionWindow
 from composition.engine.renderer import render_preview
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import (
     CompositionError,
@@ -26,8 +25,8 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
-from composition.worker import dispatch
 from tests.composition.test_designer_controls import cleanup, wait
+from tests.production_approval import dispatch, expect_blocked, generate
 
 
 def model(count=4):
@@ -69,7 +68,7 @@ def test_schema_versions_and_declarative_save_restore(tmp_path):
     target = save_project(template, tmp_path/"tickets.pdcx")
     loaded = load_project(target)
     assert loaded.to_dict() == template.to_dict()
-    assert json.loads(target.read_text(encoding="utf-8"))["template_version"] == 10
+    assert json.loads(target.read_text(encoding="utf-8"))["template_version"] == 12
     legacy = Template(elements=[Element(value="Client unchanged")]).to_dict()
     legacy["template_version"] = 4
     for key in ("sheet", "excel_formulas", "preserve_zeros"):
@@ -122,9 +121,9 @@ def test_imported_sequences_preserve_source_fields_and_block_collision(tmp_path)
         CompositionRecords(template, store)
     with pytest.raises(CompositionError, match="conflict"):
         render_preview(template, {"Name": "Bob"})
-    result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path/"out")))
-    assert result.status == "failed" and result.generated_files == 0
-    assert "conflict" in result.error
+    review = expect_blocked(lambda: generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path/"out"))))
+    assert "conflict" in str(review)
+    assert not (tmp_path / "out").exists()
 
 
 def test_preview_random_access_and_chunked_output_share_exact_values(tmp_path):
@@ -153,6 +152,89 @@ def test_preview_random_access_and_chunked_output_share_exact_values(tmp_path):
     assert log["record_mode"] == "generated"
     assert log["sequences"][1]["first"] == "001" and log["sequences"][1]["last"] == "008"
     assert "generated record ordinal" in log["record_identity"]
+
+
+@pytest.mark.parametrize("pages", [1, 2, 3])
+@pytest.mark.parametrize("duplex", [False, True])
+def test_no_media_page_sequences_follow_output_pages_and_preview(tmp_path, pages, duplex):
+    template = model(3)
+    template.pages = [PageSpec(id=f"page-{i}", elements=[
+        Element(value="{{Ticket}} / {{PageSeq}}", width_mm=150)]) for i in range(pages)]
+    template.media = {"enabled": False, "duplex": duplex}
+    assert all(not element.barcode_profile for element in template.all_elements())
+    physical_count = pages + int(duplex and pages % 2)
+    expected = []
+    for ordinal in range(1, 4):
+        expected.extend(f"INV-{100 + (ordinal - 1) * 2:05d}-HK / "
+                        f"{(ordinal - 1) * physical_count + page + 1:03d}" for page in range(pages))
+        if physical_count > pages:
+            expected.append("")
+    job = ProductionJob(template.to_dict(), "", str(tmp_path / "out"), chunk_size=2)
+    result = generate(job)
+    assert result.status == "completed", result.error
+    assert result.generated_pages == 3 * physical_count
+    with fitz.open(result.output_pdf) as pdf:
+        assert [page.get_text().strip() for page in pdf] == expected
+        for ordinal in (2, 3):
+            for page_index in (0, pages - 1):
+                preview = dispatch({"task": "preview", "template": template.to_dict(),
+                                    "design": False, "record": ordinal, "page": page_index,
+                                    "target": str(tmp_path / f"preview-{ordinal}-{page_index}.pdf")})
+                output_index = (ordinal - 1) * physical_count + page_index
+                with fitz.open(preview["pdf"]) as current:
+                    assert current.page_count == 1
+                    assert current[0].get_text().strip() == expected[output_index]
+                    assert current[0].get_pixmap().samples == pdf[output_index].get_pixmap().samples
+    log = json.loads((tmp_path / "out" / job.job_id / "job.json").read_text(encoding="utf-8"))
+    by_name = {sequence["name"]: sequence for sequence in log["sequences"]}
+    assert by_name["PageSeq"]["first"] == "001"
+    assert by_name["PageSeq"]["last"] == f"{2 * physical_count + pages:03d}"
+    assert by_name["Ticket"]["first"] == "INV-00100-HK"
+    assert by_name["Ticket"]["last"] == "INV-00104-HK"
+
+
+def test_page_sequence_cache_tracks_duplex_changes_without_media():
+    template = model(3)
+    template.pages.append(PageSpec(id="third"))
+    for duplex, expected in ((False, "004"), (True, "005"), (False, "004"), (True, "005")):
+        template.media = {"enabled": False, "duplex": duplex}
+        assert sequence_record(template, {}, 2, 0)["PageSeq"] == expected
+        assert sequence_record(template, {}, 2, 2)["Ticket"] == "INV-00102-HK"
+    template.pages.append(PageSpec(id="fourth"))
+    assert sequence_record(template, {}, 2, 3)["PageSeq"] == "008"
+    template.pages.append(PageSpec(id="fifth"))
+    assert sequence_record(template, {}, 2, 0)["PageSeq"] == "007"
+
+
+def test_page_sequence_cache_tracks_media_blank_insertion_and_disabled_media():
+    from tests.composition.test_media_duplex_sheets import four_page_template
+    template = four_page_template()
+    template.sequences = [SequenceSpec("PageSeq", 1, 1, 3, scope="page")]
+    assert sequence_record(template, {}, 2, 2)["PageSeq"] == "007"
+    template.media["assignments"].update({"2": "LH_B", "3": "LH_A"})
+    template.media["blank_policy"] = "insert"
+    assert sequence_record(template, {}, 2, 2)["PageSeq"] == "013"
+    template.media["enabled"] = False
+    assert sequence_record(template, {}, 2, 2)["PageSeq"] == "007"
+    template.media["enabled"] = True
+    assert sequence_record(template, {}, 2, 2)["PageSeq"] == "013"
+
+
+def test_duplex_page_sequence_formatting_and_rule_values_without_media(tmp_path):
+    template = model(3)
+    template.pages.append(PageSpec(id="third"))
+    template.media = {"enabled": False, "duplex": True}
+    template.sequences[1] = SequenceSpec("PageSeq", 9, 3, 4, "P-", "-END", scope="page")
+    assert sequence_record(template, {}, 3, 2)["PageSeq"] == "P-0039-END"
+    template.sequences[1] = SequenceSpec("PageSeq", 1, 1, 3, scope="page")
+    template.pages[0].elements.append(Element(value="VISIBLE", y_mm=50, rules=ElementRules(
+        ConditionGroup("all", [RuleCondition("PageSeq", "gt", "number", "4")]))))
+    result = generate(ProductionJob(template.to_dict(), "", str(tmp_path / "out")))
+    assert result.status == "completed", result.error
+    assert result.rule_summary["hidden_occurrences"] == 1
+    with fitz.open(result.output_pdf) as pdf:
+        assert "VISIBLE" not in pdf[0].get_text()
+        assert "VISIBLE" in pdf[4].get_text()  # Second record starts at output page 5.
 
 
 def test_sequence_rules_use_correct_page_in_preflight_and_preview(tmp_path):
@@ -230,6 +312,8 @@ def test_gui_generated_fields_preview_production_undo_and_reopen(app, tmp_path):
         saved = save_project(w.template, tmp_path/"project.pdcx")
         assert load_project(saved).sequences == [seq]
         w.start_production(str(tmp_path/"out"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(w)
         wait(lambda: not w.production_worker and bool(w.last_output))
         with fitz.open(w.last_output) as pdf:
             assert [p.get_text().strip() for p in pdf] == ["T-0001", "T-0002", "T-0003"]

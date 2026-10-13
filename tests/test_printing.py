@@ -64,6 +64,7 @@ def test_prepare_preserves_snapshot_order_and_duplicates(tmp_path):
     assert prepared.pages == (2, 0, 2)
     with fitz.open(stream=prepared.data, filetype="pdf") as result:
         assert "unsaved edit" in result[0].get_text()
+    prepared.session.close()
     cancelled = Event()
     cancelled.set()
     with pytest.raises(TaskCancelled):

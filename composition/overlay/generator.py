@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 from contextlib import ExitStack
+from dataclasses import asdict
 from itertools import islice
 from pathlib import Path
 
@@ -17,11 +18,13 @@ from composition.engine.assets import qpdf_executable
 from composition.media.planner import PrintPlan, overlay_plan
 from composition.pdf_source.source import inspect_source, snapshot_source
 from composition.production.generator import JobCancelled, _assemble, check_cancel
+from composition.production.journal import production_claim, publish_package
 from composition.production.model import now
 from composition.production.resources import peak_memory
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
+from core.variables import VariableContext, resolve_filename
 
 from .model import EnvelopeSpec, OverlayResult
 from .qc import check_mark
@@ -47,7 +50,8 @@ def _error_page(result, page):
     result.error_output_page=page.output_page
 
 
-def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None,_defer_media_ticket=False):
+@production_claim("overlay")
+def generate(job, *, progress=None, is_cancelled=None, external_values=None, additional_reports=None,_defer_media_ticket=False,authorization=None):
     spec=EnvelopeSpec.from_dict(job.project)
     if spec.external_fields and external_values is None:
         raise CompositionError("This overlay requires reviewed Workflow extraction data. Generate it from Workflow.")
@@ -59,14 +63,33 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         raise CompositionError("Invalid job identity.")
     if type(job.chunk_size) is not int or not 1 <= job.chunk_size <= 1000 or type(job.auto_repair) is not bool:
         raise CompositionError("Invalid chunk size or automatic font repair flag.")
+    context = VariableContext(**job.variable_context) if job.variable_context else VariableContext.for_job(
+        input_path=spec.source.path, job_id=job.job_id, job_name=spec.name)
+    values = context.to_dict()
+    values["namespaces"].setdefault("job", {}).update(id=job.job_id)
+    naming = resolve_filename(job.output_name, VariableContext(**values), extension=".pdf")
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    reviewed_context = authorization.require_job("overlay", job, is_cancelled=is_cancelled)
+    provider_audit = None
+    expected_provider = reviewed_context.get("binding", {}).get("external_provider_sha256")
+    if expected_provider:
+        if external_values is None:
+            raise CompositionError("Reviewed external values provider is missing.")
+        from composition.review.providers import ProviderAudit
+        provider_audit = ProviderAudit(external_values)
+        external_values = provider_audit
+    from core.output_safety import contained_path, validate_identifier
+    validate_identifier(job.job_id)
     output_root=Path(job.output_dir).resolve()
     output_root.mkdir(parents=True,exist_ok=True)
-    final=output_root/job.job_id
+    final=contained_path(output_root,job.job_id)
     failure=output_root/(job.job_id+"-failed")
     if final.exists() or failure.exists():
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging=Path(tempfile.mkdtemp(prefix="."+job.job_id+"-",dir=output_root))
     result=OverlayResult(job.job_id)
+    result.warnings.extend(naming.issues)
     result.copied_source_pages=0
     result.rendered_inserted_blanks=0
     current=None
@@ -76,9 +99,13 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
     result.source_pages=spec.source.pages
     result.warnings.extend(spec.source.warnings)
     if any(obj.profile and obj.profile.validation=="pending" for obj in spec.objects):
-        result.warnings.append("Generic barcode profile: machine validation pending. Software decoding does not certify inserter compatibility.")
+        result.warnings.append("Barcode profile: machine validation pending. Software decoding does not certify inserter compatibility.")
+    if any(segment.overflow == "cycle" for obj in spec.objects if obj.profile for segment in obj.profile.segments):
+        result.warnings.append("Generic sequence cycling enabled: review barcode-cycles.csv for full and encoded values.")
     try:
         check_cancel(is_cancelled)
+        from composition.engine.barcode_profiles import require_current_inserters
+        require_current_inserters((o.element.id, o.profile) for o in spec.objects if o.profile)
         plan=overlay_plan(spec,is_cancelled=is_cancelled)
         result.excluded_source_pages=plan.excluded_pages
         result.source_pages=plan.source_pages
@@ -88,7 +115,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         result.sheets=plan.sheets
         if isinstance(plan,PrintPlan):
             from composition.media.ticket import export_print_package
-            result.media_summary=export_print_package(staging,plan,"production.pdf",is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket)
+            result.media_summary=asdict(plan.preflight())
+            result.media_summary.update(export_print_package(staging,plan,naming.value,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket))
             result.media_summary["inserted_blanks"]=plan.inserted_blanks
             result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
         if progress:
@@ -115,11 +143,19 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                 result.font_scan=dict(renderer.renderer.repair_summary)
             # Validate scopes, all payloads, required read positions and page boundaries before composition.
             marks_file=resources.enter_context((staging/"marks.jsonl").open("w",encoding="utf-8"))
+            from composition.engine.generic_production import CycleAudit
+            cycle_audit = (CycleAudit(resources.enter_context((staging/"barcode-cycles.csv").open(
+                "w", encoding="utf-8-sig", newline="")))
+                if any(o.profile and o.profile.layout_mode == "fixed" for o in spec.objects) else None)
             for page in plan.pages():
                 check_cancel(is_cancelled)
                 current=page
                 fields=page_values(spec,page,job.job_id,external_values)
                 selected=renderer.selections(fields,verified.page_geometry(page))
+                if cycle_audit:
+                    for element, obj, _value in selected:
+                        if obj.profile and obj.profile.layout_mode == "fixed":
+                            cycle_audit.write(element, obj.profile, fields, page.envelope)
                 result.expected_barcodes+=sum(element.type in ("qr","code128","i25") for element,_obj,_value in selected)
             current=None
             pages_file=resources.enter_context((staging/"pages.csv").open("w",encoding="utf-8-sig",newline=""))
@@ -128,6 +164,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             row(pages_writer,["Source page","Output page","Envelope sequence","Letter page","Print page","Sheet no","Side","Inserted blank", "Original PDF page"])
             row(env_writer,["Envelope index","Envelope sequence","Source start","Source end","Output start","Output end","Source pages","Output pages","Sheets","Status"])
             chunks=[]
+            if provider_audit is not None:
+                provider_audit.capture = True
             pending = iter(plan.pages())
             per_envelope = plan.settings_for(1).output_pages_per_envelope
             batch_size = job.chunk_size if spec.settings.groups else ((job.chunk_size + per_envelope-1)//per_envelope)*per_envelope
@@ -176,7 +214,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         check_cancel(is_cancelled)
         if progress:
             progress(plan.output_pages,plan.output_pages,"Assembling and validating overlay PDF")
-        pdf=staging/"production.pdf"
+        pdf=staging/naming.value
         result.assembler_peak_memory_bytes=_assemble(chunks,pdf,executable,is_cancelled)
         validate_pdf_file(pdf,expected_page_count=plan.output_pages)
         for path in chunks:
@@ -186,7 +224,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             with (staging/"barcodes.csv").open("w",encoding="utf-8-sig",newline="") as stream, (staging/"barcodes.jsonl").open("w",encoding="utf-8") as audit:
                 qc_envelope=None
                 writer=csv.writer(stream)
-                row(writer,["Output page","Source page","Envelope","Object","Symbology","Profile","Payload","QC"])
+                row(writer,["Output page","Source page","Envelope","Object","Symbology","Profile","Payload","QC",
+                            "Sheet", "Group sequence", "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "Sheet sequence", "Job sheet"])
                 for raw in marks:
                     check_cancel(is_cancelled)
                     mark=json.loads(raw)
@@ -197,8 +236,10 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                     check_mark(document[mark["output_page"]-1],mark)
                     result.decoded_barcodes+=1
                     audit.write(json.dumps({**mark,"qc":"decoded_exact"},ensure_ascii=False)+"\n")
+                    parts = mark.get("parts", {})
                     row(writer,[mark["output_page"],mark["source_page"] or "",mark["envelope"],mark["object"],
-                                mark["symbology"],mark["profile"],mark["payload"],"Decoded: exact match"])
+                                mark["symbology"],mark["profile"],mark["payload"],"Decoded: exact match", mark.get("sheet", ""),
+                                parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", ""), parts.get("sheet", ""), mark.get("job_sheet", "")])
                     if progress and result.decoded_barcodes%100==0:
                         progress(result.decoded_barcodes,result.expected_barcodes,f"Barcode QC {result.decoded_barcodes:,}/{result.expected_barcodes:,}")
                 # The assembled PDF has passed output validation and all existing marks
@@ -210,6 +251,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             raise CompositionError("An overlay image or font changed during production. Review and run again.")
         result.unverified_envelopes=plan.envelopes-result.successful_envelopes
         result.generated_files=1
+        if provider_audit is not None and provider_audit.digest.hexdigest() != expected_provider:
+            raise CompositionError("External values changed after review; production was not published.")
         reconcile(result)
         if isinstance(plan,PrintPlan) and not _defer_media_ticket:
             from composition.media.postscript import export_postscript
@@ -240,7 +283,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                     raise CompositionError("Unsafe overlay asset cleanup path.")
                 shutil.rmtree(directory)
         check_cancel(is_cancelled)
-        os.rename(staging,final)
+        published = publish_package(staging, final, asdict(result), authorization)
+        result.warnings = published.get("warnings", result.warnings)
         return result
     except Exception as exc:
         for document in (chunk,layers):

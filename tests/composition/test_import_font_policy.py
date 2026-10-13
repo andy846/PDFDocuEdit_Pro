@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import fitz
 import pytest
 from openpyxl import Workbook
@@ -10,9 +7,9 @@ from openpyxl.styles import Font
 
 from composition.data.source import import_records
 from composition.engine.renderer import render_preview
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, Template
+from tests.production_approval import expect_blocked, generate
 
 
 def styled_data(tmp_path, font_family):
@@ -39,14 +36,12 @@ def test_excel_cell_fonts_do_not_override_template_preview_or_production(tmp_pat
         for store in stores:
             with pytest.raises(CompositionError, match="Template font: Noto Sans; PDF face: Noto Sans Regular"):
                 render_preview(template, store.record(2))
-            result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out")))
-            assert result.status == "failed" and result.error_record == 2
-            assert result.generated_files == result.generated_pages == 0
-            assert "font file: NotoSans-Regular.ttf" in result.error
-            assert "Imported data supplies values only" in result.error
-            report = json.loads((Path(result.report_dir) / "job.json").read_text(encoding="utf-8"))
-            assert report["template_fonts"][0]["primary"]["family"] == family
-            assert "imported data fonts ignored" in report["font_policy"]
+            review = expect_blocked(lambda store=store: generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out"))))
+            assert review.packet["issues"][0]["envelope"] == 2
+            assert "font file: NotoSans-Regular.ttf" in str(review)
+            assert "Imported data supplies values only" in str(review)
+            assert review.packet["context"]["job"]["template"]["pages"][0]["elements"][0]["font"]["family"] == family
+            assert not (tmp_path / "out").exists()
         return
     previews = [render_preview(template, store.record(2)) for store in stores]
     with fitz.open(stream=previews[0], filetype="pdf") as first, fitz.open(stream=previews[1], filetype="pdf") as second:

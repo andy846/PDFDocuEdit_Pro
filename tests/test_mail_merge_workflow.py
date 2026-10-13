@@ -6,9 +6,10 @@ from pathlib import Path
 import fitz
 import pytest
 
-from composition.template.model import Element, PageSpec, SequenceSpec, Template
+from composition.template.model import CompositionError, Element, PageSpec, SequenceSpec, Template
 from composition.template.serializer import save_project
-from workflow.batch import BatchJob, BatchRun, approve, execute_batch, load_record, prepare, save_record
+from tests.production_approval import execute_batch
+from workflow.batch import BatchJob, BatchRun, approve, load_record, prepare, save_record
 from workflow.model import WorkflowSpec
 from workflow.serializer import load_workflow, save_workflow
 from workflow.worker import dispatch
@@ -70,7 +71,9 @@ def test_multitemplate_mapping_sequences_reconciliation_and_retry(tmp_path):
         assert log["input_records"]==log["successful_records"]
     paths=[j.result["output_pdf"] for j in run.jobs]
     prepare(spec,run,tmp_path/"scratch")
-    execute_batch(spec,run,tmp_path/"out")
+    assert all(j.status == "Completed" and not j.approved for j in run.jobs)
+    with pytest.raises(CompositionError, match="confirm production"):
+        execute_batch(spec,run,tmp_path/"out")
     assert [j.result["output_pdf"] for j in run.jobs]==paths
     assert (Path(run.report_dir)/"batch-summary.csv").is_file()
 
@@ -99,7 +102,9 @@ def test_source_change_after_approval_requires_review_and_snapshot_preview_is_fi
     preview=dispatch({"operation":"batch_preview","spec":spec.to_dict(),"batch":run.to_dict(),
         "job_id":job.id,"record":1,"page":2,"target":str(tmp_path/"preview.png")},None,None)
     assert Path(preview["image"]).is_file()
-    execute_batch(spec,run,tmp_path/"out")
+    with pytest.raises(CompositionError, match="Check and explicitly approve"):
+        execute_batch(spec,run,tmp_path/"out")
+    prepare(spec,run,tmp_path/"scratch")
     assert job.status=="Needs review" and not job.result
     assert not list((tmp_path/"out").rglob("*.pdf"))
 
@@ -111,7 +116,7 @@ def test_cancel_preserves_ready_remaining_and_record_reopen_requires_check(tmp_p
     approve(run,[j.id for j in jobs])
     execute_batch(spec,run,tmp_path/"out",is_cancelled=lambda:True)
     assert run.status=="Cancelled"
-    assert all(j.status=="Ready" for j in jobs)
+    assert all(j.status=="Needs review" and not j.approved for j in jobs)
     save_record(run,tmp_path/"list.json")
     restored=load_record(tmp_path/"list.json")
     assert all(not j.approved and j.status=="Needs review" and not j.prepared_template for j in restored.jobs)
@@ -171,8 +176,13 @@ def test_excel_profile_preserves_zeros_and_real_render_error_continues(tmp_path)
     run=prepare(spec,BatchRun(jobs=jobs),tmp_path/"scratch")
     approve(run,[j.id for j in jobs])
     states=[]
+    from tests.production_approval import ReviewBlocked
+    with pytest.raises(ReviewBlocked, match="I25 accepts"):
+        execute_batch(spec,run,tmp_path/"out",on_state=states.append)
+    assert not (tmp_path / "out").exists()
+    # Operator excludes the invalid job, then explicitly reviews the good one.
+    jobs[0].approved = False
     execute_batch(spec,run,tmp_path/"out",on_state=states.append)
-    assert jobs[0].status=="Failed" and jobs[0].result["failed_records"]>=1
     assert jobs[1].status=="Completed"
     with fitz.open(jobs[1].result["output_pdf"]) as pdf:
         assert "0000123" in pdf[0].get_text()
@@ -193,8 +203,9 @@ def test_snapshot_tampering_and_output_directory_change(tmp_path):
     prepare(spec,run,tmp_path/"scratch")
     approve(run,[job.id])
     Path(job.record_store).write_bytes(b"changed")
-    execute_batch(spec,run,tmp_path/"out")
-    assert job.status=="Failed" and "snapshot changed" in job.error
+    with pytest.raises(Exception, match="snapshot|database|disk image"):
+        execute_batch(spec,run,tmp_path/"new-out")
+    assert not (tmp_path / "new-out").exists()
 
 
 @pytest.mark.parametrize("changes",[{"input_records":"many"},{"status":[]},{"warnings":"bad"},{"result":{"output_pdf":1}}])

@@ -62,6 +62,10 @@ def test_template_page_names_and_missing_stock_can_be_repaired(app):
     try:
         assert dialog.mode.currentData()=="template"
         assert "Page 1" in dialog.assignments.item(0,0).text()
+        assert not dialog.value()["assignments"]  # Do not guess the operator's paper choices.
+        dialog.assignments.selectAll()
+        dialog.batch_stock.setCurrentText("LH_A")
+        dialog.assign_selected()
         assert model.pages[0].id in dialog.value()["assignments"]
         dialog.assignments.setItem(1,1,QTableWidgetItem("LH_C"))
         dialog.duplex.setChecked(True)

@@ -12,6 +12,10 @@ TESTS = ROOT / "tests"
 
 SMOKE_TESTS = ("tests/test_commands.py", "tests/test_source_contract.py")
 UI_TESTS = (
+    "tests/test_queued_open_lifecycle.py", "tests/test_error_recovery_lifecycle.py",
+    "tests/test_sidebar_navigation.py",
+    "tests/test_private_auth_ui.py",
+    "tests/composition/test_production_review_ui.py",
     "tests/test_workflow_inspection_ui.py",
     "tests/composition/test_profile_library_ui.py",
     "tests/composition/test_media_ui.py",
@@ -79,6 +83,10 @@ CROSS_PLATFORM_TESTS = (
     "tests/test_deep_search.py",
     "tests/test_deep_search_detailed.py",
     "tests/test_font_inspector.py",
+    "tests/test_font_preflight.py",
+    "tests/test_pdf_runtime.py", "tests/test_prepare_qpdf.py", "tests/test_pdf_operations.py",
+    "tests/test_font_preflight_ui.py",
+    "tests/test_pdf_production.py", "tests/test_pdf_production_ui.py",
     "tests/test_ocr.py",
     "tests/test_io_atomic.py",
     "tests/test_mutation_transactions.py",
@@ -99,16 +107,18 @@ ZERO_SHA = "0" * 40
 
 
 def is_ui_change(path: str) -> bool:
-    return path == "main.py" or path == "core/viewer.py" or path.startswith(
+    return path in {"main.py", "core/viewer.py", "core/pdf_runtime.py"} or path.startswith(
         ("ui/", "dialogs/", "styles/", "composition/designer/", "composition/preview/", "workflow/workspace",
          "workflow/regions_ui", "workflow/canvas", "workflow/chrome", "workflow/mail_merge_ui", "workflow/node_settings",
-         "workflow/inspection_ui", "workflow/drafts", "workflow/node_presentation")
+         "workflow/inspection_ui", "workflow/drafts", "workflow/node_presentation", "auth/application", "auth/ui", "auth/controller")
     ) or path in UI_TESTS
 
 
 def is_cross_platform_change(path: str) -> bool:
     return path.startswith(("core/", "ui/", "dialogs/", "styles/", "updates/", "composition/", "workflow/")) or path in {
-        "main.py", "launcher.py", "pyproject.toml", "requirements-base.txt", "requirements-dev.txt"
+        "main.py", "launcher.py", "pyproject.toml", "requirements-base.txt", "requirements-dev.txt",
+        "scripts/prepare_qpdf.py", "scripts/prepare_composition_assets.py", "scripts/prepare_macos.py",
+        "build_assets/composition/BUNDLE_INFO.json", "build_assets/macos/SOURCES.json"
     } or path in CROSS_PLATFORM_TESTS
 
 
@@ -183,7 +193,8 @@ def run_tests(mode: str, tests: str = "") -> int:
         available = {item.relative_to(ROOT).as_posix() for item in TESTS.rglob("test_*.py")}
         if not paths or any(path not in available for path in paths):
             raise ValueError("Invalid focused test selection")
-        command = [sys.executable, "-m", "pytest", *paths]
+        from scripts.regression_suite import run
+        return run(paths, ROOT / "build/ci-focused")
     elif mode == "core":
         command = [sys.executable, "scripts/regression_suite.py", "--group", "core", "--output", "build/ci-core"]
     elif mode == "ui":
@@ -216,4 +227,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(ROOT))
     raise SystemExit(main())

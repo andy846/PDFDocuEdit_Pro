@@ -118,7 +118,7 @@ def global_style() -> str:
         /* App-wide chrome: rounded translucent cards in the sidebar's design
            language. Margins float each bar over the window background. */
         QWidget#commandBar {{
-            background: {_rgba(c['bg_surface'], 245)};
+            background: {c['bg_surface']};
             border: 1px solid {c['border']};
             border-radius: 12px;
             margin: {S.SM}px {S.SM}px 0 {S.SM}px;
@@ -385,7 +385,7 @@ def global_style() -> str:
             border: none;
         }}
         QFrame#leftPanel {{
-            background: {_rgba(c['bg_surface'], 235)};
+            background: {c['bg_surface']};
         }}
         QFrame#contextPanel {{
             background: {_rgba(c['bg_surface'], 235)};
@@ -422,7 +422,7 @@ def global_style() -> str:
             border: 1px solid {c['border']};
             border-radius: {R.LG}px;
         }}
-        QWidget#sidebarContent, QWidget#sidebarSectionBody {{
+        QWidget#sidebarContent, QWidget#sidebarSectionBody, QWidget#sidebarBrandCopy {{
             background: transparent;
         }}
         QLabel#sidebarBrandMark {{
@@ -479,10 +479,25 @@ def global_style() -> str:
             max-height: 30px;
             padding: 0;
             border-radius: {R.MD}px;
+            background: {c['bg_surface']};
+            border: 1px solid {c['primary_glow']};
+        }}
+        QToolButton#sidebarCollapseButton:hover, QToolButton#sidebarCollapseButton:focus {{
+            background: {c['primary_soft']};
+            border-color: {c['primary']};
+        }}
+        QToolButton#sidebarCollapseButton:pressed {{
+            background: {c['primary_glow']};
+            border-color: {c['primary']};
+        }}
+        QFrame#sidebarDivider {{
+            border: none;
+            background: {c['border']};
+            max-height: 1px;
         }}
         QToolButton#sidebarSectionButton {{
             min-height: 30px;
-            color: {c['legacy_green_text']};
+            color: {c['text_secondary']};
             font-size: {F.XS}px;
             font-weight: {F.SEMIBOLD};
             text-align: left;
@@ -491,12 +506,17 @@ def global_style() -> str:
             border-radius: {R.MD}px;
         }}
         QToolButton#sidebarSectionButton:hover {{
-            color: {c['legacy_green_text']};
-            background: {c['legacy_green_soft']};
+            color: {c['text_primary']};
+            background: {c['primary_soft']};
+        }}
+        QFrame#sidebarToolPopup {{
+            background: {c['bg_surface']};
+            border: 1px solid {c['border']};
+            border-radius: {R.LG}px;
         }}
         QPushButton#sidebarNavButton {{
-            min-height: 44px;
-            max-height: 44px;
+            min-height: 38px;
+            max-height: 38px;
             margin: 0 {S.XXS}px;
             padding: 0 {S.SM}px;
             text-align: left;
@@ -521,6 +541,9 @@ def global_style() -> str:
             border-left-color: {c['primary']};
         }}
         QPushButton#sidebarNavButton[collapsed="true"] {{
+            min-height: 36px;
+            max-height: 36px;
+            text-align: center;
             margin: 0;
             padding: 0;
             border-left: none;

@@ -10,9 +10,9 @@ import pytest
 from composition.data.source import import_records
 from composition.engine.fallback import AutoFallback
 from composition.engine.renderer import render_preview
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, PageSpec, Template
+from tests.production_approval import expect_blocked, generate
 
 
 def data(tmp_path, rows):
@@ -63,17 +63,16 @@ def test_auto_production_reports_exact_record_page_character_and_counts(tmp_path
 
 
 def test_unresolved_font_scan_reports_all_records_in_one_failure(tmp_path, monkeypatch):
+    import io
     monkeypatch.setattr(AutoFallback, "select", lambda *args: None)
     store = data(tmp_path, ["田", "中中", "文"])
     template = Template(elements=[Element(value="{{Name}}")])
-    result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out"), auto_repair=True))
-    assert result.status == "failed" and result.generated_files == 0
-    assert result.font_scan["complete"] and result.font_scan["checked_records"] == 3
-    assert result.font_scan["unresolved_occurrences"] == 4
-    assert result.font_scan["unresolved_records"] == 3
-    assert "checked all 3 records" in result.error
-    with Path(result.glyph_repair_report).open(encoding="utf-8-sig", newline="") as stream:
-        rows = list(csv.DictReader(stream))
+    review = expect_blocked(lambda: generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out"), auto_repair=True)))
+    scan = review.packet["summary"]["font_scan"]
+    assert scan["complete"] and scan["checked_records"] == 3
+    assert scan["unresolved_occurrences"] == 4 and scan["unresolved_records"] == 3
+    assert "checked all 3 records" in str(review)
+    rows = list(csv.DictReader(io.StringIO(review.diagnostics["glyph-repairs.csv"].decode("utf-8-sig"))))
     assert {r["Record"] for r in rows} == {"1", "2", "3"}
     assert all(r["Mode"] == "Unresolved" for r in rows)
     assert not list((tmp_path / "out").rglob("*.pdf"))
@@ -91,7 +90,7 @@ def test_repeated_characters_discover_fallback_once_per_face(tmp_path, monkeypat
     result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out"), auto_repair=True))
     assert result.status == "completed", result.error
     assert result.generated_pages == 1000 and result.repaired_glyphs == 2000
-    assert seen == [("田", "Noto Sans Regular")]
+    assert seen == [("田", "Noto Sans Regular")] * 2  # Review and generation each cache discovery.
 
 
 def test_explicit_repairs_take_precedence_over_auto(tmp_path):
@@ -119,8 +118,9 @@ def test_private_use_glyph_is_reported_for_review(tmp_path):
 def test_invalid_primary_font_is_not_hidden_by_auto(tmp_path):
     store = data(tmp_path, ["田"])
     template = Template(elements=[Element(value="{{Name}}", font=FontSpec(file=str(tmp_path / "missing.ttf")))])
-    result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out"), auto_repair=True))
-    assert result.status == "failed" and "missing.ttf" in result.error
+    with pytest.raises(CompositionError, match="missing.ttf"):
+        generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out"), auto_repair=True))
+    assert not (tmp_path / "out").exists()
 
 
 def test_designer_auto_preview_production_and_strict_switch(tmp_path):
@@ -147,6 +147,8 @@ def test_designer_auto_preview_production_and_strict_switch(tmp_path):
         wait(lambda: window.canvas.preview_item is not None)
         assert "glyph font substitution" in window.message.text()
         window.start_production(str(tmp_path / "production"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(window)
         wait(lambda: window.production_worker is None)
         assert window.last_output and window.open_font_report_button.isEnabled()
         assert window.template.elements[0].font.family == primary

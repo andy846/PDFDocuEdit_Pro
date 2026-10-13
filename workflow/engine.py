@@ -23,6 +23,7 @@ from core.merge import MergeItem, MergeSpec, merge_pdf_items
 
 from .extraction import ExtractionSpec, ExtractionStore, scan_pdf
 from .model import WorkflowRun
+from .registry import PDF_OPERATION_KINDS
 
 
 def context_fingerprint(spec, *, include_overlay=True):
@@ -42,18 +43,27 @@ def context_fingerprint(spec, *, include_overlay=True):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None):
+def execute(spec, run, directory, *, until="review", progress=None, is_cancelled=None, review_context=None, authorization=None):
     spec.chain()
+    if until == "output":
+        from composition.review.authorization import require_authorization
+        authorization = require_authorization(authorization)
+        authorization.require_workflow(spec)
+        review_context = authorization.contexts[0]
+    if review_context is not None and until == "output":
+        from .pdf_pipeline import execute_pdf
+        return execute_pdf(spec, run, directory, until=until, progress=progress,
+                           is_cancelled=is_cancelled, review_context=review_context, authorization=authorization)
     if spec.workflow_version>=3:
         from .registry import EXTRA_KINDS
         if any(n.kind in EXTRA_KINDS for n in spec.nodes):
             from .pdf_pipeline import execute_pdf
-            return execute_pdf(spec,run,directory,until=until,progress=progress,is_cancelled=is_cancelled)
+            return execute_pdf(spec,run,directory,until=until,progress=progress,is_cancelled=is_cancelled,authorization=authorization)
     if spec.project_kind!="pdf_workflow":
         raise CompositionError("Use the Mail Merge batch executor for this workflow type.")
     root=Path(directory)
     root.mkdir(parents=True,exist_ok=True)
-    reserved={(root/name).resolve() for name in ("source.pdf","extraction.sqlite","source-map.jsonl","run.json")}
+    reserved={(root/name).resolve() for name in ("source.pdf","input-source.pdf","extraction.sqlite","source-map.jsonl","run.json")}
     if any(Path(path).resolve() in reserved for path in spec.node("input").params.get("paths",[])):
         raise CompositionError("Use a separate workflow scratch directory; it must not replace an input PDF.")
     import hashlib
@@ -91,6 +101,16 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
             prior=hashlib.sha256((prior+node.kind+content).encode()).hexdigest()
             signatures[node.id]=prior
             unchanged=run.signatures.get(node.id)==signatures[node.id]
+            if node.kind in ("input", "merge", *PDF_OPERATION_KINDS) and unchanged:
+                cached = run.pdf_sources.get(node.id)
+                if cached:
+                    path = Path(cached["path"]).resolve()
+                    if not path.is_relative_to(root.resolve()) or not path.is_file() or file_hash(path) != cached["sha256"]:
+                        unchanged = False
+                    else:
+                        run.source = str(path)
+                elif node.kind in PDF_OPERATION_KINDS:
+                    unchanged = False
             if node.kind=="review":
                 if not unchanged:
                     run.accepted=False
@@ -110,7 +130,9 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                     if tail:
                         run.statuses.pop(downstream.id,None)
                         run.signatures.pop(downstream.id,None)
-                if node.kind in ("input","merge","extract","group"):
+                        run.pdf_operation_reports.pop(downstream.id, None)
+                        run.pdf_sources.pop(downstream.id, None)
+                if node.kind in ("input","merge","extract","group", *PDF_OPERATION_KINDS):
                     run.accepted=False
                     run.output={}
             run.statuses[node.id]="Running"
@@ -123,7 +145,7 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                 if len(paths)>1 and not spec.node("merge"):
                     raise CompositionError("Multiple sources require a Merge node.")
                 # All downstream work reads an immutable owned snapshot.
-                run.source=str(root/"source.pdf")
+                run.source=str(root/("input-source.pdf" if spec.workflow_version == 6 else "source.pdf"))
                 if len(paths)==1:
                     # The job snapshot helper intentionally refuses overwrites.
                     # Replace only our owned scratch PDF, after the new copy is complete.
@@ -141,11 +163,17 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                     with fitz.open(path) as doc:
                         selected=strict_pages(selections.get(path,"All"),doc.page_count)
                     items.append(MergeItem(path,pages=selected))
+                run.source = str(root / "source.pdf")
                 merged=merge_pdf_items(MergeSpec(items,run.source),progress=progress,is_cancelled=is_cancelled)
                 with atomic_output(root/"source-map.jsonl") as temp:
                     with temp.open("w",encoding="utf-8") as stream:
                         for row in merged.page_map:
                             stream.write(json.dumps(row,ensure_ascii=False)+"\n")
+            elif node.kind in PDF_OPERATION_KINDS:
+                from .pdf_operations import process_pdf
+                report = process_pdf(node, run.source, root, progress=progress, is_cancelled=is_cancelled)
+                run.source = report["output_pdf"]
+                run.pdf_operation_reports[node.id] = report
             elif node.kind=="extract":
                 result=scan_pdf(run.source,ExtractionSpec.from_dict(node.params),root/"extraction.sqlite",
                                 progress=progress,is_cancelled=is_cancelled)
@@ -201,7 +229,10 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                     prior_review = store.metadata().get("mailpiece_review")
                     composed.detection_review = detection_audit(composed, json.loads(prior_review) if prior_review else None)
                     composed.validate()
-                    job=OverlayJob(composed.to_dict(),target)
+                    from core.variables import VariableContext
+                    job=OverlayJob(composed.to_dict(),target, output_name=node.params.get("output_name", "production.pdf"))
+                    job.variable_context = VariableContext.for_job(input_path=spec.node("input").params["paths"][0],
+                        job_id=job.job_id, job_name=spec.name, sequence=1).to_dict()
                     def reports(report,result,source=source,settings=settings):
                         store.export(report/"extracted-data.csv")
                         import csv
@@ -217,13 +248,16 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                             temp.write_text(json.dumps({"workflow":spec.to_dict(),"fingerprint":run.fingerprint,
                                 "groups":run.groups,"corrections":[dict(r) for r in store.db.execute("SELECT * FROM edits")],
                                 "boundary_corrections":[dict(r) for r in store.db.execute("SELECT * FROM group_edits")],
-                                "source_sha256":store.metadata()["sha256"],"output_pages":result.generated_pages},
+                                "source_sha256":store.metadata()["sha256"],"output_pages":result.generated_pages,
+                                "pdf_operations": run.pdf_operation_reports},
                                 ensure_ascii=False,indent=2),encoding="utf-8")
-                    result=generate(job,progress=progress,is_cancelled=is_cancelled,external_values=store.production_values,
+                    result=generate(job,progress=progress,is_cancelled=is_cancelled,external_values=store.production_values,authorization=authorization,
                                     additional_reports=reports)
                     run.output=asdict(result)
                     if result.status!="completed":
                         raise CompositionError(result.error or "Production did not complete.")
+            if node.kind in ("input", "merge", *PDF_OPERATION_KINDS) and Path(run.source).is_file():
+                run.pdf_sources[node.id] = {"path": run.source, "sha256": file_hash(Path(run.source))}
             run.statuses[node.id]="Completed"
             run.signatures[node.id]=signatures[node.id]
             if node.kind==until:
@@ -231,10 +265,10 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
         return run
     except Exception as exc:
         run.error=str(exc)
-        if current and current.kind in ("input","merge","extract","group"):
+        if current and current.kind in ("input","merge","extract","group", *PDF_OPERATION_KINDS):
             run.accepted=False
             run.output={}
-            if current.kind in ("input","merge","extract"):
+            if current.kind in ("input","merge","extract", *PDF_OPERATION_KINDS):
                 run.database=""
                 run.groups=[]
             tail=False

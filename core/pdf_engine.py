@@ -323,7 +323,7 @@ class PdfEngine:
                     clean=False,
                     encryption=fitz.PDF_ENCRYPT_KEEP,
                 )
-            elif self._doc.can_save_incrementally():
+            elif self._can_save_working_incrementally():
                 # The working document is an isolated copy of the source.
                 # Append annotation changes there, then atomically copy it to
                 # the destination. Existing page, font, image and barcode
@@ -349,6 +349,18 @@ class PdfEngine:
         self._original_path = target
         self._is_modified = False
         return target
+
+    def _can_save_working_incrementally(self) -> bool:
+        """Stream restores may report incremental support without a backing file."""
+        doc = self._doc
+        if doc is None or not self._temp_dir or not isinstance(doc.name, (str, Path)) or not str(doc.name):
+            return False
+        try:
+            backing = Path(doc.name).resolve(strict=True)
+            owned = Path(self._temp_dir.name).resolve(strict=True)
+            return backing.is_file() and backing.is_relative_to(owned) and bool(doc.can_save_incrementally())
+        except (OSError, ValueError):
+            return False
 
     @_locked
     def save_as(self, path: str | os.PathLike[str]) -> Path:
@@ -461,6 +473,12 @@ class PdfEngine:
     def password(self) -> str | None:
         return self._password
 
+    @_locked
+    def copy_security_context(self) -> dict:
+        """Memory-only copy settings; never persist passwords in job records."""
+        return {"output_password": self._password if self._reencrypt_on_save else "",
+                "output_permissions": self._saved_permissions}
+
     # Compatibility accessors used by older modular callers.
     def get_document(self) -> fitz.Document | None:
         return self._doc
@@ -533,35 +551,38 @@ class PdfEngine:
             raise PdfEngineError(
                 "A repeat interval and at least one source page are required."
             )
-        original_count = doc.page_count
-        inserted = 0
-        with fitz.open(source_path) as source:
-            invalid = sorted(
-                {page + 1 for page in pages if not 0 <= page < source.page_count}
-            )
-            if invalid:
-                raise PdfEngineError(
-                    "Source pages are out of range: " + ", ".join(map(str, invalid))
+        if interval > doc.page_count:
+            raise PdfEngineError("The repeat interval does not create any insertion points.")
+        with self.mutation_transaction("Repeat Insert Pages"):
+            original_count = doc.page_count
+            inserted = 0
+            with fitz.open(source_path) as source:
+                invalid = sorted(
+                    {page + 1 for page in pages if not 0 <= page < source.page_count}
                 )
-            valid = [page for page in pages if 0 <= page < source.page_count]
-            if not valid:
-                raise PdfEngineError("No valid source pages were selected.")
-            for boundary in range(interval, original_count + 1, interval):
-                position = boundary + inserted
-                for offset, page_num in enumerate(valid):
-                    doc.insert_pdf(
-                        source,
-                        from_page=page_num,
-                        to_page=page_num,
-                        start_at=position + offset,
+                if invalid:
+                    raise PdfEngineError(
+                        "Source pages are out of range: " + ", ".join(map(str, invalid))
                     )
-                    copy_page_scale(source[page_num], doc[position + offset])
-                inserted += len(valid)
-        if not inserted:
-            raise PdfEngineError(
-                "The repeat interval does not create any insertion points."
-            )
-        self._touch(requires_full_save=True)
+                valid = [page for page in pages if 0 <= page < source.page_count]
+                if not valid:
+                    raise PdfEngineError("No valid source pages were selected.")
+                for boundary in range(interval, original_count + 1, interval):
+                    position = boundary + inserted
+                    for offset, page_num in enumerate(valid):
+                        doc.insert_pdf(
+                            source,
+                            from_page=page_num,
+                            to_page=page_num,
+                            start_at=position + offset,
+                        )
+                        copy_page_scale(source[page_num], doc[position + offset])
+                    inserted += len(valid)
+            if not inserted:
+                raise PdfEngineError(
+                    "The repeat interval does not create any insertion points."
+                )
+            self._touch(requires_full_save=True)
 
     @_locked
     def delete_page(self, page_num: int) -> None:

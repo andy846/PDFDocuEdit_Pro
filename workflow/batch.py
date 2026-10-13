@@ -10,13 +10,20 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from composition.data.sequences import open_records
 from composition.data.source import import_records, suggest_import
 from composition.engine.fonts import load_font
 from composition.production.generator import JobCancelled, check_cancel, generate
-from composition.production.model import ProductionJob, new_job_id, now, validate_output_name
+from composition.production.model import (
+    ProductionJob,
+    new_job_id,
+    now,
+    resolve_output_name,
+    validate_output_template,
+)
 from composition.template.model import CompositionError, DataConfig, required_fields, validate_template
 from composition.template.serializer import file_hash, load_project, save_project
 from core.io_atomic import atomic_output
@@ -90,15 +97,26 @@ class BatchJob:
     result: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
     data_summary: dict = field(default_factory=dict)
+    variable_context: dict = field(default_factory=dict)
+
+    def resolved_output_name(self):
+        return resolve_output_name(self.output_name, self.variable_context)
 
     def validate(self):
+        from core.output_safety import validate_identifier
+        try:
+            validate_identifier(self.id, limit=64, label="batch item")
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
         if not isinstance(self.id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",self.id):
             raise CompositionError("Invalid batch item identity.")
         if not isinstance(self.name,str) or not 1<=len(self.name)<=200:
             raise CompositionError("Use a job name of 1–200 characters.")
         if any(not isinstance(v,str) or len(v)>4096 for v in (self.template_path,self.data_path,self.mapping_profile)):
             raise CompositionError("Invalid batch input path/profile.")
-        validate_output_name(self.output_name)
+        validate_output_template(self.output_name)
+        if not isinstance(self.variable_context, dict):
+            raise CompositionError("Invalid prepared variable context.")
         if not isinstance(self.data_options,dict) or not isinstance(self.sequence_starts,dict):
             raise CompositionError("Invalid import or sequence settings.")
         if (type(self.approved) is not bool or not isinstance(self.status,str)
@@ -149,8 +167,11 @@ class BatchRun:
             if len(raw.get("jobs",[]))>10000:
                 raise CompositionError("Use at most 10,000 batch items.")
             run=cls(**{**raw,"jobs":[BatchJob(**j) for j in raw.get("jobs",[])]})
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",run.batch_id):
-                raise CompositionError("Invalid batch identity.")
+            from core.output_safety import validate_identifier
+            try:
+                validate_identifier(run.batch_id, label="batch")
+            except ValueError as exc:
+                raise CompositionError(str(exc)) from exc
             ids=set()
             for job in run.jobs:
                 job.validate()
@@ -200,7 +221,7 @@ def _signature(spec, job):
     sources=[job.template_path,*assets]+([job.data_path] if config else [])
     hashes={str(Path(p).resolve()):file_hash(Path(p)) for p in sources}
     signature=hashlib.sha256(json.dumps({"files":hashes,"config":asdict(config) if config else None,
-        "starts":job.sequence_starts,"output":job.output_name,
+        "starts":job.sequence_starts,"output":job.output_name,"variables":job.variable_context,
         "pipeline":[{"kind":n.kind,"id":n.id,"params":n.params} if n.kind in EXTRA_KINDS else n.kind for n in spec.chain()],
         "auto_repair":spec.node("compose").params.get("auto_repair",True)},sort_keys=True).encode()).hexdigest()
     return signature,template,config,hashes
@@ -208,6 +229,15 @@ def _signature(spec, job):
 
 def _finished_valid(job):
     result=job.result
+    report = Path(result.get("report_dir", ""))
+    if (report / "completion.json").is_file():
+        from composition.production.journal import verify_package
+        try:
+            packet = json.loads((report / "completion.json").read_text(encoding="utf-8"))
+            if verify_package(report, result.get("job_id"), packet.get("binding")) is None:
+                return False
+        except (ValueError, OSError):
+            return False
     if result.get("status")=="completed" and result.get("generated_files")==0 and result.get("input_records")==0:
         return Path(result.get("report_dir",""),"job.json").is_file()
     if result.get("output_files"):
@@ -227,9 +257,14 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
         raise CompositionError("This queue requires a Mail Merge workflow.")
     root=Path(directory).resolve()/"mail-snapshots"
     root.mkdir(parents=True,exist_ok=True)
-    names={}
-    for job in run.jobs:
-        names.setdefault(job.output_name.casefold(),[]).append(job.id)
+    from core.variables import VariableContext
+    frozen_at = datetime.now().astimezone()
+    for index, job in enumerate(run.jobs, 1):
+        if not job.variable_context:
+            job.variable_context = VariableContext.for_job(
+                input_path=job.data_path or job.template_path, job_id=new_job_id(),
+                job_name=job.name, batch_id=run.batch_id, sequence=index, frozen_at=frozen_at,
+            ).to_dict()
     run.status="Checking"
     for index,job in enumerate(run.jobs,1):
         if is_cancelled and is_cancelled():
@@ -240,8 +275,6 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
         try:
             job.validate()
             check_cancel(is_cancelled)
-            if len(names[job.output_name.casefold()])>1:
-                raise CompositionError("Duplicate output name in batch. Give each job a distinct filename.")
             signature,template,config,before=_signature(spec,job)
             job.template_fields=sorted(required_fields(template)-{seq.name for seq in template.sequences})
             job.sequence_fields=[asdict(seq) for seq in template.sequences]
@@ -252,9 +285,10 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             was_approved=job.approved and job.signature==signature
             if job.snapshot_dir:
                 previous=Path(job.snapshot_dir).resolve()
-                if previous.parent==root and previous.name.startswith(job.id+"-") and previous.exists():
+                if previous.parent==root and previous.name.startswith((job.id+"-",job.id[:8]+"-")) and previous.exists():
                     shutil.rmtree(previous)
-            snapshot=root/(job.id+"-"+uuid.uuid4().hex)
+            # Leave room for bundled font asset names under Windows MAX_PATH.
+            snapshot=root/(job.id[:8]+"-"+uuid.uuid4().hex[:12])
             snapshot.mkdir()
             job.snapshot_dir=str(snapshot)
             if job.result:
@@ -290,7 +324,7 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                     progress=progress,is_cancelled=is_cancelled)
                 job.record_store=str(transformed.path)
                 job.data_summary=summary(transformed,with_records.count)
-                job.data_summary["outputs"]=split_names(transformed,job.output_name)
+                job.data_summary["outputs"]=split_names(transformed,job.resolved_output_name())
                 from .transforms import export_audit
                 report=snapshot/"data-review"
                 export_audit(transformed,report)
@@ -301,6 +335,15 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             missing=required_fields(template)-set(with_records.fields)
             if missing:
                 raise CompositionError("Missing mapped fields: "+", ".join(sorted(missing)))
+            from composition.engine.barcode_profiles import has_inserter
+            if has_inserter(template):
+                from composition.engine.inserter_production import preflight as inserter_preflight
+                from composition.media.planner import build_print_plan
+                inserter_preflight(template, with_records.records(), build_print_plan(template, with_records.count, is_cancelled=is_cancelled),
+                                   is_cancelled, progress)
+            from composition.engine.generic_production import preflight as generic_preflight
+            generic_preflight(template, with_records.records(), is_cancelled=is_cancelled, progress=progress,
+                              audit_path=snapshot/"barcode-cycles.csv", record_store=job.record_store)
             if any(file_hash(Path(p))!=digest for p,digest in before.items()):
                 raise CompositionError("Input changed during checking. Check this job again.")
             job.prepared_template=template.to_dict()
@@ -308,7 +351,8 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             job.input_records=with_records.count
             job.pages_per_record=len(template.pages)
             job.expected_pages=job.input_records*job.pages_per_record
-            if template.media.get("enabled") and job.input_records:
+            from composition.engine.barcode_profiles import has_profiles
+            if (template.media.get("enabled") or has_profiles(template)) and job.input_records:
                 from composition.media.planner import build_print_plan
                 media_plan=build_print_plan(template,job.input_records,is_cancelled=is_cancelled)
                 job.pages_per_record=media_plan.settings_for(1).output_pages_per_envelope
@@ -316,7 +360,8 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                 if not job.data_summary:
                     job.data_summary={"input":job.input_records,"retained":job.input_records,"excluded":0,
                                       "errors":0,"warnings":0,"steps":[],"fields":list(with_records.fields)}
-                job.data_summary["media"]={**asdict(media_plan.preflight()),"profile":template.media["printer_profile"]}
+                if template.media.get("enabled"):
+                    job.data_summary["media"]={**asdict(media_plan.preflight()),"profile":template.media["printer_profile"]}
             job.warnings=list(with_records.metadata.get("warnings",[]))
             if job.data_summary.get("warnings"):
                 job.warnings.append(f"Data validation: {job.data_summary['warnings']} warning(s). Review findings.csv.")
@@ -336,6 +381,20 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                 break
         if progress:
             progress(index,len(run.jobs),f"Checked {index}/{len(run.jobs)} · {job.name}")
+    names = {}
+    for job in run.jobs:
+        if job.status not in ("Needs review", "Ready", "Completed"):
+            continue
+        try:
+            # Keep the established distinct-PDF-basename queue delivery rule.
+            names.setdefault(job.resolved_output_name().casefold(), []).append(job)
+        except CompositionError as exc:
+            job.status, job.approved, job.error = "Blocked", False, str(exc)
+    for group in names.values():
+        if len(group) > 1:
+            for job in group:
+                if job.status != "Completed":
+                    job.status, job.approved, job.error = "Blocked", False, "Duplicate output name in batch. Give each job a distinct filename."
     if run.status!="Cancelled":
         run.status="Needs review"
     return run
@@ -374,8 +433,11 @@ def load_record(path):
 
 
 def _reports(run, root):
-    save_record(run,root/"batch.json")
-    with atomic_output(root/"batch-summary.csv") as temp, temp.open("w",encoding="utf-8-sig",newline="") as stream:
+    from core.output_safety import contained_path
+    record = contained_path(root, "batch.json")
+    summary = contained_path(root, "batch-summary.csv")
+    save_record(run, record)
+    with atomic_output(summary) as temp, temp.open("w",encoding="utf-8-sig",newline="") as stream:
         writer=csv.writer(stream)
         writer.writerow(["Batch ID","Name","Template","Data","Status","Job ID","Retained records","Expected pages","Generated pages","PDF","Reports","Error","Source records","Excluded records"])
         for job in run.jobs:
@@ -385,93 +447,139 @@ def _reports(run, root):
             writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in values])
 
 
-def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on_state=None):
+def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on_state=None, _direct_root=False, authorization=None):
     spec.chain()
     if not output_dir:
         raise CompositionError("Choose a batch output folder.")
-    root=Path(output_dir).resolve()/("batch-"+run.batch_id)
-    root.mkdir(parents=True,exist_ok=True)
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    BatchRun.from_dict(run.to_dict())
+    authorization.require_workflow(spec, [j.id for j in run.jobs if j.status == "Ready" and j.approved])
+    from core.output_safety import contained_path
+    root=Path(output_dir).resolve()
+    if not _direct_root:
+        try:
+            root=contained_path(root, "batch-"+run.batch_id)
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+    root=authorization.require_destination(root)
+    def report_state():
+        checked = authorization.require_destination(root)
+        _reports(run, checked)
     run.report_dir=str(root)
     run.status="Running"
     run.started_at=run.started_at or now()
-    _reports(run,root)
-    if on_state:
-        on_state({"status":run.status,"jobs":[]})
-    for index,job in enumerate(run.jobs,1):
-        if is_cancelled and is_cancelled():
-            run.status="Cancelled"
-            break
-        if job.status!="Ready" or not job.approved:
-            continue
-        try:
-            job.stage="Recheck inputs"
-            signature,_,_,_=_signature(spec,job)
-            if signature!=job.signature or not job.prepared_template:
-                job.approved=False
-                job.status="Needs review"
-                job.error="Inputs/settings changed. Check and approve this item again."
-                _reports(run,root)
-                if on_state:
-                    on_state({"status":run.status,"jobs":[job.record()]})
-                continue
-            if not job.snapshot_hashes or any(not Path(p).is_file() or file_hash(Path(p))!=digest for p,digest in job.snapshot_hashes.items()):
-                raise CompositionError("Checked snapshot changed or is unavailable. Check this item again.")
-            check_cancel(is_cancelled)
-            job.status="Running"
-            job.stage="Compose"
-            _reports(run,root)
-            if on_state:
-                on_state({"status":run.status,"jobs":[job.record()]})
-            def job_progress(done,total,message,current_job=job,current_index=index):
-                current_job.stage=message
-                if progress:
-                    progress(done,total,f"Job {current_index}/{len(run.jobs)} · {current_job.name} · {message}")
-            partitions=job.data_summary.get("outputs",[])
-            if job.input_records==0:
-                from .transforms import DataSet, export_audit
-                empty_id=new_job_id()
-                report=root/empty_id
-                report.mkdir()
-                export_audit(DataSet(job.record_store),report)
-                result={"job_id":empty_id,"status":"completed","input_records":0,"successful_records":0,
-                    "generated_pages":0,"generated_files":0,"output_pdf":"","report_dir":str(report),"error":"",
-                    "source_records":job.data_summary.get("input",0),"excluded_records":job.data_summary.get("excluded",0),
-                    "warnings":["No records selected. No empty PDF was generated."]}
-                (report/"job.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
-            else:
-                result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled)
-            if job.data_summary:
-                result.update(source_records=job.data_summary["input"],excluded_records=job.data_summary["excluded"],
-                              retained_records=job.data_summary["retained"])
-            job.result=result
-            job.error=result["error"]
-            job.status={"completed":"Completed","cancelled":"Cancelled"}.get(result["status"],"Failed")
-            if job.status=="Completed":
-                if result["output_pdf"]:
-                    job.result["output_sha256"]=file_hash(Path(result["output_pdf"]))
-                job.warnings=list(result.get("warnings",[]))
-            job.stage="Finished"
-        except JobCancelled:
-            job.status="Cancelled"
-            job.error="Cancellation requested."
-        except Exception as exc:
-            job.status="Failed"
-            job.error=str(exc)
-        job.approved=False
-        _reports(run,root)
+    def notify(state):
         if on_state:
-            on_state({"status":run.status,"jobs":[job.record()]})
-        if job.status=="Cancelled":
-            run.status="Cancelled"
-            break
-    if run.status!="Cancelled":
+            try:
+                on_state(state)
+            except Exception as exc:
+                for item in run.jobs:
+                    message = "Progress notification failed: " + str(exc)
+                    if message not in item.warnings:
+                        item.warnings.append(message)
+    try:
+        root.mkdir(parents=True,exist_ok=True)
+        report_state()
+        notify({"status":run.status,"jobs":[]})
+        for index,job in enumerate(run.jobs,1):
+            if is_cancelled and is_cancelled():
+                run.status="Cancelled"
+                break
+            if job.status!="Ready" or not job.approved:
+                continue
+            try:
+                job.stage="Recheck inputs"
+                signature,_,_,_=_signature(spec,job)
+                if signature!=job.signature or not job.prepared_template:
+                    job.approved=False
+                    job.status="Needs review"
+                    job.error="Inputs/settings changed. Check and approve this item again."
+                    report_state()
+                    notify({"status":run.status,"jobs":[job.record()]})
+                    continue
+                if not job.snapshot_hashes or any(not Path(p).is_file() or file_hash(Path(p))!=digest for p,digest in job.snapshot_hashes.items()):
+                    raise CompositionError("Checked snapshot changed or is unavailable. Check this item again.")
+                check_cancel(is_cancelled)
+                job.status="Running"
+                job.stage="Compose"
+                report_state()
+                notify({"status":run.status,"jobs":[job.record()]})
+                def job_progress(done,total,message,current_job=job,current_index=index):
+                    current_job.stage=message
+                    if progress:
+                        progress(done,total,f"Job {current_index}/{len(run.jobs)} · {current_job.name} · {message}")
+                partitions=job.data_summary.get("outputs",[])
+                if job.input_records==0:
+                    from composition.production.journal import publish_empty_report
+
+                    from .transforms import DataSet
+                    context = next(c for c in authorization.contexts if c.get("identity") == job.id)
+                    result = publish_empty_report(ProductionJob(**context["job"]), DataSet(job.record_store), job.data_summary, authorization)
+                else:
+                    result=_compose_item(spec,job,root,partitions,job_progress,is_cancelled,authorization)
+                if job.data_summary:
+                    result.update(source_records=job.data_summary["input"],excluded_records=job.data_summary["excluded"],
+                                  retained_records=job.data_summary["retained"])
+                job.result=result
+                job.error=result["error"]
+                job.status={"completed":"Completed","cancelled":"Cancelled"}.get(result["status"],"Failed")
+                if job.status=="Completed":
+                    if result["output_pdf"]:
+                        job.result["output_sha256"]=file_hash(Path(result["output_pdf"]))
+                    job.warnings=list(result.get("warnings",[]))
+                job.stage="Finished"
+            except JobCancelled:
+                job.status="Cancelled"
+                job.error="Cancellation requested."
+            except Exception as exc:
+                job.status="Failed"
+                job.error=str(exc)
+            job.approved=False
+            report_state()
+            notify({"status":run.status,"jobs":[job.record()]})
+            if job.status=="Cancelled":
+                run.status="Cancelled"
+                break
+    except JobCancelled:
+        run.status = "Cancelled"
+    except Exception as exc:
+        run.status = "Partial / needs attention" if any(j.status == "Completed" for j in run.jobs) else "Failed"
+        for item in run.jobs:
+            if item.status in ("Ready", "Running"):
+                item.status, item.error = "Needs review", str(exc)
+    finally:
+        for item in run.jobs:
+            item.approved = False
+            if item.status in ("Ready", "Running"):
+                item.status, item.error = "Needs review", "Production stopped. Check and review a new attempt."
+    if run.status not in ("Cancelled", "Failed"):
         run.status="Completed" if run.jobs and all(j.status=="Completed" for j in run.jobs) else "Partial / needs attention"
     run.finished_at=now()
-    _reports(run,root)
+    try:
+        report_state()
+    except Exception as exc:
+        for item in run.jobs:
+            item.warnings.append("State/report could not be saved: " + str(exc))
+    notify({"status":run.status,"jobs":[j.record() for j in run.jobs]})
     return run
 
 
-def _compose_item(spec,job,root,partitions,progress,is_cancelled):
+def _compose_item(spec,job,root,partitions,progress,is_cancelled,authorization):
+    if not partitions:
+        return _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
+    from composition.production.journal import final_claim
+    identity = job.variable_context["namespaces"]["job"]["id"]
+    with final_claim(authorization, identity, root, partitions) as journal:
+        if journal.existing is not None:
+            return copy.deepcopy(journal.existing)
+        result = _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
+        journal.finish(result)
+        return result
+
+
+def _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization):
+    identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id") or new_job_id()
     from contextlib import nullcontext
     # Short owned scratch paths avoid Windows MAX_PATH failures in nested font caches.
     context=tempfile.TemporaryDirectory(prefix="wf-prod-") if partitions else nullcontext(str(root))
@@ -484,14 +592,18 @@ def _compose_item(spec,job,root,partitions,progress,is_cancelled):
                     "input":job.data_summary["input"],"retained":job.data_summary["retained"],
                     "excluded":job.data_summary["excluded"],"errors":job.data_summary["errors"],
                     "warnings":job.data_summary["warnings"]},indent=2),encoding="utf-8")
-        result=generate(ProductionJob(job.prepared_template,job.record_store,str(directory),
-            auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name),
+        production_job=ProductionJob(job.prepared_template,job.record_store,str(root),job_id=identity,
+            auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name,
+            variable_context=copy.deepcopy(job.variable_context))
+        child = authorization.for_staging("template", production_job, directory) if partitions else authorization
+        production_job.output_dir = str(directory)
+        result=generate(production_job, authorization=child,
             progress=progress,is_cancelled=is_cancelled,additional_reports=reports,_defer_media_ticket=bool(partitions)).to_dict()
         if result["status"]=="completed" and partitions:
             from .splitter import split_composed
             from .transforms import DataSet
             result=split_composed(result,DataSet(job.record_store),partitions,root,job.pages_per_record,
-                                  is_cancelled=is_cancelled,progress=progress)
+                                  is_cancelled=is_cancelled,progress=progress,authorization=authorization)
         elif partitions and result.get("report_dir"):
             report=root/(result["job_id"]+"-failed")
             shutil.copytree(result["report_dir"],report)

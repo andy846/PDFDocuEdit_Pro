@@ -35,6 +35,7 @@ from composition.overlay.geometry import validate_changed_geometry
 from composition.overlay.model import EnvelopeSpec
 from composition.pdf_source.planner import SYSTEM_FIELDS, applies
 from composition.template.model import MM_TO_PT, Template
+from ui.combo_popup import WideComboBox
 from ui.icons import icon
 from ui.responsive import scroll_container
 
@@ -150,7 +151,11 @@ class OverlayWindow(OverlayActions, QMainWindow):
         action("close", "Close overlay designer", self.close, "&File", "Ctrl+W", "x")
         for name in ("undo", "redo"):
             item = self.undo.createUndoAction(self, "Undo") if name == "undo" else self.undo.createRedoAction(self, "Redo")
-            item.setShortcut(QKeySequence.StandardKey.Undo if name == "undo" else QKeySequence.StandardKey.Redo)
+            if name == "undo":
+                item.setShortcut(QKeySequence.StandardKey.Undo)
+            else:
+                from ui.shortcut_bindings import redo_shortcuts
+                item.setShortcuts(redo_shortcuts())
             item.setIcon(icon(name))
             item.setProperty("designer_icon", name)
             self.actions[name] = item
@@ -268,6 +273,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.tabs.addTab(self.splitter, "Design & preview")
         production = QWidget()
         prod_layout = QVBoxLayout(production)
+        review_button = QPushButton("Review Production…")
+        review_button.clicked.connect(self.generate_pdf)
+        prod_layout.addWidget(review_button)
         self.production_text = QPlainTextEdit()
         self.production_text.setReadOnly(True)
         prod_layout.addWidget(self.production_text)
@@ -303,7 +311,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         inspector_layout = QVBoxLayout(content)
         scope_form = QFormLayout()
         scope_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        self.scope, self.required_scope = QComboBox(), QComboBox()
+        self.scope, self.required_scope = WideComboBox(), WideComboBox()
         for control, labels in ((self.scope, SCOPE_LABELS), (self.required_scope, SCOPE_LABELS[:-1])):
             for label, value in labels:
                 control.addItem(label, value)
@@ -317,7 +325,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.control = QCheckBox("Machine control barcode")
         self.control.setToolTip("Enable required read-position checks for this barcode. Text-only overlays do not require a barcode.")
         self.control.toggled.connect(self.scope_edited)
-        self.profile_button = QPushButton("Edit barcode payload…")
+        self.profile_button = QPushButton("Configure barcode…")
         self.profile_button.clicked.connect(self.edit_profile)
         scope_form.addRow("Apply to", self.scope)
         scope_form.addRow("Letter page", self.letter_page)
@@ -332,6 +340,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         scope_form.addRow("Required read positions", self.required_scope)
         inspector_layout.addLayout(scope_form)
         self.properties = Properties()
+        self.properties.barcodeProfileRequested.connect(self.edit_profile)
         self.properties.edited.connect(self.property_edit)
         self.properties.fontRequested.connect(self.request_font)
         self.properties.revertRequested.connect(self.revert_draft)
@@ -475,18 +484,24 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.commit(after,"Change Print Media")
 
     def apply_spec(self, value, selected=None):
-        self.spec = EnvelopeSpec.from_dict(value)
+        try:
+            candidate = EnvelopeSpec.from_dict(value)
+            plan = preview_plan(candidate)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.invalidate_preview(str(exc))
+            return False
+        self.spec = candidate
         self.fields.clear()
         self.fields.addItems(sorted(SYSTEM_FIELDS | set(self.spec.external_fields)))
         self.filter_system_fields(self.field_filter.text())
         self.draft_error = ""
         self.properties.revert_content.hide()
-        plan = preview_plan(self.spec)
         self.media_error=getattr(plan,"media_error","")
-        for control, maximum in ((self.envelope, plan.envelopes), (self.print_page, plan.settings_for(self.envelope.value()).output_pages_per_envelope)):
-            control.blockSignals(True)
-            control.setRange(1, maximum)
-            control.blockSignals(False)
+        try:
+            self.sync_preview_indices(plan)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.invalidate_preview(str(exc))
+            return False
         self.required_scope.blockSignals(True)
         self.required_scope.setCurrentIndex(self.required_scope.findData(self.spec.required_scope))
         self.required_scope.blockSignals(False)
@@ -500,12 +515,41 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.refresh_canvas(selected=selected)
         self.busy()
         self.title()
+        return not self.draft_error
+
+    def sync_preview_indices(self, plan):
+        """Clamp the envelope before querying its possibly different page plan."""
+        controls = (self.envelope, self.print_page)
+        blocked = [control.blockSignals(True) for control in controls]
+        try:
+            self.envelope.setRange(1, plan.envelopes)
+            self.envelope.setValue(max(1, min(self.envelope.value(), plan.envelopes)))
+            maximum = plan.settings_for(self.envelope.value()).output_pages_per_envelope
+            self.print_page.setRange(1, maximum)
+            self.print_page.setValue(max(1, min(self.print_page.value(), maximum)))
+        finally:
+            for control, state in zip(controls, blocked, strict=True):
+                control.blockSignals(state)
+
+    def invalidate_preview(self, message):
+        self.timer.stop()
+        self.preview_generation += 1
+        self.preview_pending = False
+        if self.preview_worker:
+            self.preview_worker.stop_preview()
+        self.draft_error = message
+        self.canvas.set_preview(None)
+        self.preview_status.setText("Preview unavailable: " + message)
+        self.preview_status.setToolTip(message)
+        self.error(message)
+        self.busy()
 
     def commit(self, after, label, selected=None):
         if self.active_worker or self.font_token:
             return False
         try:
             candidate = EnvelopeSpec.from_dict(after)
+            preview_plan(candidate)
             if not candidate.needs_source_review:
                 validate_changed_geometry(self.spec, candidate)
         except ValueError as exc:
@@ -531,13 +575,17 @@ class OverlayWindow(OverlayActions, QMainWindow):
                 return
         if editor:
             editor.last_page = current_page
-        plan = preview_plan(self.spec)
-        self.print_page.blockSignals(True)
-        self.print_page.setMaximum(plan.settings_for(self.envelope.value()).output_pages_per_envelope)
-        self.print_page.blockSignals(False)
-        page = plan.page(self.envelope.value(), self.print_page.value())
-        fields = page.fields("preview")
-        geom = self.spec.source.page_geometry(page)
+        try:
+            plan = preview_plan(self.spec)
+            self.sync_preview_indices(plan)
+            page = plan.page(self.envelope.value(), self.print_page.value())
+            fields = page.fields("preview")
+            geom = self.spec.source.page_geometry(page)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.invalidate_preview(str(exc))
+            return
+        if editor:
+            editor.last_page = (self.envelope.value(), self.print_page.value())
         chosen = self.canvas.selected_ids() if selected is None else selected
         elements = [copy.deepcopy(obj.element) for obj in self.spec.objects if applies(obj.scope, fields, obj.letter_page)]
         self.canvas.set_template(

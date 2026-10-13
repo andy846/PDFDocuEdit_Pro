@@ -94,6 +94,8 @@ def test_worker_review_production_and_portable_save(standalone,tmp_path):
     w.accept_review()
     wait_until(lambda:w.active_worker is None and w.run.accepted)
     w.execute("output")
+    from tests.composition.review_helpers import confirm_review
+    confirm_review(w)
     wait_until(lambda:w.active_worker is None and bool(w.run.output),timeout=30)
     assert w.run.output["status"]=="completed",w.run.error
     target=tmp_path/"saved.pdflow"

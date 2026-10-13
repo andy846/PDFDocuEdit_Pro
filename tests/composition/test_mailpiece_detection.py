@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QApplication
 
 from composition.designer.mailpiece_dialog import MailpieceDialog
 from composition.designer.overlay_workspace import OverlayWindow
-from composition.overlay.generator import generate, reconcile
+from composition.overlay.generator import reconcile
 from composition.overlay.model import BarcodeProfile, EnvelopeSpec, OverlayJob, OverlayObject
 from composition.overlay.renderer import render_preview
 from composition.overlay.serializer import load_project, save_project
@@ -20,8 +20,9 @@ from composition.pdf_source.model import EnvelopeSettings, SourceInfo
 from composition.pdf_source.planner import EnvelopePlan
 from composition.pdf_source.source import inspect_source
 from composition.template.model import MM_TO_PT, CompositionError, Element
-from composition.worker import dispatch
 from tests.composition.test_pdf_overlay_ui import finish
+from tests.production_approval import dispatch
+from tests.production_approval import overlay_generate as generate
 
 
 def make_pdf(tmp_path, texts, name="source.pdf"):
@@ -289,7 +290,7 @@ def test_pending_detection_project_cannot_silently_generate_fixed_groups(tmp_pat
     cfg=EnvelopeSettings(pages_per_envelope=1)
     spec=EnvelopeSpec(inspect_source(path,cfg,uniform=True),cfg,detection_review={"required":True,"accepted":False})
     assert spec.needs_detection_review
-    with pytest.raises(CompositionError,match="review and accept"):
+    with pytest.raises(CompositionError,match="Accept source and mailpiece boundaries"):
         generate(OverlayJob(spec.to_dict(),str(tmp_path/"output")))
     assert not (tmp_path/"output").exists()
 

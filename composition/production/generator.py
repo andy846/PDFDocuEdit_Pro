@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -21,11 +22,12 @@ from composition.engine.assets import qpdf_executable
 from composition.engine.fonts import RecordFontError
 from composition.engine.renderer import Renderer
 from composition.engine.rules import RecordRuleError
+from composition.production.journal import production_claim, publish_package
 from composition.template.model import CompositionError, Template, required_fields
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
 
-from .model import JobResult, ProductionJob, now, validate_output_name
+from .model import JobResult, ProductionJob, now, validate_output_name, validate_output_template
 from .resources import peak_memory
 
 
@@ -39,6 +41,8 @@ def check_cancel(is_cancelled):
 
 
 def reconcile(result: JobResult) -> None:
+    if not result.expected_barcodes == result.rendered_barcodes == result.decoded_barcodes:
+        raise CompositionError("RECONCILIATION FAILED: barcode counts do not agree.")
     if not (
         result.input_records == result.processed_records == result.successful_records
         and result.failed_records == 0
@@ -154,6 +158,9 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         "Successful Records": result.successful_records, "Failed Records": result.failed_records,
         "Pages Per Record": result.pages_per_record, "Expected Pages": result.expected_pages,
         "Page Count": result.generated_pages, "Output Files": result.generated_files,
+        "Printing": result.printing, "Physical Sheets": result.sheets, "Inserted Blank Backs": result.inserted_blanks,
+        "Expected Barcodes": result.expected_barcodes, "Rendered Barcodes": result.rendered_barcodes,
+        "Decoded Barcodes": result.decoded_barcodes,
         "Output File": result.output_pdf, "PostScript File": result.output_ps, "File Size": result.output_size,
         "Repaired Glyphs": result.repaired_glyphs, "Repaired Records": result.repaired_records,
         "Glyph Repair Report": result.glyph_repair_report,
@@ -170,10 +177,11 @@ def _write_reports(directory: Path, result: JobResult, template: Template, store
         writer.writerow([_csv_value(value) for value in columns.values()])
 
 
+@production_claim("template")
 def generate(
     job: ProductionJob, *, progress: Callable | None = None, is_cancelled: Callable | None = None,
     additional_reports: Callable | None = None,
-    _defer_media_ticket: bool = False,
+    _defer_media_ticket: bool = False, authorization=None,
 ) -> JobResult:
     """Compose a disk-backed imported snapshot without loading all rendered pages."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job.job_id):
@@ -182,26 +190,66 @@ def generate(
         raise CompositionError("Chunk size must be between 1 and 1,000 pages.")
     if type(job.auto_repair) is not bool:
         raise CompositionError("Automatic glyph repair must be a boolean.")
-    validate_output_name(job.output_name)
+    # Work on a copy: repeated preview/retry must retain the original template
+    # and the prepared clock/identity rather than resolving a new timestamp.
+    job = copy.copy(job)
+    validate_output_template(job.output_name)
     template = Template.from_dict(job.template)
+    template._barcode_job_id = job.job_id
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    authorization.require_job("template", job, is_cancelled=is_cancelled)
+    from core.output_safety import contained_path, validate_identifier
+    validate_identifier(job.job_id)
     output_root = Path(job.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    final = output_root / job.job_id
+    final = contained_path(output_root, job.job_id)
     if final.exists() or (output_root / f"{job.job_id}-failed").exists():
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))
     result = JobResult(job.job_id, pages_per_record=len(template.pages), auto_repair=job.auto_repair)
     store = None
     media_plan = None
+    marks_stream = None
     current_record = None
     chunk = None
     chunks = []
     try:
         check_cancel(is_cancelled)
         store = open_records(template, job.record_store)
+        job.variable_context = copy.deepcopy(job.variable_context)
+        job.variable_context["namespaces"].setdefault("job", {}).update(id=job.job_id, records=store.count)
+        job.output_name = job.resolved_output_name()
+        validate_output_name(job.output_name)
         result.warnings.extend(store.metadata.get("warnings", []))
         result.input_records = store.count
         result.expected_pages = store.count * len(template.pages)
+        from composition.engine.barcode_profiles import has_inserter
+        profile_plan = None
+        from composition.media.planner import build_print_plan
+        profile_plan = build_print_plan(template, store.count, is_cancelled=is_cancelled)
+        result.pages_per_record = profile_plan.settings_for(1).output_pages_per_envelope
+        result.expected_pages = profile_plan.output_pages
+        result.printing = "duplex" if profile_plan.settings.duplex else "simplex"
+        result.sheets = profile_plan.sheets
+        result.inserted_blanks = profile_plan.inserted_blanks
+        if has_inserter(template):
+            if any(e.barcode_profile.get("preset") == "inserter_i25_18" and
+                   e.barcode_profile.get("validation", "pending") == "pending" for e in template.all_elements()):
+                result.warnings.append("Inserter I25 profile: machine validation pending. Confirm dimensions, direction and read position on the actual inserter.")
+            from composition.engine.inserter_production import preflight
+            result.expected_barcodes = preflight(template, store.records(), profile_plan, is_cancelled, progress)
+        from composition.engine.generic_production import has_fixed_layout
+        from composition.engine.generic_production import preflight as generic_preflight
+        if has_fixed_layout(template):
+            if any(segment.get("overflow") == "cycle" for element in template.all_elements()
+                   for segment in element.barcode_profile.get("segments", [])):
+                result.warnings.append("Generic sequence cycling enabled: review barcode-cycles.csv for full and encoded values.")
+            result.expected_barcodes += generic_preflight(template, store.records(), profile_plan, is_cancelled, progress,
+                                                         audit_path=staging/"barcode-cycles.csv",
+                                                         record_store=job.record_store if template.record_mode == "imported" else None)
+        if has_inserter(template) or has_fixed_layout(template):
+            marks_stream = (staging/"inserter-marks.jsonl").open("w", encoding="utf-8")
         if template.media.get("enabled"):
             from composition.media.planner import build_print_plan
             media_plan=build_print_plan(template,store.count,is_cancelled=is_cancelled)
@@ -220,7 +268,9 @@ def generate(
                           *(spec.file for spec in element.glyph_repairs.values())) if value
         ]
         fingerprints = {path: file_hash(Path(path)) for path in assets if path}
-        with tempfile.TemporaryDirectory(prefix="font-subsets-", dir=staging) as font_folder, Renderer(
+        # Native font tools may not support Windows extended-length paths.
+        # Deep routed output folders must not become the font scratch root.
+        with tempfile.TemporaryDirectory(prefix="font-subsets-") as font_folder, Renderer(
             template, auto_repair=job.auto_repair, fallback_directory=Path(font_folder)/"fallback", is_cancelled=is_cancelled,
         ) as renderer:
             if progress:
@@ -241,6 +291,10 @@ def generate(
                 current_record = ordinal
                 try:
                     renderer.render(chunk, record, ordinal, is_cancelled=is_cancelled)
+                    if marks_stream is not None:
+                        for mark in renderer.barcode_marks:
+                            marks_stream.write(json.dumps(mark, ensure_ascii=False)+"\n")
+                            result.rendered_barcodes += 1
                 except Exception:
                     if is_cancelled and is_cancelled():
                         raise JobCancelled("Production cancelled between template pages.") from None
@@ -275,6 +329,14 @@ def generate(
             path.unlink()
         check_cancel(is_cancelled)
         validate_pdf_file(pdf, expected_page_count=result.expected_pages)
+        if marks_stream is not None:
+            marks_stream.close()
+            marks_stream = None
+            from composition.engine.inserter_production import audit_pdf
+            result.decoded_barcodes = audit_pdf(pdf, staging/"inserter-marks.jsonl", staging/"barcodes.csv",
+                is_cancelled=is_cancelled, progress=progress, expected=result.expected_barcodes)
+            if result.rendered_barcodes != result.expected_barcodes:
+                raise CompositionError("RECONCILIATION FAILED: rendered production barcode count differs.")
         with fitz.open(pdf) as checked:
             result.generated_pages = checked.page_count
         result.generated_files = 1
@@ -310,9 +372,17 @@ def generate(
             additional_reports(staging,result)
         check_cancel(is_cancelled)
         # A unique, same-parent directory rename publishes the PDF and both reports together.
-        os.rename(staging, final)
+        published = publish_package(staging, final, asdict(result), authorization)
+        result.warnings = published.get("warnings", result.warnings)
         return result
     except Exception as exc:
+        from composition.engine.inserter_production import BarcodeRecordError
+        if marks_stream is not None:
+            marks_stream.close()
+            marks_stream = None
+        if isinstance(exc, BarcodeRecordError):
+            result.error_record = exc.record_ordinal
+            result.failed_records = 1
         if chunk is not None:
             chunk.close()
             chunk = None
@@ -363,6 +433,8 @@ def generate(
             result.warnings.append(f"Unable to publish diagnostic reports: {report_error}")
         return result
     finally:
+        if marks_stream is not None:
+            marks_stream.close()
         if staging.exists():
             resolved = staging.resolve()
             if resolved.parent != output_root or not resolved.name.startswith(f".{job.job_id}-"):

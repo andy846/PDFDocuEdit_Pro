@@ -6,10 +6,11 @@ import math
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache as _value_cache
 from pathlib import Path
 from typing import Any
 
-TEMPLATE_VERSION = 10
+TEMPLATE_VERSION = 12
 MAX_TEMPLATE_PAGES = 100
 MM_TO_PT = 72 / 25.4
 ELEMENT_TYPES = frozenset({"text", "image", "line", "rectangle", "code128", "i25", "qr"})
@@ -98,6 +99,7 @@ class Element:
     # Quiet zones are included in the element bounding box.
     barcode_module_mm: float = 0.25
     show_barcode_text: bool = False
+    barcode_profile: dict = field(default_factory=dict)
     # Explicit repairs apply only when the primary face lacks that exact code point.
     glyph_repairs: dict[str, FontSpec] = field(default_factory=dict)
     rules: ElementRules = field(default_factory=ElementRules)
@@ -245,6 +247,10 @@ class Template:
                 elements = page.get("elements", [])
                 if not isinstance(elements, list) or len(elements) > 5000:
                     raise CompositionError("A template can contain at most 5,000 elements.")
+                if version < 11 and any(e.get("barcode_profile") for e in elements):
+                    raise CompositionError("Barcode profiles require template version 11.")
+                if version < 12 and any(e.get("barcode_profile", {}).get("layout_mode") == "fixed" for e in elements):
+                    raise CompositionError("Fixed-length barcode layouts require template version 12.")
                 if version < 7 and any(e.get("rotation_deg", 0) != 0 for e in elements):
                     raise CompositionError("Object rotation requires template version 7.")
                 if version < 4 and any(e.get("rules", {}).get("visible_when") is not None or
@@ -287,42 +293,52 @@ def _number(value: object, label: str, low: float, high: float) -> None:
 
 def parse_value(value: str) -> tuple[tuple[str, str], ...]:
     """Compile field references into literal/field tokens; never execute input."""
-    if not isinstance(value, str) or len(value) > 100_000:
-        raise CompositionError("Element content must be text of at most 100,000 characters.")
-    tokens: list[tuple[str, str]] = []
-    cursor = 0
-    for match in VARIABLE.finditer(value):
-        if match.start() > cursor:
-            tokens.append(("literal", value[cursor:match.start()]))
-        tokens.append(("field", match.group(1)))
-        cursor = match.end()
-    tokens.append(("literal", value[cursor:]))
-    for kind, text in tokens:
-        if kind == "literal" and ("{{" in text or "}}" in text):
-            raise CompositionError("Invalid variable syntax. Use {{Field_Name}}.")
-    return tuple(tokens)
+    from core.variables import VariableError, compile_template
+
+    try:
+        compiled = compile_template(value)
+        # Keep the existing project grammar until extended text tokens have a
+        # saved-format gate. Naming can already use the full shared grammar.
+        if any(token.transforms or "." in token.name for token in compiled.tokens):
+            raise VariableError("Invalid variable syntax. Use {{Field_Name}}.")
+        if len(VARIABLE.findall(value)) != sum(bool(token.name) for token in compiled.tokens):
+            raise VariableError("Invalid variable syntax. Use {{Field_Name}} without spaces.")
+        tokens = [("field", token.name) if token.name else ("literal", token.literal)
+                  for token in compiled.tokens]
+        if not tokens or tokens[-1][0] != "literal":
+            tokens.append(("literal", ""))
+        return tuple(tokens)
+    except VariableError as exc:
+        raise CompositionError(f"Invalid variable syntax. {exc}") from exc
 
 
 def resolve_value(tokens: tuple[tuple[str, str], ...], record: dict[str, str]) -> str:
-    parts = []
-    for kind, text in tokens:
-        if kind == "literal":
-            parts.append(text)
-        elif text not in record:
-            raise CompositionError(f"Missing field: {text}")
-        else:
-            parts.append(record[text])
-    return "".join(parts)
+    from core.variables import VariableContext, VariableError, resolve
+    compiled = _shared_value_tokens(tokens)
+    try:
+        return resolve(compiled, VariableContext.for_record(record)).value
+    except VariableError as exc:
+        raise CompositionError(str(exc)) from exc
+
+
+@_value_cache(maxsize=512)
+def _shared_value_tokens(tokens):
+    from core.variables.model import CompiledTemplate, Token
+    return CompiledTemplate("", tuple(Token(literal=text) if kind == "literal" else Token(name=text)
+                                      for kind, text in tokens))
 
 
 def required_fields(template: Template) -> set[str]:
     from composition.engine.rules import rule_fields
     fields = {
         text for element in template.all_elements()
-        if element.type in {"text", "code128", "i25", "qr"}
+        if element.type in {"text", "code128", "i25", "qr"} and not element.barcode_profile
         for kind, text in parse_value(element.value) if kind == "field"
     }
     for element in template.all_elements():
+        if element.barcode_profile:
+            from composition.engine.barcode_profiles import BarcodeProfile
+            fields.update(BarcodeProfile.from_dict(element.barcode_profile).required_fields())
         fields.update(rule_fields(element.rules))
         if element.rules.alternative and element.type != "image":
             fields.update(text for kind, text in parse_value(element.rules.alternative.value) if kind == "field")
@@ -389,6 +405,18 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
         seen.add(element.id)
         from composition.engine.rules import validate_rules
         validate_rules(element, check_assets)
+        if not isinstance(element.barcode_profile, dict):
+            raise CompositionError("Barcode profile must be a JSON object.")
+        if element.barcode_profile:
+            from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile
+            profile = BarcodeProfile.from_dict(element.barcode_profile)
+            profile.validate(profile.fields())
+            if element.type not in {"code128", "i25", "qr"}:
+                raise CompositionError("Only barcode objects use a barcode profile.")
+            if profile.preset == INSERTER_I25 and element.type != "i25":
+                raise CompositionError("The 18-digit inserter preset requires I25.")
+            if element.rules.alternative is not None:
+                raise CompositionError("Profile barcodes use their configured payload; remove alternative content.")
         if not isinstance(element.type, str) or element.type not in ELEMENT_TYPES:
             raise CompositionError(f"Unsupported element type: {element.type}")
         for prop in ("x_mm", "y_mm"):
@@ -441,3 +469,6 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
             parse_value(element.value)
         if element.type == "image" and check_assets and not Path(element.image).is_file():
             raise CompositionError(f"Image not found: {element.image}")
+    template._has_barcode_profiles = any(e.barcode_profile for e in template.all_elements())
+    template._has_inserter_profiles = any(e.barcode_profile.get("preset") == "inserter_i25_18"
+                                        for e in template.all_elements() if isinstance(e.barcode_profile, dict))

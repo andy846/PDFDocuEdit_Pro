@@ -43,7 +43,7 @@ from ui.icons import icon
 
 from .canvas import NodeToolbox, WorkflowCanvas
 from .model import KINDS, LABELS, WorkflowNode, WorkflowRun, WorkflowSpec
-from .registry import EXTRA_KINDS, REGISTRY, default_options
+from .registry import EXTRA_KINDS, PDF_OPERATION_KINDS, REGISTRY, default_options
 
 
 class ProjectProperties(QObject):
@@ -103,7 +103,7 @@ class WorkflowWindow(QMainWindow):
         self.embedded,self.project_host=embedded,project_host
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,embedded)
         self.resize(1280,820)
-        self.spec=WorkflowSpec.default().upgraded()
+        self.spec=WorkflowSpec.default().upgraded(6)
         self.run=WorkflowRun()
         self.project_path=None
         self.properties=ProjectProperties(self)
@@ -152,7 +152,11 @@ class WorkflowWindow(QMainWindow):
         action("close","Close workflow",self.close,"Ctrl+W",bar=False)
         for key in ("undo","redo"):
             act=self.undo.createUndoAction(self,"Undo") if key=="undo" else self.undo.createRedoAction(self,"Redo")
-            act.setShortcut("Ctrl+Z" if key=="undo" else "Ctrl+Shift+Z")
+            if key == "undo":
+                act.setShortcut("Ctrl+Z")
+            else:
+                from ui.shortcut_bindings import redo_shortcuts
+                act.setShortcuts(redo_shortcuts())
             act.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             act.setIcon(icon(key))
             act.setProperty("workflow_icon",key)
@@ -163,6 +167,7 @@ class WorkflowWindow(QMainWindow):
         action("step","Check to this step",self.run_selected,symbol="chevron-right")
         action("scan","Run to review",lambda:self.execute("review"),symbol="scan")
         action("generate","Generate production PDF",lambda:self.execute("output"),"Ctrl+Shift+G","printer")
+        action("production_review","Review Production",lambda:self.execute("output"),symbol="printer")
         self.actions["scan"].setIconText("Scan and review")
         self.actions["generate"].setIconText("Generate PDF")
         action("cancel","Cancel task",self.cancel_job,symbol="x")
@@ -215,6 +220,9 @@ class WorkflowWindow(QMainWindow):
         self.page.setRange(1,1)
         self.page.valueChanged.connect(lambda *_:self.review())
         navigation.addWidget(self.page)
+        navigation.addStretch()
+        review_layout.addLayout(navigation)
+        navigation=QHBoxLayout()
         for label,handler in (("View PDF region",self.edit_regions),("Correct value",self.correct),
                               ("Export CSV",self.export_csv),("Accept review",self.accept_review)):
             button=QPushButton(label)
@@ -398,7 +406,8 @@ class WorkflowWindow(QMainWindow):
         self._draft_getter=None
         self.draft_error=""
         self.canvas.display(self.spec,self.run.statuses,self.selected)
-        self.toolbox.configure(tuple(dict.fromkeys(self.spec.kinds+EXTRA_KINDS)))
+        cleanup = PDF_OPERATION_KINDS if self.spec.project_kind == "pdf_workflow" else ()
+        self.toolbox.configure(tuple(dict.fromkeys(self.spec.kinds+EXTRA_KINDS+cleanup)))
         self.select_node(self.selected)
         self.title()
 
@@ -428,7 +437,7 @@ class WorkflowWindow(QMainWindow):
                "extract":"OUTPUT · Named fields from PDF text regions", "group":"OUTPUT · Envelope boundaries",
                "review":"CHECK · Values, findings and boundaries", "overlay":"SETTINGS · Designer overlay project",
                "output":"OUTPUT · Validated PDF and production reports"}
-        subtitle=QLabel(roles[node.kind])
+        subtitle=QLabel(roles.get(node.kind, "SETTINGS · Validated PDF working copy"))
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
         self.inspector_scroll.setWidget(self.inspector)
@@ -480,6 +489,15 @@ class WorkflowWindow(QMainWindow):
             source_path=path.currentText()
             self.watch_settings(node,lambda:{"pages":{**node.params.get("pages",{}),source_path:pages.text()}},[pages])
             button("Apply selection",self.flush_settings)
+        elif node.kind in PDF_OPERATION_KINDS:
+            from .node_presentation import settings_summary
+            info = QLabel(settings_summary(node))
+            info.setWordWrap(True)
+            layout.addWidget(info)
+            button("Configure PDF processing…", lambda: self.edit_pdf_operation(node))
+            note = QLabel("Works on a validated temporary copy before extraction. Check to this step to analyze the result. Final production still requires Review.")
+            note.setWordWrap(True)
+            layout.addWidget(note)
         elif node.kind=="extract":
             info=QLabel(f"{len(node.params.get('regions',[]))} named region(s). Uses PDF text layers; no automatic OCR.")
             info.setWordWrap(True)
@@ -529,10 +547,17 @@ class WorkflowWindow(QMainWindow):
             button("Create / edit in Designer…",self.edit_overlay)
             button("Choose overlay project…",self.choose_overlay)
         elif node.kind=="output":
+            from core.variables import VariableContext
+            from ui.variable_name import VariableNameEdit
             folder=QLineEdit(node.params.get("directory",""))
             form.addRow("Output folder",folder)
+            naming = VariableNameEdit(node.params.get("output_name", "production.pdf"), self)
+            naming.set_context(VariableContext.for_job(
+                input_path=next(iter(self.spec.node("input").params.get("paths", [])), "example.pdf"),
+                job_id="example-job", job_name=self.spec.name, sequence=1))
+            form.addRow("Output PDF", naming)
             button("Browse…",lambda:self.choose_output(node))
-            self.watch_settings(node,lambda:{"directory":folder.text().strip()},[folder])
+            self.watch_settings(node,lambda:{"directory":folder.text().strip(), "output_name":naming.text()},[folder,naming.edit])
             button("Apply folder",self.flush_settings)
             info=QLabel("A new job folder contains the validated PDF, extracted-data.csv, production reports and workflow.json.")
             info.setWordWrap(True)
@@ -549,11 +574,22 @@ class WorkflowWindow(QMainWindow):
         if node.kind=="input" and len(value.get("paths",[]))>1 and not self.spec.node("merge"):
             merge=WorkflowNode("merge",x=max(n.x for n in self.spec.nodes)+215,y=0)
             after["nodes"].append(asdict(merge))
-            edge=[node.id,self.spec.node("extract").id]
-            if edge in after["edges"]:
+            edge=next((edge for edge in after["edges"] if edge[0] == node.id), None)
+            if edge:
                 after["edges"].remove(edge)
                 after["edges"].extend([[node.id,merge.id],[merge.id,edge[1]]])
         return self.commit(after,"Configure "+LABELS[node.kind])
+
+    def edit_pdf_operation(self, node):
+        from core.pdf_operations.model import PdfOptions
+        from dialogs.pdf_operations import PdfOperationDialog
+        source = self.run.source or next(iter(self.spec.node("input").params.get("paths", [])), "")
+        options = PdfOptions.from_dict(node.params["options"])
+        dialog = PdfOperationDialog(source, options.operation, parent=self,
+                                    settings_only=True, initial_options=options)
+        if dialog.exec() and dialog.selected_options:
+            self.params(node, {"options": asdict(dialog.selected_options)})
+        dialog.deleteLater()
 
     def auto_detect_mailpieces(self):
         previous = getattr(self, "detection_dialog", None)
@@ -604,7 +640,7 @@ class WorkflowWindow(QMainWindow):
     def add_node(self,kind,x,y):
         if not self.flush_settings():
             return
-        if kind in EXTRA_KINDS:
+        if kind in EXTRA_KINDS + PDF_OPERATION_KINDS:
             closest=None
             distance=30
             from PyQt6.QtCore import QPointF
@@ -653,6 +689,8 @@ class WorkflowWindow(QMainWindow):
 
     def insert_step(self,kind,x=None,y=None,*,after_id=None,params=None):
         target_id=after_id or self.selected
+        if kind in PDF_OPERATION_KINDS and self.spec.workflow_version < 6:
+            return self.ensure_v3(lambda:self.insert_step(kind,x,y,after_id=target_id,params=params),version=6)
         if kind!="media_assignment" and self.spec.workflow_version<3:
             return self.ensure_v3(lambda:self.insert_step(kind,x,y,after_id=target_id,params=params))
         if kind=="media_assignment" and self.spec.workflow_version<4:
@@ -855,7 +893,7 @@ class WorkflowWindow(QMainWindow):
     def run_selected(self):
         self.inspections.check()
 
-    def execute(self,until):
+    def execute(self,until,*,production_reviews=None):
         if self.active_worker or self.capture_active or not self.flush_settings():
             return
         try:
@@ -876,6 +914,16 @@ class WorkflowWindow(QMainWindow):
                 if not project.undo.isClean() or getattr(project,"draft_error", ""):
                     self.message("Save or repair the open overlay project before running Workflow; production uses its saved version.")
                     return
+        if until == "output" and production_reviews is None:
+            from .production_review import open_workflow_review
+            output = self.spec.node("output").params.get("directory", "")
+            if not output:
+                self.message("Choose an output folder in the Output node, then check and accept review.")
+                self.select_node(self.spec.node("output").id)
+                return
+            open_workflow_review(self, {"review_kind": "pdf", "run": asdict(self.run), "output_dir": output},
+                                lambda receipts: self.execute("output", production_reviews=receipts))
+            return
         if until=="output":
             self.run.statuses.pop(self.spec.node("output").id,None)
             self.run.output={}
@@ -904,7 +952,8 @@ class WorkflowWindow(QMainWindow):
                 self.production_summary.setPlainText(self.result_summary())
                 self.tabs.setCurrentWidget(self.production_page)
         self.request({"operation":"run","spec":self.spec.to_dict(),"run":asdict(self.run),
-                      "directory":str(self.directory),"until":until},ready)
+                      "directory":str(self.directory),"until":until,
+                      **({"production_reviews":production_reviews} if production_reviews is not None else {})},ready)
 
     def request(self,request,callback,*,preview=False,on_error=None):
         if self.close_pending or (self.active_worker and not preview):
@@ -1219,7 +1268,7 @@ class WorkflowWindow(QMainWindow):
     def choose_output(self,node):
         path=QFileDialog.getExistingDirectory(self,"Output folder")
         if path:
-            self.params(node,{"directory":path})
+            self.params(node,{**node.params, "directory":path})
 
     def result_summary(self):
         output=self.run.output

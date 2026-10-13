@@ -63,7 +63,7 @@ class DesignerHandoffDialog(QDialog):
     def refresh(self, *args):
         mail_merge = self.kind.currentData() == "mail_merge_template"
         self.explanation.setText(
-            "Repeat all selected template pages for each customer. Add merge fields, running sequences and barcodes in Designer."
+            "Repeat all selected template pages for each customer. Add merge fields, running sequences and barcodes in Template Designer."
             if mail_merge else "Keep existing PDF pages and add envelope sequences or inserter barcodes.")
         self.range.setEnabled(self.selection.currentIndex() == 2)
         valid = True

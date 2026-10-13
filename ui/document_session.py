@@ -114,6 +114,8 @@ class DocumentSession(QObject):
         self.engine = PdfEngine(on_commit=self.undo_stack.push_bytes)
         self.form_draft = None
         self.form_mode_active = False
+        self.window_owner = parent
+        self.editable_split = None
         self.display_path: Path | None = None
         self.page = 0
         self.split_orientation = "horizontal"
@@ -288,7 +290,7 @@ class DocumentSession(QObject):
 
     @property
     def has_split(self) -> bool:
-        return self.split_canvas is not None
+        return self.split_canvas is not None or self.editable_split is not None
 
     # --- chrome ----------------------------------------------------------
     @property
@@ -304,13 +306,17 @@ class DocumentSession(QObject):
         self.nav_panel.set_animations_enabled(enabled)
 
     def refresh_icons(self) -> None:
+        if self.editable_split is not None:
+            self.editable_split.refresh_headers()
         self.canvas.update_theme()
         self.nav_panel.refresh_icons()
         if self.split_canvas is not None:
             self.split_canvas.update_theme()
 
     def close(self) -> None:
-        """Quiesce background renders and release the document."""
+        """Quiesce background renders and release the document exactly once."""
+        if getattr(self, "_retirement_started", False):
+            return
         readers = self.canvas.reader_events() + self.nav_panel.thumbnails.reader_events()
         self.canvas.clear(wait=False)
         if self.split_canvas is not None:
@@ -325,3 +331,4 @@ class DocumentSession(QObject):
             if snapshot:
                 Path(snapshot).unlink(missing_ok=True)
         after_readers(readers, cleanup)
+        self._retirement_started = True

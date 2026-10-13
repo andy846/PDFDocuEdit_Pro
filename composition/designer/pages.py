@@ -19,6 +19,34 @@ from composition.template.model import MAX_TEMPLATE_PAGES, PageSpec
 
 
 class PageOperations:
+    def repeat_selected_objects(self):
+        if (self.canvas.mode_preview or not self.canvas.editable
+                or getattr(self, "batch_pending", False)):
+            return
+        if hasattr(self, "batch_editor") and not self.batch_editor.resolve():
+            return
+        if not self._page_editable():
+            return
+        if self.font_requests or getattr(self, "batch_pending", False):
+            return
+        selected = self.canvas.selected_ids()
+        if not selected or len(self.template.pages) < 2:
+            self._error("Select objects and add another template page before repeating them.")
+            return
+        from .repeat_objects import RepeatObjectsDialog
+        before = self.template.to_dict()
+        dialog = RepeatObjectsDialog(before, self.active_page_id, selected, self)
+        try:
+            if dialog.exec() != dialog.DialogCode.Accepted:
+                return
+            self._commit(before, dialog.result_value, "Repeat objects on template pages", selected)
+            self.message.setText(
+                f"Repeated {len(selected)} object(s) on {len(dialog.target_ids())} page(s). "
+                "Copies are independent; Ctrl+Z undoes all copies."
+            )
+        finally:
+            dialog.deleteLater()
+
     @property
     def page_index(self):
         return next((i for i, page in enumerate(self.template.pages)
@@ -79,9 +107,18 @@ class PageOperations:
             self.page_combo.addItem(f"{index+1} · {page.name}", page.id)
         self.page_combo.setCurrentIndex(self.page_index)
         self.page_combo.blockSignals(False)
-        self.production_heading.setText(
-            f"Production: {len(self.template.pages)} fixed page(s) per record · "
-            f"{self.record_count * len(self.template.pages):,} expected pages")
+        heading = f"Production · {len(self.template.pages)} logical template page(s) per record"
+        try:
+            from composition.media.planner import build_print_plan
+            count = self.record_count
+            plan = build_print_plan(self.template, max(1, count))
+            heading += f" · {plan.output_pages if count else 0:,} expected pages"
+            self.production_heading.setToolTip(
+                "Expected physical output pages, including inserted blank backs.")
+        except ValueError as exc:
+            heading += " · Print plan needs review"
+            self.production_heading.setToolTip(str(exc))
+        self.production_heading.setText(heading)
         self._update_page_actions()
 
     def _update_page_actions(self):

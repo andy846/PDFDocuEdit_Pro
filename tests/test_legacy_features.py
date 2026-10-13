@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import fitz
+import pytest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import core.viewer as viewer_module
@@ -11,6 +12,10 @@ from core.settings import SettingsManager
 from dialogs.readme_dialog import README_CONTENT, ReadmeDialog
 from ui.icons import _PATHS
 from ui.side_panel import SidePanel
+
+# Keep one QApplication/theme alive across this module. Creating it in each
+# helper lets Python destroy Qt while closed windows still have deferred work.
+pytestmark = pytest.mark.usefixtures("qt_application")
 
 
 def make_pdf(path: Path, pages: int = 3, prefix: str = "Doc") -> Path:
@@ -120,7 +125,7 @@ def test_annotation_toolbar_icons_are_defined_and_unique() -> None:
     annotation_items = next(
         items
         for section_key, _title, items in SidePanel.SECTIONS
-        if section_key == "annotate"
+        if section_key == "edit"
     )
     icon_names = [item.icon_name for item in annotation_items]
     assert all(name in _PATHS for name in icon_names)

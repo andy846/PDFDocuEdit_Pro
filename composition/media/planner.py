@@ -21,6 +21,7 @@ class MediaPreflightResult:
     stock_sheets:dict
     configuration_valid:bool=True
     device_validation:str="pending"
+    backend:str=""
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class PrintPage:
             "LetterPage":str(self.logical_page or ""),"LetterPageCount":str(c.pages_per_envelope),
             "OutputPage":str(self.output_page),"PrintPage":str(self.print_page),"PrintPageCount":str(c.output_pages_per_envelope),
             "SheetNo":str(self.sheet),"SheetCount":str(c.sheets_per_envelope),
+            "JobSheetNo":str((self.output_page+1)//2 if c.duplex else self.output_page),
             "Side":"Back" if c.duplex and self.print_page%2==0 else "Front",
             "IsFirstSheet":str(int(self.sheet==1)),"IsLastSheet":str(int(self.sheet==c.sheets_per_envelope)),
             "IsInsertedBlank":str(int(self.source_page is None)),"PageRole":page_role(self.logical_page,c.pages_per_envelope) if self.logical_page else "BLANK",
@@ -110,7 +112,7 @@ class PrintPlan:
                             raise CompositionError(f"Logical page {logical}: size differs from Stock {stock}.")
                     if self.media.duplex and len(pattern)%2 and last_stock!=stock:
                         if self.media.blank_policy=="block":
-                            raise CompositionError(f"Media conflict: envelope / record {envelope}, logical pages {logical-1} and {logical} require {last_stock} / {stock} on the same sheet. Correct the stocks or explicitly select blank-back insertion.")
+                            raise CompositionError(f"Media conflict: envelope / record {envelope}, logical pages {logical-1} and {logical} require {last_stock} / {stock} on the same sheet. Front and back must use the same Stock. For four duplex pages, assign pages 1/2 to Stock A and pages 3/4 to Stock B, or explicitly select blank-back insertion (adds pages).")
                         pattern.append((None,logical-2,last_stock,"Confirmed media-change blank back"))
                     pattern.append((logical,logical-1,stock,"Rule "+key if key in self.media.assignments else "Explicit fallback"))
                     last_stock=stock
@@ -173,7 +175,8 @@ class PrintPlan:
                 cfg.pages_per_envelope,cfg.output_pages_per_envelope,cfg.sheets_per_envelope,status]
 
     def preflight(self):
-        return MediaPreflightResult(self.output_pages,self.sheets,self.inserted_blanks,dict(self.stock_sheets))
+        return MediaPreflightResult(self.output_pages,self.sheets,self.inserted_blanks,dict(self.stock_sheets),
+            backend=PrinterProfile.from_dict(self.media.printer_profile).backend)
 
 
 def build_print_plan(template,count,*,is_cancelled=None):

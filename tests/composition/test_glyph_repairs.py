@@ -8,7 +8,6 @@ import pytest
 
 from composition.data.source import import_records
 from composition.engine.renderer import render_preview
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import (
     TEMPLATE_VERSION,
@@ -19,6 +18,7 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
+from tests.production_approval import generate
 
 
 def element(value="Latin {{Name}} end"):

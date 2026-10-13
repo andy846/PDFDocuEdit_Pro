@@ -30,15 +30,27 @@ class ScopedPlan(ElementPlan):
 
 def page_values(spec, plan, job_id, external_values=None):
     fields = plan.fields(job_id)
+    system = dict(fields)
+    if job_id == "preview":
+        system["JobId"] = "00000000-000000-00000000"
+    values = {}
     if spec.external_fields:
         values=external_values(plan) if external_values else dict.fromkeys(spec.external_fields, "")
         if set(values)!=set(spec.external_fields) or any(not isinstance(v,str) for v in values.values()):
             raise CompositionError("Workflow values do not match the declared extraction fields.")
         fields.update(values)
+    from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
+    fields[CONTEXT_KEY] = BarcodeContext(data=values, system=system)
     for obj in spec.objects:
         if obj.profile:
-            fields[barcode_field(obj)] = (obj.profile.payload(fields)
-                                          if applies(obj.scope, fields, obj.letter_page) else "")
+            try:
+                from composition.engine.rules import CompiledGroup
+                visible = (not obj.element.rules.visible_when or CompiledGroup(obj.element.rules.visible_when).matches(fields))
+                fields[barcode_field(obj)] = (obj.profile.payload(fields)
+                                              if applies(obj.scope, fields, obj.letter_page) and visible else "")
+            except (ValueError, KeyError) as exc:
+                raise CompositionError(f"Envelope {plan.envelope}, source page {plan.source_page}, "
+                    f"output page {plan.output_page}, object {obj.element.id}: {exc}") from exc
     return fields
 
 
@@ -55,6 +67,7 @@ def page_records(spec, plan, job_id, is_cancelled=None, external_values=None):
 class OverlayRenderer:
     def __init__(self, spec, *, auto_repair=True, fallback_directory=None, is_cancelled=None):
         self.spec = spec
+        self._profiles_checked = False
         self.renderer = Renderer(render_template(spec), auto_repair=auto_repair,
                                  fallback_directory=fallback_directory, is_cancelled=is_cancelled)
         self.elements = list(self.renderer.template.elements)
@@ -68,12 +81,23 @@ class OverlayRenderer:
         self.renderer.close()
 
     def selections(self, fields, geometry, *, enforce_control=True):
+        if enforce_control and not self._profiles_checked:
+            from composition.engine.barcode_profiles import require_current_inserters
+            require_current_inserters((o.element.id, o.profile) for o in self.spec.objects if o.profile)
+            self._profiles_checked = True
         visible, controls = [], []
         for element, obj in zip(self.elements, self.spec.objects, strict=True):
             selected = self.renderer.plans[element.id].resolve(fields)
             if not selected.visible:
                 continue
-            check_object_bounds(element, geometry)
+            try:
+                check_object_bounds(element, geometry)
+                if obj.profile:
+                    from composition.engine.barcodes import validate_size
+                    validate_size(element, selected.value)
+            except ValueError as exc:
+                raise CompositionError(f"Envelope {fields.get('EnvelopeSeq', '?')}, "
+                    f"output page {fields.get('OutputPage', '?')}, object {element.id}: {exc}") from exc
             visible.append((element,obj,selected))
             if obj.control:
                 controls.append(element)
@@ -98,6 +122,10 @@ class OverlayRenderer:
                               "profile": obj.profile.name, "payload": value.value,
                               "rotation_deg": element.rotation_deg,
                               "rect": [value*MM_TO_PT for value in element_bounds(element)]})
+                if obj.profile.preset == "inserter_i25_18":
+                    marks[-1]["parts"] = obj.profile.inserter_parts(fields)
+                    marks[-1]["sheet"] = int(fields["SheetNo"])
+                    marks[-1]["job_sheet"] = int(fields["JobSheetNo"])
         return layer.number, marks
 
     @staticmethod
@@ -141,4 +169,5 @@ def render_preview(spec, envelope, print_page, *, auto_repair=True, external_val
             raise CompositionError("Source page count changed since inspection.")
         renderer.paint(output,layers,source,plan,fields,spec.source.page_geometry(plan), enforce_control=False)
         # Fonts belong to the separate layer; never subset the copied source document.
-        return output.tobytes(deflate=True,garbage=1),fields
+        from composition.engine.generic_layout import CONTEXT_KEY
+        return output.tobytes(deflate=True,garbage=1), {key: value for key, value in fields.items() if key != CONTEXT_KEY}

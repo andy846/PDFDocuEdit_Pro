@@ -7,6 +7,7 @@ DATA_KINDS = ("clean_fields", "create_fields", "filter_records", "sort_records",
 MEDIA_KINDS = ("media_assignment",)
 PRODUCTION_KINDS = ("running_sequence", "split_output")+MEDIA_KINDS
 EXTRA_KINDS = DATA_KINDS + PRODUCTION_KINDS
+PDF_OPERATION_KINDS = ("flatten_pdf", "repair_pdf")
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,20 @@ class NodeDefinition:
     def validate_options(self, options):
         if not isinstance(options, dict):
             raise CompositionError(f"{self.label}: settings must be an object.")
-        if self.tool_id=="media_assignment":
+        if self.tool_id == "output" and "output_name" in options:
+            from composition.production.model import validate_output_template
+            validate_output_template(options["output_name"])
+        elif self.tool_id in PDF_OPERATION_KINDS:
+            from core.pdf_operations.model import PdfOptions
+            try:
+                if set(options) != {"options"}:
+                    raise ValueError("Expected PDF operation options.")
+                value = PdfOptions.from_dict(options["options"])
+                if value.operation != ("flatten" if self.tool_id == "flatten_pdf" else "repair"):
+                    raise ValueError("PDF operation does not match the node.")
+            except (TypeError, ValueError) as exc:
+                raise CompositionError(f"{self.label}: {exc}") from exc
+        elif self.tool_id=="media_assignment":
             from composition.media.model import MediaSpec
             MediaSpec.from_dict(options)
         elif self.tool_id in EXTRA_KINDS:
@@ -43,6 +57,10 @@ def _definition(kind, label, inputs, output="", repeatable=False, description=""
 REGISTRY = {d.tool_id: d for d in (
     _definition("input", "PDF Input", "", "PDF Source"),
     _definition("merge", "Merge PDFs", "PDF Source", "PDF Source"),
+    _definition("flatten_pdf", "Flatten PDF", "PDF Source", "PDF Source", repeatable=True,
+                description="Flatten selected annotations/forms in a validated working copy before extraction."),
+    _definition("repair_pdf", "Repair / Normalise PDF", "PDF Source", "PDF Source", repeatable=True,
+                description="Rewrite PDF structure; destructive normalisation requires explicit settings."),
     _definition("extract", "Extract Regions", "PDF Source", "Page Data"),
     _definition("group", "Group Mailpieces", "Page Data", "Mailpiece Set"),
     _definition("review", "Review", "Mailpiece Set"),
@@ -55,6 +73,11 @@ REGISTRY = {d.tool_id: d for d in (
     _definition("mail_review", "Preview & Review", "Record Set"),
     _definition("compose", "Compose", "Record Set", "PDF Set"),
     _definition("reports", "Validate & Reports", "PDF Set", "PDF Set"),
+    _definition("for_each", "For each Data File", "", "Record Set",description="Process an ordered, fixed list of data files with one reusable recipe."),
+    _definition("batch_sequence", "Batch Sequence", "Record Set",description="Assign one unique batch-wide sequence before routing; exceptions reserve their numbers."),
+    _definition("route", "Route by Condition", "Record Set",description="Route each record to exactly one template; missing or ambiguous matches need review."),
+    _definition("exceptions", "Exceptions", "Record Set",description="Review invalid and unmatched records before approving partial production."),
+    _definition("collect", "Collect Results", "PDF Set",description="Reconcile all source/branch jobs and report unprinted records; does not combine PDFs."),
     _definition("clean_fields", "Clean Fields", "Record Set|Page Data|Mailpiece Set", repeatable=True,
                 description="Trim, join lines, remove prefixes, change case or replace literal text."),
     _definition("create_fields", "Create Fields", "Record Set|Page Data|Mailpiece Set", repeatable=True,
@@ -75,6 +98,12 @@ REGISTRY = {d.tool_id: d for d in (
 
 
 def default_options(kind, field="Name"):
+    if kind in PDF_OPERATION_KINDS:
+        from dataclasses import asdict
+
+        from core.pdf_operations.model import PdfOptions
+        operation = "flatten" if kind == "flatten_pdf" else "repair"
+        return {"options": asdict(PdfOptions(operation=operation, annotations=operation == "flatten"))}
     if kind=="media_assignment":
         from composition.media.model import default_media
         return default_media()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import shutil
+import sys
 import tempfile
 import textwrap
 import uuid
@@ -70,7 +71,6 @@ from core.analysis import (
 from core.annotation_io import (
     export_annotation_summary,
     export_annotations_json,
-    flatten_annotations,
     import_annotations_json,
 )
 from core.annotations import (
@@ -92,7 +92,7 @@ from core.annotations import (
 )
 from core.capabilities import CapabilityId, detect_capabilities, refresh_capabilities
 from core.commands import Command
-from core.diagnostics import log_failure
+from core.diagnostics import log_failure, log_lifecycle
 from core.file_association import (
     is_default_app,
     is_installed,
@@ -121,6 +121,7 @@ from core.performance import LARGE_DOCUMENT_PAGES, PerformanceTrace
 from core.platform_service import PlatformService
 from core.printing import PrintJob, PrintRenderSettings, render_page_image
 from core.reader_lifetime import after_readers
+from core.redaction_images import redaction_spot_image_count
 from core.resources import APP_VERSION, COPYRIGHT_NOTICE
 from core.settings import SettingsManager
 from core.tasks import FunctionTask, TaskCancelled
@@ -295,7 +296,7 @@ def _perform_document_analysis(
 
 
 class PDFViewer(QMainWindow):
-    def __init__(self, initial_path: str | None = None):
+    def __init__(self, initial_path: str | None = None, *, pdf_only=False, document_windows=None):
         self._startup_trace = PerformanceTrace("startup")
         super().__init__()
         self._integrated_chrome = os.name == "nt"
@@ -304,6 +305,14 @@ class PDFViewer(QMainWindow):
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         with self._startup_trace.span("settings"):
             self.settings = SettingsManager()
+        self._pdf_only_window = pdf_only
+        if pdf_only:
+            # closeEvent accepts only after workers/readers are safely closed.
+            # Release a retired secondary widget tree instead of retaining it
+            # for later application-wide theme repolish.
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._window_closed = False
+        self._window_exit_approved = False
         self._sessions: list[DocumentSession] = []
         self._session: DocumentSession | None = None
         self._idle_engine = PdfEngine()
@@ -311,6 +320,7 @@ class PDFViewer(QMainWindow):
         self._last_context_key: str | None = None
         self._tasks: set[FunctionTask] = set()
         self._search_tasks: dict[int, FunctionTask] = {}
+        self._pending_searches: dict[int, tuple] = {}
         self._search_generations: dict[int, int] = {}
         self._child_windows: list[PDFViewer] = []
         self._task_had_error = False
@@ -318,13 +328,20 @@ class PDFViewer(QMainWindow):
         self._printing = False
         self._queued_open_paths: list[tuple[str, str | None, DocumentSession | None, float]] = []
         self._open_queue_scheduled = False
+        self._open_activity_owner = object()
+        self._queued_open_status = "Ready"
         self._thread_pool = QThreadPool.globalInstance()
         with self._startup_trace.span("main_window"):
             self._init_ui()
+        from ui.close_lifecycle import CloseLifecycle
+        self._close_lifecycle = CloseLifecycle(self)
         with self._startup_trace.span("restore_window"):
             self._restore_window_state()
         with self._startup_trace.span("theme"):
             self._apply_theme(self.settings.get_theme())
+        from ui.document_windows import DocumentWindows
+        self.document_windows = document_windows or DocumentWindows(self)
+        self.document_windows.register(self)
         if initial_path:
             self.queue_open_files([initial_path])
 
@@ -418,7 +435,7 @@ class PDFViewer(QMainWindow):
         self._build_command_registry()
         self._install_shortcuts()
         from composition.enabled import is_enabled
-        if is_enabled():
+        if is_enabled() and not self._pdf_only_window:
             from ui.workspace_mode_controller import WorkspaceModeController
             self._mode_controller = WorkspaceModeController(self, layout)
         self._set_motion_enabled(bool(self.settings.get("animations_enabled", True)))
@@ -523,6 +540,10 @@ class PDFViewer(QMainWindow):
         for label, key in (
             ("Merge PDFs…", "merge"),
             ("Compress PDF…", "compress"),
+            ("PDF Production Tools…", "pdf_production"),
+            ("Flatten PDF…", "flatten"),
+            ("Font Preflight / Safe Embed Fonts…", "font_preflight"),
+            ("PDF Repair / Production Normalise…", "pdf_repair"),
             ("Deep Search…", "deep_search"),
             ("Page Count Report…", "page_report"),
             ("External Tools & Diagnostics…", "diagnostics"),
@@ -862,6 +883,8 @@ class PDFViewer(QMainWindow):
         return session
 
     def _wire_session(self, session: DocumentSession) -> None:
+        from ui.editable_split import SessionOwnerRoute
+        self = SessionOwnerRoute(session)
         self._wire_canvas(session, session.canvas)
         self._wire_navigation(session)
         session.splitSourceRequested.connect(
@@ -875,6 +898,8 @@ class PDFViewer(QMainWindow):
         )
 
     def _wire_canvas(self, session: DocumentSession, canvas) -> None:
+        from ui.editable_split import SessionOwnerRoute
+        self = SessionOwnerRoute(session)
         canvas.pageChanged.connect(
             lambda page, s=session, c=canvas: self._canvas_page_changed(s, c, page)
         )
@@ -894,6 +919,9 @@ class PDFViewer(QMainWindow):
             lambda page, xref, pos, s=session, c=canvas: self._show_annotation_menu_from(
                 pos, s, c, page, xref
             )
+        )
+        canvas.annotationSelectionCleared.connect(
+            lambda s=session, c=canvas: self._clear_canvas_annotation_selection(s, c)
         )
         canvas.annotationGeometryChanged.connect(
             lambda page, xref, payload, s=session, c=canvas: self._change_annotation_geometry_from(
@@ -1062,6 +1090,8 @@ class PDFViewer(QMainWindow):
                 canvas.invalidate_pages(pages)
 
     def _wire_navigation(self, session: DocumentSession) -> None:
+        from ui.editable_split import SessionOwnerRoute
+        self = SessionOwnerRoute(session)
         nav = session.nav_panel
         nav.thumbnails.pageSelected.connect(
             lambda page, s=session: self._session_goto(s, page)
@@ -1131,6 +1161,7 @@ class PDFViewer(QMainWindow):
 
     def _session_page_changed(self, session: DocumentSession, page: int) -> None:
         if session is not self._session:
+            session.page = page
             return
         page_changed = session.page != page
         session.page = page
@@ -1257,6 +1288,7 @@ class PDFViewer(QMainWindow):
                 action.setChecked(True)
                 break
         if not session.engine.is_loaded():
+            self.bottom_bar.set_page_size(0, 0)
             return
         self._update_undo_actions()
         self._sync_modified_state()
@@ -1266,8 +1298,7 @@ class PDFViewer(QMainWindow):
             session.engine.page_count,
             str(session_path) if session_path else "",
         )
-        self.bottom_bar.set_current_page(session.page)
-        self.bottom_bar.set_zoom_percent(round(session.canvas.zoom_ratio * 100))
+        self._update_page_state()
         self.bottom_bar.set_layout_mode(str(session.canvas.layout_mode.value))
         self.context_panel.set_page_count(session.engine.page_count)
         session.nav_panel.search.set_page_count(session.engine.page_count)
@@ -1276,13 +1307,14 @@ class PDFViewer(QMainWindow):
         self._refresh_annotate_list()
         self._session_nav_tab_changed(session, session.nav_panel.active_key())
         self._refresh_all_split_source_choices()
-        if session.form_mode_active and session.form_draft is not None:
+        if not self._printing and session.form_mode_active and session.form_draft is not None:
             session.canvas.set_form_fields(session.form_draft.fields)
             self._form_panel_sync(session)
             self._show_context("form")
             self.side_panel.set_active_tool("fill_form")
             if session.form_draft.changed and not self._form_is_stale(session):
                 self._refresh_form_preview()
+        self._enforce_print_readonly()
 
     def _on_tab_close_requested(self, session: DocumentSession) -> None:
         self.close_document(session)
@@ -1301,6 +1333,17 @@ class PDFViewer(QMainWindow):
 
     def load_file(self, path: str, *, on_open=None) -> None:
         if self._printing:
+            return
+        existing = self.document_windows.find_path(path)
+        if existing is not None and existing[1].engine.is_loaded():
+            controller = getattr(self, "_mode_controller", None)
+            if controller:
+                controller.request_mode("pdf")
+            target = existing[1] if existing[0] is self else None
+            if target is not None:
+                target._after_open = on_open
+            self._queued_open_paths.append((path, None, target, perf_counter()))
+            self._schedule_queued_open()
             return
         if self._session is not None and self._session.engine.is_loaded():
             if not self._confirm_discard_changes():
@@ -1344,6 +1387,8 @@ class PDFViewer(QMainWindow):
         controller = getattr(self, "_mode_controller", None)
         if paths and controller:
             controller.request_mode("pdf")
+        if self._closing or self.document_windows.pending_exit:
+            return
         self._queued_open_paths.extend((path, None, None, perf_counter()) for path in paths if path)
         self._schedule_queued_open()
 
@@ -1352,23 +1397,57 @@ class PDFViewer(QMainWindow):
         if not self._queued_open_paths or self._open_queue_scheduled:
             return
         self._open_queue_scheduled = True
-        self.task_bar.start("Opening document", cancellable=False)
-        self.command_bar.set_work_status("Opening document")
-        self.bottom_bar.set_status("Opening document")
+        self._queued_open_status = "Ready"
+        self._show_queued_open_activity()
         QTimer.singleShot(0, self._drain_open_queue)
 
-    def _drain_open_queue(self) -> None:
-        if not self._queued_open_paths:
-            self._open_queue_scheduled = False
+    def _show_queued_open_activity(self, *, completed_owner=None) -> None:
+        if self._tasks or self._printing or self._mutation_controller.active or (self.task_bar.active and not self.task_bar.owns(self._open_activity_owner)
+                                             and not (completed_owner is not None and self.task_bar.owns(completed_owner))):
             return
-        if self._tasks:
+        self.task_bar.start("Opening document", cancellable=False, owner=self._open_activity_owner)
+        self.command_bar.set_work_status("Opening document")
+        self.bottom_bar.set_status("Opening document")
+
+    def _drain_open_queue(self) -> None:
+        try:
+            self._drain_open_queue_checked()
+        except Exception as exc:
+            log_failure("Queued open dispatch failed")
+            self._queued_open_status = "Error"
+            self._error("Open failed", f"Open callback failed ({type(exc).__name__}). See diagnostics.")
+            self._queued_open_finished()
+
+    def _drain_open_queue_checked(self) -> None:
+        if self._closing or self.document_windows.pending_exit:
+            self._queued_open_paths.clear()
+            self._queued_open_finished()
+            return
+        if not self._queued_open_paths:
+            self._queued_open_finished()
+            return
+        if self._tasks or self._printing or self._mutation_controller.active or (self.task_bar.active and not self.task_bar.owns(self._open_activity_owner)):
             QTimer.singleShot(100, self._drain_open_queue)
             return
+        self._show_queued_open_activity()
         path, password, target, requested_at = self._queued_open_paths.pop(0)
         if target is not None and target not in self._sessions:
             self._queued_open_finished()
             return
         source = Path(os.path.abspath(os.path.expanduser(path)))
+        existing = self.document_windows.find_path(source)
+        if existing is not None and existing[1].engine.is_loaded():
+            window, opened = existing
+            callback = getattr(target, "_after_open", None) if target is not None else None
+            if target is not None:
+                target._after_open = None
+                if not target.engine.is_loaded():
+                    self.close_document(target)
+            self.document_windows.focus(window, opened)
+            if callback and window is self:
+                callback(opened)
+            self._queued_open_finished()
+            return
         current = target or self._session
         session = (
             target if target is not None else
@@ -1422,6 +1501,8 @@ class PDFViewer(QMainWindow):
                 "Encrypted PDF",
                 "Password (ASCII characters only)",
             )
+            if not accepted:
+                self._queued_open_status = "Cancelled"
             if accepted:
                 self._queued_open_paths.insert(
                     0,
@@ -1434,6 +1515,7 @@ class PDFViewer(QMainWindow):
                 self._schedule_queued_open()
             return
         if status == "error":
+            self._queued_open_status = "Error"
             self._error("Open failed", str(value))
             if session in self._sessions and not session.engine.is_loaded():
                 self.close_document(session)
@@ -1452,8 +1534,13 @@ class PDFViewer(QMainWindow):
             requested = getattr(session, "_open_requested_at", trace.started)
             trace.values["queue_wait"] = round((trace.started - requested) * 1000, 3)
             trace.started = requested
-        self._replace_session_engine(session, opened)
-        self._complete_pdf_open(session, display_path)
+        try:
+            self._replace_session_engine(session, opened)
+            self._complete_pdf_open(session, display_path)
+        except BaseException:
+            if not any(s.engine is opened for w in self.document_windows.live_windows() for s in w._sessions):
+                after_readers([], opened.close)
+            raise
         callback = getattr(session, "_after_open", None)
         session._after_open = None
         if callback:
@@ -1467,13 +1554,23 @@ class PDFViewer(QMainWindow):
                 QTimer.singleShot(0, action)
 
     def _queued_open_finished(self) -> None:
-        if self._closing:
-            self._open_queue_scheduled = False
-            return
-        if self._queued_open_paths:
+        if self._queued_open_paths and not self._closing:
+            self._show_queued_open_activity()
             QTimer.singleShot(0, self._drain_open_queue)
-        else:
-            self._open_queue_scheduled = False
+            return
+        self._open_queue_scheduled = False
+        if not self._tasks and self.task_bar.clear(owner=self._open_activity_owner):
+            self.command_bar.set_work_status("Ready")
+            self.bottom_bar.set_status(self._queued_open_status)
+
+    def _split_documents(self, first, second):
+        if first not in self._sessions or second not in self._sessions:
+            return False
+        if not first.engine.is_loaded() or not second.engine.is_loaded():
+            return False
+        self.workspace.pair_sessions(first, second)
+        self.info_bar.show_message("Both documents are editable. Click a pane to choose the active document.", "success")
+        return True
 
     def _toggle_split_view(self) -> None:
         session = self._session
@@ -1481,6 +1578,9 @@ class PDFViewer(QMainWindow):
             self.info_bar.show_message(
                 "Open a PDF before splitting the view.", "warning"
             )
+            return
+        if session.editable_split is not None:
+            self.workspace.end_pair()
             return
         session.set_split(not session.has_split)
         if session.split_canvas is not None:
@@ -1504,6 +1604,9 @@ class PDFViewer(QMainWindow):
         )
 
     def _close_split_view(self, session: DocumentSession) -> None:
+        if session.editable_split is not None:
+            self.workspace.end_pair()
+            return
         if not session.has_split:
             return
         session.set_split(False)
@@ -1518,6 +1621,9 @@ class PDFViewer(QMainWindow):
         source: DocumentSession | None,
     ) -> None:
         if host not in self._sessions or not host.has_split:
+            return
+        if source is not None and source is not host and source in self._sessions:
+            self._split_documents(host, source)
             return
         if source is host or source not in self._sessions:
             source = None
@@ -1588,32 +1694,42 @@ class PDFViewer(QMainWindow):
         value = "vertical" if orientation == "vertical" else "horizontal"
         self.settings.set("split_orientation", value)
         if self._session is not None:
+            pair = self._session.editable_split
+            if pair is not None:
+                pair.set_orientation(value)
             self._session.set_split_orientation(value)
             self._sync_split_actions(self._session)
 
     def _set_split_sync_page(self, checked: bool) -> None:
         self.settings.set("split_sync_page", bool(checked))
         if self._session is not None:
+            if self._session.editable_split is not None:
+                self._session.editable_split.sync_page = bool(checked)
             self._session.set_split_sync(page=bool(checked))
             self._sync_split_actions(self._session)
 
     def _set_split_sync_zoom(self, checked: bool) -> None:
         self.settings.set("split_sync_zoom", bool(checked))
         if self._session is not None:
+            if self._session.editable_split is not None:
+                self._session.editable_split.sync_zoom = bool(checked)
             self._session.set_split_sync(zoom=bool(checked))
             self._sync_split_actions(self._session)
 
     def _reset_split_sizes(self) -> None:
         if self._session is not None:
+            if self._session.editable_split is not None:
+                self._session.editable_split.reset_sizes()
             self._session.reset_split_sizes()
 
     def _sync_split_actions(self, session: DocumentSession) -> None:
         for action in self._split_orientation_actions:
             action.setChecked(action.data() == session.split_orientation)
-        self.split_sync_page_action.setChecked(session.split_sync_page)
-        self.split_sync_zoom_action.setChecked(session.split_sync_zoom)
+        pair = session.editable_split
+        self.split_sync_page_action.setChecked(pair.sync_page if pair else session.split_sync_page)
+        self.split_sync_zoom_action.setChecked(pair.sync_zoom if pair else session.split_sync_zoom)
         self.split_reset_action.setEnabled(session.has_split)
-        self.split_open_document_action.setEnabled(session.has_split)
+        self.split_open_document_action.setEnabled(session.has_split and pair is None)
 
     # --- Theme and window state -----------------------------------------
     def apply_theme(self, value: str) -> None:
@@ -1625,7 +1741,12 @@ class PDFViewer(QMainWindow):
         if not isinstance(app, QApplication):
             return
         apply_theme(app, ThemeMode(value))
-        app.setStyleSheet(global_style())
+        stylesheet = global_style()
+        # Reapplying identical QSS repolishes every open/closed widget. A new
+        # PDF window only needs its own controls refreshed; actual theme
+        # changes still install the new shared application stylesheet.
+        if app.styleSheet() != stylesheet:
+            app.setStyleSheet(stylesheet)
         clear_icon_cache()
         self.command_bar.refresh_icons()
         self.side_panel.refresh_icons()
@@ -1633,6 +1754,9 @@ class PDFViewer(QMainWindow):
         self.info_bar.refresh_icons()
         self.context_panel.refresh_icons()
         self.workspace.refresh_icons()
+        manager = getattr(self, "document_windows", None)
+        if manager:
+            manager.sync_theme(self, value)
         merge = getattr(self, "_merge_workspace", None)
         if merge:
             merge.refresh_theme()
@@ -1723,7 +1847,7 @@ class PDFViewer(QMainWindow):
                 self.move(area.center() - self.rect().center())
         else:
             self.resize(width, height)
-        if self.settings.get("window_maximized", False):
+        if self.settings.get("window_maximized", False) and not self._pdf_only_window:
             self.showMaximized()
 
     def _side_panel_state_changed(self, value):
@@ -1846,6 +1970,10 @@ class PDFViewer(QMainWindow):
 
     def _set_canvas_tool(self, mode: str) -> None:
         session = self._session
+        if self._printing:
+            for canvas in self._session_canvases(session):
+                canvas.set_tool_mode("hand")
+            return
         if session is not None and session.form_mode_active and mode != "form":
             self._suspend_form_preview(session)
             session.form_mode_active = False
@@ -1927,6 +2055,8 @@ class PDFViewer(QMainWindow):
         self, global_pos, session: DocumentSession, canvas=None
     ) -> None:
         """Right-click menu for the PDF canvas."""
+        if self._printing:
+            return
         canvas = canvas or session.canvas
         source = self._external_split_source(session, canvas)
         if source is not None:
@@ -2164,16 +2294,20 @@ class PDFViewer(QMainWindow):
     def _show_annotation_menu(
         self, global_pos, session: DocumentSession, page: int, xref: int
     ) -> None:
+        if self._printing:
+            return
         self.workspace.set_current_session(session)
         self._session = session
         session.canvas.select_annotation(page, xref)
+        from core.page_images import list_page_images
+        is_image = any(entry["xref"] == xref for entry in list_page_images(session.engine.document.load_page(page)))
         menu = QMenu(self)
         menu.addAction(
             "Edit Properties…",
             lambda: self._focus_annotation_properties(page, xref),
         )
         menu.addAction(
-            "Delete Annotation",
+            "Delete Image" if is_image else "Delete Annotation",
             lambda: self._handle_remove_annotation(page, xref),
         )
         menu.exec(global_pos)
@@ -2181,6 +2315,8 @@ class PDFViewer(QMainWindow):
     def _show_measurement_menu(
         self, global_pos, session: DocumentSession, canvas, page: int, index: int
     ) -> None:
+        if self._printing:
+            return
         self.workspace.set_current_session(session)
         self._session = session
         menu = QMenu(self)
@@ -2205,6 +2341,8 @@ class PDFViewer(QMainWindow):
         self, global_pos, session: DocumentSession, canvas, page: int,
         identifier: str,
     ) -> None:
+        if self._printing:
+            return
         self.workspace.set_current_session(session)
         self._session = session
         record = canvas.selected_saved_measurement()
@@ -2280,7 +2418,7 @@ class PDFViewer(QMainWindow):
         self._set_canvas_tool("measure")
         canvas.begin_calibration(canvas.current_page)
         self.info_bar.show_message(
-            "Click two points of a known length on this page.", "info"
+            "Drag a reference line or click two points of a known length on this page.", "info"
         )
 
     def _calibrate_from_reference(self, session: DocumentSession, canvas,
@@ -2361,6 +2499,25 @@ class PDFViewer(QMainWindow):
         self._select_annotation(page, xref)
         self._show_context("annotate", "Annotation Options")
 
+    def _clear_canvas_annotation_selection(self, session: DocumentSession, canvas) -> None:
+        if session is not self._session or self._external_split_source(session, canvas) is not None:
+            return
+        for target in self._session_canvases(session):
+            target.clear_annotation_selection()
+        self.context_panel.clear_annotation_selection()
+
+    @staticmethod
+    def _image_failure_detail(error: Exception) -> str:
+        from core.page_images import PageImageError
+        cause = error
+        seen = set()
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            if isinstance(cause, PageImageError):
+                return f"{cause} Original document state was restored."
+            cause = cause.__cause__
+        return str(error)
+
     def _canvas_annotation_selected(
         self, session: DocumentSession, page: int, xref: int
     ) -> None:
@@ -2371,6 +2528,9 @@ class PDFViewer(QMainWindow):
         if session.page != page:
             self.goto_page(page)
         self.context_panel.select_annotation(page, xref)
+        from core.page_images import list_page_images
+        if any(entry["xref"] == xref for entry in list_page_images(session.engine.document.load_page(page))):
+            self._show_context("annotate", "Image Position & Size")
 
     def _change_annotation_geometry(
         self,
@@ -2390,19 +2550,24 @@ class PDFViewer(QMainWindow):
                     xref,
                     rect=payload.get("rect"),
                     points=tuple(payload.get("points") or ()),
+                    keep_aspect=payload.get("keep_aspect"),
                 )
                 if new_xref is None:
                     raise ValueError("This annotation cannot be moved or resized.")
                 session.engine.mark_modified()
         except Exception as exc:
             log_failure('viewer._change_annotation_geometry: fallback after failure', 10)
-            self.info_bar.show_message(f"Move/resize failed: {exc}", "error", 0)
+            self.info_bar.show_message(f"Move/resize failed: {self._image_failure_detail(exc)}", "error", 0)
             return
         self._refresh_session_canvases(session, {page})
         for canvas in self._session_canvases(session):
             canvas.select_annotation(page, new_xref)
         self._sync_modified_state()
         self._refresh_annotate_list()
+
+        from core.page_images import list_page_images
+        if any(entry["xref"] == new_xref for entry in list_page_images(session.engine.document.load_page(page))):
+            self.context_panel.select_annotation(page, new_xref)
 
     def _inline_edit_annotation(
         self,
@@ -2468,6 +2633,11 @@ class PDFViewer(QMainWindow):
             self._pending_welcome_tool = None
 
     def _open_composition(self):
+        if self._pdf_only_window:
+            primary = self.document_windows.primary
+            self.document_windows.focus(primary)
+            primary._open_composition()
+            return
         from composition.enabled import is_enabled
         if not is_enabled():
             return
@@ -2604,6 +2774,12 @@ class PDFViewer(QMainWindow):
         *,
         close_previous: bool = True,
     ) -> None:
+        from core.reader_lifetime import pause_readers
+        canvases = self._document_canvases(session)
+        with pause_readers((*canvases, session.nav_panel.thumbnails)):
+            self._replace_session_engine_paused(session, opened, close_previous=close_previous)
+
+    def _replace_session_engine_paused(self, session, opened, *, close_previous=True):
         """Release all old-document readers before deleting its temp copy."""
         dependent_hosts = [
             host
@@ -2796,6 +2972,9 @@ class PDFViewer(QMainWindow):
             self._error("Save failed", str(exc))
 
     def close_document(self, session: DocumentSession | None = None) -> None:
+        if self._mutation_controller.active:
+            self.info_bar.show_message("Wait for the PDF operation before closing this tab.", "warning")
+            return
         if self._printing:
             return
         target = session or self._session
@@ -2808,9 +2987,15 @@ class PDFViewer(QMainWindow):
             # session pointing at a tab that is not the visible one.
             self._session = previous
             return
+        if target.editable_split is not None:
+            self.workspace.end_pair()
         for host in self._sessions:
             if host is not target and host.split_source_session is target:
                 host.set_split_source(None)
+        self._pending_searches.pop(id(target), None)
+        search_task = self._search_tasks.get(id(target))
+        if search_task is not None:
+            search_task.cancel()
         self._sessions = [item for item in self._sessions if item is not target]
         self.workspace.close_tab(target)
         target.close()
@@ -2893,6 +3078,7 @@ class PDFViewer(QMainWindow):
         )
         self.split_open_document_action.setEnabled(
             available and self._session is not None and self._session.has_split
+            and self._session.editable_split is None
         )
         if not available:
             self.split_action.setChecked(False)
@@ -2952,7 +3138,9 @@ class PDFViewer(QMainWindow):
             panel.search.set_current_page(self._page)
         self.bottom_bar.set_zoom_percent(round(canvas.zoom_ratio * 100))
 
-    def _show_context(self, key: str) -> None:
+    def _show_context(self, key: str, title: str | None = None) -> None:
+        if self._printing:
+            return
         if key != "form" and self._session is not None and self._session.form_mode_active:
             self._set_canvas_tool("browse")
         if not self.engine.is_loaded():
@@ -2970,7 +3158,7 @@ class PDFViewer(QMainWindow):
             "annotate": "Annotation Options",
             "font_inspect": "Font Inspector",
         }
-        if self.context_panel.show_tool(key, titles.get(key, "Options")):
+        if self.context_panel.show_tool(key, title or titles.get(key, "Options")):
             self._last_context_key = key
             self.side_panel.set_active_tool(key)
             self.settings.set("right_panel_visible", True)
@@ -3485,48 +3673,60 @@ class PDFViewer(QMainWindow):
         # QPrinter's HighResolution mode follows the driver default, which is
         # not necessarily the quality selected in our dialog. Set the desired
         # raster/output resolution before the painter or page layout starts.
-        printer.setResolution(min(600, max(72, int(details.get("dpi", 300)))))
-        printer.setCopyCount(int(details["copies"]))
-        printer.setCollateCopies(bool(details["collate"]))
-        printer.setColorMode(
-            QPrinter.ColorMode.Color
-            if int(details["colour"]) == 0
-            else QPrinter.ColorMode.GrayScale
-        )
-        duplex_modes = {
-            1: QPrinter.DuplexMode.DuplexNone,
-            2: QPrinter.DuplexMode.DuplexLongSide,
-            3: QPrinter.DuplexMode.DuplexShortSide,
-        }
-        if int(details["duplex"]) in duplex_modes:
-            printer.setDuplex(duplex_modes[int(details["duplex"])])
+        from dialogs.print_profile import apply_printer_settings
+        apply_printer_settings(printer, {**details, "dpi": details.get("dpi", 300)})
         return printer
 
     @contextmanager
-    def _suspend_print_actions(self):
+    def _suspend_print_actions(self, allow_browse=True):
         """Hold application commands and editing widgets while an async job owns the UI."""
         printing = self._printing
         actions = [(action, action.isEnabled()) for action in self._registered_shortcut_actions]
         widgets = [(widget, widget.isEnabled())
-                   for widget in (self.command_bar, self.side_panel, self.workspace)]
+                   for widget in (self.command_bar, self.side_panel, self.context_panel,
+                                  *(() if allow_browse else (self.workspace,)))]
+        canvases = [(canvas, canvas.annotations_editable, canvas.tool_mode)
+                    for session in self._sessions
+                    for canvas in (session.canvas, session.split_canvas) if canvas is not None]
+        self._print_readonly_actions = actions
+        self._print_allow_browse = allow_browse
         self._printing = True
         try:
             for action, _ in actions:
                 action.setEnabled(False)
             for widget, _ in widgets:
                 widget.setEnabled(False)
+            for canvas, _, _ in canvases:
+                canvas.set_annotations_editable(False)
+                canvas.set_tool_mode("hand")
+            self._enforce_print_readonly()
             yield
         finally:
             for widget, was_enabled in widgets:
                 widget.setEnabled(was_enabled)
             for action, was_enabled in actions:
                 action.setEnabled(was_enabled)
+            for canvas, editable, tool in canvases:
+                canvas.set_annotations_editable(editable)
+                canvas.set_tool_mode(tool)
+            self._print_readonly_actions = []
             self._printing = printing
+
+    def _enforce_print_readonly(self):
+        if not self._printing:
+            return
+        safe = {"zoom_in", "zoom_out", "fit_width", "fit_page", "actual_size",
+                "next_page", "prev_page", "first_page", "last_page", "tab_next", "tab_prev",
+                "view_single", "view_continuous", "view_facing", "copy_selection"}
+        if not getattr(self, "_print_allow_browse", True):
+            safe = set()
+        for action, enabled in getattr(self, "_print_readonly_actions", []):
+            action.setEnabled(enabled and action.property("commandId") in safe)
 
     @contextmanager
     def _print_operation(self):
         """Compatibility path for synchronous native painting; never pump GUI events."""
-        with self._suspend_print_actions(), DOCUMENT_LOCK:
+        with self._suspend_print_actions(allow_browse=False), DOCUMENT_LOCK:
             yield
 
     @staticmethod
@@ -3547,12 +3747,18 @@ class PDFViewer(QMainWindow):
         guard.enter_context(self._suspend_print_actions())
         confirmed = False
         native_layout = None
+        batch_printer = getattr(dialog, "selected_printer", None)
+        if batch_printer is not None:
+            from dialogs.print_profile import apply_printer_settings
+            apply_printer_settings(batch_printer, details, dialog.selected_printer_profile)
 
         def make_printer(job, prepared):
-            nonlocal confirmed, native_layout
+            nonlocal confirmed, native_layout, batch_printer
             if printer is not None:
                 return printer
-            result = self._create_printer(details)
+            if batch_printer is None:
+                batch_printer = self._create_printer(details)
+            result = batch_printer
             result.setDocName(job.name)
             self._configure_print_layout(result, fitz.Rect(0, 0, *prepared.first_size), details)
             if native_layout is not None:
@@ -3561,19 +3767,25 @@ class PDFViewer(QMainWindow):
                 original_layout = result.pageLayout()
                 native = QPrintDialog(result, self)
                 native.setWindowTitle("Confirm Batch Print")
+                if hasattr(native, "setOption"):
+                    for option in (QPrintDialog.PrintDialogOption.PrintPageRange,
+                                   QPrintDialog.PrintDialogOption.PrintSelection,
+                                   QPrintDialog.PrintDialogOption.PrintCurrentPage):
+                        native.setOption(option, False)
                 if native.exec() != QDialog.DialogCode.Accepted:
                     raise TaskCancelled
                 # Carry user-confirmed device settings to every file in the batch.
-                details.update({
-                    "printer": result.printerName(), "dpi": result.resolution(),
-                    "copies": result.copyCount(), "collate": result.collateCopies(),
-                    "colour": 0 if result.colorMode() == QPrinter.ColorMode.Color else 1,
-                    "duplex": {QPrinter.DuplexMode.DuplexNone: 1,
-                               QPrinter.DuplexMode.DuplexLongSide: 2,
-                               QPrinter.DuplexMode.DuplexShortSide: 3}.get(result.duplex(), 0),
-                })
+                from dialogs.print_profile import printer_profile
+                accepted = printer_profile(result)
+                details.update({key: value for key, value in accepted.items()
+                                if key not in {"paper", "orientation"}})
                 if result.pageLayout() != original_layout:
                     native_layout = result.pageLayout()
+                if isinstance(dialog, BatchPrintDialog):
+                    from dialogs.print_profile import restore_print_profile
+                    restore_print_profile(dialog, {**details, **accepted})
+                    dialog.selected_printer = result
+                    dialog.selected_printer_profile = accepted
             confirmed = True
             return result
 
@@ -3706,6 +3918,12 @@ class PDFViewer(QMainWindow):
     ) -> None:
         page_rect = page if isinstance(page, fitz.Rect) else page.rect
         paper = str(details["paper"])
+        if paper == "Printer settings":
+            orientation = int(details["orientation"])
+            landscape = page_rect.width > page_rect.height if orientation == 0 else orientation == 2
+            printer.setPageOrientation(QPageLayout.Orientation.Landscape
+                                      if landscape else QPageLayout.Orientation.Portrait)
+            return
         sizes = {
             "A4": QPageSize.PageSizeId.A4,
             "A3": QPageSize.PageSizeId.A3,
@@ -3763,6 +3981,8 @@ class PDFViewer(QMainWindow):
     }
 
     def _tool_requested(self, key: str) -> None:
+        if self._printing:
+            return
         if key != "fill_form" and self._session is not None and self._session.form_mode_active:
             self._set_canvas_tool("browse")
         if key in self.ANNOTATION_TOOL_KEYS:
@@ -3791,6 +4011,10 @@ class PDFViewer(QMainWindow):
             "merge": self._merge_pdfs,
             "overlay": self._overlay_pdf,
             "compress": self._compress_pdf,
+            "flatten": self._flatten_annotations,
+            "pdf_repair": lambda: self._open_pdf_operation("repair"),
+            "font_preflight": self._open_font_preflight,
+            "pdf_production": self._open_pdf_production,
             "deep_search": self._deep_search,
             "ocr": self._ocr,
             "merge_sheet": self._merge_sheets,
@@ -4188,14 +4412,25 @@ class PDFViewer(QMainWindow):
                 session.engine.mark_modified()
         except Exception as exc:
             log_failure('viewer._handle_annotation: fallback after failure', 10)
-            self.info_bar.show_message(f"{op.description()} failed: {exc}", "error", 0)
+            self.info_bar.show_message(f"{op.description()} failed: {self._image_failure_detail(exc)}", "error", 0)
             return
         self._refresh_session_canvases(session, {op.page})
         self._sync_modified_state()
         self._refresh_annotate_list()
+        if op.kind in {"image", "signature_image"}:
+            from core.page_images import list_page_images
+            images = list_page_images(session.engine.document.load_page(op.page))
+            if images:
+                self._set_canvas_tool("browse")
+                self._show_context("annotate", "Image Position & Size")
+                self.context_panel.select_annotation(op.page, images[-1]["xref"])
+                for canvas in self._session_canvases(session):
+                    canvas.select_annotation(op.page, images[-1]["xref"])
         message = (
             "Redaction mark added for review. Content has not been removed."
             if op.kind == "redact"
+            else f"{op.description()} added. Drag to move, drag a corner to resize, or edit Position & Size."
+            if op.kind in {"image", "signature_image"}
             else f"{op.description()} added. Save the document to keep the change."
         )
         self.info_bar.show_message(message, "success")
@@ -4240,7 +4475,7 @@ class PDFViewer(QMainWindow):
                 session.engine.mark_modified()
         except Exception as exc:
             log_failure('viewer._handle_remove_annotation: fallback after failure', 10)
-            self.info_bar.show_message(f"Remove annotation failed: {exc}", "error", 0)
+            self.info_bar.show_message(f"Remove annotation failed: {self._image_failure_detail(exc)}", "error", 0)
             return
         self._refresh_session_canvases(session, {page})
         self._sync_modified_state()
@@ -4250,31 +4485,45 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
-        with DOCUMENT_LOCK:
-            mark_count = sum(
-                1
-                for entry in list_document_annotations(session.engine.document)
-                if str(entry.get("kind")) == "Redact"
-            )
+        try:
+            with DOCUMENT_LOCK:
+                mark_count = sum(
+                    1
+                    for entry in list_document_annotations(session.engine.document)
+                    if str(entry.get("kind")) == "Redact"
+                )
+                spot_images = redaction_spot_image_count(session.engine.document) if mark_count else 0
+        except Exception as exc:
+            log_failure('viewer._apply_redactions: analysis failure', 10)
+            self.info_bar.show_message(f"Cannot analyse redaction images: {exc}", "error", 0)
+            return
         if mark_count == 0:
             self.info_bar.show_message("No redaction marks were found.", "warning")
             return
+        colour_warning = (
+            f"\n\n{spot_images} affected spot-colour image{'s' if spot_images != 1 else ''} "
+            "must be converted to process colour at the original resolution for pixel removal. "
+            "This changes spot-colour separation and may slightly change edge rendering. "
+            "Unmarked images/pages are retained. Review the result before printing."
+            if spot_images else ""
+        )
         answer = QMessageBox.question(
             self,
             "Apply redaction marks",
             "Permanently remove content covered by every redaction mark?\n\n"
             "This step cannot be reversed after saving. A document snapshot "
-            "will be kept for Undo during this session.",
+            "will be kept for Undo during this session." + colour_warning,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        image_conversions = []
         try:
             with self._mutation_transaction("Apply Redactions") as allowed:
                 if not allowed:
                     return
-                count = apply_redaction_marks(session.engine.document)
+                count = apply_redaction_marks(session.engine.document, image_conversions=image_conversions)
                 session.engine.mark_modified(requires_sanitized_save=True)
         except Exception as exc:
             log_failure('viewer._apply_redactions: fallback after failure', 10)
@@ -4283,9 +4532,14 @@ class PDFViewer(QMainWindow):
         self._refresh_session_canvases(session)
         self._sync_modified_state()
         self._refresh_annotate_list()
+        colour_notice = (
+            f" Converted {len(image_conversions)} affected spot-colour "
+            f"image{'s' if len(image_conversions) != 1 else ''} to process colour for pixel removal."
+            if image_conversions else ""
+        )
         self.info_bar.show_message(
             f"Applied {count} redaction mark{'s' if count != 1 else ''}. "
-            "Save to make the removal permanent.",
+            "Save to make the removal permanent." + colour_notice,
             "success",
         )
 
@@ -4294,6 +4548,9 @@ class PDFViewer(QMainWindow):
     ) -> None:
         session = self._session
         if session is None or not session.engine.is_loaded():
+            return
+        if "rect" in values:
+            self._change_annotation_geometry(session, page, xref, values)
             return
         style = AnnotationStyle(
             stroke=str(values.get("stroke") or "yellow"),
@@ -4453,21 +4710,25 @@ class PDFViewer(QMainWindow):
             self.info_bar.show_message(f"Summary export failed: {exc}", "error", 0)
 
     def _flatten_annotations(self) -> None:
-        if not self.engine.is_loaded():
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save flattened copy", "flattened.pdf", "PDF (*.pdf)"
-        )
-        if not path:
-            return
-        try:
-            target = flatten_annotations(self.engine.document, path)
-            self.info_bar.show_message(
-                f"Flattened copy created: {target.name}", "success", 5000
-            )
-        except Exception as exc:
-            log_failure('viewer._flatten_annotations: fallback after failure', 10)
-            self.info_bar.show_message(f"Flatten failed: {exc}", "error", 0)
+        self._open_pdf_operation("flatten")
+
+    def _open_pdf_operation(self, operation: str) -> None:
+        self._open_pdf_production(operation)
+
+    def _open_font_preflight(self) -> None:
+        self._open_pdf_production("fonts")
+
+    def _open_pdf_production(self, section="overview") -> None:
+        from ui.merge_controller import MergeController
+        from ui.pdf_production_integration import open_production_workspace
+        from ui.pdf_production_workspace import PdfProductionWorkspace
+        if not getattr(self, "_merge_controller", None):
+            self._merge_controller = MergeController(self)
+        open_production_workspace(self, PdfProductionWorkspace, section)
+
+    def _font_preflight_page(self, session, page):
+        if session in self._sessions and session.engine.is_loaded():
+            self._session_goto(session, page)
 
     def _show_watermark_dialog(self) -> None:
         if not self.engine.is_loaded():
@@ -4647,14 +4908,31 @@ class PDFViewer(QMainWindow):
         key = id(session)
         generation = self._search_generations.get(key, 0) + 1
         self._search_generations[key] = generation
-        previous = self._search_tasks.pop(key, None)
+        previous = self._search_tasks.get(key)
+        identity = (session.engine.document_id, session.engine.revision)
+        request = (session, query, list(pages) if pages is not None else None,
+                   generation, identity, panel.case_sensitive(), panel.whole_word())
         if previous is not None:
             previous.cancel()
-            self._tasks.discard(previous)
+            self._pending_searches[key] = request
+            panel.show_searching()
+            panel.show_progress(0, 0, "Stopping previous search…")
+            return
+        self._start_search(*request)
+
+    def _start_search(self, session, query, pages, generation, identity,
+                      case_sensitive, whole_word) -> None:
+        key = id(session)
+        if self._closing or session not in self._sessions:
+            return
+        panel = session.search_panel
+        if not session.engine.is_loaded() or identity != (
+            session.engine.document_id, session.engine.revision
+        ):
+            panel.show_error("Document changed — search again for current page numbers.")
+            return
+        temp = session.engine.temp_path
         panel.show_searching()
-        identity = (session.engine.document_id, session.engine.revision)
-        case_sensitive = panel.case_sensitive()
-        whole_word = panel.whole_word()
 
         if session.engine.page_count <= 50:
             try:
@@ -4687,15 +4965,30 @@ class PDFViewer(QMainWindow):
                 hits, session, query, generation, identity
             ),
             on_finished=lambda: self._finish_search_task(key, generation),
+            callback_guard=lambda: (
+                session in self._sessions
+                and self._search_generations.get(key) == generation
+                and session.engine.is_loaded()
+                and identity == (session.engine.document_id, session.engine.revision)
+            ),
         )
         if task is not None:
             self._search_tasks[key] = task
-
-            task.signals.progress.connect(panel.show_progress)
+            task.signals.progress.connect(
+                lambda *values: panel.show_progress(*values)
+                if not self._closing and not task.is_cancelled()
+                and session in self._sessions
+                and self._search_generations.get(key) == generation
+                and session.engine.is_loaded()
+                and identity == (session.engine.document_id, session.engine.revision)
+                else None
+            )
 
     def _finish_search_task(self, key: int, generation: int) -> None:
-        if self._search_generations.get(key) == generation:
-            self._search_tasks.pop(key, None)
+        self._search_tasks.pop(key, None)
+        request = self._pending_searches.pop(key, None)
+        if request is not None and not self._closing:
+            self._start_search(*request)
 
     def _finish_search(
         self,
@@ -4705,7 +4998,7 @@ class PDFViewer(QMainWindow):
         generation: int | None = None,
         identity=None,
     ) -> None:
-        if session is None:
+        if self._closing or session is None or session not in self._sessions:
             return
         key = id(session)
         if generation is not None and self._search_generations.get(key) != generation:
@@ -4857,13 +5150,15 @@ class PDFViewer(QMainWindow):
         )
 
         tool_shortcuts = {"search": "Ctrl+F", **SHORTCUT_HINTS}
-        for section_key, _title, items in SidePanel.SECTIONS:
+        for _section_key, _title, items in SidePanel.SECTIONS:
             for item in items:
                 make(
                     item.key,
                     item.label,
                     tool_shortcuts.get(item.key, ""),
-                    "Annotate" if section_key == "annotate" else "Tools",
+                    "Annotate"
+                    if item.key in self.ANNOTATION_TOOL_KEYS or item.key == "font_inspect"
+                    else "Tools",
                     lambda key=item.key: self._tool_requested(key),
                     lambda key=item.key: self._tool_available(key),
                 )
@@ -5132,9 +5427,11 @@ class PDFViewer(QMainWindow):
         from ui.shortcut_bindings import dialog_commands, organizer_commands
         scoped = organizer_commands(overrides) + dialog_commands(overrides)
 
+        from core.commands import shortcut_conflict
         override_shortcuts = {
             QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText)
-            for value in overrides.values()
+            for key, value in overrides.items()
+            if any(command.id == key for command in commands)
             if value
         }
         used_shortcuts: set[str] = set()
@@ -5142,20 +5439,26 @@ class PDFViewer(QMainWindow):
         for command in commands:
             sequence = command.shortcut
             is_override = command.id in overrides
-            if sequence and not is_override and sequence in override_shortcuts:
+            if sequence and not is_override and any(shortcut_conflict(sequence, value) for value in override_shortcuts):
                 sequence = ""
-            elif sequence and sequence in used_shortcuts:
+            elif sequence and any(shortcut_conflict(sequence, value) for value in used_shortcuts):
                 fallback = command.default_shortcut
                 sequence = (
                     fallback
                     if fallback
-                    and fallback not in used_shortcuts
-                    and fallback not in override_shortcuts
+                    and not any(shortcut_conflict(fallback, value) for value in used_shortcuts | override_shortcuts)
                     else ""
                 )
             if sequence:
                 used_shortcuts.add(sequence)
             resolved_commands.append(replace(command, shortcut=sequence))
+        # Restore the native-compatible redo alias only when the user
+        # has not reassigned it (including a conflicting chord prefix).
+        for index, command in enumerate(resolved_commands):
+            if command.id == "redo" and command.shortcut and "redo" not in overrides and sys.platform in {"win32", "darwin"}:
+                alias = "Ctrl+Shift+Z"
+                if not any(shortcut_conflict(alias, value) for value in used_shortcuts):
+                    resolved_commands[index] = replace(command, alternate_shortcuts=(alias,))
         self._commands = resolved_commands + scoped
 
     def _command_action(self, command: Command, claimed: set[QAction]) -> QAction | None:
@@ -5163,10 +5466,17 @@ class PDFViewer(QMainWindow):
                      if action not in claimed and action.property("commandId") == command.id), None)
 
     def _run_shortcut_command(self, command_id: str) -> None:
+        if self._printing and command_id not in {
+            "zoom_in", "zoom_out", "fit_width", "fit_page", "actual_size",
+            "next_page", "prev_page", "first_page", "last_page", "tab_next", "tab_prev",
+            "view_single", "view_continuous", "view_facing", "copy_selection",
+        }:
+            return
         command = next((item for item in self._commands if item.id == command_id), None)
         if command is None or not command.is_enabled():
             return
-        if command_id != "escape_browse" and self._editing_focused():
+        from ui.shortcut_bindings import shortcut_blocked_by_editing
+        if command_id != "escape_browse" and shortcut_blocked_by_editing(command_id):
             return
         command.handler()
 
@@ -5211,7 +5521,7 @@ class PDFViewer(QMainWindow):
             sequence = QKeySequence(command.shortcut)
             action = self._command_action(command, claimed)
             if action is not None:
-                action.setShortcut(sequence)
+                action.setShortcuts([sequence, *(QKeySequence(value) for value in command.alternate_shortcuts)])
                 claimed.add(action)
                 self._command_action_map[command.id] = action
                 continue
@@ -5235,11 +5545,16 @@ class PDFViewer(QMainWindow):
                 if command.shortcut
             }
         )
+        self.command_bar.set_shortcut_hints(self._commands)
 
         controller = getattr(self, "_mode_controller", None)
         if controller:
             controller.capture_pdf_bindings()
             controller.sync_bindings()
+        merge = getattr(self, "_merge_controller", None)
+        if merge:
+            merge.set_active(merge.pdf_active() and self.workspace.current_tool() is not None)
+            merge.sync_controls()
 
     def _install_shortcuts(self) -> None:
         self._apply_command_shortcuts()
@@ -6483,8 +6798,25 @@ class PDFViewer(QMainWindow):
         on_batch: Callable | None = None,
         on_finished: Callable[[], None] | None = None,
         on_discard: Callable | None = None,
+        callback_guard: Callable[[], bool] | None = None,
         **kwargs,
     ) -> FunctionTask | None:
+        from auth.guard import worker_allowed
+        if self._closing or self._mutation_controller.active:
+            if on_finished:
+                try:
+                    on_finished()
+                except Exception:
+                    log_failure("Rejected task cleanup failed")
+            return None
+        if not worker_allowed():
+            self.info_bar.show_message("Private account access is paused. Sign in before starting new work.", "warning")
+            if on_finished:
+                try:
+                    on_finished()
+                except Exception:
+                    log_failure("Denied task cleanup failed")
+            return None
         if self._tasks or self._printing:
             self.info_bar.show_message(
                 "Wait for the current background operation to finish or cancel it first.",
@@ -6493,8 +6825,8 @@ class PDFViewer(QMainWindow):
             if on_finished:
                 try:
                     on_finished()
-                except OSError:
-                    log_failure('viewer._run_task: fallback after failure', 10)
+                except Exception:
+                    log_failure("Busy task cleanup failed")
                     pass
             return None
         self._task_had_error = False
@@ -6508,24 +6840,53 @@ class PDFViewer(QMainWindow):
             **kwargs,
         )
         self._tasks.add(task)
-        self.task_bar.start(label, cancellable=bool(cancel_argument))
+        log_lifecycle("task.started", task=id(task), tasks=len(self._tasks))
+        self.task_bar.start(label, cancellable=bool(cancel_argument), owner=task)
         self.command_bar.set_work_status(label)
         self.bottom_bar.set_status(label)
 
+        def accepts_callbacks(*, allow_cancelled=False) -> bool:
+            try:
+                return (not self._closing and (allow_cancelled or not task.is_cancelled())
+                        and (callback_guard is None or callback_guard()))
+            except BaseException as exc:
+                callback_failed("guard", exc)
+                return False
+
         def progress(current: int, total: int, message: str) -> None:
-            if self._closing:
+            if not accepts_callbacks() or not self.task_bar.owns(task):
                 return
             self.task_bar.update_progress(current, total, message)
             self.command_bar.set_work_status(message)
             self.bottom_bar.set_status(message)
 
+        def callback_failed(stage, exc):
+            log_failure("Task callback failed at " + stage)
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                task.signals.interrupted.emit(type(exc).__name__)
+            elif not self._closing:
+                self._task_had_error = True
+                if label == "Opening document":
+                    self._queued_open_status = "Error"
+                message = f"{stage.title()} callback failed ({type(exc).__name__}). See diagnostics."
+                if self.task_bar.owns(task):
+                    self._task_failed(label, message)
+                else:
+                    self.info_bar.show_message(message, "error", 0)
+
         def result(value) -> None:
-            if self._closing:
+            if not accepts_callbacks():
                 if on_discard is not None:
-                    on_discard(value)
+                    try:
+                        on_discard(value)
+                    except BaseException as exc:
+                        callback_failed("discard", exc)
                 return
             if on_result:
-                on_result(value)
+                try:
+                    on_result(value)
+                except BaseException as exc:
+                    callback_failed("result", exc)
             else:
                 name = (
                     Path(value).name
@@ -6536,39 +6897,49 @@ class PDFViewer(QMainWindow):
 
         def finished() -> None:
             self._tasks.discard(task)
+            if self._queued_open_paths and not self._closing:
+                self._show_queued_open_activity(completed_owner=task)
             if on_finished:
                 try:
                     on_finished()
-                except OSError:
-                    log_failure('viewer.finished: fallback after failure', 10)
-                    pass
+                except BaseException as exc:
+                    callback_failed("finished", exc)
+            log_lifecycle("task.finished", task=id(task), tasks=len(self._tasks))
             if self._closing:
-                return  # the window is gone: never touch its widgets again
-            if not self._tasks:
-                self.task_bar.clear()
+                if not self._window_closed:
+                    self.task_bar.clear(owner=task)
+                return
+            if not self._tasks and self.task_bar.clear(owner=task):
                 self.command_bar.set_work_status("Ready")
-                if not self._task_had_error:
-                    self.bottom_bar.set_status("Ready")
+                self.bottom_bar.set_status(self._queued_open_status if label == "Opening document"
+                                           else "Error" if self._task_had_error else "Ready")
 
         task.signals.progress.connect(progress)
         if on_batch:
-            task.signals.batch.connect(lambda item: None if self._closing else on_batch(item))
+            def batch(item):
+                if not self._closing:
+                    try:
+                        on_batch(item)
+                    except BaseException as exc:
+                        callback_failed("batch", exc)
+            task.signals.batch.connect(batch)
         task.signals.result.connect(result)
         task.signals.cancelled.connect(
             lambda: (
                 None
-                if self._closing
+                if not accepts_callbacks(allow_cancelled=True)
                 else self.info_bar.show_message(f"Cancelled: {label}", "info")
             )
         )
         task.signals.error.connect(
-            lambda message: None if self._closing else self._task_failed(label, message)
+            lambda message: None if not accepts_callbacks() else self._task_failed(label, message)
         )
         task.signals.finished.connect(finished)
         self._thread_pool.start(task)
         return task
 
     def _cancel_tasks(self) -> None:
+        self._pending_searches.clear()
         controller = getattr(self, "_print_controller", None)
         if controller is not None:
             controller.cancel()
@@ -6585,6 +6956,8 @@ class PDFViewer(QMainWindow):
 
     def _task_failed(self, label: str, message: str) -> None:
         self._task_had_error = True
+        if label == "Opening document":
+            self._queued_open_status = "Error"
         self.info_bar.show_message(f"{label} failed: {message}", "error", 0)
         self.command_bar.set_work_status("Ready")
         self.bottom_bar.set_status("Error")
@@ -6856,6 +7229,14 @@ class PDFViewer(QMainWindow):
             self._set_default_app()
 
     def _check_for_updates(self) -> None:
+        if self._pdf_only_window:
+            self.document_windows.primary._check_for_updates()
+            return
+        from auth.config import configuration
+        from updates.target import build_target
+        if configuration() is not None and build_target().channel != "private":
+            self._error("Private test build", "Public updates are disabled in this internal build.")
+            return
         from ui.update_dialog import UpdateDialog
 
         dialog = getattr(self, "_update_dialog", None)
@@ -6900,6 +7281,14 @@ class PDFViewer(QMainWindow):
         resize_handles = getattr(self, "_resize_handles", None)
         if resize_handles is not None:
             resize_handles.update()
+        # Responsive collapse is temporary and must not overwrite user choice.
+        if getattr(self, "_auto_collapsed_sidebar", False) and self.width() >= 1050:
+            blocked = self.side_panel.blockSignals(True)
+            try:
+                self.side_panel.set_collapsed(False, animate=False)
+            finally:
+                self.side_panel.blockSignals(blocked)
+            self._auto_collapsed_sidebar = False
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls() and any(
@@ -6927,27 +7316,71 @@ class PDFViewer(QMainWindow):
         for extra in paths[1:]:
             self.open_in_new_tab(extra)
 
+    def _retire_pdf_sessions(self):
+        """Retry only sessions whose safe retirement has not been installed."""
+        if not hasattr(self, "_window_reader_events"):
+            self._window_reader_events = []
+            self._retired_pdf_sessions = set()
+        for session in list(self._sessions):
+            if session in self._retired_pdf_sessions:
+                continue
+            self._window_reader_events.extend(session.canvas.reader_events())
+            self._window_reader_events.extend(session.nav_panel.thumbnails.reader_events())
+            if session.split_canvas is not None:
+                self._window_reader_events.extend(session.split_canvas.reader_events())
+            session.close()
+            self._retired_pdf_sessions.add(session)
+        return all(reader.is_set() for reader in self._window_reader_events)
+
+    def _defer_close(self, reason):
+        self._close_lifecycle.defer(reason)
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        try:
+            self._close_event_checked(event)
+            if not event.isAccepted() and not self._closing and not self._mutation_controller.active and not self.document_windows.pending_exit:
+                self._close_lifecycle.cancel_preflight()
+        except Exception:
+            event.ignore()
+            # Failed save/confirmation is not an approval. Re-enable work and
+            # revoke approvals already collected from other windows, but do
+            # not reopen sessions once irreversible shutdown has begun.
+            if not self._closing and not self.document_windows.pending_exit:
+                self.document_windows._reset_approvals(self.document_windows.live_windows())
+            self._close_lifecycle.failed()
+
+    def _close_event_checked(self, event: QCloseEvent) -> None:
+        if self._mutation_controller.active:
+            event.ignore()
+            self._defer_close("mutation")
+            return
+        manager = getattr(self, "document_windows", None)
+        if manager and self is manager.primary and not manager.prepare_application_close():
+            event.ignore()
+            return
         controller = getattr(self, "_mode_controller", None)
         merge_only = getattr(self, "_merge_controller", None) if controller is None else None
         if controller:
             dialog = getattr(self, "_update_dialog", None)
             if self._printing or (dialog is not None and dialog.busy()):
+                log_lifecycle("close.blocked_print_or_update")
+                self.info_bar.show_message("Finish printing or the update download before closing.", "warning")
                 event.ignore()
                 return
             if not controller.prepare_exit():
                 event.ignore()
                 return
+            self.workspace.end_pair()
             if not controller.shutdown_workspaces():
                 event.ignore()
-                QTimer.singleShot(150, self.close)
+                self._defer_close("workspace_readers" if not self._tasks else "pdf_tasks")
                 return
         comparisons = list(getattr(self, "_comparison_dialogs", []))
         for comparison in comparisons:
             comparison.close()
         if any(comparison._task is not None for comparison in comparisons):
             event.ignore()
-            QTimer.singleShot(150, self.close)
+            self._defer_close("comparison")
             return
         dialog = getattr(self, "_update_dialog", None)
         if dialog is not None and dialog.busy():
@@ -6956,6 +7389,8 @@ class PDFViewer(QMainWindow):
             event.ignore()
             return
         if self._printing:
+            log_lifecycle("close.blocked_print")
+            self.info_bar.show_message("Finish printing before closing.", "warning")
             event.ignore()
             return
         if merge_only:
@@ -6964,26 +7399,58 @@ class PDFViewer(QMainWindow):
                 return
             if not merge_only.shutdown():
                 event.ignore()
-                QTimer.singleShot(150, self.close)
+                self._defer_close("tool_workers")
                 return
         self._closing = True
-        for session in ([] if controller or merge_only else list(self._sessions)):
-            self._session = session
-            if not self._confirm_discard_changes():
-                event.ignore()
-                self._closing = False
-                self._session = self.workspace.current_session()
-                return
-        self.settings.update(
-            {
-                "window_size": [self.width(), self.height()],
-                "window_position": [self.x(), self.y()],
-                "window_maximized": self.isMaximized(),
-                "left_panel_collapsed": False if getattr(self, "_auto_collapsed_sidebar", False) else self.side_panel.is_collapsed(),
-            }
-        )
+        try:
+            for session in ([] if controller or merge_only or self._window_exit_approved else list(self._sessions)):
+                self._session = session
+                if not self._confirm_discard_changes():
+                    event.ignore()
+                    self._closing = False
+                    self._session = self.workspace.current_session()
+                    return
+        except Exception:
+            # Save/confirmation failed before retirement began. Restore normal
+            # document routing rather than leaving every operation "closing".
+            self._closing = False
+            self._session = self.workspace.current_session()
+            raise
+        self._close_lifecycle.begin()
+        self.workspace.end_pair()
+        pdf_operations = list(getattr(self, "_pdf_operation_dialogs", []))
+        for operation in pdf_operations:
+            operation.reject()
+        if any(operation.worker for operation in pdf_operations):
+            self._closing = True
+            event.ignore()
+            self._defer_close("pdf_tools")
+            return
+        if not self._pdf_only_window:
+            self.settings.update(
+                {
+                    "window_size": [self.width(), self.height()],
+                    "window_position": [self.x(), self.y()],
+                    "window_maximized": self.isMaximized(),
+                    "left_panel_collapsed": False if getattr(self, "_auto_collapsed_sidebar", False) else self.side_panel.is_collapsed(),
+                }
+            )
         for task in list(self._tasks):
             task.cancel()
-        for session in ([] if controller else list(self._sessions)):
-            session.close()
+        self._pending_searches.clear()
+        self._queued_open_paths.clear()
+        if self._tasks:
+            event.ignore()
+            self._defer_close("pdf_tasks")
+            return
+        if not controller:
+            self._window_exit_approved = True
+            if not self._retire_pdf_sessions():
+                event.ignore()
+                self._defer_close("pdf_readers")
+                return
+        self._window_closed = True
+        self._close_lifecycle.finished()
+        if manager:
+            manager.window_closed(self)
         event.accept()

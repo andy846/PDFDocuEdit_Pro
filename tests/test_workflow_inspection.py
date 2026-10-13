@@ -227,8 +227,8 @@ def test_version_four_media_review_runs_shared_pipeline(tmp_path,monkeypatch):
     from dataclasses import asdict
 
     from composition.media.model import default_media
+    from tests.production_approval import execute
     from workflow import pdf_pipeline
-    from workflow.engine import execute
     from workflow.model import WorkflowRun
     spec=configured(fixture_pdf(tmp_path/"source.pdf"),tmp_path/"output").upgraded(4)
     spec=spec.insert_after(spec.node("review").id,WorkflowNode("media_assignment",params=default_media()))

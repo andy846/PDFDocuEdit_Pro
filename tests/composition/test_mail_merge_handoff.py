@@ -12,11 +12,11 @@ from composition.data.source import import_records
 from composition.engine.renderer import render_preview
 from composition.handoff import capture_template_pdf, detach_template_page
 from composition.overlay.qc import check_mark
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
 from core.pdf_engine import PdfEngine
+from tests.production_approval import generate
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ def test_selected_pages_roundtrip_asset_move_and_page_id_mapping(engine, tmp_pat
     Path(tmp_path / "word-template.pdf").unlink()
     shutil.move(str(saved.parent), str(tmp_path / "relocated"))
     reopened = load_project(tmp_path / "relocated" / "customer.pdcx")
-    assert reopened.template_version == 10
+    assert reopened.template_version == 12
     first = reopened.pages[0]
     assert reopened.source_link["template_page_map"][first.id] == 2
     with fitz.open(stream=render_preview(reopened, {}), filetype="pdf") as pdf:
@@ -149,7 +149,7 @@ def test_invalid_mapping_and_v8_migration(engine, tmp_path, mutation):
         Template.from_dict(raw)
     old = Template().to_dict()
     old["template_version"] = 8
-    assert Template.from_dict(old).template_version == 10
+    assert Template.from_dict(old).template_version == 12
 
 
 def test_detaching_one_background_preserves_other_page_mappings(engine, tmp_path):

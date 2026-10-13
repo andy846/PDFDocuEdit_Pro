@@ -73,3 +73,36 @@ def collect_print_profile(owner) -> dict[str, object]:
         "offset_y": top - bottom,
         "confirm_system_dialog": owner.confirm_system.isChecked(),
     }
+
+
+def printer_profile(printer):
+    """Qt-exposed device choices; vendor settings stay in the QPrinter itself."""
+    from PyQt6.QtGui import QPageLayout
+    from PyQt6.QtPrintSupport import QPrinter
+    return {
+        "printer": printer.printerName(), "copies": printer.copyCount(),
+        "collate": printer.collateCopies(), "dpi": printer.resolution(),
+        "colour": 0 if printer.colorMode() == QPrinter.ColorMode.Color else 1,
+        "duplex": {QPrinter.DuplexMode.DuplexNone: 1,
+                   QPrinter.DuplexMode.DuplexLongSide: 2,
+                   QPrinter.DuplexMode.DuplexShortSide: 3}.get(printer.duplex(), 0),
+        "paper": "Printer settings",
+        "orientation": 2 if printer.pageLayout().orientation() == QPageLayout.Orientation.Landscape else 1,
+    }
+
+
+def apply_printer_settings(printer, details, previous=None):
+    from PyQt6.QtPrintSupport import QPrinter
+    previous = previous or {}
+    setters = {
+        "dpi": lambda v: printer.setResolution(min(600, max(72, int(v)))),
+        "copies": lambda v: printer.setCopyCount(int(v)),
+        "collate": lambda v: printer.setCollateCopies(bool(v)),
+        "colour": lambda v: printer.setColorMode(QPrinter.ColorMode.Color if int(v) == 0 else QPrinter.ColorMode.GrayScale),
+        "duplex": lambda v: printer.setDuplex({1: QPrinter.DuplexMode.DuplexNone,
+                                               2: QPrinter.DuplexMode.DuplexLongSide,
+                                               3: QPrinter.DuplexMode.DuplexShortSide}[int(v)]) if int(v) else None,
+    }
+    for key, setter in setters.items():
+        if key in details and details[key] != previous.get(key):
+            setter(details[key])

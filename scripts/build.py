@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "3.0.1"
+VERSION = "3.0.6"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -34,6 +34,8 @@ def sha256(path: Path) -> None:
 
 def build_macos() -> Path:
     print("OCR is not bundled in the macOS build.")
+    from scripts.prepare_macos import require_arm64
+    require_arm64()
     validate_verapdf_bundle()
     run(sys.executable, "scripts/make_icns.py")
     run(
@@ -47,10 +49,12 @@ def build_macos() -> Path:
     app = ROOT / "dist" / f"{APP_NAME}.app"
     if not app.exists():
         raise FileNotFoundError(app)
+    run(sys.executable, "-m", "scripts.finalize_macos", str(app))
     release = ROOT / "release"
     release.mkdir(exist_ok=True)
     arch = platform.machine()
-    dmg = release / f"PDFDocuEdit-Pro-{VERSION}-macOS-{arch}.dmg"
+    suffix = "-Private" if os.environ.get("PDFDOCUEDIT_BUILD_AUTH") == "1" else ""
+    dmg = release / f"PDFDocuEdit-Pro-{VERSION}-macOS-{arch}{suffix}.dmg"
     with tempfile.TemporaryDirectory(prefix="pdfdocuedit-dmg-") as value:
         staging = Path(value)
         shutil.copytree(app, staging / app.name, symlinks=True)
@@ -314,13 +318,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
     parser.add_argument("--run-tests", action="store_true", help="Explicitly run the full local suite (normally covered by CI)")
-    parser.add_argument("--composition", "--document-designer", action="store_true", help="Build the opt-in Windows Document Designer development workspace")
+    parser.add_argument("--composition", "--document-designer", action="store_true", help="Build Document Designer with verified platform assets")
     args = parser.parse_args(argv or [])
     if args.composition:
-        if platform.system() != "Windows":
-            parser.error("Initial composition builds require Windows x64.")
+        if platform.system() not in {"Windows", "Darwin"}:
+            parser.error("Composition builds require Windows x64 or macOS arm64.")
         os.environ["PDFDOCUEDIT_ENABLE_COMPOSITION"] = "1"
-        run(sys.executable, "scripts/prepare_composition_assets.py")
+        if platform.system() == "Windows":
+            run(sys.executable, "scripts/prepare_composition_assets.py")
 
     if sys.version_info[:2] != (3, 12):
         current = ".".join(map(str, sys.version_info[:3]))

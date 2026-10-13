@@ -1,5 +1,5 @@
 """Screen-bounded dialogs with scrollable content and reachable actions."""
-from PyQt6.QtCore import QRect, Qt, QTimer
+from PyQt6.QtCore import QPoint, QRect, Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -43,12 +43,18 @@ def scroll_container(content, parent=None):
     return scroll
 
 
-def reveal_widget(widget):
+def reveal_widget(widget, *, whole_control=False):
     """Reveal focused controls through nested scroll areas, inside out."""
     parent = widget.parentWidget()
     while parent is not None:
         if isinstance(parent, QScrollArea):
-            parent.ensureWidgetVisible(widget, 12, 12)
+            if whole_control and parent.widget() is not None:
+                # ensureWidgetVisible may use a spin box's focused line-edit
+                # rectangle, leaving the outer frame/buttons clipped.
+                center = widget.mapTo(parent.widget(), QPoint(widget.width() // 2, widget.height() // 2))
+                parent.ensureVisible(center.x(), center.y(), widget.width() // 2 + 12, widget.height() // 2 + 12)
+            else:
+                parent.ensureWidgetVisible(widget, 12, 12)
         parent = parent.parentWidget()
 
 

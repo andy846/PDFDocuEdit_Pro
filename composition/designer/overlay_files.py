@@ -125,9 +125,10 @@ class OverlayFiles:
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.error(str(exc))
             return
+        if not self.apply_spec(spec.to_dict()):
+            return
         self.project_path = Path(path)
         self.undo.clear()
-        self.apply_spec(spec.to_dict())
         self.undo.setClean()
         self.fit_canvas()
 
@@ -168,10 +169,17 @@ class OverlayFiles:
             return
         if not self.spec or self.active_worker or self.font_token or self.draft_error:
             return
+        from .production_settings import confirm_i25_update
+        if not confirm_i25_update(self, self.spec.to_dict(), overlay=True):
+            return
         if not output_dir:
             output_dir = QFileDialog.getExistingDirectory(self, "Output folder: a new job subfolder will be created")
         if not output_dir:
             return
+        from .production_review import open_overlay_review
+        open_overlay_review(self, output_dir)
+
+    def _launch_reviewed_overlay(self, raw_job, receipt):
         self.last_result = None
         import copy
         self._output_spec = copy.deepcopy(self.spec.to_dict())
@@ -179,8 +187,8 @@ class OverlayFiles:
         self.report_button.setEnabled(False)
         self.production_text.setPlainText("Validating source, fonts, page scopes and barcode profiles…")
         self.tabs.setCurrentIndex(1)
-        job = OverlayJob(self.spec.to_dict(), str(output_dir), auto_repair=self.auto_repair.isChecked())
-        self.worker({"task": "overlay_generate", "job": asdict(job)}, self.production_ready, self.production_failed, active=True)
+        job = OverlayJob(**raw_job)
+        self.worker({"task": "overlay_generate", "job": asdict(job), "production_review": receipt}, self.production_ready, self.production_failed, active=True)
 
     def production_ready(self, result):
         self.last_result = result
@@ -201,8 +209,8 @@ class OverlayFiles:
         if result.get("media_summary"):
             summary=result["media_summary"]
             text+="\n\nMedia: "+" · ".join(f"{k}: {v:,} sheets" for k,v in summary.get("stock_sheets",{}).items())
-            text+=("\nPostScript selection embedded · device validation pending" if summary.get("backend")=="postscript"
-                   else "\nOffline default_ticket.jdf · Canon device validation pending")
+            from composition.media.model import media_output_description
+            text+="\n"+media_output_description(summary, published=bool(result.get("generated_files")))
         self.production_text.setPlainText(text)
         self.pdf_button.setEnabled(result["status"] == "completed")
         self.report_button.setEnabled(bool(result["report_dir"]))

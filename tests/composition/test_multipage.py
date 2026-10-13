@@ -3,13 +3,13 @@ from __future__ import annotations
 import copy
 import csv
 import json
+from pathlib import Path
 
 import fitz
 import pytest
 
 from composition.data.source import import_records
 from composition.engine.renderer import Renderer, render_preview
-from composition.production.generator import generate
 from composition.production.model import ProductionJob
 from composition.template.model import (
     TEMPLATE_VERSION,
@@ -21,7 +21,7 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
-from composition.worker import dispatch
+from tests.production_approval import dispatch, expect_blocked, generate
 
 
 def template():
@@ -145,9 +145,9 @@ def test_later_page_font_validation_and_explicit_repairs(tmp_path):
     model = template()
     model.pages[1].elements[0].value = "Repair \u7530"
     job = job_for(tmp_path, model)
-    failure = generate(job)
-    assert failure.status == "failed" and "Template page 2" in failure.error
-    assert failure.successful_records == failure.generated_files == 0
+    failure = expect_blocked(lambda: generate(job))
+    assert "Template page 2" in str(failure)
+    assert not Path(job.output_dir).exists()
     model.pages[1].elements[0].vertical_align = "center"
     primary = copy.deepcopy(model.pages[1].elements[0].font)
     model.pages[1].elements[0].glyph_repairs["U+7530"] = FontSpec(family="Noto Sans CJK HK")

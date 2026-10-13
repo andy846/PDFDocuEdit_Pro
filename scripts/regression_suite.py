@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(paths: list[str], output: Path, *, timeout: int = 600) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     output.mkdir(parents=True, exist_ok=True)
     rows = []
     for index, path in enumerate(paths, 1):
@@ -30,7 +32,8 @@ def run(paths: list[str], output: Path, *, timeout: int = 600) -> int:
                 result = subprocess.run(
                     [sys.executable, "-u", "-m", "pytest", "-q", path,
                      "--tb=short", f"--junitxml={xml}"], cwd=ROOT,
-                    env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+                    env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONFAULTHANDLER": "1",
+                         "PYTHONIOENCODING": "utf-8"},
                     stdout=log, stderr=subprocess.STDOUT, timeout=timeout,
                 )
                 code = result.returncode
@@ -44,6 +47,11 @@ def run(paths: list[str], output: Path, *, timeout: int = 600) -> int:
                 row[key] = sum(int(s.get(key, 0)) for s in suites.iter("testsuite"))
         rows.append(row)
         print(json.dumps(row), flush=True)
+        if code:
+            # CI must expose assertion/native-crash details, not only counts.
+            # Full per-module logs remain retained alongside JUnit evidence.
+            lines = (output / (stem + ".log")).read_text(encoding="utf-8", errors="replace").splitlines()
+            print("\n".join(lines[-160:]), flush=True)
         (output / "result.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     return int(any(row["exit_code"] for row in rows))
 

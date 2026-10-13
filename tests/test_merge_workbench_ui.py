@@ -104,6 +104,22 @@ def test_merge_tab_identity_modes_shortcuts_and_close_cancel(window, tmp_path, m
     assert window.workspace._tabs.indexOf(page) >= 0
 
 
+def test_merge_redo_and_shared_override_do_not_collide(window):
+    from core.commands import find_shortcut_conflict
+    window._merge_pdfs()
+    page = window._merge_workspace
+    assert {s.toString() for s in page.actions["redo"].shortcuts()} == {"Ctrl+Y", "Ctrl+Shift+Z"}
+    window.settings.set_shortcut_overrides({"main_menu": "Ctrl+Y"})
+    window._build_command_registry()
+    window._apply_command_shortcuts()
+    assert [s.toString() for s in page.actions["redo"].shortcuts()] == ["Ctrl+Shift+Z"]
+    assert find_shortcut_conflict(window._commands_for_mode(), {}) is None
+    window._mode_controller.request_mode("designer")
+    assert all(not action.shortcuts() for action in page.actions.values())
+    window._mode_controller.request_mode("pdf")
+    assert [s.toString() for s in page.actions["redo"].shortcuts()] == ["Ctrl+Shift+Z"]
+
+
 @pytest.mark.parametrize("collapsed", [False, True])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 @pytest.mark.parametrize("size", [(760, 580), (960, 640)])

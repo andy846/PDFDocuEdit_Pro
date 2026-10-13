@@ -120,6 +120,8 @@ def test_multipage_ui_save_preview_and_production(app, tmp_path, monkeypatch):
         assert window.save_project()
         assert len(load_project(target).pages) == 2 and window.page_index == 1
         window.start_production(str(tmp_path/"output"))
+        from tests.composition.review_helpers import confirm_review
+        confirm_review(window)
         wait(lambda: window.production_worker is None)
         assert window.last_output, window.production_summary.toPlainText()
         with fitz.open(window.last_output) as doc:

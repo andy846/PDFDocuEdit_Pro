@@ -52,17 +52,25 @@ def sequence_value(seq, ordinal, page_index=0, pages_per_record=1):
 
 
 def sequence_record(template, record, ordinal, page_index=0, *, design=False):
+    from composition.engine.barcode_profiles import has_profiles, profile_record
+    record = profile_record(template, record, ordinal, page_index)
+    from composition.engine.generic_layout import CONTEXT_KEY
+    materialized = getattr(template, "_barcode_materialized_sequences", set())
+    if CONTEXT_KEY in record and materialized:
+        record[CONTEXT_KEY].sequences = {name: record[name] for name in materialized if name in record}
     if not template.sequences:
         return record
     values = dict(record)
     physical_index=page_index
     physical_count=len(template.pages)
-    if template.media.get("enabled"):
+    # Match Renderer.render: duplex can add blank backs without enabled Media
+    # or barcode profiles. Page sequences count those physical output pages.
+    if template.media.get("enabled") or template.media.get("duplex") or has_profiles(template):
         from composition.media.planner import build_print_plan
         key=repr((template.media,[(p.id,p.width_mm,p.height_mm) for p in template.pages]))
         if getattr(template,"_media_sequence_key",None)!=key:
             plan=build_print_plan(template,1)
-            template._media_sequence_offsets={p.logical_page-1:p.print_page-1 for p in plan.pages() if p.logical_page}
+            template._media_sequence_offsets={p.role:p.print_page-1 for p in plan.pages() if p.source_page is not None}
             template._media_sequence_count=plan.output_pages
             template._media_sequence_key=key
         physical_index=template._media_sequence_offsets[page_index]
@@ -72,6 +80,8 @@ def sequence_record(template, record, ordinal, page_index=0, *, design=False):
             raise CompositionError(f"Sequence field conflicts with supplied record: {seq.name}")
         values[seq.name] = ("{{" + seq.name + "}}" if design else
                             sequence_value(seq, ordinal, physical_index, physical_count))
+    if CONTEXT_KEY in values:
+        values[CONTEXT_KEY].sequences.update({s.name: values[s.name] for s in template.sequences})
     return values
 
 
@@ -95,6 +105,7 @@ class CompositionRecords:
         check_field_collisions(template, source_fields)
         self.fields = source_fields + [seq.name for seq in template.sequences]
         self.count = store.count if store else template.generated_count
+        template._barcode_record_count = self.count
         self.metadata = (dict(store.metadata) if store else {
             "source": {"path": "", "type": "generated_records", "record_count": self.count},
             "record_count": self.count, "original_fields": [],

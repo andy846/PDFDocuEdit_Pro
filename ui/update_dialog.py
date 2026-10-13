@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
@@ -12,6 +13,7 @@ from core.resources import APP_VERSION
 from ui.responsive import ResponsiveDialog
 from updates.protocol import Cancelled, check_release, download
 from updates.runtime import managed_root, request_restart
+from updates.target import build_target, resolve_update_route
 from updates.trust import PUBLIC_KEY_HEX, REPOSITORY
 
 
@@ -29,7 +31,11 @@ class UpdateWorker(QThread):
     def run(self):
         try:
             if self.release is None:
-                result = check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION)
+                target = build_target()
+                route = resolve_update_route(self.root, target)
+                result = (check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION) if target.legacy else
+                          check_release(REPOSITORY, PUBLIC_KEY_HEX, APP_VERSION, target=route.transport,
+                                        application_target=route.application))
             else:
                 result = download(
                     self.release, self.root / "staging",
@@ -70,16 +76,30 @@ class UpdateDialog(ResponsiveDialog):
         buttons.addWidget(self.action)
         buttons.addWidget(self.cancel)
         layout.addLayout(buttons)
-        if self.root is None:
+        if sys.platform == "darwin" and self.root is None:
+            channel = "private account" if build_target().channel == "private" else "public"
+            self.status.setText(f"Current version: {APP_VERSION}. Open the matching {channel} Managed DMG application to enable automatic updates. This older standalone app requires manual replacement; retain your projects and user settings.")
+            self.action.setText("Open download page")
+            self.action.clicked.disconnect(self.perform)
+            self.action.clicked.connect(self.open_mac_downloads)
+        elif self.root is None:
             self.status.setText("Automatic ZIP updates require the managed portable edition. Extract the deployment ZIP once and open Launcher.exe.")
             self.action.setEnabled(False)
         else:
             QTimer.singleShot(0, self.perform)
 
+    def open_mac_downloads(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(f"https://github.com/{REPOSITORY}/releases"))
+
     def busy(self) -> bool:
         return self.worker is not None and self.worker.isRunning()
 
     def perform(self):
+        if sys.platform == "darwin" and self.root is None:
+            self.open_mac_downloads()
+            return
         if self.busy():
             return
         if self.downloaded:
@@ -112,6 +132,10 @@ class UpdateDialog(ResponsiveDialog):
             self.release = result
             self.status.setText(f"Version {result.manifest.version} is available ({result.manifest.size / 1024**2:.1f} MB).")
             self.notes.setPlainText(result.notes)
+            if result.manifest.maturity == "preview":
+                self.status.setText(self.status.text() + "\nmacOS test build: Apple notarization is not completed. Download only if you accept testing this build.")
+            if result.manifest.application_target and result.manifest.application_target.channel == "private":
+                self.notes.append("\nThis version requires an approved account. First sign-in requires an internet connection.")
             self.action.setText("Download Update")
 
     def failed(self, message):
@@ -122,6 +146,12 @@ class UpdateDialog(ResponsiveDialog):
             request_restart(self.root)
             if self.viewer.close():
                 self.viewer._update_restart = True
+            elif getattr(getattr(self.viewer, "document_windows", None), "pending_exit", False):
+                # All windows approved exit; closeEvent is waiting for safe cleanup.
+                # Keep the supervisor request until the final window closes.
+                self.viewer._update_restart = True
+                self.action.setEnabled(False)
+                self.status.setText("Finishing background tasks before restarting…")
             else:
                 (self.root / "restart.json").unlink(missing_ok=True)
                 self.show()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fitz
 from PyQt6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
@@ -13,7 +14,10 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QFont, QFontDatabase
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
     QButtonGroup,
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QCompleter,
@@ -39,6 +43,7 @@ from PyQt6.QtWidgets import (
 
 from core.annotations import STAMP_IDS
 from core.diagnostics import log_failure
+from core.page_images import IMAGE_KINDS
 from core.pdf_engine import parse_page_range
 from styles.tokens import D, S
 
@@ -125,6 +130,19 @@ class ContextPanel(QFrame):
         self._build_font_inspector()
         self.form_panel = FormPanel()
         self._add_page("form", self.form_panel)
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._reveal_focused_control)
+
+    def _reveal_focused_control(self, _old, current) -> None:
+        if current is None or not self.isAncestorOf(current):
+            return
+        # A spin box focuses its inner line edit. Reveal the whole control,
+        # including the arrow buttons, through both panel scroll areas.
+        if isinstance(current.parentWidget(), QAbstractSpinBox):
+            current = current.parentWidget()
+        from .responsive import reveal_widget
+        reveal_widget(current, whole_control=True)
 
     @pyqtProperty(int)
     def panelWidth(self) -> int:  # noqa: N802 - Qt property naming
@@ -456,7 +474,12 @@ class ContextPanel(QFrame):
         layout.setContentsMargins(S.XS, S.SM, S.XS, S.SM)
         layout.setSpacing(S.MD)
         manage_scroll.setWidget(manage_page)
-        self._annot_tabs.addTab(manage_scroll, "Manage")
+        manage_container = QWidget()
+        manage_outer = QVBoxLayout(manage_container)
+        manage_outer.setContentsMargins(0, 0, 0, 0)
+        manage_outer.setSpacing(S.SM)
+        manage_outer.addWidget(manage_scroll, 1)
+        self._annot_tabs.addTab(manage_container, "Manage")
 
         layout.addWidget(QLabel("Document annotations"))
         self._annotation_scan = QPushButton("Refresh all document annotations")
@@ -488,13 +511,36 @@ class ContextPanel(QFrame):
         self._property_text.setPlaceholderText("FreeText / note content")
         self._property_text.setFixedHeight(84)
         properties.addRow("Content", self._property_text)
+        self._image_geometry = QWidget()
+        geometry_form = QFormLayout(self._image_geometry)
+        geometry_form.setContentsMargins(0, 0, 0, 0)
+        self._image_dimensions = {}
+        for key, title in (("x", "X"), ("y", "Y"), ("width", "Width"), ("height", "Height")):
+            spin = QDoubleSpinBox()
+            spin.setDecimals(2)
+            spin.setRange(0 if key in {"x", "y"} else 0.36, 100000)
+            spin.setSuffix(" mm")
+            spin.setKeyboardTracking(False)
+            geometry_form.addRow(title, spin)
+            self._image_dimensions[key] = spin
+        self._image_keep_aspect = QCheckBox("Keep proportions")
+        self._image_keep_aspect.setChecked(True)
+        geometry_form.addRow(self._image_keep_aspect)
+        help_text = QLabel("Drag the image to move it; drag a corner to resize. Hold Shift to resize freely. Coordinates use the unrotated page's top-left corner.")
+        help_text.setWordWrap(True)
+        geometry_form.addRow(help_text)
+        properties.addRow(self._image_geometry)
+        self._image_geometry.hide()
+        self._image_dimensions["width"].valueChanged.connect(lambda value: self._resize_image_dimension("width", value))
+        self._image_dimensions["height"].valueChanged.connect(lambda value: self._resize_image_dimension("height", value))
         layout.addLayout(properties)
         self._set_content_editor_visible(False)
         self._apply_properties = QPushButton("Apply Style")
         self._apply_properties.setProperty("secondary", True)
         self._apply_properties.setEnabled(False)
         self._apply_properties.clicked.connect(self._apply_selected_annotation)
-        layout.addWidget(self._apply_properties)
+        # Applying dimensions stays reachable even when the settings scroll.
+        manage_outer.addWidget(self._apply_properties)
 
         actions = QHBoxLayout()
         self._remove_selected = QPushButton("Remove Selected")
@@ -921,6 +967,8 @@ class ContextPanel(QFrame):
             "line": "Drag from the first endpoint to the second endpoint.",
             "arrow": "Drag from the tail to the arrow head.",
             "polygon": "Click vertices; double-click or right-click to finish.",
+            "image": "Choose a PNG/JPG, then draw its area. After insertion, drag to move or resize using the corner handles.",
+            "signature": "Place a handwritten-signature image, then move or resize it. This is an image, not a digital signature.",
         }
         self._active_tool_title.setText(names.get(tool, tool.replace("_", " ").title()))
         self._active_tool_hint.setText(
@@ -943,6 +991,7 @@ class ContextPanel(QFrame):
         }
         stamp_visible = tool == "stamp"
         image_visible = tool in {"signature", "image"}
+        self._image_label.setText("Signature image source" if tool == "signature" else "Image source")
         self._annot_color_label.setText(
             "Text color" if text_visible else "Stroke / annotation color"
         )
@@ -983,16 +1032,30 @@ class ContextPanel(QFrame):
 
     def _load_selected_annotation(self, item, _previous=None) -> None:
         if item is None:
+            self._image_geometry.hide()
             self._property_text.clear()
             self._set_content_editor_visible(False)
             self._apply_properties.setEnabled(False)
             self._remove_selected.setEnabled(False)
             return
         entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        is_image = entry.get("kind") in IMAGE_KINDS
+        self._image_geometry.setVisible(is_image)
+        if is_image:
+            rect = fitz.Rect(entry["rect"])
+            self._image_ratio = rect.width / rect.height
+            self._image_original_dimensions = dict(zip(("x", "y", "width", "height"),
+                                                       (rect.x0, rect.y0, rect.width, rect.height), strict=True))
+            for key, value in zip(("x", "y", "width", "height"),
+                                  (rect.x0, rect.y0, rect.width, rect.height), strict=True):
+                with QSignalBlocker(self._image_dimensions[key]):
+                    self._image_dimensions[key].setValue(value * 25.4 / 72)
+            self._image_keep_aspect.setChecked(bool(entry.get("keep_aspect", True)))
         editable_text = str(entry.get("kind") or "") in {"Text", "FreeText"}
         self._set_content_editor_visible(editable_text)
         self._property_text.setPlainText(str(entry.get("text") or ""))
         self._apply_properties.setText(
+            "Apply Position && Size" if is_image else
             "Apply Style & Content" if editable_text else "Apply Style"
         )
         self._apply_properties.setEnabled(True)
@@ -1031,6 +1094,14 @@ class ContextPanel(QFrame):
         if label is not None:
             label.setVisible(visible)
 
+    def _resize_image_dimension(self, key: str, value: float) -> None:
+        if not self._image_keep_aspect.isChecked():
+            return
+        ratio = getattr(self, "_image_ratio", 1.0)
+        other = "height" if key == "width" else "width"
+        with QSignalBlocker(self._image_dimensions[other]):
+            self._image_dimensions[other].setValue(value / ratio if key == "width" else value * ratio)
+
     def _emit_annotation_selected(self, item) -> None:
         if item is None:
             return
@@ -1049,6 +1120,16 @@ class ContextPanel(QFrame):
             return
         payload = self._style_payload()
         entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        if entry.get("kind") in IMAGE_KINDS:
+            # Display rounding must not change a precise PDF coordinate when
+            # the user only changes an unrelated setting (or presses Apply).
+            def points(key):
+                original = self._image_original_dimensions[key]
+                displayed = self._image_dimensions[key].value()
+                return original if displayed == round(original * 25.4 / 72, 2) else displayed * 72 / 25.4
+            x, y, width, height = (points(key) for key in ("x", "y", "width", "height"))
+            payload = {"rect": fitz.Rect(x, y, x + width, y + height),
+                       "keep_aspect": self._image_keep_aspect.isChecked()}
         if str(entry.get("kind") or "") in {"Text", "FreeText"}:
             payload["text"] = self._property_text.toPlainText()
         page = int(entry.get("page", 0))
@@ -1101,6 +1182,12 @@ class ContextPanel(QFrame):
             self._filter_annotations()
             if restore_item is not None:
                 self._annot_list.setCurrentItem(restore_item)
+                if (restore_item.data(Qt.ItemDataRole.UserRole + 1) or {}).get("kind") in IMAGE_KINDS:
+                    with QSignalBlocker(self):
+                        self._load_selected_annotation(restore_item)
+            elif self._annot_list.currentItem() is None:
+                with QSignalBlocker(self):
+                    self._load_selected_annotation(None)
 
     def _filter_annotations(self, *_args) -> None:
         query = self._annot_search.text().strip().casefold()
@@ -1118,7 +1205,10 @@ class ContextPanel(QFrame):
             item.setHidden(not matches)
 
     def select_annotation(self, page: int, xref: int) -> None:
-        self._annot_tabs.setCurrentIndex(1)
+        # A canvas selection already has a current-page record. Showing its
+        # properties must not launch a whole-document scan or lock editing.
+        with QSignalBlocker(self._annot_tabs):
+            self._annot_tabs.setCurrentIndex(1)
         for index in range(self._annot_list.count()):
             item = self._annot_list.item(index)
             entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
@@ -1128,6 +1218,10 @@ class ContextPanel(QFrame):
                 self._annot_list.setCurrentItem(item)
                 self._annot_list.scrollToItem(item)
                 return
+
+    def clear_annotation_selection(self) -> None:
+        self._annot_list.setCurrentItem(None)
+        self._load_selected_annotation(None)
 
     def _remove_selected_annotation(self) -> None:
         item = self._annot_list.currentItem()

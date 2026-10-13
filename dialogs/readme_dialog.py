@@ -8,7 +8,7 @@ from .base import ToolDialog
 
 README_CONTENT = """# PDFDocuEdit Pro
 
-PDF Editing & Print Production Suite — v3.0.1
+PDF Editing & Print Production Suite — v3.0.5
 
 **Program Developer:** Andy Leung (andy846@gmail.com)
 
@@ -20,7 +20,94 @@ PDFDocuEdit Pro combines PDF editing and print-production tools in one main
 window. PDF Workspace handles document editing; Document Designer handles
 reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
-supports Windows x64.
+supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
+
+## New in v3.0.2
+
+* Conditional Mail Merge processes an ordered list of data files and routes
+  records exclusively to different templates. Batch sequences, exception
+  review, per-branch approval and reconciliation preserve source identities.
+* Template Designer repeats selected fields across pages at exact coordinates
+  or equal footer distance; Paste in place preserves position with one Undo.
+* PDF measurement uses precise end ticks, paper rulers, draggable guides and
+  snapping. Alt temporarily bypasses snapping; guides are not written to PDF.
+* Duplex media setup supports repeated Stocks across template pages. Clipped
+  merge-field names stay editable without blanking the canvas.
+* Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
+  fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
+
+## PDF tabs and separate windows
+
+* Right-click a PDF tab → Split with… to edit two open documents side by side.
+  Click either pane to route tools, Save, Print and Undo/Redo to that PDF.
+* Swap sides, switch to stacked layout, or close the split without closing PDFs.
+  Both tabs keep their own content, page, zoom and undo history.
+* Move to New Window / Move to Window… preserve live edits. Drag outside a window
+  to detach a PDF tab; drop onto another tab strip to move it there. Escape cancels.
+* Busy PDF tasks must finish before moving. Separate windows provide PDF editing;
+  Designer and tool/project tabs stay in their original window.
+* Main-window exit, sign-out and updates include all windows' unsaved documents.
+  Closing a separate window only closes its documents. Account lock applies to all.
+
+## New in v3.0.5: PDF Workspace Tool Navigation
+
+* Six categories: Search & Inspect, Pages & Documents, Annotate & Edit, Convert, Production & Data, Security. Existing actions and commands remain available.
+* Favourites / Edit saves up to eight tools in your preferred order. Compact mode shows favourites and searchable category menus; long names have tooltips.
+* Search matches names, descriptions, old category aliases and customized shortcuts. Arrow keys select, Enter runs, Esc closes menus.
+* PDF Production Tools is in Production & Data and in the default favourites. It combines Fonts, Flatten and Repair in a persistent tool tab.
+* Template, workflow and barcode profile formats are unchanged. Both platforms retain signed Managed updates and saved offline account approval.
+
+## New in v3.0.5: Startup and Sign-in
+
+* Saved approval is read in the background while Splash is visible. Valid saved approval opens the main window directly; sign-in appears only when needed, after Splash closes.
+* Successful manual sign-in shows Opening workspace before entering the main window. No second Splash or artificial minimum delay.
+* Offline approval, background account checks and revocation behaviour are unchanged. Managed updates confirm readiness after the sign-in or main window has painted.
+* Windows/macOS share this startup flow. External PDFs wait until account access and Managed startup are ready.
+
+## New in v3.0.5: PDF Production Tools
+
+* **Production & Data → PDF Production Tools** opens a persistent PDF Workspace tab: Overview, Fonts, Flatten, Repair / Normalise, Results.
+* Analyze is read-only and runs in the background. Overview combines the existing inspectors without approving processing; unsupported checks remain visible. Generate new copy executes only the selected processing section.
+* Sources, output root and progress are shared. Editor input includes unsaved changes; source changes/closure invalidate results. Refresh source captures the original Editor again. Section changes preserve drafts and do not start jobs.
+* Fonts retains strict original-font / trusted-reference validation. Batch scans isolate failures; configure safe embedding per PDF. Rasterisation and destructive normalisation remain explicit choices.
+* Results separates analysis from production, keeps source/settings context and out-of-date evidence, and opens completed outputs/reports. Export JSON/CSV for review. Completed job bundles remain when a task is cancelled.
+* Switch PDF/Designer without cancelling work. Ctrl+O chooses sources, Ctrl+W safely closes the tool, Ctrl+Tab cycles PDF Workspace tabs. Save/Undo cannot change a background PDF. Running close requests wait for safe cleanup.
+* Narrow windows use a section dropdown; content scrolls while the shared action row remains visible. Old tool commands and Workflow settings remain compatible. Project formats remain unchanged.
+
+## Development Update: Editor Font Preflight
+
+* **Tools → Font Preflight / Safe Embed Fonts…**, under PDF Production Tools in left Production & Data: read-only existing-PDF font inventory, affected pages, exact original-face candidates, and JSON/CSV reports.
+* Safe native repair currently supports verified simple TrueType / WinAnsi cases only. Select authorized original fonts, Check sources, then provide the authoritative reference PDF with the same font binary. Missing proof blocks repair; family names alone are insufficient.
+* Repair Copy publishes PDF + audit together after original-object/stream checks, independent qpdf validation and exact 300 dpi reference comparisons on every page. No substitution, reflow or rasterisation. Originals and Editor Undo remain unchanged.
+* Batch scan isolates file failures; inspect individual files to configure their fonts. Signed/encrypted/restricted sources and unverified formats are scan-only. No new public release is implied.
+
+## Development Update: PDF Production Cleanup
+
+* **Tools → Flatten PDF**: Analyse annotations/form appearances, choose all,
+  current or selected pages, then generate a validated new copy. Open-document
+  content and its Undo history are retained. Missing appearances and XFA are
+  not silently guessed. Searchable text remains unless Rasterise is selected.
+* **Tools → PDF Repair / Production Normalise**: Safe Repair rewrites structure;
+  Normalise offers explicit removal/flatten/crop options. Maximum Compatibility
+  rasterises with a loss confirmation. This cannot repair every broken PDF.
+* Choose PDFs for batch processing; each file has its own result and audit.
+  Cancel removes unpublished temporary PDFs and retains completed job bundles.
+  Optional Production Preflight compares before/after findings.
+* PDF Visual Workflow adds **Flatten PDF** and **Repair / Normalise PDF** before
+  Extract Regions. Check to this step processes private copies, never approves
+  production. Source/config changes invalidate cached results.
+* Production filename editors share previews for `{{input.stem}}`, `{{job.id}}`,
+  `{{system.date}}` and `{{workflow.sequence|pad:6}}`. Missing values are errors;
+  illegal Windows filename characters are sanitised without changing data.
+* New PDF workflows use v6; v1–v5 remain readable. Upgrade saved workflows to a
+  new file. Old installations cannot read v6 PDF-cleanup nodes. Template,
+  Overlay and barcode formats and the public application version are unchanged.
+* Namespace/transform syntax currently applies to output naming. Designer text
+  continues to save `{{Field_Name}}`; extended barcode/folder/report templates
+  are future integrations. No arbitrary Python or shell execution is allowed.
+* Digital signature validity cannot survive a derived copy. Encrypted input
+  requires encrypted output. Transparency flattening is not offered; coverage
+  limits are reported. Rasterisation does not automatically run OCR.
 
 ## Quick Start: Two Workspaces
 
@@ -37,7 +124,11 @@ supports Windows x64.
 
 ## Document Designer
 
-### Templates, Fields and Data
+Document Designer is the workspace mode. It contains **Template Designer** for
+template layout, **PDF Overlay** for finished PDFs, and **Visual Workflow** for
+production workflows.
+
+### Template Designer: Templates, Fields and Data
 * Start with a blank page or a multi-page PDF background. One customer record
   can produce several fixed template pages; the background remains intact.
 * Import CSV, delimited/tab-delimited TXT and Excel data; select import options,
@@ -51,6 +142,11 @@ supports Windows x64.
 * Edit position, size, rotation and text properties numerically; multi-select
   objects to apply common settings. Rulers, snapping and alignment help place
   objects accurately. Undo/Redo preserves editing continuity.
+* Select a footer or group of fields, then use **Edit / right-click → Repeat on
+  template pages…** to copy to chosen pages at the same coordinates or distance
+  from the page bottom. Copies are independent and the entire operation has one
+  Undo. **Ctrl+Shift+V (Paste in place)** preserves exact coordinates; objects
+  that would extend outside the destination page are rejected without shifting.
 * Select installed Windows fonts. Missing-glyph repairs or automatic fallback
   replace unsupported characters while retaining the primary font, with a
   report of affected pages and characters for review.
@@ -69,13 +165,70 @@ supports Windows x64.
 * Production keeps source-page mappings, reconciliation and barcode QC.
   Inserter values and read positions must match the actual machine's spec.
 
+### Inserter I25 — 18 digits
+* Select a barcode in Template Designer or PDF Overlay. In **Barcode properties**,
+  choose **Inserter I25 — 18 digits**, then **Configure…**. Workflow reuses the
+  same template/overlay profile and generation engine.
+* **Sequence:** group starts at 00 and cycles through 99 → 00; sheet sequence starts at 00 per envelope.
+  Full envelope identity is retained separately from the cycling group digits.
+* **Inserts:** six Never / Always / Conditional controls; each group of three
+  uses weights 1, 2 and 4. VS1/VS2 output-bin diversion remains Off.
+* **Customer info:** nine zeros or an exact nine-digit ASCII data field; leading
+  zeros are preserved. Values are never truncated or padded.
+* **Placement:** choose Simplex/Duplex without creating Media, or follow active
+  Media settings. One mark per physical sheet front; odd duplex envelopes get
+  a blank back without a mark. Apply to required template pages at the same
+  position with a target-page summary and one Undo.
+* **Preview:** segmented payload, barcode image, automatic EOG and check digit.
+  Digit 8 is fixed zero. Digit 18 is the modulo-10 complement of the first 17
+  digits weighted 3,1 from the left. No extra checksum is appended.
+* Generation checks all records and front-side positions before composition,
+  then decodes final marks. **barcodes.csv** records full envelope, sheet,
+  output page, zero-based barcode sheet sequence, insert masks, EOG, check digit and decode result.
+* More than 99 sheets, invalid data, missing or duplicate controls block
+  production with record/page/object details. Dimensions, rotation and read
+  positions remain subject to actual inserter validation.
+* Existing Generic profiles keep their payloads. Current template/overlay
+  saves use versions 12/8; fixed Generic layouts use profile v3, while the
+  Inserter I25 encoding remains unchanged.
+
+### Generic — Custom Barcode Layout
+* Select a barcode → **Configure… → Generic — custom barcode layout**.
+  Set **Total length** and add/reorder named segments. Every segment has its
+  own Length; the positions and sum are shown and must match Total.
+* Choose **Fixed**, **Data field** (imported/mapped CSV, TXT, Excel or Workflow
+  extraction values), **System field**, or **Running sequence**. Imported
+  fields and system values with the same name stay separate.
+* **Numeric:** nonnegative ASCII digits, normalized then zero-padded to Length.
+  `000001` becomes `01` in two digits. **Text:** preserve the exact value and
+  leading zeros; exact length is required, with no trimming or truncation.
+* Running sequences can reference a template sequence or use a barcode-only
+  counter: Start 0, Increment 1 by default; per record/envelope, output page,
+  or physical sheet within envelope. Duplex faces share a sheet number.
+* Overflow stops by default. Explicit **Cycle** is available only for Numeric
+  sequences. **barcode-cycles.csv** records full/raw and encoded values with
+  record, envelope, page, object, segment and source-row identity. Data fields
+  are never cycled or shortened.
+* The preview checks available samples, not the entire job. Missing data allows
+  saving a structurally valid layout for later configuration; production still
+  validates all visible marks in the background before composing any pages.
+  Final-PDF decoding and **barcodes.csv** reconcile exact payloads/counts.
+* I25 needs an even number of ASCII digits; Code 128 uses printable ASCII;
+  use QR for Unicode. Barcode dimensions must support the chosen length.
+* Old token profiles require **Convert to fixed-length layout…**. Confirm any
+  unknown segment lengths and Total; conversion does not silently rewrite the
+  saved profile. Invalid drafts stay available for correction or cancellation.
+
 ## Visual Workflow: Settings, Checks and Results
 
 ### Build and Configure
 * The node library is grouped into **Sources**, **Data preparation**, **Design**
   and **Production output**. Search matches names and function descriptions.
 * **Add next step** offers compatible steps and explains unavailable choices.
-  Workflows remain linear; branches and loops are not supported.
+  Existing PDF/linear Mail Merge recipes retain their current behavior.
+* **Create Visual Workflow → Conditional Mail Merge** creates a v5 recipe with
+  **For each Data File**, a shared preparation chain, **Batch Sequence** and
+  exclusive named template routes. Free cycles and nested loops are not allowed.
 * Data steps include field cleaning, field creation, sorting, validation,
   filtering and running sequences. Other steps cover Visual Extraction Regions,
   mailpiece grouping, mappings, letter templates, media and output splitting.
@@ -86,6 +239,21 @@ supports Windows x64.
 * Repeated node types retain separate settings, counts, statuses and evidence.
 
 ### Check to This Step
+* Conditional Mail Merge checks all configured source files. Its shared
+  sequence follows file order and each file's filtered/sorted records; exceptions
+  reserve their numbers. Refer to the default field as `{{WorkflowSeq}}` in the
+  letter template. A conflicting imported/template sequence field is blocked.
+* Add named routes with All/Any conditions and choose a saved template per
+  route. Exactly one condition must match. An explicit fallback applies only
+  when none match; multiple matches always go to **Exceptions**.
+* On **Review & approve**, preview a branch record, review exceptions and
+  approve selected/all checked branches. Partial production requires explicit
+  acknowledgement. **Run approved** produces independent outputs per source
+  file and template, with reconciliation CSV, exceptions CSV and a JSON log.
+  **Collect Results** collects results and reports; it does not merge PDFs.
+* Recheck after data or rules change. Valid completed branches are retained;
+  reopening a saved recipe requires a new check and approval, and never resumes
+  production automatically. Folder inputs are a fixed snapshot, not a hot folder.
 * Select the target node and click **Check to this step**. For Mail Merge,
   explicitly choose one batch job. PDF checks use the current workflow sources.
 * Checks process the complete input, even when downstream steps are unfinished.
@@ -224,7 +392,22 @@ supports Windows x64.
   preview and combine them. Open the merged PDF or send it directly to Designer;
   the PDF tool sidebar remains available.
 * **PDF Ruler:** Measure page distances in mm/cm with zoom-independent results,
-  calibrate page scale and save measurement lines as PDF annotations.
+  short dimension ticks and a generous endpoint drag area. Drag and release to
+  measure, or click two points. Endpoint drags preserve the grab offset;
+  hold Shift for horizontal/vertical alignment. Activating Measure
+  shows top/left paper rulers with cursor markers and a reference page; rulers
+  follow zoom, scrolling and page rotation, and disappear when leaving the tool.
+  Ruler coordinates start at the displayed page's top-left. They show paper size;
+  calibrated distances remain on measurement lines. Rulers are not saved to PDF.
+  Drag from the top/left ruler to add horizontal/vertical reference guides.
+  Alt+drag moves an existing guide; drop outside the page to remove it, or press
+  Esc to cancel. Right-click a guide to set its exact position or remove it.
+  Click the ruler corner or right-click a ruler to show/hide guides, clear the
+  page, or toggle snapping. Measurement endpoints snap within 8 screen pixels
+  to guides/page edges; hold Alt to bypass snapping and Shift to constrain axes.
+  Guides remain in the current workspace and are cleared on document reload;
+  they are never written to PDF or added to PDF Undo/Redo history.
+  Calibrate page scale and save measurement lines as PDF annotations.
 * **Inspector / Preflight:** Check fonts, images, page boxes and production
   warnings; jump to affected pages and export findings.
 * **Merge CSV/Excel:** Merge data from many spreadsheet files into one

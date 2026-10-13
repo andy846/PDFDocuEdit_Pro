@@ -13,6 +13,11 @@ import core.viewer as viewer_module
 from core.settings import SettingsManager
 from styles.tokens import D
 
+# Match the real entry point: one QApplication and installed theme live for
+# the entire process. Recreating Qt between tests leaves native/style callbacks
+# referring to an already-destroyed application and can cause access violations.
+pytestmark = pytest.mark.usefixtures("qt_application")
+
 
 def make_pdf(path: Path) -> Path:
     with fitz.open() as document:
@@ -292,7 +297,8 @@ def test_background_print_cancel_restores_ui_and_keeps_dialog_alive(tmp_path, mo
             QTest.qWait(5)
         assert entered.is_set()
         assert window._printing
-        assert not window.workspace.isEnabled()
+        assert window.workspace.isEnabled()  # browsing stays available; editing controls are locked
+        assert not window.context_panel.isEnabled()
         assert not window.command_bar.isEnabled()
         assert window.task_bar._cancel.isEnabled()
         assert window._open_in_new_tab_sync(str(source)) is None

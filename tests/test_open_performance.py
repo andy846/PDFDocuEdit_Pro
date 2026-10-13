@@ -8,7 +8,7 @@ import pytest
 from PyQt6.QtCore import QAbstractListModel, QTimer
 from PyQt6.QtGui import QImage
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QWidget
 
 import core.viewer as viewer_module
 import ui.workspace as workspace_module
@@ -21,8 +21,10 @@ from ui.thumbnail_panel import MAX_PENDING_RENDERS, ThumbnailPanel
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qt_application):
+    # Keep the QApplication/theme alive across native widget teardown. Creating
+    # and destroying a fresh one per test can crash Qt before assertions run.
+    return qt_application
 
 @pytest.fixture
 def window(app, tmp_path, monkeypatch):

@@ -120,7 +120,7 @@ class CommandBar(QWidget):
             ("hand", "hand", "Hand tool — drag to pan"),
             ("select", "text-cursor", "Select text"),
             ("magnifier", "search", "Magnifier"),
-            ("measure", "line-tool", "Measure PDF paper distance (mm/cm): click two points"),
+            ("measure", "line-tool", "Measure PDF paper distance (mm/cm): drag or click two points; Shift aligns, Alt disables snapping. Drag from rulers for guides; click the ruler corner for settings."),
         ):
             button = self._button(
                 icon_name,
@@ -248,6 +248,8 @@ class CommandBar(QWidget):
         menu.addSeparator()
         preferences = QAction("Preferences…", self)
         preferences.triggered.connect(self.preferencesClicked.emit)
+        self._preferences_action = preferences
+        self._settings_menu: QMenu | None = None
         about = QAction("About PDFDocuEdit Pro", self)
         about.triggered.connect(self.aboutClicked.emit)
         menu.addAction(preferences)
@@ -317,9 +319,26 @@ class CommandBar(QWidget):
                 menu.addMenu(source_menu)
             elif not action.isSeparator():
                 menu.addAction(action)
+        if self._settings_menu is not None:
+            menu.addSeparator()
+            menu.addMenu(self._settings_menu)
         self._main_menu_button.setMenu(menu)
         self._main_menu_button.setEnabled(bool(menu.actions()))
         self._more.setMenu(menu if self._mode == WorkspaceMode.DESIGNER else self._pdf_more_menu)
+
+    def add_settings_action(self, action: QAction) -> None:
+        """Keep optional application actions beside settings across mode changes."""
+        if action not in self._pdf_more_menu.actions():
+            self._pdf_more_menu.insertAction(self._preferences_action, action)
+        if self._settings_menu is None:
+            self._settings_menu = QMenu("Settings", self)
+            self._settings_menu.addAction(self._preferences_action)
+            menu = self._main_menu_button.menu()
+            if menu is not None:
+                menu.addSeparator()
+                menu.addMenu(self._settings_menu)
+        if action not in self._settings_menu.actions():
+            self._settings_menu.insertAction(self._preferences_action, action)
 
     def open_application_menu(self) -> None:
         if self._main_menu_button.menu() is not None:
@@ -431,6 +450,17 @@ class CommandBar(QWidget):
     def set_undo_redo_enabled(self, can_undo: bool, can_redo: bool) -> None:
         self._undo.setEnabled(can_undo)
         self._redo.setEnabled(can_redo)
+
+    def set_shortcut_hints(self, commands) -> None:
+        from core.commands import command_shortcuts
+        buttons = {"open": self._open, "save": self._save, "save_as": self._save_as,
+                   "search": self._search, "print": self._print, "undo": self._undo,
+                   "redo": self._redo, "main_menu": self._main_menu_button, "toggle_tools": self._panel}
+        for command in commands:
+            if command.id in buttons:
+                sequences = " / ".join(command_shortcuts(command))
+                label = command.label.replace("&", "")
+                buttons[command.id].setToolTip(f"{label} ({sequences})" if sequences else label)
 
     def set_work_status(self, text: str) -> None:
         ready = text.strip().casefold() == "ready"

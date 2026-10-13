@@ -39,7 +39,15 @@ def run(directory,pages):
         store.accept()
     result.accepted=True
     started=time.perf_counter()
-    result=execute(spec,result,directory/f"run-{pages}",until="output")
+    from dataclasses import asdict
+
+    from composition.review.headless import approve_checked_contexts
+    from workflow.production_review import prepare_contexts
+    request={"review_kind":"pdf","spec":spec.to_dict(),"run":asdict(result),"directory":str(directory/f"run-{pages}"),
+             "output_dir":spec.node("output").params["directory"]}
+    authorization=approve_checked_contexts(prepare_contexts(request)["contexts"],directory/f"review-{pages}",
+                                           confirm=lambda _:True,warnings_acknowledged=True)
+    result=execute(spec,result,directory/f"run-{pages}",until="output",authorization=authorization)
     generated=time.perf_counter()-started
     if result.error or result.output.get("status")!="completed":
         raise RuntimeError(result.error)

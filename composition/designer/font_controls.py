@@ -6,6 +6,7 @@ import uuid
 from PyQt6.QtWidgets import QInputDialog
 
 from composition.template.model import FontSpec
+from core.system_fonts import font_platform_label
 
 
 class FontOperations:
@@ -13,7 +14,7 @@ class FontOperations:
         if self.close_pending:
             return
         self._worker({"task": "fonts"}, self.properties.set_catalogue,
-                     lambda error: self.properties.font_status.setText("Windows fonts unavailable: " + error))
+                     lambda error: self.properties.font_status.setText(f"{font_platform_label()} fonts unavailable: " + error))
 
     def _request_font(self, request):
         if request.get("element_ids"):
@@ -84,7 +85,7 @@ class FontOperations:
                 message = f"{repair}: {result['family']} configured only for missing glyphs; primary font retained."
             else:
                 target["font"].update(family=result["family"], file=result["file"], bold=False, italic=False)
-                label = "Select exact Windows font face"
+                label = f"Select exact {font_platform_label()} font face"
                 message = result.get("note") or f"{result['family']} · {result['style']} selected for PDF embedding."
             self._commit(before, after, label, self.canvas.selected_ids())
             self.message.setText(message)

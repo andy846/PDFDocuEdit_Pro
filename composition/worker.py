@@ -26,7 +26,7 @@ def emit(event, **values):
         print(line, end="", flush=True)
 
 
-def dispatch(request: dict) -> dict:
+def dispatch(request: dict, *, session=None) -> dict:
     task = request["task"]
     def cancelled():
         return bool(request.get("cancel_file") and Path(request["cancel_file"]).exists())
@@ -34,9 +34,35 @@ def dispatch(request: dict) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task.startswith("production_review_"):
+        from composition.review.service import create_review, preview_sheet, review_rows, validate_snapshot
+        if task == "production_review_check":
+            return create_review(request["directory"], request["context"], progress=progress, is_cancelled=cancelled, session=session)
+        if task == "production_review_rows":
+            return review_rows(request["directory"], request["snapshot_id"], offset=request.get("offset", 0),
+                search=request.get("search", ""), envelope=request.get("envelope", 0), output_page=request.get("output_page", 0))
+        if task == "production_review_preview":
+            return preview_sheet(request["directory"], request["snapshot_id"], request["output_page"], scale=request.get("scale", 2))
+        if task == "production_review_approve":
+            from composition.review.authorization import approve_snapshot
+            token = approve_snapshot(request["directory"], request["snapshot_id"], request["context"], session=session,
+                                     acknowledge=request.get("acknowledge", False), is_cancelled=cancelled)
+            return {"authorization": token}
+        if task == "production_review_validate":
+            validate_snapshot(request["directory"], request["snapshot_id"], request["context"],
+                              warnings_acknowledged=request.get("acknowledge", False), is_cancelled=cancelled)
+            return {"valid": True}
+        raise ValueError("Unknown production review operation.")
+
+    authorization = None
+    if task in ("generate", "overlay_generate"):
+        from composition.review.authorization import ProductionAuthorization
+        receipt = request.get("production_review")
+        authorization = ProductionAuthorization([receipt] if isinstance(receipt, dict) else [], session)
+
     if task == "workflow":
         from workflow.worker import dispatch as workflow_dispatch
-        return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state))
+        return workflow_dispatch(request, progress, cancelled,emit_state=lambda state:emit("state",state=state),session=session)
     if task == "media_paper_test":
         from composition.media.postscript import export_paper_test
         return export_paper_test(request["target"],request["media"],is_cancelled=cancelled,progress=progress)
@@ -190,7 +216,7 @@ def dispatch(request: dict) -> dict:
 
         from composition.overlay.generator import generate as overlay_generate
         from composition.overlay.model import OverlayJob
-        return asdict(overlay_generate(OverlayJob(**request["job"]), progress=progress, is_cancelled=cancelled))
+        return asdict(overlay_generate(OverlayJob(**request["job"]), progress=progress, is_cancelled=cancelled, authorization=authorization))
     if task == "overlay_save":
         from composition.overlay.model import EnvelopeSpec
         from composition.overlay.serializer import load_project, save_project
@@ -275,27 +301,29 @@ def dispatch(request: dict) -> dict:
             record = open_records(template, request.get("store", "")).record(index)
         else:
             record = {name: "{{" + name + "}}" for name in required_fields(template)}
-        repairs, rules = [], []
+        repairs, rules, layout = [], [], []
         page_index = request.get("page", 0)
         raw = render_preview(template, record, index, repair_details=repairs, page_index=page_index,
-                             design=design, rule_details=rules, auto_repair=request.get("auto_repair", False))
+                             design=design, rule_details=rules, auto_repair=request.get("auto_repair", False),layout_details=layout)
         pdf = Path(request["target"])
         pdf.write_bytes(raw)
         image = pdf.with_suffix(".png")
         with fitz.open(stream=raw, filetype="pdf") as document:
             raster = save_preview(document[0], image, request.get("raster_scale", 2))
-        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs, "rules": rules, **raster}
+        return {"pdf": str(pdf), "image": str(image), "record": index, "page": page_index, "glyph_repairs": repairs, "rules": rules, "layout_issues":layout, **raster}
     if task == "save":
         from composition.template.serializer import load_project, save_project
         target = save_project(Template.from_dict(request["template"]), request["target"])
         return {"project": str(target), "template": load_project(target).to_dict()}
     if task == "generate":
-        result = generate(ProductionJob(**request["job"]), progress=progress, is_cancelled=cancelled)
+        result = generate(ProductionJob(**request["job"]), progress=progress, is_cancelled=cancelled, authorization=authorization)
         return result.to_dict()
     raise ValueError("Unknown composition worker task.")
 
 
 def main(argv=None):
+    from auth.guard import require_worker_access
+    require_worker_access()
     global EVENTS_FILE
     parser = argparse.ArgumentParser(description="PDFDocuEdit headless composition worker")
     parser.add_argument("request")
@@ -309,7 +337,12 @@ def main(argv=None):
         request = json.loads(request_path.read_text(encoding="utf-8"))
         if request.get("events_file"):
             EVENTS_FILE = Path(request["events_file"])
-        result = dispatch(request)
+        session = None
+        if request.get("stdin_secrets"):
+            from composition.review.authorization import ReviewSession
+            private = json.loads(sys.stdin.readline(16384))
+            session = ReviewSession.from_private(private["production_session"])
+        result = dispatch(request, session=session)
         emit("result", result=result)
         return 0
     except Exception as exc:

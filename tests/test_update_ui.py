@@ -54,11 +54,25 @@ def test_successful_close_requests_supervised_restart(app, tmp_path, monkeypatch
 
 
 def test_unmanaged_build_explains_bootstrap(app, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
     monkeypatch.delenv(ROOT_ENV, raising=False)
     viewer = Viewer(True)
     dialog = UpdateDialog(viewer)
     assert not dialog.action.isEnabled()
     assert "Launcher.exe" in dialog.status.text()
+    dialog.close()
+    viewer.close()
+
+
+def test_unmanaged_mac_explains_matching_managed_dmg(app, monkeypatch):
+    from updates.target import UpdateTarget
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+    monkeypatch.setattr("ui.update_dialog.build_target", lambda: UpdateTarget("macos-arm64", "private", "qatest"))
+    viewer = Viewer(True)
+    dialog = UpdateDialog(viewer)
+    assert "private account Managed DMG" in dialog.status.text()
+    assert "Launcher.exe" not in dialog.status.text()
     dialog.close()
     viewer.close()
 
@@ -111,4 +125,21 @@ def test_qt_startup_disables_editor_until_matching_acceptance(app, tmp_path, mon
     assert calls == [[], ["document.pdf"]]
     assert not list((tmp_path / "requests").glob("*.json"))
     viewer._update_requests_timer.stop()
+    viewer.close()
+
+
+def test_all_windows_approved_cleanup_keeps_restart_request(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+    monkeypatch.setenv(TOKEN_ENV, "test-launch-token")
+    viewer = Viewer(False)
+    viewer.document_windows = SimpleNamespace(pending_exit=True)
+    dialog = UpdateDialog(viewer)
+    dialog.root = tmp_path
+    dialog.restart()
+    assert viewer._update_restart
+    assert read_json(tmp_path / "restart.json")["token"] == "test-launch-token"
+    assert "Finishing background tasks" in dialog.status.text()
+    viewer.allow_close = True
+    dialog.close()
     viewer.close()

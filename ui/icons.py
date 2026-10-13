@@ -44,6 +44,8 @@ _PATHS: dict[str, str] = {
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     "chevron-up": '<path d="m6 15 6-6 6 6"/>',
+    "arrow-left-right": '<path d="M8 3 4 7l4 4M4 7h16M16 13l4 4-4 4M20 17H4"/>',
+    "panels-top-bottom": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/>',
     "panel-left": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
     "panel-right": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
@@ -128,11 +130,12 @@ def icon(name: str, size: int = 20, color: str | None = None) -> QIcon:
 
 
 @lru_cache(maxsize=256)
-def app_pixmap(filename: str, size: int) -> QPixmap:
+def app_pixmap(filename: str, size: int, *, monochrome: bool = False) -> QPixmap:
     """Load one of the original high-resolution feature icons at UI scale.
 
     In dark themes the bitmap is recolored to the text colour so pre-rendered
     raster icons keep contrast, matching the monochrome SVG icons.
+    Explicit monochrome artwork is tinted in light themes as well.
     """
     source = QPixmap(str(resource_path("App_icon", filename)))
     if source.isNull():
@@ -146,8 +149,8 @@ def app_pixmap(filename: str, size: int) -> QPixmap:
         Qt.TransformationMode.SmoothTransformation,
     )
     foreground = QColor(get_color("text_primary"))
-    if foreground.lightness() > 128:
-        # Dark theme: tint the bitmap to the light text colour.
+    if monochrome or foreground.lightness() > 128:
+        # Preserve the original alpha/shape; only change the foreground colour.
         tinted = QPixmap(scaled.size())
         tinted.fill(Qt.GlobalColor.transparent)
         painter = QPainter(tinted)
@@ -188,6 +191,21 @@ def brand_pixmap(size: int) -> QPixmap:
 def app_icon(filename: str, size: int = 24) -> QIcon:
     path = resource_path("App_icon", filename)
     return QIcon(str(path)) if path.exists() else QIcon(app_pixmap(filename, size))
+
+
+def category_header_icon(filename: str, expanded: bool) -> QIcon:
+    """Keep a directional disclosure arrow beside a full-colour category icon."""
+    dpr = _screen_dpr()
+    canvas = QPixmap(round(44 * dpr), round(24 * dpr))
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.drawPixmap(
+        0, 5, _pixmap("chevron-down" if expanded else "chevron-right", 14, get_color("text_secondary"))
+    )
+    painter.drawPixmap(20, 0, app_icon(filename, 24).pixmap(24, 24))
+    painter.end()
+    return QIcon(canvas)
 
 
 def clear_icon_cache() -> None:

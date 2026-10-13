@@ -1,0 +1,38 @@
+[
+  {
+    "records": 1000,
+    "source_files": 3,
+    "branches": 2,
+    "check_seconds": 1.336881999974139,
+    "check_records_per_second": 748.0091735989745,
+    "generation_seconds": 0,
+    "generated_pages": 0,
+    "output_bytes": 0,
+    "peak_memory_bytes": 95289344,
+    "fixture": "Synthetic local CSV; two template branches sharing a one-page text layout; full routing, snapshots and font/rule preflight; no network, CJK, image-heavy or printer guarantee"
+  },
+  {
+    "records": 10000,
+    "source_files": 3,
+    "branches": 2,
+    "check_seconds": 1.9876286999788135,
+    "check_records_per_second": 5031.120752133732,
+    "generation_seconds": 0,
+    "generated_pages": 0,
+    "output_bytes": 0,
+    "peak_memory_bytes": 98127872,
+    "fixture": "Synthetic local CSV; two template branches sharing a one-page text layout; full routing, snapshots and font/rule preflight; no network, CJK, image-heavy or printer guarantee"
+  },
+  {
+    "records": 50000,
+    "source_files": 3,
+    "branches": 2,
+    "check_seconds": 4.877106000087224,
+    "check_records_per_second": 10251.981400261913,
+    "generation_seconds": 0,
+    "generated_pages": 0,
+    "output_bytes": 0,
+    "peak_memory_bytes": 101150720,
+    "fixture": "Synthetic local CSV; two template branches sharing a one-page text layout; full routing, snapshots and font/rule preflight; no network, CJK, image-heavy or printer guarantee"
+  }
+]

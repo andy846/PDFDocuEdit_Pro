@@ -351,14 +351,15 @@ class PreferencesDialog(ResponsiveDialog):
         if command_id is None:
             self.shortcut_status.setText("Select a command first.")
             return False
-        from core.commands import scopes_overlap, shortcut_conflict
+        from core.commands import command_shortcuts, scopes_overlap, shortcut_conflict
         candidate = self._canonical_shortcut(self.shortcut_editor.keySequence())
         if candidate:
             conflict_id = next(
                 (
                     other_id
                     for other_id, value in self._shortcut_values.items()
-                    if other_id != command_id and shortcut_conflict(value, candidate)
+                    if other_id != command_id and any(shortcut_conflict(binding, candidate)
+                        for binding in command_shortcuts(next(c for c in self._commands if c.id == other_id), self._shortcut_values))
                     and scopes_overlap(
                         next(c.scope for c in self._commands if c.id == command_id),
                         next(c.scope for c in self._commands if c.id == other_id))

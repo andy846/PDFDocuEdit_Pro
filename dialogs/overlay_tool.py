@@ -127,7 +127,7 @@ def _preflight_worker(template: Path, mode: int, current: Path | None, selected:
 
 def _preview_worker(template: Path, target: Path, page: int, options: OverlayOptions):
     with DOCUMENT_LOCK:
-        return render_overlay_preview(template, target, page, options)
+        return render_overlay_preview(template, target, page, options, include_geometry=True)
 
 
 class OverlayDialog(ToolDialog):
@@ -181,9 +181,17 @@ class OverlayDialog(ToolDialog):
                                    ("Cycle template pages", "cycle"),
                                    ("Matching pages only", "matching_only"))
         options_form.addRow("Page pairing", self.mapping)
-        self.scale_mode = self._combo(("Fit within target page", "fit"),
-                                      ("Original template size", "actual"))
-        options_form.addRow("Size", self.scale_mode)
+        self.output_page_size = self._combo(("Keep target page size", "target"),
+                                            ("Match paired template page size", "template"))
+        self.output_page_size.setToolTip("Sets output PDF paper dimensions, independently of template content scaling.")
+        options_form.addRow("Output page size", self.output_page_size)
+        self.scale_mode = self._combo(("Fit template to output page", "fit"),
+                                      ("Template at 100% (original content size)", "actual"))
+        options_form.addRow("Template content", self.scale_mode)
+        size_note = QLabel("Target content stays at 100% in its original position. A smaller output page may clip edges. "
+                           "Unpaired target pages keep their size. Preview shows actual output dimensions.")
+        size_note.setWordWrap(True)
+        options_form.addRow(size_note)
         self.alignment = self._combo(*((label, value) for label, value in (
             ("Top left", "top-left"), ("Top", "top"), ("Top right", "top-right"),
             ("Left", "left"), ("Centre", "center"), ("Right", "right"),
@@ -270,7 +278,7 @@ class OverlayDialog(ToolDialog):
             edit.textChanged.connect(self._schedule_scan)
         for control in (self.recursive, self.overwrite):
             control.toggled.connect(self._schedule_scan)
-        for control in (self.layer, self.mapping, self.scale_mode, self.alignment, self.rotation):
+        for control in (self.layer, self.mapping, self.output_page_size, self.scale_mode, self.alignment, self.rotation):
             control.currentIndexChanged.connect(self._schedule_preview)
         for control in (self.offset_x, self.offset_y):
             control.valueChanged.connect(self._schedule_preview)
@@ -354,6 +362,7 @@ class OverlayDialog(ToolDialog):
             scale_mode=self.scale_mode.currentData(), alignment=self.alignment.currentData(),
             rotation=self.rotation.currentData(), offset_x_mm=self.offset_x.value(),
             offset_y_mm=self.offset_y.value(),
+            output_page_size=self.output_page_size.currentData(),
         )
 
     def _schedule_scan(self, *_args) -> None:
@@ -456,13 +465,14 @@ class OverlayDialog(ToolDialog):
         if self._closed or generation != self._preview_generation:
             return
         self._preview_task = None
-        before, after, count = value
+        before, after, count, geometry = value
         left, right = QPixmap(), QPixmap()
         left.loadFromData(before)
         right.loadFromData(after)
         self._images = left, right
         self._display_images()
-        self.preview_status.setText(f"Page {self.preview_page.value()} of {count}")
+        width, height = geometry["after_mm"]
+        self.preview_status.setText(f"Page {self.preview_page.value()} of {count} · Output {width:.1f} × {height:.1f} mm")
 
     def _preview_failed(self, generation: int, error: str) -> None:
         if self._closed or generation != self._preview_generation:

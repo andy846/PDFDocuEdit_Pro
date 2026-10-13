@@ -151,6 +151,8 @@ def test_output_return_source_mapping_blank_and_edited_qc(window, tmp_path):
     raw["settings"]["duplex"] = True
     project.commit(raw, "Confirm grouping")
     project.generate_pdf(output_dir=str(tmp_path / "output"))
+    from tests.composition.review_helpers import confirm_review
+    confirm_review(project)
     wait_until(lambda: project.active_worker is None)
     assert project.last_result["status"] == "completed", project.last_result
     project.open_result("output_pdf")

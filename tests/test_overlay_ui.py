@@ -5,11 +5,45 @@ from pathlib import Path
 from shutil import copyfile
 
 import fitz
+import pytest
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from core.overlay import OverlayFileResult
 from dialogs.overlay_tool import OverlayDialog, OverlayResultsDialog
+
+
+@pytest.fixture(scope="module", autouse=True)
+def stable_application(qt_application):
+    yield qt_application
+
+
+def test_output_paper_size_is_separate_from_template_scale_and_reaches_export(tmp_path):
+    from core.tools import overlay_pdf
+    template, target = tmp_path / "a4.pdf", tmp_path / "letter.pdf"
+    for path, size in ((template, (210 * 72 / 25.4, 297 * 72 / 25.4)), (target, (612, 792))):
+        with fitz.open() as doc:
+            doc.new_page(width=size[0], height=size[1]).insert_text((30, 50), path.stem)
+            doc.save(path)
+    dialog = OverlayDialog(target)
+    dialog.show()
+    dialog.template.setText(str(template))
+    dialog.output.setText(str(tmp_path))
+    wait_for(lambda: dialog.apply_button.isEnabled() and dialog._images is not None)
+    assert dialog.options().output_page_size == "target"
+    assert "215.9" in dialog.preview_status.text() and "279.4" in dialog.preview_status.text()
+    dialog.output_page_size.setCurrentIndex(dialog.output_page_size.findData("template"))
+    dialog.scale_mode.setCurrentIndex(dialog.scale_mode.findData("actual"))
+    wait_for(lambda: "210.0" in dialog.preview_status.text() and "297.0" in dialog.preview_status.text())
+    assert dialog._images[1].width() / dialog._images[1].height() == pytest.approx(210 / 297, abs=0.002)
+    dialog._validate()
+    assert dialog.details["options"].output_page_size == "template"
+    assert dialog.details["options"].scale_mode == "actual"
+    output = overlay_pdf(template, target, tmp_path / "verified.pdf", options=dialog.details["options"])
+    with fitz.open(output) as doc:
+        assert (doc[0].rect.width, doc[0].rect.height) == pytest.approx((210 * 72 / 25.4, 297 * 72 / 25.4), abs=0.001)
+    dialog.close()
+    QApplication.processEvents()
 
 
 def make_pdf(path: Path, pages: int = 1) -> Path:

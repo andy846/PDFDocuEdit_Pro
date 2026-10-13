@@ -9,12 +9,33 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Every frozen/internal worker entry is checked before Qt or PDF imports.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] in {
+    "--print-worker", "--pdf-operations-worker", "--composition-worker", "--composition-smoke", "--macos-smoke",
+}:
+    from auth.guard import require_worker_access
+    require_worker_access()
+
 # Worker dispatch must precede Qt/editor imports in frozen development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--print-worker":
+    from core.print_worker import main as print_worker_main
+    raise SystemExit(print_worker_main(sys.argv[2:]))
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--pdf-operations-worker":
+    from core.pdf_operations.worker import main as pdf_operations_worker_main
+    raise SystemExit(pdf_operations_worker_main(sys.argv[2:]))
+
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-worker":
     from composition.worker import main as composition_worker_main
     raise SystemExit(composition_worker_main(sys.argv[2:]))
 
 # Internal acceptance mode is available only in explicitly enabled development builds.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--macos-smoke":
+    if sys.platform != "darwin" or os.environ.get("PDFDOCUEDIT_COMPOSITION_QA") != "1":
+        raise SystemExit("Mac acceptance requires an explicitly enabled Mac QA session.")
+    from scripts.macos_smoke import main as mac_smoke_main
+    raise SystemExit(mac_smoke_main(sys.argv[2:]))
+
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--composition-smoke":
     from composition.enabled import is_enabled
     if not is_enabled() or os.environ.get("PDFDOCUEDIT_COMPOSITION_QA") != "1":
@@ -23,7 +44,7 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--compositio
     raise SystemExit(import_module("scripts.composition_smoke").main(sys.argv[2:]))
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 
@@ -64,15 +85,26 @@ class PDFDocuEditApplication(QApplication):
 SINGLE_INSTANCE_KEY = f"{APP_SLUG}-v1-1-single-instance"
 
 
+def local_server_endpoint(name):
+    if sys.platform != "darwin":
+        return name
+    # macOS TMPDIR paths can exceed sockaddr_un's limit before Qt appends the
+    # server name. Use a short, deterministic endpoint isolated by user ID.
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:24]
+    return f"/tmp/pdfdocuedit-{os.getuid()}-{digest}.sock"
+
+
 class SingleInstanceRouter(QObject):
-    """Forward later Windows launches to the first running application."""
+    """Forward later launches to the first running application."""
 
     pathsReceived = pyqtSignal(list)
 
     def __init__(self, server_name: str = SINGLE_INSTANCE_KEY, parent=None):
         super().__init__(parent)
-        self.server_name = server_name
+        self.server_name = local_server_endpoint(server_name)
         self._server = QLocalServer(self)
+        if sys.platform == "darwin":
+            self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self._server.newConnection.connect(self._accept_connections)
         self._buffers: dict[QLocalSocket, bytearray] = {}
 
@@ -92,7 +124,7 @@ class SingleInstanceRouter(QObject):
         timeout_ms: int = 700,
     ) -> bool:
         socket = QLocalSocket()
-        socket.connectToServer(server_name)
+        socket.connectToServer(local_server_endpoint(server_name))
         if not socket.waitForConnected(timeout_ms):
             socket.abort()
             return False
@@ -164,29 +196,9 @@ class SingleInstanceRouter(QObject):
 
 
 def _create_splash() -> QSplashScreen:
-    splash_path = resource_path("Splash.png")
-    if splash_path.exists():
-        pixmap = QPixmap(str(splash_path))
-        # Show the splash at up to 45% of the screen width at native
-        # resolution (the previous fixed 520px looked small and blurry).
-        screen = QApplication.primaryScreen()
-        if screen and not pixmap.isNull():
-            dpr = screen.devicePixelRatio()
-            max_pixels = max(320, int(screen.availableGeometry().width() * 0.45 * dpr))
-            if pixmap.width() > max_pixels:
-                pixmap = pixmap.scaledToWidth(
-                    max_pixels, Qt.TransformationMode.SmoothTransformation
-                )
-            pixmap.setDevicePixelRatio(dpr)
-    else:
-        pixmap = QPixmap(520, 292)
-        pixmap.fill(QColor("#1c1c1e"))
-        painter = QPainter(pixmap)
-        painter.setPen(QColor("#f2f2f4"))
-        painter.setFont(QFont(QApplication.font().family(), 24, QFont.Weight.DemiBold))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, APP_NAME)
-        painter.end()
-    return QSplashScreen(pixmap)
+    from ui.splash import create_splash
+
+    return create_splash(resource_path("Splash.png"), APP_VERSION)
 
 
 def _set_windows_app_id() -> None:
@@ -293,7 +305,14 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
     app.setOrganizationDomain("pdfdocuedit.local")
     app.setApplicationVersion(APP_VERSION)
     app.setWindowIcon(_application_icon())
-    if managed_root() is not None:
+    from auth.config import configuration
+    try:
+        private_config = configuration()
+    except (ValueError, OSError, TypeError):
+        # Invalid private configuration is reported after QApplication exists.
+        # Never start the public settings migration in this failure case.
+        private_config = True
+    if managed_root() is not None and private_config is None:
         from updates.app_session import import_settings
 
         import_settings()
@@ -308,11 +327,47 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
     return [
         Path(os.path.abspath(os.path.expanduser(argument)))
         for argument in argv
-        if Path(argument).suffix.casefold() in {".pdf", ".ps", ".eps"}
+        if Path(argument).suffix.casefold() in ({".pdf", ".ps", ".eps", ".pdcx", ".pdflow"}
+                                              if sys.platform == "darwin" else {".pdf", ".ps", ".eps"})
     ]
 
 
+def route_open_files(viewer, paths):
+    """Finder projects use the existing host; PDF requests retain their queue."""
+    manager = getattr(viewer, "document_windows", None)
+    pdf_viewer = manager.active_window() if manager else viewer
+    if sys.platform != "darwin":
+        pdf_viewer.queue_open_files(paths)
+        return
+    for path in paths:
+        if Path(path).suffix.casefold() in {".pdcx", ".pdflow"}:
+            controller = getattr(viewer, "_mode_controller", None)
+            if controller:
+                if manager:
+                    manager.focus(viewer)
+                host = controller.ensure_host(create_default=False)
+                if host.open_project(path):
+                    controller.request_mode("designer")
+        else:
+            pdf_viewer.queue_open_files([path])
+
+
 def main() -> int:
+    if getattr(sys, "frozen", False) and sys.platform == "darwin" and not os.environ.get(TOKEN_ENV):
+        from updates.macos import managed_shell
+        from updates.target import build_target
+        try:
+            launcher_path = managed_shell(Path(sys.executable), build_target())
+            if launcher_path is not None:
+                environment = os.environ.copy()
+                environment.pop(ROOT_ENV, None)
+                environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                subprocess.Popen([str(launcher_path), *sys.argv[1:]], env=environment)
+                return 0
+        except Exception:
+            from core.diagnostics import log_failure
+            log_failure("Managed Mac launcher could not start")
+            return 1
     if getattr(sys, "frozen", False) and sys.platform == "win32":
         if not os.environ.get(TOKEN_ENV):
             from updates.protocol import UpdateError
@@ -351,10 +406,18 @@ def main() -> int:
 
 def _run_application(root: Path | None) -> int:
     app = create_application()
+    from auth.config import configuration
+    try:
+        auth_config = configuration()
+    except (ValueError, OSError, TypeError):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.critical(None, "Private build configuration", "Authentication configuration is invalid. Restore the complete private build.")
+        return 1
     # A file association starts the executable again. Forward those paths to
     # the existing process before creating a splash or a second main window.
     paths = pdf_arguments(sys.argv[1:])
-    server_name = SINGLE_INSTANCE_KEY if root is None else SINGLE_INSTANCE_KEY + "-" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    instance_key = SINGLE_INSTANCE_KEY + ("-private-" + auth_config.project_ref if auth_config else "")
+    server_name = instance_key if root is None else instance_key + "-" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
     if SingleInstanceRouter.forward_to_primary(paths, server_name):
         return 0
     instance_router = SingleInstanceRouter(server_name, parent=app)
@@ -367,20 +430,46 @@ def _run_application(root: Path | None) -> int:
     splash.show()
     app.processEvents()
 
+    if auth_config is not None:
+        from auth.application import PrivateApplication
+
+        def private_viewer():
+            viewer = PDFViewer()
+            if root is not None and sys.platform == "win32" and getattr(sys, "frozen", False):
+                from updates.windows_shell import clear_managed_window, configure_managed_window
+                hwnd = int(viewer.winId())
+                configure_managed_window(hwnd, root)
+                app.aboutToQuit.connect(lambda: clear_managed_window(hwnd))
+            QTimer.singleShot(150, lambda: _force_windows_icon(viewer))
+            QTimer.singleShot(200, viewer._update_title_bar)
+            return viewer
+
+        private = PrivateApplication(app, auth_config, private_viewer, root=root, open_paths=route_open_files, splash=splash)
+        app._private_session = private
+        app.fileOpenRequested.connect(lambda path: private.accept_paths([path]))
+        instance_router.pathsReceived.connect(private.accept_paths)
+        if root is not None:
+            from updates.app_session import activate
+            # A painted login or main window confirms startup. Saved approval
+            # is resolved first; neither password entry nor network is awaited.
+            private.startupReady.connect(
+                lambda: activate(private, private.accept_paths, on_ready=private.managed_ready)
+            )
+        private.start(paths)
+        app.activate_file_open_handler()
+        return app.exec()
+
     viewer = PDFViewer()
     # macOS FileOpen events each open in their own tab instead of replacing
     # the current document.
-    app.fileOpenRequested.connect(lambda path: viewer.queue_open_files([path]))
+    app.fileOpenRequested.connect(lambda path: route_open_files(viewer, [path]))
     app.activate_file_open_handler()
 
     def accept_forwarded_paths(forwarded: list[str]) -> None:
-        if viewer.isMinimized():
-            viewer.showNormal()
-        viewer.show()
-        viewer.raise_()
-        viewer.activateWindow()
+        target = viewer.document_windows.active_window()
+        viewer.document_windows.focus(target)
         if forwarded:
-            viewer.queue_open_files(forwarded)
+            route_open_files(viewer, forwarded)
 
     instance_router.pathsReceived.connect(accept_forwarded_paths)
     try:
@@ -400,7 +489,7 @@ def _run_application(root: Path | None) -> int:
     viewer.show()
     splash.finish(viewer)
     if paths and root is None:
-        viewer.queue_open_files([str(path) for path in paths])
+        route_open_files(viewer, [str(path) for path in paths])
     # Qt's HICON mask renders the title-bar icon as a white square; hand
     # Windows a correctly-masked icon once the native window exists.
     QTimer.singleShot(150, lambda: _force_windows_icon(viewer))

@@ -1,0 +1,14 @@
+[
+  {
+    "records": 50000,
+    "source_files": 3,
+    "branches": 2,
+    "check_seconds": 5.163044999935664,
+    "check_records_per_second": 9684.207672143675,
+    "generation_seconds": 96.74281130009331,
+    "generated_pages": 50000,
+    "output_bytes": 25316653,
+    "peak_memory_bytes": 106377216,
+    "fixture": "Synthetic local CSV; two template branches sharing a one-page text layout; full routing, snapshots and font/rule preflight; no network, CJK, image-heavy or printer guarantee"
+  }
+]

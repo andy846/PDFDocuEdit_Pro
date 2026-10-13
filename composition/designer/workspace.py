@@ -51,6 +51,7 @@ from .font_controls import FontOperations
 from .inspector import InspectorScrollArea
 from .pages import PageOperations
 from .process import Worker
+from .production_settings import ProductionScroll, ProductionSettings
 from .properties import Properties
 from .rule_controls import RuleOperations
 from .sequence_controls import SequenceOperations
@@ -83,7 +84,7 @@ class TemplateEdit(QUndoCommand):
         return True
 
 
-class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
+class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, DesignerUsability, RuleOperations, PageOperations, DesignerChrome, FontOperations, QMainWindow):
     activityChanged = pyqtSignal()
     projectClosed = pyqtSignal()
 
@@ -223,6 +224,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
         self.properties.glyphRepairRequested.connect(self.edit_glyph_repairs)
+        from .barcode_operations import edit_template_barcode
+        self.properties.barcodeProfileRequested.connect(lambda preset: edit_template_barcode(self, preset or None))
         self.properties.rulesRequested.connect(self.edit_object_rules)
         self.properties.rulesClearRequested.connect(self.clear_object_rules)
         self.properties.revertRequested.connect(self.revert_content_draft)
@@ -241,7 +244,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         preview_row.addWidget(self.preview_state, 1)
         self.preview_review = QPushButton("Review object")
         self.preview_review.hide()
-        self.preview_review.clicked.connect(self.review_failed_object)
+        self.preview_review.clicked.connect(self.review_preview_object)
+        self.preview_layout_issues = []
         preview_row.addWidget(self.preview_review)
         self.preview_retry = QPushButton("Refresh")
         self.preview_retry.setToolTip("Render the current template page again")
@@ -275,6 +279,10 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.production_heading = QLabel()
         self.production_heading.setWordWrap(True)
         prod_layout.addWidget(self.production_heading)
+        self.build_production_settings(prod_layout)
+        self.review_production_button = QPushButton("Review Production…")
+        self.review_production_button.clicked.connect(self.generate_pdf)
+        prod_layout.addWidget(self.review_production_button)
         self.auto_repair = QCheckBox("Automatically substitute missing glyphs and report changes")
         self.auto_repair.setChecked(self.preferences.value("auto_glyph_repair", True, type=bool))
         self.auto_repair.setToolTip("Keeps each object's primary font. Only missing characters use an available embeddable font. "
@@ -282,8 +290,14 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                                    "substitutions may affect text width and wrapping. Uncheck for strict font validation.")
         self.auto_repair.toggled.connect(self._auto_repair_changed)
         prod_layout.addWidget(self.auto_repair)
-        prod_layout.addWidget(QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
-                                    "Only validated, reconciled output is published to a new job folder."))
+        from ui.variable_name import VariableNameEdit
+        prod_layout.addWidget(QLabel("Output PDF filename"))
+        self.output_name_edit = VariableNameEdit(parent=self.production_page)
+        prod_layout.addWidget(self.output_name_edit)
+        source_note = QLabel("Source data is an imported snapshot. Critical errors stop the job.\n"
+                             "Only validated, reconciled output is published to a new job folder.")
+        source_note.setWordWrap(True)
+        prod_layout.addWidget(source_note)
         self.production_summary = QPlainTextEdit()
         self.production_summary.setReadOnly(True)
         prod_layout.addWidget(self.production_summary, 1)
@@ -299,7 +313,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         self.production_actions.addWidget(self.open_font_report_button)
         self.last_font_report = ""
         self.last_output = ""
-        self.stack.addWidget(self.production_page)
+        self.stack.addWidget(ProductionScroll(self.production_page, self.production_actions))
         layout.addWidget(self.stack, 1)
         self.message = CompactMessage(self)
         self.record_navigation = QWidget()
@@ -342,7 +356,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
     def _title(self, *args):
         name = self.project_path.name if self.project_path else self.template.name
-        self.setWindowTitle(f"{'* ' if not self.undo.isClean() else ''}{name} — Document Designer")
+        self.setWindowTitle(f"{'* ' if not self.undo.isClean() else ''}{name} — Template Designer")
 
     def _worker(self, request, result, failure=None):
         worker = Worker(self.directory, request, self)
@@ -528,6 +542,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if self.embedded:
             for key in ("new", "open", "pdf_overlay"):
                 self.actions[key].setEnabled(not self.close_pending)
+        self.refresh_production_settings()
         self.activityChanged.emit()
 
     def _mode_changed(self, index):
@@ -537,7 +552,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self.tabs.blockSignals(False)
             return
         self._designer_last_tab = index
-        self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 0)
+        self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 3 if index == 4 else 0)
         self.canvas.set_preview_mode(index == 2)
         self.record_navigation.setVisible(index == 2)
         self._show_properties(self.actions["properties"].isChecked())
@@ -546,6 +561,9 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
 
     def _schedule_preview(self, *args):
         self.preview_generation += 1
+        self.preview_layout_issues = []
+        self.preview_review.hide()
+        self.canvas.set_layout_issues([])
         self.preview_state.setText("Updating preview…" if self.tabs.currentIndex() in (1, 2) else "")
         context = (self.font_epoch, self.active_page_id, self.page.background,
                    self.page.width_mm, self.page.height_mm,
@@ -587,6 +605,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         if generation == self.preview_generation and not self.close_pending and not self.content_invalid:
             self.preview_review.hide()
             self.canvas.set_preview(result["image"])
+            self.preview_layout_issues = result.get("layout_issues", [])
+            self.canvas.set_layout_issues(self.preview_layout_issues)
             self.preview_state.setText(
                 f"Record {result['record']:,} · template page {result.get('page', 0)+1}"
                 if self.tabs.currentIndex() == 2 else "Design layout · field placeholders")
@@ -598,8 +618,21 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             repairs = result.get("glyph_repairs", [])
             count = sum(item["occurrences"] for item in repairs)
             self.message.setText(f"Preview uses {count} glyph font substitution(s); primary fonts retained." if count else "")
+            if self.preview_layout_issues:
+                self.preview_state.setText(self.preview_state.text() + f" · {len(self.preview_layout_issues)} clipped text box(es)")
+                self.preview_review.show()
+                self.message.setText("Some design labels do not fit. The canvas remains editable; use Record Preview to check actual values.")
         Path(result["pdf"]).unlink(missing_ok=True)
         Path(result["image"]).unlink(missing_ok=True)
+
+    def review_preview_object(self):
+        if not self.preview_layout_issues:
+            self.review_failed_object()
+            return
+        issue = self.preview_layout_issues[0]
+        self.canvas.select_ids([issue["object"]])
+        self.focus_properties()
+        self.message.setText(issue["reason"])
 
     def _preview_error(self, error, generation):
         if generation == self.preview_generation:
@@ -710,19 +743,41 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return
         if command != "copy" and (self.import_worker or self.production_worker or self.content_invalid or self.canvas.mode_preview):
             return
+        if command == "paste_in_place" and (not self.canvas.editable or self.font_requests
+                or getattr(self, "batch_pending", False) or self.properties.apply() is False):
+            return
         selected = set(self.canvas.selected_ids())
         if command == "cut":
             self.object_command("copy")
             self.object_command("delete")
             return
         if command == "copy":
+            if self.properties.apply() is False:
+                return
             self.clipboard = [asdict(e) for e in self.page.elements if e.id in selected]
+            self.clipboard_page_size = (self.page.width_mm, self.page.height_mm)
             self._update_actions()
             return
         before, after = self.template.to_dict(), self.template.to_dict()
         if command == "delete":
             self._page_dict(after)["elements"] = [e for e in self._page_dict(after)["elements"] if e["id"] not in selected]
-        elif command in {"paste", "duplicate"}:
+        elif command in {"paste", "paste_in_place", "duplicate"}:
+            if command == "paste_in_place":
+                if self.font_requests or getattr(self, "batch_pending", False):
+                    return
+                from .repeat_objects import append_exact_copies
+                try:
+                    pasted = append_exact_copies(self.clipboard, self._page_dict(after))
+                except CompositionError as exc:
+                    self._error(str(exc))
+                    return
+                self._commit(before, after, "Paste in place", pasted)
+                if pasted:
+                    notice = f"Pasted {len(pasted)} object(s) at their original coordinates."
+                    if getattr(self, "clipboard_page_size", None) != (self.page.width_mm, self.page.height_mm):
+                        notice += " Page sizes differ; X / Y were kept unchanged."
+                    self.message.setText(notice)
+                return
             source = (self.clipboard if command == "paste" else
                       [asdict(e) for e in self.page.elements if e.id in selected])
             for element in copy.deepcopy(source):
@@ -746,7 +801,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return False
         if self.undo.isClean() and not self.content_invalid:
             return True
-        answer = QMessageBox.question(self, "Unsaved document design", "Save changes to this project?",
+        answer = QMessageBox.question(self, "Unsaved template", "Save changes to this project?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
             QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
         if answer == QMessageBox.StandardButton.Save:
@@ -792,7 +847,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             self._error("Finish or cancel the active job before replacing the project.")
             return
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Open Document Designer project", "", "Document Designer projects (*.pdcx)")
+            path, _ = QFileDialog.getOpenFileName(self, "Open Template Designer project", "", "Template Designer projects (*.pdcx)")
         if not path:
             return
         try:
@@ -840,7 +895,7 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
             return False
         path = str(self.project_path) if self.project_path and not save_as else ""
         if not path:
-            path, _ = QFileDialog.getSaveFileName(self, "Save Document Designer project", "", "Document Designer projects (*.pdcx)")
+            path, _ = QFileDialog.getSaveFileName(self, "Save Template Designer project", "", "Template Designer projects (*.pdcx)")
         if not path:
             return False
         if self.project_host and not self.project_host.allow_save_path(self, path):
@@ -1018,20 +1073,34 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
         info = self._store()
         if not info or self.production_worker or self.import_worker:
             return
+        if self.properties.apply() is False:
+            return
+        from .production_review import open_template_review
+        open_template_review(self, output)
+
+    def _launch_reviewed_production(self, raw_job, receipt):
         from composition.production.model import ProductionJob
-        job = ProductionJob(self.template.to_dict(), info["store"], output, auto_repair=self.auto_repair.isChecked())
+        job = ProductionJob(**raw_job)
+        from core.variables import VariableContext, VariableError
+        job.variable_context["namespaces"].setdefault("job", {})["records"] = self.record_count
+        self.output_name_edit.set_context(VariableContext(**job.variable_context), prepared=True)
+        try:
+            self.output_name_edit.resolved()
+        except VariableError as exc:
+            self._error(str(exc))
+            return
         self._output_template = copy.deepcopy(self.template.to_dict())
         self.tabs.setCurrentIndex(3)
-        page_summary=(f"Logical template pages per record: {len(self.template.pages)}\n"
-                      "Print Media: calculating final pages and sheets in the worker…\n" if self.template.media.get("enabled") else
-                      f"Pages per record: {len(self.template.pages)}\nExpected pages: {self.record_count * len(self.template.pages):,}\n")
+        self.stack.setCurrentIndex(2)
+        from .production_settings import plan_summary
+        page_summary = plan_summary(self.template, self.record_count) + "\n"
         self.production_summary.setPlainText(f"Job {job.job_id}\nInput records: {self.record_count:,}\n"
                                              +page_summary+"Composing in an isolated process…")
         self.last_output = ""
         self.open_output_button.setEnabled(False)
         self.last_font_report = ""
         self.open_font_report_button.setEnabled(False)
-        self.production_worker = self._worker({"task": "generate", "job": asdict(job)}, self._production_ready)
+        self.production_worker = self._worker({"task": "generate", "job": asdict(job), "production_review": receipt}, self._production_ready)
         self.production_worker.progress.connect(self._progress)
         self._busy()
 
@@ -1041,11 +1110,19 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                  f"Processed records: {result['processed_records']:,}",
                  f"Successful records: {result['successful_records']:,}",
                  f"Failed records: {result['failed_records']:,}",
+                 f"Printing: {result.get('printing', 'simplex').title()}",
+                 f"Physical sheets: {result.get('sheets', 0):,}",
+                 f"Inserted blank backs: {result.get('inserted_blanks', 0):,}",
                  f"Pages per record: {result.get('pages_per_record', 1)}",
                  f"Expected pages: {result.get('expected_pages', result['input_records']):,}",
                  f"Generated pages: {result['generated_pages']:,}",
                  f"Published files: {result['generated_files']}",
                  "PDF: " + result["output_pdf"], "Reports: " + result["report_dir"]]
+        if result.get("expected_barcodes"):
+            lines.extend([f"Expected control barcodes: {result['expected_barcodes']:,}",
+                          f"Rendered control barcodes: {result.get('rendered_barcodes', 0):,}",
+                          f"Decoded control barcodes: {result.get('decoded_barcodes', 0):,}",
+                          "Barcode audit: " + str(Path(result["report_dir"]) / "barcodes.csv")])
         if result.get("output_ps"):
             lines.append("PostScript: "+result["output_ps"])
         if result["error"]:
@@ -1068,8 +1145,8 @@ class CompositionWindow(SequenceOperations, BulkTypography, DesignerUsability, R
                           f"Alternative content occurrences: {rules.get('alternate_occurrences', 0)}"])
         if result.get("media_summary"):
             lines.append("Media: "+" · ".join(f"{k}: {v:,} sheets" for k,v in result["media_summary"].get("stock_sheets",{}).items()))
-            lines.append("PostScript selection embedded · device validation pending" if result["media_summary"].get("backend")=="postscript"
-                         else "Offline default_ticket.jdf · Canon device validation pending")
+            from composition.media.model import media_output_description
+            lines.append(media_output_description(result["media_summary"], published=bool(result.get("generated_files"))))
         self.production_summary.setPlainText("\n".join(lines))
         self.failed_record = result.get("error_record")
         self._record_font_error(result["error"], result.get("error_record"))

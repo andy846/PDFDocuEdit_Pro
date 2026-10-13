@@ -15,8 +15,60 @@ from .model import WorkflowRun, WorkflowSpec
 from .registry import EXTRA_KINDS
 
 
-def dispatch(request, progress, cancelled, emit_state=None):
+def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
     operation=request["operation"]
+    if operation == "production_review_prepare":
+        from .production_review import prepare_contexts
+        return prepare_contexts(request, progress=progress, is_cancelled=cancelled)
+    authorization = None
+    if operation in ("batch_run", "branch_run") or (operation == "run" and request.get("until", "review") == "output"):
+        from .production_review import validate_receipts
+        authorization = validate_receipts(request, is_cancelled=cancelled, session=session)
+    if operation.startswith("branch_"):
+        from .branch_engine import approve_routes, execute_routes, prepare_routes, rows
+        spec=WorkflowSpec.from_dict(request["spec"])
+        if operation=="branch_folder":
+            check=Path(request["folder"])
+            paths=[]
+            for file in sorted(check.iterdir(),key=lambda p:p.name.casefold()):
+                if cancelled():
+                    from composition.production.generator import JobCancelled
+                    raise JobCancelled()
+                if file.suffix.lower() in (".csv",".txt",".tsv",".xlsx",".xlsm") and file.is_file():
+                    paths.append(str(file.resolve()))
+                if len(paths)>10000:
+                    raise CompositionError("A folder snapshot supports at most 10,000 data files.")
+            return {"paths":paths}
+        if operation=="branch_template":
+            from composition.template.serializer import load_project
+            return {"template":load_project(request["path"]).to_dict()}
+        if operation=="branch_check":
+            return {"run":prepare_routes(spec,request["directory"],previous=request.get("run"),target_id=request.get("node_id"),
+                                         progress=progress,is_cancelled=cancelled,on_state=emit_state)}
+        if operation=="branch_approve":
+            return {"run":approve_routes(spec,request["run"],request["identities"],acknowledge=request.get("acknowledge",False))}
+        if operation=="branch_run":
+            return {"run":execute_routes(spec,request["run"],request["directory"],request["output_dir"],
+                                         progress=progress,is_cancelled=cancelled,on_state=emit_state,authorization=authorization)}
+        if operation=="branch_recover":
+            from .branch_engine import recover_public_run
+            return {"run":recover_public_run(spec, request["output_dir"])}
+        if operation=="branch_rows":
+            return rows(spec,request["run"],request["directory"],source_id=request.get("source_id",""),
+                        branch_id=request.get("branch_id",""),view=request.get("view","output"),offset=request.get("offset",0),
+                        search=request.get("search",""),node_id=request.get("node_id",""))
+        if operation=="branch_preview":
+            from .branch_engine import _check_current, _location, branch_signature
+            _location(request["directory"],request["run"])
+            _check_current(spec,request["run"])
+            entry=next((e for e in request["run"]["jobs"] if e["id"]==request["job_id"]),None)
+            if not entry or not entry["batch"] or branch_signature(spec,request["run"]["signature"],entry["branch_id"])!=entry["signature"]:
+                raise CompositionError("Check this branch before previewing it.")
+            target=Path(request["target"]).resolve()
+            if not target.is_relative_to(Path(request["directory"]).resolve()):
+                raise CompositionError("Invalid preview destination.")
+            return dispatch({**request,"operation":"batch_preview","spec":entry["spec"],"batch":entry["batch"]},progress,cancelled,emit_state)
+        raise CompositionError("Unknown branch operation.")
     if operation in ("inspect_step","inspection_rows","inspection_preview","inspection_value"):
         from .batch import BatchJob
         from .inspection import inspect_step, inspection_preview, inspection_rows, inspection_value
@@ -37,7 +89,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
         return inspection_preview(request["directory"],request["run_id"],request["node_id"],spec,request["target"],
                                   **options,record=request.get("record",1),page=request.get("page",1))
     if operation.startswith("batch_"):
-        from .batch import BatchRun, approve, execute_batch, load_record, prepare, save_record
+        from .batch import BatchRun, execute_batch, load_record, prepare, save_record
         if operation=="batch_load":
             return {"batch":load_record(request["path"]).to_dict()}
         run=BatchRun.from_dict(request["batch"])
@@ -53,8 +105,7 @@ def dispatch(request, progress, cancelled, emit_state=None):
         if operation=="batch_check":
             return {"batch":prepare(spec,run,request["directory"],progress=progress,is_cancelled=cancelled).to_dict()}
         if operation=="batch_run":
-            approve(run,request["approved"])
-            return {"batch":execute_batch(spec,run,request["output_dir"],progress=progress,is_cancelled=cancelled,on_state=emit_state).to_dict()}
+            return {"batch":execute_batch(spec,run,request["output_dir"],progress=progress,is_cancelled=cancelled,on_state=emit_state,authorization=authorization).to_dict()}
         if operation=="batch_preview":
             from composition.data.sequences import open_records
             from composition.engine.preview_raster import save_preview
@@ -75,7 +126,8 @@ def dispatch(request, progress, cancelled, emit_state=None):
     if operation=="run":
         return asdict(execute(WorkflowSpec.from_dict(request["spec"]),WorkflowRun(**request["run"]),
                               request["directory"],until=request.get("until","review"),
-                              progress=progress,is_cancelled=cancelled))
+                              progress=progress,is_cancelled=cancelled,
+                              review_context=request["production_reviews"][0]["context"] if request.get("production_reviews") else None, authorization=authorization))
     if operation=="save":
         from .serializer import save_workflow
         return {"path":save_workflow(WorkflowSpec.from_dict(request["spec"]),request["path"],is_cancelled=cancelled)}

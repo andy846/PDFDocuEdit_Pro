@@ -27,17 +27,23 @@ def description(kind):
 
 
 def category(kind):
-    if kind in ("input", "data", "merge"):
+    if kind in ("input", "data", "merge", "for_each"):
         return CATEGORIES[0]
     if kind in ("template", "overlay"):
         return CATEGORIES[2]
-    if kind in ("review", "mail_review", "compose", "output", "reports", "media_assignment", "split_output"):
+    if kind in ("review", "mail_review", "compose", "output", "reports", "media_assignment", "split_output","exceptions","collect"):
         return CATEGORIES[3]
     return CATEGORIES[1]
 
 
 def settings_summary(node, fallback="Configure step"):
     params = node.params
+    if node.kind in ("flatten_pdf", "repair_pdf"):
+        options = params.get("options", {})
+        pages = options.get("pages")
+        scope = "All pages" if pages is None else f"{len(pages)} selected page(s)"
+        mode = "Rasterise" if options.get("rasterise") or options.get("mode") == "maximum" else options.get("mode", "safe")
+        return f"{mode} · {scope}"
     if node.kind in ("clean_fields", "create_fields", "sort_records", "validate_data", "filter_records"):
         key = {"clean_fields": "operations", "create_fields": "fields", "sort_records": "keys",
                "validate_data": "checks", "filter_records": "conditions"}[node.kind]

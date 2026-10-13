@@ -11,7 +11,7 @@ from pathlib import Path
 
 from composition.engine.assets import qpdf_executable
 from composition.production.generator import check_cancel
-from composition.production.model import new_job_id
+from composition.production.journal import publish_package, split_claim
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
 from core.pdf_io import validate_pdf_file
@@ -49,12 +49,20 @@ def qpdf_select(source, ranges, target, is_cancelled=None):
         args.unlink(missing_ok=True)
 
 
-def split_composed(result, source, partitions, output_dir, pages_per_record, *, is_cancelled=None, progress=None):
+@split_claim
+def split_composed(result, source, partitions, output_dir, pages_per_record, *, is_cancelled=None, progress=None, authorization=None):
+    from composition.review.authorization import require_authorization
+    authorization = require_authorization(authorization)
+    authorization.require_output_plan(result["job_id"], output_dir, partitions)
+    from core.output_safety import contained_path, validate_identifier
+    validate_identifier(result["job_id"])
     root=Path(output_dir).resolve()
     root.mkdir(parents=True,exist_ok=True)
-    job_id=new_job_id()
+    job_id=result["job_id"]
     staging=Path(tempfile.mkdtemp(prefix=".split-"+job_id+"-",dir=root))
-    final=root/job_id
+    final=contained_path(root,job_id)
+    if final.exists():
+        raise CompositionError("This production output already exists. Review a new attempt explicitly.")
     files=[]
     try:
         with closing(sqlite3.connect(source.path)) as db:
@@ -155,7 +163,7 @@ def split_composed(result, source, partitions, output_dir, pages_per_record, *, 
             "retained":source.count,"excluded":updated["excluded_records"],"outputs":files},indent=2),encoding="utf-8")
         (staging/"job.json").write_text(json.dumps(updated,ensure_ascii=False,indent=2),encoding="utf-8")
         check_cancel(is_cancelled)
-        os.rename(staging,final)
+        updated = publish_package(staging, final, updated, authorization)
         return updated
     finally:
         if staging.exists() and staging.resolve().parent==root and staging.name.startswith(".split-"+job_id+"-"):
