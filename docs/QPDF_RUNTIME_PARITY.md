@@ -16,4 +16,23 @@ The existing Mac native preparer shares the build/staging helper. PyInstaller in
 
 ## Evidence
 
-Local Windows focused suite: 88 passed; Ruff passed; Windows assets `--verify-only` passed. Local source verification cannot pass until this checkout has the existing pinned Ghostscript runtime (`Ghostscript/bin/gswin64c.exe`). Actual remote Linux/Mac core, Windows automated/UI and native Mac installed-app results are pending. Synthetic fixtures do not prove physical printer behavior. No GitHub Release was produced.
+Local Windows focused suite: 88 passed; Ruff passed; Windows assets `--verify-only` passed. Local source verification cannot pass until this checkout has the existing pinned Ghostscript runtime (`Ghostscript/bin/gswin64c.exe`). Remote validation on product source `a5681ae601b0b5f3a3a9d8ae20879920a8028162`:
+
+| Gate | Result / evidence |
+| --- | --- |
+| Linux core | 340 passed, 14 existing platform skips |
+| macOS ARM64 core | 340 passed, 14 existing platform skips |
+| Windows UI | 970 passed, zero skips/failures |
+| Mac native application / Managed / private admission | Passed; [native run](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38393146954) |
+| Mac platform acceptance tests | 224 passed, 1 platform skip, 14 modules |
+| Windows automated | Passed on failed-job-only rerun: 1,461 passed, 3 platform skips, 114 modules; performance smoke passed. Initial same-source attempt had one inactive-page navigation failure; the exact case also passed locally. |
+
+[Full CI](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38393152221) includes the full existing core/UI suites. No test has been disabled or skipped to pass this repair.
+
+The native artifact report confirms qpdf 12.4.2, `qpdf_independent_check.status=OK`, exit code 0, and an executable inside `Installation with spaces/PDFDocuEdit Pro.app/Contents/Frameworks/build_assets/composition/qpdf/qpdf`. Font repair's three original failures pass on both native core platforms.
+
+Native testing exposed two outdated test assumptions that were corrected: the frozen QA generator now supplies the genuine session-bound review receipt over private stdin, including for synthetic PostScript fixtures; the mode-transition test waits for completion within its existing deadline instead of a fixed 250ms. The production authorization service and animation behavior are unchanged. Local signed-QA/authorization/runtime tests: 38 passed; the exact animation case passed.
+
+Earlier runs retain their actual failures: [old native harness](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38390609145), [fixed-delay animation assertion](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38391892467), and existing Windows UI crashes/errors in `test_p5_ui` / `test_large_organizer`. The later native run and Windows UI gate passed. The exact `test_p5_ui` module passed locally (4 cases). These records are not replaced or described as successful. Synthetic fixtures do not prove physical printer behavior. No GitHub Release was produced.
+
+Final full CI conclusion: success (attempt 2), retaining successful source quality, Windows UI and Linux/Mac core jobs. The tested product source is `a5681ae`; the following documentation-only commit adds evidence and the Symantec support note without rerunning unchanged product gates. No main/default branch merge, version bump, release or antivirus submission was performed.

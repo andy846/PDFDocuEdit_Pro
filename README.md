@@ -498,3 +498,5 @@ Completed production packages include checksum/completion evidence. **Visual Wor
 ### qpdf runtime parity
 
 Native macOS/Linux preparation and packaging use the same pinned qpdf source and strict runtime integrity checks. See [qpdf preparation and acceptance](docs/QPDF_RUNTIME_PARITY.md).
+
+Symantec WS.Reputation.1 quarantine review: [verified qpdf identity and support procedure](docs/QPDF_SYMANTEC_REVIEW.md). Antivirus vendor clearance remains unconfirmed.
