@@ -8,6 +8,19 @@ from dataclasses import asdict
 from pathlib import Path
 
 
+def generate_checked_fixture(worker, job, directory):
+    """Explicitly approve synthetic QA fixtures using the production contract."""
+    context = {"kind": "template", "job": asdict(job)}
+    reviewed = worker({"task": "production_review_check", "directory": str(directory), "context": context})
+    if reviewed["status"] != "checked" or Path(job.output_dir).exists():
+        raise RuntimeError(f"Frozen review failed or published output: {reviewed['issues']}")
+    receipt = {"directory": str(directory), "snapshot_id": reviewed["snapshot_id"],
+               "context": reviewed["context"], "acknowledge": True}
+    approved = worker({"task": "production_review_approve", **receipt})
+    return worker({"task": "generate", "job": reviewed["context"]["job"],
+                   "production_review": {**receipt, "authorization": approved["authorization"]}})
+
+
 def main(argv):
     import fitz
     from PyQt6.QtWidgets import QApplication
@@ -43,16 +56,19 @@ def main(argv):
     app.processEvents()
     viewer.grab().save(str(output / "workspace.png"))
 
+    from composition.review.authorization import ReviewSession
+    session = ReviewSession.new()
     counter = 0
     def worker(request):
         nonlocal counter
         counter += 1
         file = output / f"request-{counter}.json"
         events = output / f"events-{counter}.jsonl"
-        request = {**request, "events_file": str(events)}
+        request = {**request, "events_file": str(events), "stdin_secrets": True}
         file.write_text(json.dumps(request), encoding="utf-8")
         completed = subprocess.run([sys.executable, "--composition-worker", str(file)],
-                                   capture_output=True, timeout=180)
+                                   capture_output=True, timeout=180,
+                                   input=json.dumps({"production_session": session.private_payload()}).encode() + b"\n")
         rows = [json.loads(line) for line in events.read_text().splitlines()] if events.exists() else []
         errors = [r for r in rows if r["event"] == "error"]
         if completed.returncode or errors:
@@ -87,15 +103,7 @@ def main(argv):
         if len(pdf) != 1 or "陳明" not in pdf[0].get_text():
             raise RuntimeError("Frozen imported-record CJK preview is incorrect.")
     job = ProductionJob(template.to_dict(), imported["store"], str(output / "production"))
-    context = {"kind": "template", "job": asdict(job)}
-    reviewed = worker({"task": "production_review_check", "directory": str(output / "review"), "context": context})
-    if reviewed["status"] != "checked" or (output / "production").exists():
-        raise RuntimeError(f"Frozen review failed or published output: {reviewed['issues']}")
-    worker({"task": "production_review_validate", "directory": str(output / "review"),
-            "snapshot_id": reviewed["snapshot_id"], "context": reviewed["context"], "acknowledge": True})
-    generated = worker({"task": "generate", "job": reviewed["context"]["job"],
-                       "production_review": {"directory": str(output / "review"),
-                           "snapshot_id": reviewed["snapshot_id"], "context": reviewed["context"], "acknowledge": True}})
+    generated = generate_checked_fixture(worker, job, output / "review")
     if generated["status"] != "completed" or generated["generated_pages"] != 8 or generated["decoded_barcodes"] != 4:
         raise RuntimeError(f"Frozen I25 generation failed: {generated}")
 
@@ -104,7 +112,7 @@ def main(argv):
         mappings={s["id"]: {"media_type": s["id"]} for s in media["stocks"]}))
     ps_template = Template(pages=[PageSpec(elements=[Element(value="Mac production")]) for _ in range(3)],
                            record_mode="generated", generated_count=2, media=media)
-    ps = worker({"task": "generate", "job": asdict(ProductionJob(ps_template.to_dict(), "", str(output / "ps")))})
+    ps = generate_checked_fixture(worker, ProductionJob(ps_template.to_dict(), "", str(output / "ps")), output / "ps-review")
     if ps["status"] != "completed" or not list(Path(ps["report_dir"]).glob("*.ps")):
         raise RuntimeError(f"Frozen PostScript output failed: {ps}")
     # The persistent print worker must restore POSIX streams in the .app.
