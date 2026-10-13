@@ -49,6 +49,8 @@ def verify_package(final, identity, binding, expected_completion=""):
             return None
         # Every recorded absolute output must still belong to this package.
         result = packet["result"]
+        if Path(result.get("report_dir", "")).resolve() != final.resolve():
+            return None
         pdfs = [result.get("output_pdf")] + [f.get("output_pdf") for f in result.get("output_files", [])]
         from core.pdf_io import validate_pdf_file
         for raw in pdfs:
@@ -219,27 +221,71 @@ def production_claim(kind):
     return decorate
 
 
+@contextmanager
+def final_claim(authorization, identity, output_dir, outputs):
+    """Own the final destination before rendering, including split intermediates."""
+    authorization.require_output_plan(identity, output_dir, outputs)
+    journal = JobJournal(output_dir, identity, _binding(authorization, identity))
+    current = _CURRENT.get()
+    if current is not None and current.final == journal.final and current.binding == journal.binding:
+        yield current
+        return
+    with journal.claim():
+        try:
+            yield journal
+        except Exception as exc:
+            try:
+                journal.persist("Needs review", error=str(exc))
+            except OSError:
+                _LOG.exception("Unable to persist final production failure")
+            raise
+
+
 def split_claim(function):
     @wraps(function)
     def checked(result, source, partitions, output_dir, pages_per_record, **kwargs):
         from composition.review.authorization import require_authorization
         authorization = require_authorization(kwargs.get("authorization"))
-        authorization.require_output_plan(result["job_id"], output_dir, partitions)
-        journal = JobJournal(output_dir, result["job_id"], _binding(authorization, result["job_id"]))
-        with journal.claim():
+        with final_claim(authorization, result["job_id"], output_dir, partitions) as journal:
             if journal.existing is not None:
                 return copy.deepcopy(journal.existing)
-            try:
-                value = function(result, source, partitions, output_dir, pages_per_record, **kwargs)
-                journal.finish(value)
-                return value
-            except Exception as exc:
-                try:
-                    journal.persist("Needs review", error=str(exc))
-                except OSError:
-                    _LOG.exception("Unable to persist split production failure")
-                raise
+            value = function(result, source, partitions, output_dir, pages_per_record, **kwargs)
+            journal.finish(value)
+            return value
     return checked
+
+
+def branch_binding(run, entry):
+    return {"common": run["signature"], "batch_id": run["batch_id"],
+            **{k: entry[k] for k in ("id", "source_id", "branch_id", "signature", "records")}}
+
+
+def publication_binding(authorization, identity):
+    context = next(c for c in authorization.contexts if c["job"]["job_id"] == identity)
+    binding = context.get("binding", {})
+    result = {"identity": context.get("identity", ""), "job_signature": binding.get("job_signature", "")}
+    branch = binding.get("branch_approval")
+    if branch:
+        entry = next(j for j in branch["jobs"] if j["id"] == context["identity"])
+        result["branch"] = branch_binding(branch, entry)
+    return result
+
+
+def verified_branch_output(result, expected):
+    """A mutable recovery manifest cannot relabel an old checked package."""
+    try:
+        identity = validate_identifier(result["job_id"])
+        folder = Path(result["report_dir"])
+        folder = contained_path(folder.parent, folder.name)
+        state = json.loads(contained_path(folder.parent, ".production-state", identity + ".json").read_text(encoding="utf-8"))
+        if state.get("job_id") != identity or not state.get("completion_sha256"):
+            return False
+        if verify_package(folder, identity, state["binding"], state["completion_sha256"]) is None:
+            return False
+        packet = json.loads(contained_path(folder, "completion.json").read_text(encoding="utf-8"))
+        return packet.get("production_binding", {}).get("branch") == expected
+    except (KeyError, ValueError, OSError, TypeError):
+        return False
 
 
 def publish_package(staging, final, result, authorization):
@@ -254,7 +300,8 @@ def publish_package(staging, final, result, authorization):
     context = next(c for c in authorization.contexts if c["job"]["job_id"] == journal.identity)
     packet = {"version": 1, "job_id": journal.identity, "binding": journal.binding,
               "variable_context":copy.deepcopy(context["job"].get("variable_context", {})),
-              "result": copy.deepcopy(result), "artifacts": _artifact_rows(Path(staging))}
+              "result": copy.deepcopy(result), "artifacts": _artifact_rows(Path(staging)),
+              "production_binding": publication_binding(authorization, journal.identity)}
     _write(Path(staging) / "completion.json", packet)
     completion = file_hash(Path(staging) / "completion.json")
     journal.persist("Publishing", staging=str(staging), completion_sha256=completion, result=result)

@@ -433,8 +433,11 @@ def load_record(path):
 
 
 def _reports(run, root):
-    save_record(run,root/"batch.json")
-    with atomic_output(root/"batch-summary.csv") as temp, temp.open("w",encoding="utf-8-sig",newline="") as stream:
+    from core.output_safety import contained_path
+    record = contained_path(root, "batch.json")
+    summary = contained_path(root, "batch-summary.csv")
+    save_record(run, record)
+    with atomic_output(summary) as temp, temp.open("w",encoding="utf-8-sig",newline="") as stream:
         writer=csv.writer(stream)
         writer.writerow(["Batch ID","Name","Template","Data","Status","Job ID","Retained records","Expected pages","Generated pages","PDF","Reports","Error","Source records","Excluded records"])
         for job in run.jobs:
@@ -452,9 +455,17 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
     authorization = require_authorization(authorization)
     BatchRun.from_dict(run.to_dict())
     authorization.require_workflow(spec, [j.id for j in run.jobs if j.status == "Ready" and j.approved])
+    from core.output_safety import contained_path
     root=Path(output_dir).resolve()
     if not _direct_root:
-        root=root/("batch-"+run.batch_id)
+        try:
+            root=contained_path(root, "batch-"+run.batch_id)
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+    root=authorization.require_destination(root)
+    def report_state():
+        checked = authorization.require_destination(root)
+        _reports(run, checked)
     run.report_dir=str(root)
     run.status="Running"
     run.started_at=run.started_at or now()
@@ -469,7 +480,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                         item.warnings.append(message)
     try:
         root.mkdir(parents=True,exist_ok=True)
-        _reports(run,root)
+        report_state()
         notify({"status":run.status,"jobs":[]})
         for index,job in enumerate(run.jobs,1):
             if is_cancelled and is_cancelled():
@@ -484,7 +495,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                     job.approved=False
                     job.status="Needs review"
                     job.error="Inputs/settings changed. Check and approve this item again."
-                    _reports(run,root)
+                    report_state()
                     notify({"status":run.status,"jobs":[job.record()]})
                     continue
                 if not job.snapshot_hashes or any(not Path(p).is_file() or file_hash(Path(p))!=digest for p,digest in job.snapshot_hashes.items()):
@@ -492,7 +503,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                 check_cancel(is_cancelled)
                 job.status="Running"
                 job.stage="Compose"
-                _reports(run,root)
+                report_state()
                 notify({"status":run.status,"jobs":[job.record()]})
                 def job_progress(done,total,message,current_job=job,current_index=index):
                     current_job.stage=message
@@ -525,7 +536,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
                 job.status="Failed"
                 job.error=str(exc)
             job.approved=False
-            _reports(run,root)
+            report_state()
             notify({"status":run.status,"jobs":[job.record()]})
             if job.status=="Cancelled":
                 run.status="Cancelled"
@@ -546,7 +557,7 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
         run.status="Completed" if run.jobs and all(j.status=="Completed" for j in run.jobs) else "Partial / needs attention"
     run.finished_at=now()
     try:
-        _reports(run,root)
+        report_state()
     except Exception as exc:
         for item in run.jobs:
             item.warnings.append("State/report could not be saved: " + str(exc))
@@ -555,6 +566,19 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
 
 
 def _compose_item(spec,job,root,partitions,progress,is_cancelled,authorization):
+    if not partitions:
+        return _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
+    from composition.production.journal import final_claim
+    identity = job.variable_context["namespaces"]["job"]["id"]
+    with final_claim(authorization, identity, root, partitions) as journal:
+        if journal.existing is not None:
+            return copy.deepcopy(journal.existing)
+        result = _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
+        journal.finish(result)
+        return result
+
+
+def _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization):
     identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id") or new_job_id()
     from contextlib import nullcontext
     # Short owned scratch paths avoid Windows MAX_PATH failures in nested font caches.

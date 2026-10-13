@@ -73,3 +73,9 @@ Started 2026-10-13T00:13:36+00:00; release preparation in progress.
 - Task 4: candidate operator acceptance — Pending; earlier version checks cannot fill these fields.
 - Task 5: public release/post-public verification — Pending.
 - Mac native plan retains existing gates and adds P0 authorization/output/recovery, Branch UI, live document windows and Overlay UI tests.
+
+## Independent release review and fixes
+
+Fresh reviewer inspected 4900521..4f959f7; no Critical or Minor findings, four Important issues accepted and fixed: PDF execution DB binding, batch destination/report containment, final split claim ordering, and recovered package-to-branch provenance. A changed report-directory reference is also rejected. Tests first reproduced all four issues; 17-module follow-up passed 227 cases with one Windows file-symlink permission skip. Native Mac plan now has 40 modules and includes that test. Complete candidate-native and operator gates remain Pending.
+
+No second review or duplicate local full regression was dispatched; the next full suite is the mandatory frozen-source Windows CI gate. The signing key was checked against the existing trust anchor without exposing or uploading it. Previous v3.0.5 signed artifacts and the original v3.0.3 portable are available for the two-upgrade test: 3.0.3 → 3.0.5 → this 3.0.6 candidate, avoiding an extra QA build.

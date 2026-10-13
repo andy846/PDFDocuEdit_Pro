@@ -23,6 +23,7 @@ TESTS = [
     "tests/test_production_authorization.py", "tests/test_production_output_safety.py",
     "tests/test_production_recovery.py", "tests/test_workflow_branch_ui.py",
     "tests/test_document_windows.py", "tests/test_overlay_ui.py",
+    "tests/test_release_production_boundaries.py",
 ]
 
 

@@ -312,13 +312,39 @@ def execute_pdf(spec,run,directory,*,until="review",progress=None,is_cancelled=N
 
 
 def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,review_context=None,authorization=None):
+    if not _review_only:
+        from composition.review.authorization import require_authorization
+        authorization = require_authorization(authorization)
+        authorization.require_workflow(spec)
+        reviewed = authorization.contexts[0]
+        authorization.require_execution_database(run.database)
+        partitions = reviewed.get("outputs", [])
+        if partitions:
+            from composition.production.journal import final_claim
+            with final_claim(authorization, reviewed["job"]["job_id"], reviewed["job"]["output_dir"], partitions) as journal:
+                if journal.existing is not None:
+                    run.output = copy.deepcopy(journal.existing)
+                    run.statuses[spec.node("output").id] = "Completed"
+                    return run
+                result = _produce_claimed(spec,run,root,progress=progress,is_cancelled=is_cancelled,
+                                          review_context=review_context,authorization=authorization)
+                journal.finish(result.output)
+                return result
+    return _produce_claimed(spec,run,root,progress=progress,is_cancelled=is_cancelled,_review_only=_review_only,
+                            review_context=review_context,authorization=authorization)
+
+
+def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,review_context=None,authorization=None):
     from .engine import detection_audit, external_fields
     if not _review_only:
         from composition.review.authorization import require_authorization
         authorization = require_authorization(authorization)
         authorization.require_workflow(spec)
         review_context = authorization.contexts[0]
-    with ExtractionStore(run.database) as store:
+        database = authorization.require_execution_database(run.database)
+    else:
+        database = run.database
+    with ExtractionStore(database) as store:
         if store.metadata()["accepted"]!="true" or store.metadata()["sha256"]!=file_hash(Path(run.source)):
             raise CompositionError("Extracted data or source changed since acceptance.")
         original_groups=[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")]
@@ -397,7 +423,7 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,
                                          trace[0] if trace else "",trace[1] if trace else ""])
                 (report/"original-boundaries.json").write_text(json.dumps({"groups":run.groups,"selected":selected,
                     "input_envelopes":len(run.groups),"kept":data.count,"excluded":len(run.groups)-data.count},indent=2),encoding="utf-8")
-            with ProductionValues(data.path,run.database,composed) as values:
+            with ProductionValues(data.path,database,composed) as values:
                 # Keep nested renderer/font caches beneath a short owned Windows path.
                 context=tempfile.TemporaryDirectory(prefix="wf-overlay-") if partitions else nullcontext(folder)
                 with context as generation_root:

@@ -207,6 +207,11 @@ def _save_review(folder, context, identity, digest, stats, status, summary, issu
 
 def create_review(directory, raw, *, progress=None, is_cancelled=None, session=None, external_values=None):
     context = _context(raw)
+    # Freeze the physical destination while the operator reviews it. Never
+    # resolve the signed anchor through a later junction when executing.
+    context.binding["output_anchor"] = str(Path(context.job["output_dir"]).resolve())
+    context.binding.setdefault("output_root", context.binding["output_anchor"])
+    raw = asdict(context)
     from core.output_safety import validate_identifier
     validate_identifier(context.job.get("job_id"))
     identity = uuid.uuid4().hex

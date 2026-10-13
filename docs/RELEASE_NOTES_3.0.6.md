@@ -9,8 +9,8 @@
 
 - Template, Overlay, PDF Workflow, Batch and Branch publication require authenticated Production Review evidence bound to settings, inputs, prepared data, selected work and output destination.
 - Restarting, changing settings/resources, or retrying unfinished work requires renewed review. Approval is valid for new starts within the current session and 24 hours; started work is not interrupted by expiry.
-- Branch/job identities and destinations are validated; traversal, Windows reserved device names and symlink/junction escapes are rejected.
-- Production journals, OS-held job claims and completion manifests cover PDF, PS, JDF, split output and reports. Verified committed output is retained and skipped; incomplete or changed output is not overwritten automatically.
+- Branch/job identities and physical destinations are bound to approval; traversal, Windows reserved device names, directory junctions and report-file symlinks are rejected before writes. PDF Workflow uses the authenticated extraction database, not a replacement request reference.
+- Production journals, OS-held job claims and completion manifests cover PDF, PS, JDF, split output and reports. Split jobs claim their final destination before rendering, so verified committed work is skipped without recomposition. Recovery also checks the original published branch/template binding; missing or changed proof requires review. Incomplete or changed output is not overwritten automatically.
 - Visual Workflow > Production > **Recover previous run…** verifies a previous batch folder and retains completed output. Unfinished jobs require Check & Review and an explicit new attempt/destination.
 - Post-publication notification/report/state failures are distinguished from failed composition. No silent retry-folder substitution remains.
 - Zero selected records produce an approved report-only package, not an empty PDF. Headless callers must supply `ProductionAuthorization` through the documented explicit review contract.

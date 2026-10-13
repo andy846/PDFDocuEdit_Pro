@@ -136,8 +136,36 @@ class ProductionAuthorization:
         if len(matches) != 1:
             raise CompositionError("Production job or destination differs from its approval. Review again.")
         self.validate(is_cancelled=is_cancelled)
+        self.require_destination(raw["output_dir"], raw["job_id"])
         self.started = True
         return matches[0]
+
+    def require_destination(self, directory, job_id=None):
+        from pathlib import Path
+
+        from core.output_safety import contained_path
+        contexts = [c for c in self.contexts if job_id is None or c["job"]["job_id"] == job_id]
+        if not contexts:
+            raise CompositionError("Missing approval for this production destination.")
+        try:
+            actual = Path(directory).resolve()
+            for context in contexts:
+                binding = context.get("binding", {})
+                expected = Path(binding["output_anchor"])
+                scope = Path(binding.get("output_root", str(expected)))
+                checked = contained_path(scope, *expected.relative_to(scope).parts)
+                if checked != expected or actual != expected:
+                    raise ValueError("destination differs from its checked physical location")
+            return expected
+        except (KeyError, ValueError, OSError, TypeError) as exc:
+            raise CompositionError("Production destination differs from approval or traverses a symlink/junction. Review again: " + str(exc)) from exc
+
+    def require_execution_database(self, database):
+        from pathlib import Path
+        if (len(self.contexts) != 1 or not self.contexts[0].get("external_database")
+                or Path(database).resolve() != Path(self.contexts[0]["external_database"]).resolve()):
+            raise CompositionError("Execution extraction database differs from production review. Check again.")
+        return self.contexts[0]["external_database"]
 
     def require_workflow(self, spec, selected=None):
         if any(spec.to_dict() not in (c.get("binding", {}).get("owner_spec"), c.get("binding", {}).get("execution_spec")) for c in self.contexts):
@@ -160,6 +188,7 @@ class ProductionAuthorization:
         if (len(matches) != 1 or Path(matches[0]["job"]["output_dir"]).resolve() != Path(directory).resolve()
                 or matches[0].get("outputs", []) != outputs):
             raise CompositionError("Output plan differs from its production approval.")
+        self.require_destination(directory, job_id)
         self.validate()
         self.started = True
         return matches[0]
@@ -178,7 +207,10 @@ class ProductionAuthorization:
     def for_staging(self, kind, job, output_dir):
         """Only trusted engines derive an in-memory grant for their owned scratch."""
         context = copy.deepcopy(self.require_job(kind, job))
+        from pathlib import Path
         context["job"]["output_dir"] = str(output_dir)
+        context["binding"]["output_anchor"] = str(Path(output_dir).resolve())
+        context["binding"]["output_root"] = context["binding"]["output_anchor"]
         child = object.__new__(ProductionAuthorization)
         child.session, child.receipts, child.contexts = self.session, self.receipts, [context]
         child.parent, child.started = self, True

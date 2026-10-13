@@ -10,7 +10,7 @@ from composition.review.service import validate_snapshot
 from composition.template.model import CompositionError
 
 
-def batch_context(spec, job, root, *, owner_spec=None):
+def batch_context(spec, job, root, *, owner_spec=None, output_root=None):
     from .batch import _signature
     signature, _, _, _ = _signature(spec, job)
     if job.status != "Ready" or not job.approved or not job.prepared_template or signature != job.signature:
@@ -26,6 +26,7 @@ def batch_context(spec, job, root, *, owner_spec=None):
     return {"kind": "template", "job": asdict(prepared), "label": job.name, "identity": job.id,
         "outputs": job.data_summary.get("outputs", []),
         "binding": {"owner_spec": (owner_spec or spec).to_dict(), "execution_spec": spec.to_dict(), "job_signature": signature,
+                    "output_root": str(output_root or root),
                     "data_summary": copy.deepcopy(job.data_summary),
                     "files": [job.template_path, job.data_path, *job.snapshot_hashes]}}
 
@@ -47,7 +48,9 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
     output = Path(request["output_dir"]).resolve()
     if kind == "batch":
         batch = BatchRun.from_dict(request["batch"])
-        return {"contexts": [batch_context(spec, job, output / ("batch-" + batch.batch_id)) for job in batch.jobs
+        from core.output_safety import contained_path
+        root = contained_path(output, "batch-" + batch.batch_id)
+        return {"contexts": [batch_context(spec, job, root, output_root=output) for job in batch.jobs
                              if job.approved and job.status == "Ready"]}
     if kind == "branch":
         from .branch_engine import _check_current, _location, production_root
@@ -59,7 +62,7 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
             if entry["approved"] and entry["status"] == "Ready":
                 child = WorkflowSpec.from_dict(entry["spec"])
                 batch = BatchRun.from_dict(entry["batch"])
-                context = batch_context(child, batch.jobs[0], production_root(output, run, entry), owner_spec=spec)
+                context = batch_context(child, batch.jobs[0], production_root(output, run, entry), owner_spec=spec, output_root=output)
                 context["binding"]["branch_approval"] = branch_approval_binding(run)
                 contexts.append(context)
         return {"contexts": contexts}

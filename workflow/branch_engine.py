@@ -321,7 +321,7 @@ def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,i
                             continue
                         entry["signature"]=branch_signature(spec,signature,r["id"])
                         prior=old.get((item["id"],r["id"]))
-                        if prior and prior["signature"]==entry["signature"] and prior["status"]=="Completed" and prior.get("batch") and _finished_valid(BatchJob(**prior["batch"]["jobs"][0])):
+                        if prior and prior["signature"]==entry["signature"] and prior["status"]=="Completed" and prior.get("batch") and _finished_valid(BatchJob(**prior["batch"]["jobs"][0])) and _finished_branch(run, entry, prior["batch"]["jobs"][0]["result"]):
                             entry.update(copy.deepcopy(prior))
                             continue
                         try:
@@ -342,7 +342,7 @@ def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,i
                                           progress=progress,is_cancelled=is_cancelled)
                             if prior and prior["signature"]==entry["signature"] and prior["status"]=="Completed" and prior.get("result"):
                                 restored=BatchJob(result=prior["result"])
-                                if _finished_valid(restored):
+                                if _finished_valid(restored) and _finished_branch(run, entry, prior["result"]):
                                     job.status,job.result,job.approved="Completed",copy.deepcopy(prior["result"]),False
                                     if prior.get("recovered_variables"):
                                         job.variable_context=copy.deepcopy(prior["recovered_variables"])
@@ -671,6 +671,11 @@ def _page(source,offset,search):
             yield ordinal,{k:v[:256] for k,v in list(json.loads(value).items())[:12]},identity
 
 
+def _finished_branch(run, entry, result):
+    from composition.production.journal import branch_binding, verified_branch_output
+    return verified_branch_output(result, branch_binding(run, entry))
+
+
 def public_run(run):
     public={k:v for k,v in run.items() if k not in ("directory","jobs","stages","sources")}
     public["sources"]=[{k:v for k,v in source.items() if k!="import_store"} for source in run["sources"]]
@@ -712,7 +717,8 @@ def recover_public_run(spec, root):
                         raise CompositionError("Recovery identity does not match the journal file.")
                     with journal.claim():
                         result=journal.existing
-                        if result:
+                        expected = {**entry, "signature": branch_signature(spec, run["signature"], entry["branch_id"])}
+                        if result and _finished_branch(run, expected, result):
                             result=copy.deepcopy(result)
                             if result.get("output_pdf"):
                                 result["output_sha256"]=file_hash(Path(result["output_pdf"]))
