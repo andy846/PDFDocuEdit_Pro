@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 
 from core.diagnostics import connect_interrupts, log_failure
 from core.pdf_engine import DOCUMENT_LOCK
-from core.reader_lifetime import ReaderLease
+from core.reader_lifetime import ReaderBusyError, ReaderLease, wait_for_readers
 from styles.tokens import D, S
 
 from .motion import MotionIconButton
@@ -351,7 +351,7 @@ class ThumbnailPanel(QFrame):
     def reader_events(self):
         return [ReaderLease(task) for task in (*self._tasks.values(), *self._retired_tasks.values())]
 
-    def quiesce_renders(self, wait=True) -> None:
+    def quiesce_renders(self, wait=True, timeout_ms=3000) -> None:
         """Invalidate jobs; file-mutating callers may explicitly await readers."""
         generation = self._generation
         self._generation += 1
@@ -360,12 +360,13 @@ class ThumbnailPanel(QFrame):
                 task.done.set()
             elif not task.done.is_set():
                 self._retired_tasks[(generation, page)] = task
-        if wait:
-            self._pool.waitForDone()
-            self._retired_tasks.clear()
         self._pending.clear()
         self._tasks.clear()
         self._failures.clear()
+        if wait:
+            if not wait_for_readers(self.reader_events(), timeout_ms):
+                raise ReaderBusyError("Thumbnail readers are still running. No edit was applied; wait and retry.")
+            self._retired_tasks.clear()
 
     def _render_visible_thumbnails(self) -> None:
         """Schedule rendering only for pages near the visible window.
@@ -374,7 +375,7 @@ class ThumbnailPanel(QFrame):
         PDF); instead only the scroll window plus a small overscan renders,
         with a hard cap on in-flight tasks.
         """
-        if not self._render_enabled or not self.isVisible() or not self._doc_path or self._list.count() == 0:
+        if getattr(self, "_reader_pause_count", 0) or not self._render_enabled or not self.isVisible() or not self._doc_path or self._list.count() == 0:
             return
         first, last = self._visible_range()
         wanted = set(range(first, last + 1))
@@ -439,7 +440,7 @@ class ThumbnailPanel(QFrame):
         return max(0, first_visible - overscan), min(count - 1, last_visible + overscan)
 
     def _schedule_render(self, page_num: int, priority: int = 5) -> None:
-        if not self._render_enabled or page_num in self._pending or not self._doc_path or self._failures.get(page_num, 0) >= 2:
+        if getattr(self, "_reader_pause_count", 0) or not self._render_enabled or page_num in self._pending or not self._doc_path or self._failures.get(page_num, 0) >= 2:
             return
         self._pending.add(page_num)
         task = _RenderTask(

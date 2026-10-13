@@ -34,9 +34,14 @@ class TaskBar(QFrame):
         self._cancel.setAccessibleName("Cancel background work")
         self._cancel.clicked.connect(self.cancelRequested.emit)
         layout.addWidget(self._cancel)
+        self._owner = None
+        self.active = False
         self.hide()
 
-    def start(self, label: str, cancellable: bool = True) -> None:
+    def start(self, label: str, cancellable: bool = True, *, owner=None) -> None:
+        self._owner = owner
+        was_active = self.active
+        self.active = True
         self._label.setText(label)
         self._detail.clear()
         self._progress.setRange(0, 0)
@@ -44,7 +49,8 @@ class TaskBar(QFrame):
         self._cancel.setVisible(cancellable)
         self._cancel.setEnabled(cancellable)
         self.show()
-        self.activityChanged.emit(True)
+        if not was_active:
+            self.activityChanged.emit(True)
 
     def update_progress(self, current: int, total: int, detail: str) -> None:
         self._detail.setText(detail)
@@ -59,9 +65,19 @@ class TaskBar(QFrame):
         self._cancel.setText("Cancelling…")
         self._cancel.setEnabled(False)
 
-    def clear(self) -> None:
-        self.activityChanged.emit(False)
+    def owns(self, owner) -> bool:
+        return self.active and self._owner is owner
+
+    def clear(self, *, owner=None) -> bool:
+        if owner is not None and not self.owns(owner):
+            return False
+        was_active = self.active
+        self.active = False
+        self._owner = None
+        if was_active:
+            self.activityChanged.emit(False)
         self.hide()
         self._detail.clear()
         self._cancel.setEnabled(True)
         self._cancel.show()
+        return was_active

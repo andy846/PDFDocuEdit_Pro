@@ -314,7 +314,9 @@ class DocumentSession(QObject):
             self.split_canvas.update_theme()
 
     def close(self) -> None:
-        """Quiesce background renders and release the document."""
+        """Quiesce background renders and release the document exactly once."""
+        if getattr(self, "_retirement_started", False):
+            return
         readers = self.canvas.reader_events() + self.nav_panel.thumbnails.reader_events()
         self.canvas.clear(wait=False)
         if self.split_canvas is not None:
@@ -329,3 +331,4 @@ class DocumentSession(QObject):
             if snapshot:
                 Path(snapshot).unlink(missing_ok=True)
         after_readers(readers, cleanup)
+        self._retirement_started = True
