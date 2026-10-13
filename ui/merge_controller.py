@@ -180,7 +180,7 @@ class MergeController:
         finally:
             self.window._session = previous
         self.exit_approved = True
-        self.window.setEnabled(False)
+        self.window._close_lifecycle.begin()
         return True
 
     def shutdown(self):

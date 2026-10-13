@@ -139,3 +139,28 @@ def test_failed_open_keeps_error_and_clears_activity(editor, tmp_path):
     wait_until(lambda: not editor._tasks and not editor._open_queue_scheduled)
     assert editor.task_bar.isHidden()
     assert editor.bottom_bar._status_full == "Error"
+
+
+def test_cancelled_password_open_clears_activity(editor, tmp_path, monkeypatch):
+    from core import viewer as viewer_module
+    source = tmp_path / "encrypted.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page()
+        pdf.save(source, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="fixture", user_pw="fixture")
+    monkeypatch.setattr(viewer_module, "ask_password", lambda *a, **k: ("", False))
+    editor.queue_open_files([str(source)])
+    wait_until(lambda: not editor._tasks and not editor._open_queue_scheduled)
+    assert editor.task_bar.isHidden() and not editor.task_bar.active
+    assert editor.bottom_bar._status_full == "Cancelled"
+    assert all(not s.engine.is_loaded() for s in editor._sessions)
+
+
+def test_access_denied_open_clears_activity_without_hiding_error(editor, tmp_path, monkeypatch):
+    from core import viewer as viewer_module
+    def denied(*args, **kwargs):
+        raise PermissionError("Controlled access denied")
+    monkeypatch.setattr(viewer_module, "_prepare_pdf_engine", denied)
+    editor.queue_open_files([str(tmp_path / "denied.pdf")])
+    wait_until(lambda: not editor._tasks and not editor._open_queue_scheduled)
+    assert editor.task_bar.isHidden() and not editor.task_bar.active
+    assert editor.bottom_bar._status_full == "Error"
