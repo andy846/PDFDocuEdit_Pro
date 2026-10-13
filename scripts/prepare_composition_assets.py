@@ -13,9 +13,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "build_assets" / "composition"
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(ROOT))
 
 
 def prepare(*, fonts_only: bool = False, verify_only: bool = False) -> None:
+    if sys.platform != "win32" and not fonts_only:
+        if verify_only:
+            from core.pdf_runtime import qpdf_executable
+            qpdf_executable()
+        else:
+            from scripts.prepare_qpdf import prepare_native_qpdf
+            prepare_native_qpdf()
     manifest = json.loads((ASSETS / "BUNDLE_INFO.json").read_text(encoding="utf-8"))
     downloads: dict[str, bytes] = {}
     for asset in manifest["assets"]:
@@ -55,7 +64,7 @@ def prepare(*, fonts_only: bool = False, verify_only: bool = False) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fonts-only", action="store_true", default=sys.platform != "win32")
+    parser.add_argument("--fonts-only", action="store_true", default=False)
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     prepare(fonts_only=args.fonts_only, verify_only=args.verify_only)

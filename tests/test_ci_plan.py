@@ -130,3 +130,13 @@ def test_mac_release_invokes_current_integrity_and_production_gates(monkeypatch)
         "tests/test_overlay_ui.py",
     } <= set(selected)
     assert len(selected) == len(set(selected))
+
+
+
+def test_qpdf_runtime_changes_require_platform_and_ui_gates():
+    result = plan("pull_request", "refs/pull/14/merge", ["core/pdf_runtime.py"])
+    assert result["full"] == result["ui"] == result["cross_platform"] == "true"
+    for path in ("scripts/prepare_qpdf.py", "scripts/prepare_macos.py", "build_assets/composition/BUNDLE_INFO.json"):
+        assert plan("pull_request", "refs/pull/14/merge", [path])["cross_platform"] == "true"
+    assert "tests/test_pdf_runtime.py" in CROSS_PLATFORM_TESTS
+    assert "tests/test_font_preflight.py" in CROSS_PLATFORM_TESTS

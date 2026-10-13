@@ -494,3 +494,7 @@ Copyright © 2026 Andy Leung. All rights reserved. PDFDocuEdit Pro is proprietar
 Production generation requires current, explicitly confirmed review evidence. Repeated page insertion is transactional, and rollback/Undo documents remain saveable. Branch output names are validated and contained within the selected production folder.
 
 Completed production packages include checksum/completion evidence. **Visual Workflow → Production → Recover previous run…** verifies earlier batches and retains completed output; remaining work must be checked and reviewed again. Failed attempts are not silently republished into retry folders. See [P0 reliability and headless approval](docs/P0_RELIABILITY.md).
+
+### qpdf runtime parity
+
+Native macOS/Linux preparation and packaging use the same pinned qpdf source and strict runtime integrity checks. See [qpdf preparation and acceptance](docs/QPDF_RUNTIME_PARITY.md).

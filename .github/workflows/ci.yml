@@ -207,7 +207,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-latest
+          - macos-14
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -223,12 +223,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+          sudo apt-get install --yes libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 cmake g++ zlib1g-dev libjpeg-dev
       - name: Install project test dependencies
         run: python -m pip install -r requirements-dev.txt
       - name: Verify dependency consistency
         run: python -m pip check
-      - name: Prepare composition fonts
-        run: python scripts/prepare_composition_assets.py --fonts-only
+      - name: Install macOS native qpdf build dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake jpeg-turbo
+      - name: Prepare pinned composition runtime
+        run: python -m scripts.prepare_composition_assets
       - name: Run platform-neutral core tests
         run: python scripts/ci_plan.py run cross

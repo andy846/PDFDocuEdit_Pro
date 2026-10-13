@@ -83,6 +83,7 @@ CROSS_PLATFORM_TESTS = (
     "tests/test_deep_search_detailed.py",
     "tests/test_font_inspector.py",
     "tests/test_font_preflight.py",
+    "tests/test_pdf_runtime.py", "tests/test_prepare_qpdf.py", "tests/test_pdf_operations.py",
     "tests/test_font_preflight_ui.py",
     "tests/test_pdf_production.py", "tests/test_pdf_production_ui.py",
     "tests/test_ocr.py",
@@ -105,7 +106,7 @@ ZERO_SHA = "0" * 40
 
 
 def is_ui_change(path: str) -> bool:
-    return path == "main.py" or path == "core/viewer.py" or path.startswith(
+    return path in {"main.py", "core/viewer.py", "core/pdf_runtime.py"} or path.startswith(
         ("ui/", "dialogs/", "styles/", "composition/designer/", "composition/preview/", "workflow/workspace",
          "workflow/regions_ui", "workflow/canvas", "workflow/chrome", "workflow/mail_merge_ui", "workflow/node_settings",
          "workflow/inspection_ui", "workflow/drafts", "workflow/node_presentation", "auth/application", "auth/ui", "auth/controller")
@@ -114,7 +115,9 @@ def is_ui_change(path: str) -> bool:
 
 def is_cross_platform_change(path: str) -> bool:
     return path.startswith(("core/", "ui/", "dialogs/", "styles/", "updates/", "composition/", "workflow/")) or path in {
-        "main.py", "launcher.py", "pyproject.toml", "requirements-base.txt", "requirements-dev.txt"
+        "main.py", "launcher.py", "pyproject.toml", "requirements-base.txt", "requirements-dev.txt",
+        "scripts/prepare_qpdf.py", "scripts/prepare_composition_assets.py", "scripts/prepare_macos.py",
+        "build_assets/composition/BUNDLE_INFO.json", "build_assets/macos/SOURCES.json"
     } or path in CROSS_PLATFORM_TESTS
 
 

@@ -59,7 +59,16 @@ def main(argv):
             raise RuntimeError(f"Frozen worker failed: {errors}; {completed.stderr[-2000:]!r}")
         return next(row["result"] for row in rows if row["event"] == "result")
 
-    version = subprocess.check_output([str(qpdf_executable()), "--version"], text=True).strip()
+    pinned_qpdf = qpdf_executable()
+    version = subprocess.check_output([str(pinned_qpdf), "--version"], text=True).strip()
+    check_pdf = output / "qpdf-independent-check.pdf"
+    with fitz.open() as check_document:
+        check_document.new_page().insert_text((72, 72), "Bundled independent PDF check")
+        check_document.save(check_pdf)
+    checked = subprocess.run([str(pinned_qpdf), "--check", str(check_pdf)],
+                             capture_output=True, text=True, timeout=30, check=True)
+    independent_check = {"status": "OK", "exit_code": checked.returncode,
+                         "bundled_executable": str(pinned_qpdf), "message": checked.stdout.strip()}
     catalogue = worker({"task": "fonts"})
     if not any(face["usable"] for face in catalogue["faces"]):
         raise RuntimeError("Mac installed font inventory is empty.")
@@ -122,5 +131,5 @@ def main(argv):
     viewer.close()
     app.processEvents()
     (output / "result.json").write_text(json.dumps({"status": "passed", "platform": sys.platform,
-        "qpdf": version, "font_faces": len(catalogue["faces"]), "production": generated, "postscript": ps}, indent=2), encoding="utf-8")
+        "qpdf": version, "qpdf_independent_check": independent_check, "font_faces": len(catalogue["faces"]), "production": generated, "postscript": ps}, indent=2), encoding="utf-8")
     return 0
