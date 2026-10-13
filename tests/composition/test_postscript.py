@@ -334,3 +334,28 @@ def test_48_simplex_records_with_i25_publish_pdf_and_postscript(tmp_path):
     assert result.media_summary["postscript_pages"] == 48
     assert Path(result.output_pdf).is_file() and Path(result.output_ps).is_file()
     assert not Path(result.report_dir, "default_ticket.jdf").exists()
+
+
+
+def test_ps_zero_retained_records_publish_reports_without_ghostscript(tmp_path, monkeypatch):
+    import composition.media.postscript as ps
+    from tests.test_workflow_data_steps import insert
+
+    def missing():
+        raise CompositionError("PostScript output requires Ghostscript.")
+    monkeypatch.setattr(ps, "ghostscript_executable", missing)
+    job = pair(tmp_path)
+    template = load_project(job.template_path)
+    template.media = ps_media()
+    save_project(template, job.template_path)
+    spec = insert(recipe([job]).upgraded(), "template", "filter_records", {"mode": "all", "conditions": [
+        {"field": "Name", "operator": "eq", "data_type": "text", "value": "not present"}]})
+    run = prepare(spec, BatchRun(jobs=[job]), tmp_path / "scratch")
+    assert job.input_records == 0 and job.status == "Needs review", job.error
+    approve(run, [job.id])
+    execute_batch(spec, run, tmp_path / "out")
+    assert job.status == "Completed", job.error
+    assert job.result["generated_files"] == 0 and job.result["excluded_records"] == 2
+    assert Path(job.result["report_dir"], "job.json").is_file()
+    assert not list(Path(run.report_dir).rglob("*.pdf"))
+    assert not list(Path(run.report_dir).rglob("*.ps"))

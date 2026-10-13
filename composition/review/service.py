@@ -129,7 +129,7 @@ def validate_snapshot(directory, identity, raw, *, warnings_acknowledged=False, 
     if packet["issues"] and not warnings_acknowledged:
         raise CompositionError("Acknowledge the production warnings before confirming.")
     context = _context(raw)
-    if context.kind != "report":
+    if context.kind != "report" and packet["summary"].get("backend") != "reports":
         from composition.media.postscript import validate_output_backend
         project = context.job["template" if context.kind == "template" else "project"]
         validate_output_backend(project.get("media", {}))

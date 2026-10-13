@@ -69,7 +69,9 @@ PS 不支援 PDF 的原生透明效果，轉換可能平面化；設定提供 30
 Selecting PDF + PostScript requires the bundled, configured or system Ghostscript.
 Production Review checks this before scanning records or approving generation, and
 checks again on confirmation and execution. PDF-only and offline JDF jobs do not
-require this converter. Missing Ghostscript does not indicate a customer-data,
+require this converter. A filter retaining zero records can still be reviewed,
+approved and published as reconciliation reports only without Ghostscript; it
+produces no empty PDF or PS. Missing Ghostscript does not indicate a customer-data,
 font or barcode failure; no production output is published.
 
 For a source checkout / linked worktree, ignored native runtime folders are not
