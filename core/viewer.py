@@ -305,6 +305,11 @@ class PDFViewer(QMainWindow):
         with self._startup_trace.span("settings"):
             self.settings = SettingsManager()
         self._pdf_only_window = pdf_only
+        if pdf_only:
+            # closeEvent accepts only after workers/readers are safely closed.
+            # Release a retired secondary widget tree instead of retaining it
+            # for later application-wide theme repolish.
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._window_closed = False
         self._window_exit_approved = False
         self._sessions: list[DocumentSession] = []
@@ -1692,7 +1697,12 @@ class PDFViewer(QMainWindow):
         if not isinstance(app, QApplication):
             return
         apply_theme(app, ThemeMode(value))
-        app.setStyleSheet(global_style())
+        stylesheet = global_style()
+        # Reapplying identical QSS repolishes every open/closed widget. A new
+        # PDF window only needs its own controls refreshed; actual theme
+        # changes still install the new shared application stylesheet.
+        if app.styleSheet() != stylesheet:
+            app.setStyleSheet(stylesheet)
         clear_icon_cache()
         self.command_bar.refresh_icons()
         self.side_panel.refresh_icons()

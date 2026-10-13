@@ -4,7 +4,8 @@ import time
 
 import fitz
 import pytest
-from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
@@ -34,14 +35,20 @@ def editor(tmp_path, monkeypatch, qt_application):
     window.close()
     wait_closed(window)
     qt_application.processEvents()
+    # A QApplication spans the module. Dispose this fixture's retired Qt
+    # roots rather than leaving every closed widget in global QSS repolish.
+    for owned in qt_application.topLevelWidgets():
+        if isinstance(owned, viewer_module.PDFViewer) and getattr(owned, "document_windows", None) is manager:
+            owned.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def wait_closed(window):
     deadline = time.monotonic() + 10
-    while window.isVisible() and time.monotonic() < deadline:
+    while not sip.isdeleted(window) and window.isVisible() and time.monotonic() < deadline:
         QApplication.instance().processEvents()
         time.sleep(0.01)
-    assert not window.isVisible()
+    assert sip.isdeleted(window) or not window.isVisible()
 
 
 def documents(window, tmp_path, count=3):
@@ -323,7 +330,7 @@ def test_pair_with_designer_mode_keeps_documents_on_return(editor, tmp_path, mon
     assert not hasattr(child, "_mode_controller")
     editor.close()
     wait_closed(editor)
-    assert not child.isVisible()
+    assert sip.isdeleted(child) or not child.isVisible()
 
 
 def test_save_action_writes_only_active_pane_and_moved_document(editor, tmp_path):
@@ -365,3 +372,54 @@ def test_external_route_uses_last_active_pdf_window(editor, tmp_path, monkeypatc
     monkeypatch.setattr(child, "queue_open_files", lambda paths: requests.extend(paths))
     route_open_files(editor, [str(tmp_path / "new.pdf")])
     assert requests == [str(tmp_path / "new.pdf")]
+
+
+def test_reapplying_unchanged_theme_does_not_repolish_application(editor, monkeypatch):
+    app = QApplication.instance()
+    original = app.setStyleSheet
+    changes = []
+
+    def capture(style):
+        changes.append(style)
+        original(style)
+
+    monkeypatch.setattr(app, "setStyleSheet", capture)
+    before = app.styleSheet()
+    editor.apply_theme(editor.settings.get_theme())
+    assert app.styleSheet() == before
+    assert changes == []
+
+
+def test_shared_theme_change_updates_global_style_once(editor, tmp_path, monkeypatch):
+    from styles.components import global_style
+
+    editor._theme_changed("light")
+    _, second, _ = documents(editor, tmp_path)
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    app = QApplication.instance()
+    original = app.setStyleSheet
+    changes = []
+
+    def capture(style):
+        changes.append(style)
+        original(style)
+
+    monkeypatch.setattr(app, "setStyleSheet", capture)
+    editor._theme_changed("dark")
+    assert changes == [global_style()]
+    assert app.styleSheet() == global_style()
+    assert child.palette().color(child.backgroundRole()) == editor.palette().color(editor.backgroundRole())
+    assert editor.isVisible() and child.isVisible()
+
+
+def test_closed_secondary_releases_qt_widgets_after_safe_cleanup(editor, tmp_path):
+    _, second, _ = documents(editor, tmp_path)
+    assert editor.document_windows.move(second)
+    child = second.window_owner
+    child.close()
+    wait_closed(child)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(child)
+    assert editor.isVisible()
+    assert editor.document_windows.live_windows() == [editor]

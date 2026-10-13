@@ -21,6 +21,7 @@
 - Overlay PDF output respects the selected template/target paper-size policy.
 - Restored branded sidebar expand/collapse control, distinct color category/tool icons, and matching top/sidebar colors.
 - Fixed the first Check of a new Branch Workflow recipe; empty drafts are not mistaken for prior production records.
+- PDF windows reuse the current application stylesheet; theme changes synchronize once. Closed secondary windows release their Qt widgets after background readers/tasks finish, avoiding cumulative theme refresh stalls.
 
 ## Platforms and updates
 
