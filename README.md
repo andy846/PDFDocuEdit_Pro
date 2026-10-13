@@ -1,12 +1,23 @@
-# PDFDocuEdit Pro V3.0.5
+# PDFDocuEdit Pro V3.0.6
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.5 已公開，同步提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**。
-現有 GitHub 正式版 v3.0.4 保留。v3.0.5 的雙平台回歸、原生打包、簽章及 20 個附件已核對；按擁有人要求即時公開，尚欠的 Windows 帳戶／畫面及 Mac 登入／離線／跨版更新實測已在發布說明列明。
+v3.0.6 正在準備雙平台候選，目標提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**。
+GitHub 最新公開版仍為 v3.0.5，原附件保留。v3.0.6 的發布、原生打包及實機驗收狀態見 [本版驗收紀錄](docs/RELEASE_VALIDATION_3.0.6.md)；候選不代表已公開。
 Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
-本版更新及平台限制見 [v3.0.5 Release notes](docs/RELEASE_NOTES_3.0.5.md)。
+本版更新及平台限制見 [v3.0.6 Release notes](docs/RELEASE_NOTES_3.0.6.md)。
+
+## v3.0.6：文件完整性與生產安全
+
+- 回復／Undo 的記憶體文件仍可 Save／Save As；重複插頁及比例複製共用交易，失敗完整回復。
+- 正式生成必須通過本次工作階段的 Production Review；舊 approved 標記不代表批准。重啟、來源／設定改動及重試未完成項目須重新覆核。
+- 拒絕不安全的 job ID 和輸出目錄跳轉，發布前再次核對目的地。
+- 每個生產工作保留 journal 及全產物校驗紀錄。已完成成果驗證後略過；失敗或中斷不自動換 retry 目錄、不覆寫原成果。
+- Visual Workflow → Production → **Recover previous run…** 核對原 batch 資料夾，保留完成成果，未完成項目重新 Check & Review。
+- PDF 分頁右鍵可選另一份已開文件做 Split View，或移至獨立視窗；編輯／Undo 狀態保留。Overlay 可分開選擇 Template／Target 紙張尺寸。
+- 主工具列恢復展開／收窄品牌樣式；六類入口、Compare 和 PDF Production Tools 使用不同彩色圖示，左側色彩與頂部一致。
+- 自訂 headless 生產呼叫須傳入有效 `ProductionAuthorization`；範例及限制見 [P0 維護說明](docs/P0_RELIABILITY.md)。專案格式與更新公鑰不變。
 
 ## 啟動體驗更新
 

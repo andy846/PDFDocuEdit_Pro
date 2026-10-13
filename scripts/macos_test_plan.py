@@ -20,6 +20,9 @@ TESTS = [
     "tests/test_pdf_production.py", "tests/test_pdf_production_ui.py",
     "tests/test_sidebar_navigation.py", "tests/test_p4_ui.py",
     "tests/test_workflow_branch_engine.py", "tests/test_workflow_inspection.py",
+    "tests/test_production_authorization.py", "tests/test_production_output_safety.py",
+    "tests/test_production_recovery.py", "tests/test_workflow_branch_ui.py",
+    "tests/test_document_windows.py", "tests/test_overlay_ui.py",
 ]
 
 
