@@ -225,13 +225,17 @@ def test_converter_failure_never_publishes_production(tmp_path,monkeypatch,failu
     def fail(*args,**kwargs):
         raise CompositionError("Unavailable converter" if failure=="missing_converter" else "Conversion failure")
     monkeypatch.setattr(module,"ghostscript_executable" if failure=="missing_converter" else "_run",fail)
+    if failure == "missing_converter":
+        from tests.production_approval import ReviewBlocked
+        with pytest.raises(ReviewBlocked, match="Unavailable converter"):
+            generate(ProductionJob(model(ps_media()).to_dict(),"",str(tmp_path)))
+        assert not list(tmp_path.rglob("*.pdf")) and not list(tmp_path.rglob("*.ps"))
+        return
     result=generate(ProductionJob(model(ps_media()).to_dict(),"",str(tmp_path)))
     assert result.status=="failed" and not result.output_ps and not result.output_pdf
     assert not list(Path(result.report_dir).glob("*.ps"))
     assert not list(Path(result.report_dir).glob("*.pdf"))
     assert not list(tmp_path.glob(".composition-*"))
-    if failure=="missing_converter":
-        assert result.processed_records==0
 
 
 def test_output_folder_percent_pattern_is_not_converter_numbering(tmp_path):
@@ -239,3 +243,94 @@ def test_output_folder_percent_pattern_is_not_converter_numbering(tmp_path):
     assert result.status=="completed",result.error
     assert Path(result.output_ps).is_file()
     assert Path(result.output_ps).is_relative_to(tmp_path/"Room %03d")
+
+
+@pytest.mark.parametrize("kind", ["template", "overlay"])
+def test_missing_ghostscript_blocks_review_before_rendering(tmp_path, monkeypatch, kind):
+    import composition.media.postscript as ps
+    from composition.review.service import create_review
+
+    def missing():
+        raise CompositionError("PostScript output requires Ghostscript. Select its executable in Settings.")
+
+    monkeypatch.setattr(ps, "ghostscript_executable", missing)
+    if kind == "template":
+        job = ProductionJob(model(ps_media()).to_dict(), "", str(tmp_path / "output"))
+    else:
+        spec = sample_spec(tmp_path)
+        spec.media = ps_media()
+        job = OverlayJob(spec.to_dict(), str(tmp_path / "output"))
+    packet = create_review(tmp_path / "review", {"kind": kind, "job": asdict(job)})
+    assert packet["status"] == "blocked" and not packet["complete"]
+    assert packet["summary"]["backend"] == "postscript"
+    assert "Ghostscript" in packet["issues"][0]["reason"]
+    assert packet["issues"][0]["action"] == "settings"
+    assert not list(tmp_path.rglob("*.ps"))
+    assert not (tmp_path / "output").exists()
+
+
+def test_converter_disappearing_after_review_blocks_confirmation(tmp_path, monkeypatch):
+    import composition.media.postscript as ps
+    from composition.review.service import create_review, validate_snapshot
+
+    raw = {"kind": "template", "job": asdict(ProductionJob(model(ps_media()).to_dict(), "", str(tmp_path / "output")))}
+    packet = create_review(tmp_path / "review", raw)
+    assert packet["status"] == "checked", packet["issues"]
+    def missing():
+        raise CompositionError("PostScript output requires Ghostscript.")
+    monkeypatch.setattr(ps, "ghostscript_executable", missing)
+    with pytest.raises(CompositionError, match="Ghostscript"):
+        validate_snapshot(tmp_path / "review", packet["snapshot_id"], packet["context"], warnings_acknowledged=True)
+    assert not (tmp_path / "output").exists()
+
+
+@pytest.mark.parametrize("backend", ["postscript", "canon_prismasync"])
+def test_preflight_keeps_requested_backend_before_export(backend):
+    from tests.composition.test_media_duplex_sheets import four_page_template
+    plan = build_print_plan(four_page_template(backend), 2)
+    assert asdict(plan.preflight())["backend"] == backend
+
+
+def test_failed_media_summary_does_not_claim_published_ps_or_jdf():
+    from composition.media.model import media_output_description
+    ps = {"backend": "postscript", "postscript": "production.ps"}
+    ticket = {"backend": "canon_prismasync", "ticket": "default_ticket.jdf"}
+    assert media_output_description(ps, published=False) == "PDF + PostScript requested; no PostScript published."
+    assert media_output_description(ticket, published=False) == "PDF + JDF requested; no JDF published."
+    assert "embedded" in media_output_description(ps, published=True)
+    assert "default_ticket.jdf" in media_output_description(ticket, published=True)
+    assert "jdf" not in media_output_description({}, published=False).lower()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_pdf_jdf_review_does_not_require_ghostscript(tmp_path, monkeypatch, enabled):
+    import composition.media.postscript as ps
+    from composition.review.service import create_review
+    def unexpected():
+        pytest.fail("PDF / JDF must not request the PostScript converter")
+    monkeypatch.setattr(ps, "ghostscript_executable", unexpected)
+    media = ps_media()
+    media["enabled"] = enabled
+    if enabled:
+        media["printer_profile"] = asdict(PrinterProfile(mappings={stock["id"]: {"name": stock["id"]} for stock in media["stocks"]}))
+    job = ProductionJob(model(media).to_dict(), "", str(tmp_path / "output"))
+    packet = create_review(tmp_path / "review", {"kind": "template", "job": asdict(job)})
+    assert packet["status"] == "checked", packet["issues"]
+    assert packet["summary"]["backend"] == ("canon_prismasync" if enabled else "pdf")
+
+
+
+def test_48_simplex_records_with_i25_publish_pdf_and_postscript(tmp_path):
+    from tests.composition.test_inserter_production import template_for
+
+    template = template_for(pages=1, count=48, duplex=False)
+    template.media = ps_media()
+    result = generate(ProductionJob(template.to_dict(), "", str(tmp_path)))
+    assert result.status == "completed", result.error
+    assert result.processed_records == result.successful_records == 48
+    assert result.expected_pages == result.generated_pages == result.sheets == 48
+    assert result.expected_barcodes == result.rendered_barcodes == result.decoded_barcodes == 48
+    assert result.media_summary["backend"] == "postscript"
+    assert result.media_summary["postscript_pages"] == 48
+    assert Path(result.output_pdf).is_file() and Path(result.output_ps).is_file()
+    assert not Path(result.report_dir, "default_ticket.jdf").exists()

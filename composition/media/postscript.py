@@ -29,6 +29,14 @@ def ghostscript_executable():
     return capability.path
 
 
+def validate_output_backend(media):
+    """Check the selected production dependency without creating output files."""
+    if media.get("enabled"):
+        spec = MediaSpec.from_dict(media)
+        if PrinterProfile.from_dict(spec.printer_profile).backend == "postscript":
+            ghostscript_executable()
+
+
 def _run(executable, arguments, directory, is_cancelled):
     """File-backed diagnostics and cooperative subprocess cancellation."""
     log = Path(directory)/"ghostscript.log"
