@@ -121,6 +121,7 @@ from core.performance import LARGE_DOCUMENT_PAGES, PerformanceTrace
 from core.platform_service import PlatformService
 from core.printing import PrintJob, PrintRenderSettings, render_page_image
 from core.reader_lifetime import after_readers
+from core.redaction_images import redaction_spot_image_count
 from core.resources import APP_VERSION, COPYRIGHT_NOTICE
 from core.settings import SettingsManager
 from core.tasks import FunctionTask, TaskCancelled
@@ -4432,31 +4433,45 @@ class PDFViewer(QMainWindow):
         session = self._session
         if session is None or not session.engine.is_loaded():
             return
-        with DOCUMENT_LOCK:
-            mark_count = sum(
-                1
-                for entry in list_document_annotations(session.engine.document)
-                if str(entry.get("kind")) == "Redact"
-            )
+        try:
+            with DOCUMENT_LOCK:
+                mark_count = sum(
+                    1
+                    for entry in list_document_annotations(session.engine.document)
+                    if str(entry.get("kind")) == "Redact"
+                )
+                spot_images = redaction_spot_image_count(session.engine.document) if mark_count else 0
+        except Exception as exc:
+            log_failure('viewer._apply_redactions: analysis failure', 10)
+            self.info_bar.show_message(f"Cannot analyse redaction images: {exc}", "error", 0)
+            return
         if mark_count == 0:
             self.info_bar.show_message("No redaction marks were found.", "warning")
             return
+        colour_warning = (
+            f"\n\n{spot_images} affected spot-colour image{'s' if spot_images != 1 else ''} "
+            "must be converted to process colour at the original resolution for pixel removal. "
+            "This changes spot-colour separation and may slightly change edge rendering. "
+            "Unmarked images/pages are retained. Review the result before printing."
+            if spot_images else ""
+        )
         answer = QMessageBox.question(
             self,
             "Apply redaction marks",
             "Permanently remove content covered by every redaction mark?\n\n"
             "This step cannot be reversed after saving. A document snapshot "
-            "will be kept for Undo during this session.",
+            "will be kept for Undo during this session." + colour_warning,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        image_conversions = []
         try:
             with self._mutation_transaction("Apply Redactions") as allowed:
                 if not allowed:
                     return
-                count = apply_redaction_marks(session.engine.document)
+                count = apply_redaction_marks(session.engine.document, image_conversions=image_conversions)
                 session.engine.mark_modified(requires_sanitized_save=True)
         except Exception as exc:
             log_failure('viewer._apply_redactions: fallback after failure', 10)
@@ -4465,9 +4480,14 @@ class PDFViewer(QMainWindow):
         self._refresh_session_canvases(session)
         self._sync_modified_state()
         self._refresh_annotate_list()
+        colour_notice = (
+            f" Converted {len(image_conversions)} affected spot-colour "
+            f"image{'s' if len(image_conversions) != 1 else ''} to process colour for pixel removal."
+            if image_conversions else ""
+        )
         self.info_bar.show_message(
             f"Applied {count} redaction mark{'s' if count != 1 else ''}. "
-            "Save to make the removal permanent.",
+            "Save to make the removal permanent." + colour_notice,
             "success",
         )
 

@@ -444,6 +444,8 @@ Conversion 面板提供 bundled Tesseract 5.5.3 英文／繁中 OCR，可抽取 
 
 Applied redactions now require a full garbage-collected save, including encrypted outputs and repeated saves. See the [redaction save report](docs/REDACTION_SAVE_REPORT.md) for reproduction and validation.
 
+Development fix: pixel redaction supports affected Separation/DeviceN scan images through page-local, native-resolution process-colour copies. The confirmation explains spot-colour and edge-rendering changes before applying. Unmarked pages/shared source images stay intact; Undo/Redo and sanitized atomic saves remain in use. This source update is not yet included in a published installer.
+
 ### V2.6 architecture preparation
 
 Page, annotation, watermark and applied-redaction actions now use a shared transaction boundary. Undo/redo preserves the live document and history when preparation or restoration fails. Mutation/history coordination lives in `ui/mutation_controller.py`; migrated PDF and annotation outputs share `core/io_atomic.py`.

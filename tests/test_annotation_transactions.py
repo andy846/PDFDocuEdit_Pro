@@ -249,8 +249,8 @@ def test_multi_page_redaction_transaction(viewer, monkeypatch, fail):
     monkeypatch.setattr(viewer_module.QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     if fail:
         original = viewer_module.apply_redaction_marks
-        def fail_midway(doc):
-            original(doc, pages=[0])
+        def fail_midway(doc, **kwargs):
+            original(doc, pages=[0], **kwargs)
             raise RuntimeError("failed after first redacted page")
         monkeypatch.setattr(viewer_module, "apply_redaction_marks", fail_midway)
     window._apply_redactions()
@@ -272,3 +272,60 @@ def test_multi_page_redaction_transaction(viewer, monkeypatch, fail):
                     data = (saved.xref_stream(xref) or b"").lower()
                     assert b"secret" not in data
                     assert b"secret".hex().encode() not in data
+
+
+def add_spot_redaction(window):
+    doc = window.engine.document
+    page = doc[0]
+    pixmap = fitz.Pixmap(fitz.csGRAY, 20, 20, bytes([255] * 400), False)
+    image = page.insert_image(fitz.Rect(40, 200, 140, 300), pixmap=pixmap)
+    doc.xref_set_key(image, "ColorSpace", "[/Separation /Black /DeviceCMYK << /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 0 0 1] /N 1 >>]")
+    page.add_redact_annot(fitz.Rect(60, 220, 80, 240))
+    before = page.get_pixmap().samples
+    original = doc.xref_object(image), doc.xref_stream(image)
+    window.engine.mark_modified()
+    return before, original, image
+
+
+def test_spot_image_redaction_reports_conversion_and_undo_redo(viewer, monkeypatch):
+    window = viewer
+    before, original, image = add_spot_redaction(window)
+    messages = []
+    monkeypatch.setattr(window.info_bar, "show_message", lambda message, *args: messages.append(message))
+    confirmations = []
+
+    def confirm(*args, **kwargs):
+        confirmations.append(args[2])
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(viewer_module.QMessageBox, "question", confirm)
+    window._apply_redactions()
+    assert "spot-colour" in confirmations[-1]
+    assert "process colour" in confirmations[-1]
+    assert window._undo_stack.undo_count == 1
+    assert window.engine._requires_sanitized_save
+    assert "spot-colour" in messages[-1]
+    assert "process colour" in messages[-1]
+    after = window.engine.document[0].get_pixmap().samples
+    assert after != before
+    assert not list(window.engine.document[0].annots(types=[fitz.PDF_ANNOT_REDACT]))
+    assert window._undo()
+    restored = window.engine.document
+    assert restored[0].get_pixmap().samples == before
+    assert (restored.xref_object(image), restored.xref_stream(image)) == original
+    assert window._redo()
+    assert window.engine.document[0].get_pixmap().samples == after
+    assert window.engine._requires_sanitized_save
+
+
+
+def test_spot_image_redaction_cancel_preserves_image_and_mark(viewer, monkeypatch):
+    window = viewer
+    before, original, image = add_spot_redaction(window)
+    monkeypatch.setattr(viewer_module.QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    window._apply_redactions()
+    assert window.engine.document[0].get_pixmap().samples == before
+    assert (window.engine.document.xref_object(image), window.engine.document.xref_stream(image)) == original
+    assert list(window.engine.document[0].annots(types=[fitz.PDF_ANNOT_REDACT]))
+    assert not window._undo_stack.can_undo
+    assert not window.engine._requires_sanitized_save
