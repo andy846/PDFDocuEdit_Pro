@@ -422,7 +422,7 @@ class BranchWorkflowWindow(QMainWindow):
         self.spec=new
         self.evidence_token+=1
         # Keep completed results for a safe recheck; none remain approved after edits.
-        if changed:
+        if changed and self.run:
             for job in self.run.get("jobs",[]):
                 job["approved"]=False
                 if job["status"]=="Ready":
@@ -657,7 +657,8 @@ class BranchWorkflowWindow(QMainWindow):
             self.error("Open this workflow within Document Designer to edit its template.")
 
     def draft_changed(self,*_):
-        self.run["stale"]=True
+        if self.run:
+            self.run["stale"]=True
         for job in self.run.get("jobs",[]):
             job["approved"]=False
         self.update_draft_status()

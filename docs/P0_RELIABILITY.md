@@ -57,3 +57,40 @@ No public version, `.pdcx`, `.pdflow`, Overlay or barcode-profile version change
 Existing positive production tests now use explicit real review/approval helpers. Negative glyph, barcode, media and rule tests assert blocked review and no publication rather than expecting an unreviewed generator to begin processing. No engine bypass flag, skipped failures or reduced validation was added. Fault-injection tests separately cover actual composition failure, cancellation, post-rename failure, state/report failures and interrupted/repeated execution.
 
 Development PS tests use the already available Ghostscript executable via PATH; no extra dependency was introduced. Windows native worker stdin (including pythonw), junction rejection and OS job locking are tested. macOS native validation remains a separate gate. No release or installer was produced by this work.
+
+## Fix traceability
+
+| Item | Isolated fix commit | Main verification |
+| --- | --- | --- |
+| C1 | `f776797` | Ordinary/encrypted rollback, Save/Save As, further edits, Undo/Redo and failed close/restore |
+| H1 | `6a6cdf7` | Direct/nested insertion, duplicate pages, first/middle/final insertion and scale-copy faults, one successful commit |
+| H7 | `fa5e9c3` | Forged identities, traversal/drive/UNC/reserved names, nested identity mismatch, junction containment |
+| H8 | `eabc79a` | Missing/tampered/expired evidence, resource changes, raw worker/engine calls, session-private stdin, partial approval |
+| H9 | `872ab7a` | Generation/cancellation/post-commit faults, all-artifact checksums, process-held claims, retained output and portable recovery |
+
+## Windows verification evidence (2026-10-13)
+
+The final regression uses `scripts/regression_suite.py --group all`, the repository's existing per-module process isolation. This retains every selected test and individual JUnit/log evidence; Qt application/style state is not shared between modules. An earlier single-process run was stopped after increasingly slow UI execution; it is not counted as a successful gate.
+
+Targeted fault-injection covers rollback/save for encrypted and ordinary PDFs, direct/nested repeated insertion, output traversal/junctions, authenticated review and private worker stdin, cancellation, post-commit journal/report failure, checksummed recovery and OS-exclusive job locks. Security and PS/JDF/duplex cases passed as a 77-test group; the final suite also includes these cases.
+
+Windows layout checks used isolated preferences at 960 x 640, 100% and 200% scaling, light and dark themes. The recovery control remained within the production page. This is offscreen/native Qt layout evidence, not a macOS or printer acceptance result.
+
+Synthetic local smoke measurements (not a release performance baseline):
+
+| Fixture | Records / output pages | Review | Generation | Peak memory |
+| --- | --- | --- | --- | --- |
+| Plain fixed one-page template | 1,000 / 1,000 | 0.844 s | 1.747 s | Composer 93.1 MiB; assembler 18.0 MiB |
+| Three CSV inputs / two template branches | 100 / 100 | 1.595 s | 4.421 s including review | 102.2 MiB |
+
+These measurements ran alongside regression work. They demonstrate functional bounded smoke workloads, not unchanged speed, large-network-file performance or printer compatibility. No pre-change same-machine performance comparison is claimed.
+
+Local evidence is retained under `D:/Python_Project/PDFdocuEdit_Pro/build/`: `p0-final-regression/`, `p0-layout-*.png`, `p0-composition-smoke.json/20261013-015158/benchmark.json`, and `p0-branch-smoke.json`.
+
+### Final result
+
+Final applicable regression evidence covers all 169 modules: **2,365 passed, 3 existing native-macOS cases skipped, 0 remaining failures/errors** (2,368 total after the added regression cases). Ruff and working diff whitespace checks pass.
+
+The original complete isolated run retained three failures: two external-open routing tests used unconstrained mocks that invented a window manager, and a real Branch UI regression treated a new recipe's stale marker as a previous run without identity. The routing tests now cover both single-window and active-window destinations. The Branch UI only marks an existing run stale; the worker's identity validation remains strict. A new regression test was observed failing before this minimal fix. Rechecking the seven affected/safety modules passed **81 tests**. Original failure logs remain retained; `p0-final-validation.json` records both the original run and final per-module rechecks without rewriting evidence.
+
+The three unchanged skips require native macOS bundle permissions/symlinks, Keychain and arm64 signed install/update/rollback. They do not constitute macOS acceptance. Windows offscreen Qt operations, native worker stdin and junction/OS-lock checks are complete for this scope. No installer build, release or default-branch merge was performed.

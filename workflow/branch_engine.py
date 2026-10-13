@@ -674,7 +674,7 @@ def _page(source,offset,search):
 def public_run(run):
     public={k:v for k,v in run.items() if k not in ("directory","jobs","stages","sources")}
     public["sources"]=[{k:v for k,v in source.items() if k!="import_store"} for source in run["sources"]]
-    public["jobs"]=[{k:v for k,v in entry.items() if k not in ("batch","spec")}| 
+    public["jobs"]=[{k:v for k,v in entry.items() if k not in ("batch","spec")}|
         {"result":entry.get("batch",{}).get("jobs",[{}])[0].get("result",{}) if entry.get("batch") else entry.get("result",{})} for entry in run["jobs"]]
     return public
 

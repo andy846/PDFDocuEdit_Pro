@@ -66,6 +66,14 @@ def test_route_dialog_named_ports_remove_and_incremental_canvas(window,tmp_path)
     assert len(window.canvas.edges)==len(window.spec.edges)
 
 
+def test_editing_fresh_recipe_does_not_forge_previous_run(window, tmp_path):
+    assert window.run == {}
+    window.apply_spec(fixture(tmp_path, records=1).to_dict())
+    assert window.run == {}
+    window.draft_changed()
+    assert window.run == {}
+
+
 def test_actual_check_pages_approval_preview_and_save_reopen(window,tmp_path):
     window.apply_spec(fixture(tmp_path,records=60).to_dict())
     window.check_all()

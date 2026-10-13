@@ -48,24 +48,36 @@ def test_mac_font_inventory_reuses_shared_files(monkeypatch, tmp_path):
     assert fonts.installed_font_files() == [path]
 
 
-def test_finder_routes_projects_to_existing_host(monkeypatch):
+@pytest.mark.parametrize("managed", [False, True])
+def test_finder_routes_projects_to_existing_host(monkeypatch, managed):
     import main
     monkeypatch.setattr(main.sys, "platform", "darwin")
     viewer = Mock()
+    # Unconstrained Mock synthesizes a fictitious manager on getattr().
+    viewer.document_windows = Mock() if managed else None
+    target = viewer.document_windows.active_window.return_value if managed else viewer
     main.route_open_files(viewer, ["letter.pdcx", "route.pdflow", "sample.pdf"])
     host = viewer._mode_controller.ensure_host.return_value
     assert [c.args[0] for c in host.open_project.call_args_list] == ["letter.pdcx", "route.pdflow"]
-    viewer.queue_open_files.assert_called_once_with(["sample.pdf"])
+    target.queue_open_files.assert_called_once_with(["sample.pdf"])
+    if managed:
+        viewer.document_windows.focus.assert_called_with(viewer)
+        viewer.queue_open_files.assert_not_called()
     assert len(main.pdf_arguments(["letter.pdcx", "route.pdflow", "sample.pdf", "--print-worker"])) == 3
 
 
-def test_windows_file_routing_unchanged(monkeypatch):
+@pytest.mark.parametrize("managed", [False, True])
+def test_windows_file_routing_unchanged(monkeypatch, managed):
     import main
     monkeypatch.setattr(main.sys, "platform", "win32")
     viewer = Mock()
+    viewer.document_windows = Mock() if managed else None
+    target = viewer.document_windows.active_window.return_value if managed else viewer
     paths = ["sample.pdf", "sample.ps"]
     main.route_open_files(viewer, paths)
-    viewer.queue_open_files.assert_called_once_with(paths)
+    target.queue_open_files.assert_called_once_with(paths)
+    if managed:
+        viewer.queue_open_files.assert_not_called()
     viewer._mode_controller.ensure_host.assert_not_called()
     assert len(main.pdf_arguments(["letter.pdcx", "sample.pdf"])) == 1
 
