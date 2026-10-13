@@ -227,7 +227,9 @@ def test_quick_switch_last_choice_and_animation_preference(window, app):
     controller, project = designer(window)
     for mode in ("pdf", "designer", "pdf", "designer", "pdf"):
         controller.request_mode(mode)
-    QTest.qWait(250)
+    # The final request is queued; snapshot creation may delay its start on CI.
+    # Assert actual completion with a deadline rather than assuming a 50ms queue.
+    wait_until(lambda: controller.modes.mode == WorkspaceMode.PDF and controller.modes.overlay is None)
     assert controller.modes.mode == WorkspaceMode.PDF
     assert controller.modes.overlay is None
     window._set_motion_enabled(False)
