@@ -115,7 +115,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         result.sheets=plan.sheets
         if isinstance(plan,PrintPlan):
             from composition.media.ticket import export_print_package
-            result.media_summary=export_print_package(staging,plan,naming.value,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket)
+            result.media_summary=asdict(plan.preflight())
+            result.media_summary.update(export_print_package(staging,plan,naming.value,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket))
             result.media_summary["inserted_blanks"]=plan.inserted_blanks
             result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
         if progress:

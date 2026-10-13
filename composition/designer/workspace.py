@@ -1145,8 +1145,8 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
                           f"Alternative content occurrences: {rules.get('alternate_occurrences', 0)}"])
         if result.get("media_summary"):
             lines.append("Media: "+" · ".join(f"{k}: {v:,} sheets" for k,v in result["media_summary"].get("stock_sheets",{}).items()))
-            lines.append("PostScript selection embedded · device validation pending" if result["media_summary"].get("backend")=="postscript"
-                         else "Offline default_ticket.jdf · Canon device validation pending")
+            from composition.media.model import media_output_description
+            lines.append(media_output_description(result["media_summary"], published=bool(result.get("generated_files"))))
         self.production_summary.setPlainText("\n".join(lines))
         self.failed_record = result.get("error_record")
         self._record_font_error(result["error"], result.get("error_record"))

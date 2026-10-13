@@ -152,3 +152,30 @@ def test_designer_result_shows_ps_and_no_jdf_instruction(app,tmp_path,monkeypatc
         assert result.output_ps in text and "default_ticket.jdf" not in text
     finally:
         close_window(window)
+
+
+@pytest.mark.parametrize("kind", ["template", "overlay"])
+def test_failed_postscript_result_shows_requested_backend_not_jdf(app, tmp_path, monkeypatch, kind):
+    from dataclasses import asdict
+
+    from composition.designer.overlay_workspace import OverlayWindow
+    from composition.overlay.model import OverlayResult
+    from composition.production.model import JobResult
+
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda self: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda self: None)
+    window = CompositionWindow() if kind == "template" else OverlayWindow()
+    try:
+        result_type = JobResult if kind == "template" else OverlayResult
+        result = asdict(result_type("test-unavailable-ps", status="failed", error="PostScript output requires Ghostscript.",
+            media_summary={"backend": "postscript", "stock_sheets": {"LH_A": 48}}))
+        if kind == "template":
+            window._production_ready(result)
+            text = window.production_summary.toPlainText()
+        else:
+            window.production_ready(result)
+            text = window.production_text.toPlainText()
+        assert "PDF + PostScript requested; no PostScript published." in text
+        assert "jdf" not in text.lower() and "embedded" not in text.lower()
+    finally:
+        close_window(window)

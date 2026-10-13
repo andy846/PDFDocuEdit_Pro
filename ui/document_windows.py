@@ -109,6 +109,8 @@ class DocumentWindows(QObject):
         self.last_active = window
 
     def busy_reason(self, window):
+        if window._mutation_controller.active:
+            return "Finish the PDF operation before moving documents."
         if window._printing:
             return "Finish printing before moving documents."
         if window._tasks or window._queued_open_paths:
@@ -207,7 +209,6 @@ class DocumentWindows(QObject):
         if not self.pending_exit:
             approved = []
             for window in [self.primary, *others]:
-                window._exit_previous_enabled = window.isEnabled()
                 dialog = getattr(window, "_update_dialog", None)
                 if window._printing or (dialog is not None and dialog.busy()):
                     self.primary.info_bar.show_message(
@@ -242,11 +243,11 @@ class DocumentWindows(QObject):
                 approved.append(window)
             self.pending_exit = True
             for window in approved:
-                window.setEnabled(False)
+                window._close_lifecycle.begin()
         for window in others:
             window.close()
         if any(w.isVisible() for w in others):
-            QTimer.singleShot(150, self.primary.close)
+            self.primary._defer_close("detached_windows")
             return False
         return True
 
@@ -254,13 +255,13 @@ class DocumentWindows(QObject):
     def _reset_approvals(windows):
         for window in windows:
             window._window_exit_approved = False
+            window._close_lifecycle.cancel_preflight()
             controller = getattr(window, "_mode_controller", None)
             if controller:
                 controller.exit_approved = False
             merge = getattr(window, "_merge_controller", None)
             if merge:
                 merge.exit_approved = False
-            window.setEnabled(getattr(window, "_exit_previous_enabled", True))
 
     def sync_theme(self, source, value):
         if getattr(self, "_theme_syncing", False):

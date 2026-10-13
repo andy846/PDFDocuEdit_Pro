@@ -35,7 +35,7 @@ def test_source_pins_and_windows_asset_manifest():
     for entry in pins["sources"].values():
         assert len(entry["sha256"]) == 64 and entry["url"].startswith("https://") and entry["license"]
     manifest = json.loads((ROOT / "build_assets/composition/BUNDLE_INFO.json").read_text())
-    executable = "qpdf/qpdf" if prepare_macos.platform.system() == "Darwin" else "qpdf/qpdf.exe"
+    executable = "qpdf/qpdf.exe" if prepare_macos.platform.system() == "Windows" else "qpdf/qpdf"
     assert any(e["path"] == executable for e in manifest["assets"])
 
 

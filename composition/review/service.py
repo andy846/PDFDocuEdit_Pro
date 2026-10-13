@@ -128,6 +128,11 @@ def validate_snapshot(directory, identity, raw, *, warnings_acknowledged=False, 
         raise CompositionError("Fix production review errors before confirming.")
     if packet["issues"] and not warnings_acknowledged:
         raise CompositionError("Acknowledge the production warnings before confirming.")
+    context = _context(raw)
+    if context.kind != "report" and packet["summary"].get("backend") != "reports":
+        from composition.media.postscript import validate_output_backend
+        project = context.job["template" if context.kind == "template" else "project"]
+        validate_output_backend(project.get("media", {}))
     return packet
 
 
@@ -263,6 +268,8 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
                 output_name = job.resolved_output_name()
                 context.job = asdict(job)
                 summary = _summary(context, plan, template.media, output_name, template.data.path if template.data else "")
+                from composition.media.postscript import validate_output_backend
+                validate_output_backend(template.media)
                 renderer = stack.enter_context(Renderer(template, auto_repair=job.auto_repair,
                     fallback_directory=folder / "fallback", is_cancelled=is_cancelled))
                 from composition.engine.barcode_profiles import has_inserter
@@ -288,6 +295,8 @@ def create_review(directory, raw, *, progress=None, is_cancelled=None, session=N
                 plan = overlay_plan(spec, is_cancelled=is_cancelled)
                 output_name = resolve_output_name(context.job.get("output_name", "production.pdf"), context.job.get("variable_context", {}))
                 summary = _summary(context, plan, spec.media, output_name, spec.source.path)
+                from composition.media.postscript import validate_output_backend
+                validate_output_backend(spec.media)
                 renderer = stack.enter_context(OverlayRenderer(spec, auto_repair=context.job.get("auto_repair", True),
                     fallback_directory=folder / "fallback", is_cancelled=is_cancelled))
                 external = _external(stack, context, spec)

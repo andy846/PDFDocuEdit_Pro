@@ -140,3 +140,17 @@ def default_media():
              "weight_gsm":80,"preprinted":True} for key in "ABC"]
     return MediaSpec(enabled=True,stocks=stocks,assignments={str(i+1):s["id"] for i,s in enumerate(stocks)},
         printer_profile=asdict(PrinterProfile(mappings={s["id"]:{"name":s["id"],"catalog_id":""} for s in stocks}))).to_dict()
+
+
+def media_output_description(summary, *, published):
+    """Describe planned versus published media artifacts without guessing JDF."""
+    backend = summary.get("backend")
+    if backend == "postscript":
+        if published and summary.get("postscript"):
+            return "PostScript selection embedded · device validation pending"
+        return "PDF + PostScript requested; no PostScript published."
+    if backend == "canon_prismasync":
+        if published and summary.get("ticket"):
+            return "Offline " + summary["ticket"] + " · device validation pending"
+        return "PDF + JDF requested; no JDF published."
+    return "Media output not identified; check the job report."
