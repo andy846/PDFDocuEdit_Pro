@@ -104,6 +104,9 @@ def test_partial_redaction_rollback_preserves_readers_and_safe_cause(editor, tmp
         session.engine.mark_modified()
     from core.annotations import list_document_annotations
     list_document_annotations(session.engine.document)
+    # MuPDF can serialize ID strings as hex or escaped literals. Force a
+    # printable revision ID so this variant is deterministic, not random.
+    session.engine.document.xref_set_key(-1, "ID", "[<00112233445566778899AABBCCDDEEFF><4142434445464748494A4B4C4D4E4F50>]")
     before = session.engine.document.tobytes(no_new_id=True)
     state = (session.engine.revision, session.engine.is_modified, session.undo_stack.undo_count)
     def fail(doc, *args, **kwargs):
@@ -116,7 +119,11 @@ def test_partial_redaction_rollback_preserves_readers_and_safe_cause(editor, tmp
     # Thumbnail snapshot serialization updates only the trailer revision ID.
     # Preserve the first identity and every content/object byte in this comparison.
     def content_bytes(data):
-        return re.sub(rb"(/ID\s*\[<[^>]+>)<[^>]+>(\])", rb"\1<revision>\2", data)
+        pdf_string = rb"(?:<[^>]*>|\((?:\\.|[^\\)])*\))"
+        pattern = rb"(/ID\s*\[" + pdf_string + rb"\s*)" + pdf_string + rb"(\s*\])"
+        normalized, matches = re.subn(pattern, rb"\1<revision>\2", data)
+        assert matches == 1
+        return normalized
     assert content_bytes(session.engine.document.tobytes(no_new_id=True)) == content_bytes(before)
     assert state == (session.engine.revision, session.engine.is_modified, session.undo_stack.undo_count)
     assert all(c._doc is session.engine.document for c in editor._document_canvases(session))
@@ -155,6 +162,13 @@ assert w.isEnabled() and w.command_bar._window_close.isEnabled()
 assert w.bottom_bar._status_full==('Ready' if stage=='none' else 'Error')
 w.close();app.processEvents()
 assert not w.isVisible()
+# Match fixture teardown: finish native runnable return and destroy owned
+# widgets while QApplication, proxy styles and Python signal slots are alive.
+from PyQt6.QtCore import QCoreApplication,QEvent,QThreadPool
+assert QThreadPool.globalInstance().waitForDone(2000)
+w.deleteLater()
+app.processEvents()
+QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
 """
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PDFDOCUEDIT_ENABLE_COMPOSITION": "0", "PDFDOCUEDIT_TEST_SETTINGS": str(tmp_path / "settings.json"), "PDFDOCUEDIT_TEST_STAGE": stage}
     result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1], env=env, capture_output=True, text=True, timeout=15)

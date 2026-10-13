@@ -115,3 +115,25 @@ processes after this change, and the probe confirmed the shared application
 survived between tests. No tests were disabled or filtered and no production
 behavior was changed for this follow-up. This is additional local smoke evidence
 beyond the 214-test targeted run, not a replacement for the PR CI gates.
+
+
+### Common GUI fixture follow-up
+
+The second CI run passed smoke but hit the same native access violation in
+an older P1 UI module. Its lifetime probe also found QApplication absent before
+successive tests and reproduced the crash locally. The existing autouse cleanup
+fixture now acquires qt_application for the existing CI UI group before widget
+construction. It reuses that registry; other modules retain their existing
+explicit GUI/headless setup. Both formerly failing modules (26 tests) passed
+three fresh diagnostic processes with a strict shared-instance check. Final
+focused fixture/core verification passed 79 tests in seven fresh processes.
+
+The rollback byte test additionally exposed a valid PDF trailer revision-ID
+encoding variant: hex and escaped literal strings are both legal. A printable
+ID fixture reproduces this deterministically; comparison now normalizes only
+the second revision ID in either representation, asserts one match, and still
+compares the first identity and all other content/object bytes. The isolated
+callback subprocess now drains its sole pool with a bounded asserted wait and
+deletes its root widget while QApplication/Python slots remain alive; the earlier
+teardown-only access violation is recorded, not conflated with the original
+Qt-slot abort. No tests were removed, filtered or weakened.
