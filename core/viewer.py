@@ -328,6 +328,8 @@ class PDFViewer(QMainWindow):
         self._printing = False
         self._queued_open_paths: list[tuple[str, str | None, DocumentSession | None, float]] = []
         self._open_queue_scheduled = False
+        self._open_activity_owner = object()
+        self._queued_open_status = "Ready"
         self._thread_pool = QThreadPool.globalInstance()
         with self._startup_trace.span("main_window"):
             self._init_ui()
@@ -1330,6 +1332,17 @@ class PDFViewer(QMainWindow):
     def load_file(self, path: str, *, on_open=None) -> None:
         if self._printing:
             return
+        existing = self.document_windows.find_path(path)
+        if existing is not None and existing[1].engine.is_loaded():
+            controller = getattr(self, "_mode_controller", None)
+            if controller:
+                controller.request_mode("pdf")
+            target = existing[1] if existing[0] is self else None
+            if target is not None:
+                target._after_open = on_open
+            self._queued_open_paths.append((path, None, target, perf_counter()))
+            self._schedule_queued_open()
+            return
         if self._session is not None and self._session.engine.is_loaded():
             if not self._confirm_discard_changes():
                 return
@@ -1382,10 +1395,17 @@ class PDFViewer(QMainWindow):
         if not self._queued_open_paths or self._open_queue_scheduled:
             return
         self._open_queue_scheduled = True
-        self.task_bar.start("Opening document", cancellable=False)
+        self._queued_open_status = "Ready"
+        self._show_queued_open_activity()
+        QTimer.singleShot(0, self._drain_open_queue)
+
+    def _show_queued_open_activity(self, *, completed_owner=None) -> None:
+        if self._tasks or self._printing or (self.task_bar.active and not self.task_bar.owns(self._open_activity_owner)
+                                             and not (completed_owner is not None and self.task_bar.owns(completed_owner))):
+            return
+        self.task_bar.start("Opening document", cancellable=False, owner=self._open_activity_owner)
         self.command_bar.set_work_status("Opening document")
         self.bottom_bar.set_status("Opening document")
-        QTimer.singleShot(0, self._drain_open_queue)
 
     def _drain_open_queue(self) -> None:
         if self._closing or self.document_windows.pending_exit:
@@ -1393,25 +1413,28 @@ class PDFViewer(QMainWindow):
             self._queued_open_finished()
             return
         if not self._queued_open_paths:
-            self._open_queue_scheduled = False
+            self._queued_open_finished()
             return
-        if self._tasks:
+        if self._tasks or self._printing or (self.task_bar.active and not self.task_bar.owns(self._open_activity_owner)):
             QTimer.singleShot(100, self._drain_open_queue)
             return
+        self._show_queued_open_activity()
         path, password, target, requested_at = self._queued_open_paths.pop(0)
         if target is not None and target not in self._sessions:
             self._queued_open_finished()
             return
         source = Path(os.path.abspath(os.path.expanduser(path)))
         existing = self.document_windows.find_path(source)
-        if existing is not None and existing[1] is not target:
+        if existing is not None and existing[1].engine.is_loaded():
             window, opened = existing
-            if target is not None and not target.engine.is_loaded():
-                callback = getattr(target, "_after_open", None)
-                self.close_document(target)
-                if callback and window is self:
-                    callback(opened)
+            callback = getattr(target, "_after_open", None) if target is not None else None
+            if target is not None:
+                target._after_open = None
+                if not target.engine.is_loaded():
+                    self.close_document(target)
             self.document_windows.focus(window, opened)
+            if callback and window is self:
+                callback(opened)
             self._queued_open_finished()
             return
         current = target or self._session
@@ -1467,6 +1490,8 @@ class PDFViewer(QMainWindow):
                 "Encrypted PDF",
                 "Password (ASCII characters only)",
             )
+            if not accepted:
+                self._queued_open_status = "Cancelled"
             if accepted:
                 self._queued_open_paths.insert(
                     0,
@@ -1479,6 +1504,7 @@ class PDFViewer(QMainWindow):
                 self._schedule_queued_open()
             return
         if status == "error":
+            self._queued_open_status = "Error"
             self._error("Open failed", str(value))
             if session in self._sessions and not session.engine.is_loaded():
                 self.close_document(session)
@@ -1512,13 +1538,14 @@ class PDFViewer(QMainWindow):
                 QTimer.singleShot(0, action)
 
     def _queued_open_finished(self) -> None:
-        if self._closing:
-            self._open_queue_scheduled = False
-            return
-        if self._queued_open_paths:
+        if self._queued_open_paths and not self._closing:
+            self._show_queued_open_activity()
             QTimer.singleShot(0, self._drain_open_queue)
-        else:
-            self._open_queue_scheduled = False
+            return
+        self._open_queue_scheduled = False
+        if not self._tasks and self.task_bar.clear(owner=self._open_activity_owner):
+            self.command_bar.set_work_status("Ready")
+            self.bottom_bar.set_status(self._queued_open_status)
 
     def _split_documents(self, first, second):
         if first not in self._sessions or second not in self._sessions:
@@ -6778,7 +6805,7 @@ class PDFViewer(QMainWindow):
             **kwargs,
         )
         self._tasks.add(task)
-        self.task_bar.start(label, cancellable=bool(cancel_argument))
+        self.task_bar.start(label, cancellable=bool(cancel_argument), owner=task)
         self.command_bar.set_work_status(label)
         self.bottom_bar.set_status(label)
 
@@ -6810,6 +6837,8 @@ class PDFViewer(QMainWindow):
 
         def finished() -> None:
             self._tasks.discard(task)
+            if self._queued_open_paths and not self._closing:
+                self._show_queued_open_activity(completed_owner=task)
             if on_finished:
                 try:
                     on_finished()
@@ -6818,11 +6847,10 @@ class PDFViewer(QMainWindow):
                     pass
             if self._closing:
                 return  # the window is gone: never touch its widgets again
-            if not self._tasks:
-                self.task_bar.clear()
+            if not self._tasks and self.task_bar.clear(owner=task):
                 self.command_bar.set_work_status("Ready")
-                if not self._task_had_error:
-                    self.bottom_bar.set_status("Ready")
+                self.bottom_bar.set_status(self._queued_open_status if label == "Opening document"
+                                           else "Error" if self._task_had_error else "Ready")
 
         task.signals.progress.connect(progress)
         if on_batch:
@@ -6860,6 +6888,8 @@ class PDFViewer(QMainWindow):
 
     def _task_failed(self, label: str, message: str) -> None:
         self._task_had_error = True
+        if label == "Opening document":
+            self._queued_open_status = "Error"
         self.info_bar.show_message(f"{label} failed: {message}", "error", 0)
         self.command_bar.set_work_status("Ready")
         self.bottom_bar.set_status("Error")
