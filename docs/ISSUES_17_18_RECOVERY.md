@@ -100,3 +100,18 @@ CI URLs are recorded in the pull request.
 
 Local final run: **214 passed, 0 skipped, 13 affected modules**, with Ruff and
 diff whitespace checks passing. Final CI URLs/results are retained in the PR.
+
+
+### CI smoke follow-up
+
+The first PR CI run hit a native access violation in test_ui_smoke. That module
+created QApplication inside individual tests rather than requesting the existing
+session fixture. A lifetime probe found no application at the start of successive
+tests, i.e. Qt was repeatedly destroyed/recreated in one process. The instrumented
+module crashed in three fresh processes before the fix. It now requests the
+existing qt_application fixture, matching the real entry point's one application
+and early theme installation. All 18 tests passed in three fresh diagnostic
+processes after this change, and the probe confirmed the shared application
+survived between tests. No tests were disabled or filtered and no production
+behavior was changed for this follow-up. This is additional local smoke evidence
+beyond the 214-test targeted run, not a replacement for the PR CI gates.
