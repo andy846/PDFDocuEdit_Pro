@@ -1,4 +1,8 @@
-#define MyAppName "PDFDocuEdit Pro"
+#ifdef AuthPrivateBuild
+  #define MyAppName "PDFDocuEdit Pro Private Auth Test"
+#else
+  #define MyAppName "PDFDocuEdit Pro"
+#endif
 #ifndef ManagedVersion
   #error Supply /DManagedVersion from build_managed_installer.py
 #endif
@@ -13,17 +17,29 @@
 #define MyAppUserModelId "AndyLeung.PDFDocuEditPro"
 #define MyAppDescription "Professional PDF viewing, editing, annotation, conversion, and document tools."
 #define MyAppCopyright "Copyright © 2026 Andy Leung. All rights reserved."
-#define MySetupFilename "PDFDocuEdit-Pro-v" + MyAppVersion + "-Setup-Windows-x64"
+#ifdef AuthPrivateBuild
+  #define MySetupFilename "PDFDocuEdit-Pro-v" + MyAppVersion + "-Private-Auth-Setup-Windows-x64"
+#else
+  #define MySetupFilename "PDFDocuEdit-Pro-v" + MyAppVersion + "-Setup-Windows-x64"
+#endif
 
 [Setup]
+#ifdef AuthPrivateBuild
+AppId={{78A4BA20-C425-4B80-9360-4F07D06F786D}
+#else
 AppId={{C17A5D2E-1A04-45D5-95CE-295E1D9884B0}
+#endif
 AppName={#MyAppName}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppCopyright={#MyAppCopyright}
 AppComments={#MyAppDescription}
+#ifdef AuthPrivateBuild
+DefaultDirName={localappdata}\Programs\PDFDocuEditProPrivateAuthTest
+#else
 DefaultDirName={localappdata}\Programs\PDFDocuEditPro
+#endif
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=auto
 PrivilegesRequired=lowest
@@ -47,7 +63,11 @@ UsePreviousGroup=yes
 UsePreviousTasks=yes
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+#ifdef AuthPrivateBuild
+ChangesAssociations=no
+#else
 ChangesAssociations=yes
+#endif
 VersionInfoVersion={#MyAppVersion}
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -76,6 +96,7 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{a
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "{#MyAppDescription}"; AppUserModelID: "{#MyAppUserModelId}"; Tasks: desktopicon
 
 [Registry]
+#ifndef AuthPrivateBuild
 ; Register as an available handler without overriding the user's Windows defaults.
 Root: HKCU; Subkey: "Software\Classes\{#MyAppProgId}"; ValueType: string; ValueData: "{#MyAppName} Document"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyAppProgId}\DefaultIcon"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"",0"
@@ -91,6 +112,7 @@ Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"
 Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ps"; ValueData: "{#MyAppProgId}"
 Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".eps"; ValueData: "{#MyAppProgId}"
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#MyRegisteredName}"; ValueData: "Software\{#MyRegisteredName}\Capabilities"; Flags: uninsdeletevalue
+#endif
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent

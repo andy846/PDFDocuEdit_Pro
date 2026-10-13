@@ -248,6 +248,8 @@ class CommandBar(QWidget):
         menu.addSeparator()
         preferences = QAction("Preferences…", self)
         preferences.triggered.connect(self.preferencesClicked.emit)
+        self._preferences_action = preferences
+        self._settings_menu: QMenu | None = None
         about = QAction("About PDFDocuEdit Pro", self)
         about.triggered.connect(self.aboutClicked.emit)
         menu.addAction(preferences)
@@ -317,9 +319,26 @@ class CommandBar(QWidget):
                 menu.addMenu(source_menu)
             elif not action.isSeparator():
                 menu.addAction(action)
+        if self._settings_menu is not None:
+            menu.addSeparator()
+            menu.addMenu(self._settings_menu)
         self._main_menu_button.setMenu(menu)
         self._main_menu_button.setEnabled(bool(menu.actions()))
         self._more.setMenu(menu if self._mode == WorkspaceMode.DESIGNER else self._pdf_more_menu)
+
+    def add_settings_action(self, action: QAction) -> None:
+        """Keep optional application actions beside settings across mode changes."""
+        if action not in self._pdf_more_menu.actions():
+            self._pdf_more_menu.insertAction(self._preferences_action, action)
+        if self._settings_menu is None:
+            self._settings_menu = QMenu("Settings", self)
+            self._settings_menu.addAction(self._preferences_action)
+            menu = self._main_menu_button.menu()
+            if menu is not None:
+                menu.addSeparator()
+                menu.addMenu(self._settings_menu)
+        if action not in self._settings_menu.actions():
+            self._settings_menu.insertAction(self._preferences_action, action)
 
     def open_application_menu(self) -> None:
         if self._main_menu_button.menu() is not None:

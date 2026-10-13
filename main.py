@@ -9,6 +9,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Every frozen/internal worker entry is checked before Qt or PDF imports.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] in {
+    "--print-worker", "--pdf-operations-worker", "--composition-worker", "--composition-smoke",
+}:
+    from auth.guard import require_worker_access
+    require_worker_access()
+
 # Worker dispatch must precede Qt/editor imports in frozen development builds.
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--print-worker":
     from core.print_worker import main as print_worker_main
@@ -281,7 +288,14 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
     app.setOrganizationDomain("pdfdocuedit.local")
     app.setApplicationVersion(APP_VERSION)
     app.setWindowIcon(_application_icon())
-    if managed_root() is not None:
+    from auth.config import configuration
+    try:
+        private_config = configuration()
+    except (ValueError, OSError, TypeError):
+        # Invalid private configuration is reported after QApplication exists.
+        # Never start the public settings migration in this failure case.
+        private_config = True
+    if managed_root() is not None and private_config is None:
         from updates.app_session import import_settings
 
         import_settings()
@@ -339,10 +353,18 @@ def main() -> int:
 
 def _run_application(root: Path | None) -> int:
     app = create_application()
+    from auth.config import configuration
+    try:
+        auth_config = configuration()
+    except (ValueError, OSError, TypeError):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.critical(None, "Private build configuration", "Authentication configuration is invalid. Restore the complete private build.")
+        return 1
     # A file association starts the executable again. Forward those paths to
     # the existing process before creating a splash or a second main window.
     paths = pdf_arguments(sys.argv[1:])
-    server_name = SINGLE_INSTANCE_KEY if root is None else SINGLE_INSTANCE_KEY + "-" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    instance_key = SINGLE_INSTANCE_KEY + ("-private-" + auth_config.project_ref if auth_config else "")
+    server_name = instance_key if root is None else instance_key + "-" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
     if SingleInstanceRouter.forward_to_primary(paths, server_name):
         return 0
     instance_router = SingleInstanceRouter(server_name, parent=app)
@@ -350,6 +372,33 @@ def _run_application(root: Path | None) -> int:
         # Cover the narrow race where two processes start at the same time.
         if SingleInstanceRouter.forward_to_primary(paths, server_name):
             return 0
+
+    if auth_config is not None:
+        from auth.application import PrivateApplication
+
+        def private_viewer():
+            viewer = PDFViewer()
+            if root is not None and sys.platform == "win32" and getattr(sys, "frozen", False):
+                from updates.windows_shell import clear_managed_window, configure_managed_window
+                hwnd = int(viewer.winId())
+                configure_managed_window(hwnd, root)
+                app.aboutToQuit.connect(lambda: clear_managed_window(hwnd))
+            QTimer.singleShot(150, lambda: _force_windows_icon(viewer))
+            QTimer.singleShot(200, viewer._update_title_bar)
+            return viewer
+
+        private = PrivateApplication(app, auth_config, private_viewer, root=root)
+        app._private_session = private
+        app.fileOpenRequested.connect(lambda path: private.accept_paths([path]))
+        instance_router.pathsReceived.connect(private.accept_paths)
+        private.start(paths)
+        app.activate_file_open_handler()
+        if root is not None:
+            from updates.app_session import activate
+            # Login shell has painted and can acknowledge the launcher without
+            # waiting for a human password entry or a network request.
+            QTimer.singleShot(300, lambda: activate(private, private.accept_paths, on_ready=private.managed_ready))
+        return app.exec()
 
     splash = _create_splash()
     splash.show()

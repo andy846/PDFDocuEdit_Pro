@@ -319,6 +319,8 @@ def dispatch(request: dict) -> dict:
 
 
 def main(argv=None):
+    from auth.guard import require_worker_access
+    require_worker_access()
     global EVENTS_FILE
     parser = argparse.ArgumentParser(description="PDFDocuEdit headless composition worker")
     parser.add_argument("request")

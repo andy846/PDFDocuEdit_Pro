@@ -6672,6 +6672,12 @@ class PDFViewer(QMainWindow):
         callback_guard: Callable[[], bool] | None = None,
         **kwargs,
     ) -> FunctionTask | None:
+        from auth.guard import worker_allowed
+        if not worker_allowed():
+            self.info_bar.show_message("Private account access is paused. Sign in before starting new work.", "warning")
+            if on_finished:
+                on_finished()
+            return None
         if self._tasks or self._printing:
             self.info_bar.show_message(
                 "Wait for the current background operation to finish or cancel it first.",
@@ -7048,6 +7054,11 @@ class PDFViewer(QMainWindow):
             self._set_default_app()
 
     def _check_for_updates(self) -> None:
+        from auth.config import configuration
+
+        if configuration() is not None:
+            self._error("Private test build", "Public updates are disabled in this internal build.")
+            return
         from ui.update_dialog import UpdateDialog
 
         dialog = getattr(self, "_update_dialog", None)

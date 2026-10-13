@@ -23,10 +23,7 @@ class Worker(QObject):
         self.events_file = directory / (token + ".events.jsonl")
         self.events_offset = 0
         self.request_file = directory / (token + ".request.json")
-        directory.mkdir(parents=True, exist_ok=True)
-        self.request_file.write_text(json.dumps({**request, "cancel_file": str(self.cancel_file), "events_file": str(self.events_file),
-                                                **({"stdin_secrets": True} if secrets is not None else {})},
-                                               ensure_ascii=True), encoding="utf-8")
+        self._recovery_thread = None
         self.process = QProcess(self)
         self.process.setWorkingDirectory(str(Path(__file__).resolve().parents[2]))
         self.buffer = bytearray()
@@ -36,6 +33,22 @@ class Worker(QObject):
         self.process.readyReadStandardError.connect(self._stderr)
         self.process.finished.connect(self._finished)
         self.process.errorOccurred.connect(self._error)
+        from auth.guard import recovery_save_allowed, worker_allowed
+        if not worker_allowed():
+            if recovery_save_allowed(request):
+                from auth.recovery import DraftSaveThread
+                self._recovery_thread = DraftSaveThread(dict(request), self)
+                self._recovery_thread.saved.connect(self.resultReady)
+                self._recovery_thread.failed.connect(self.failed)
+                self._recovery_thread.finished.connect(self._recovery_finished)
+                QTimer.singleShot(0, self._recovery_thread.start)
+            else:
+                QTimer.singleShot(0, self._access_denied)
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        self.request_file.write_text(json.dumps({**request, "cancel_file": str(self.cancel_file), "events_file": str(self.events_file),
+                                                **({"stdin_secrets": True} if secrets is not None else {})},
+                                               ensure_ascii=True), encoding="utf-8")
         frozen_flag = "--pdf-operations-worker" if worker_module == "core.pdf_operations.worker" else "--composition-worker"
         args = ([frozen_flag] if getattr(sys, "frozen", False)
                 else ["-m", worker_module]) + [str(self.request_file)]
@@ -50,6 +63,18 @@ class Worker(QObject):
         self.poll.timeout.connect(self._read_events)
         self.poll.start()
         self.process.start(sys.executable, args)
+
+    def _access_denied(self):
+        self.delivered = True
+        self.failed.emit("Private account access is paused. Sign in again to start new work.")
+        self.ended.emit()
+        self.deleteLater()
+
+    def _recovery_finished(self):
+        self._recovery_thread.deleteLater()
+        self._recovery_thread = None
+        self.ended.emit()
+        self.deleteLater()
 
     def _stderr(self):
         self.stderr.extend(bytes(self.process.readAllStandardError()))
@@ -109,7 +134,8 @@ class Worker(QObject):
             self._finished(-1, None)
 
     def cancel(self):
-        self.cancel_file.touch()
+        if self._recovery_thread is None and self.request_file.exists():
+            self.cancel_file.touch()
 
     def stop_preview(self):
         """Only non-publishing previews may be terminated immediately."""
@@ -117,4 +143,6 @@ class Worker(QObject):
 
     @property
     def running(self):
+        if self._recovery_thread is not None:
+            return True
         return self.process.state() != QProcess.ProcessState.NotRunning

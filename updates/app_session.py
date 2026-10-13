@@ -30,19 +30,23 @@ def import_settings() -> None:
     (root / "data" / ".migration-complete").touch()
 
 
-def activate(viewer, open_paths) -> None:
+def activate(viewer, open_paths, *, on_ready=None) -> None:
     root = managed_root()
     if root is None:
         return
     token = os.environ[TOKEN_ENV]
-    viewer.setEnabled(False)
+    if on_ready is None:
+        viewer.setEnabled(False)
     accepted = root / f"accepted-{token}.json"
     timer = QTimer(viewer)
     viewer._update_handshake_timer = timer
 
     def poll():
         if accepted.exists() and read_json(accepted).get("token") == token:
-            viewer.setEnabled(True)
+            if on_ready is None:
+                viewer.setEnabled(True)
+            else:
+                on_ready()
             timer.stop()
             requests.start(300)
             open_paths([])

@@ -51,7 +51,7 @@ def extract_deployment(package: Path, destination: Path, app_version: str) -> Pa
     return root
 
 
-def build_installer(package: Path, app_version: str) -> Path:
+def build_installer(package: Path, app_version: str, *, private_test=False) -> Path:
     version(app_version)
     compiler = _find_inno_setup_compiler()
     if not compiler:
@@ -73,8 +73,11 @@ def build_installer(package: Path, app_version: str) -> Path:
             *_inno_signing_args(_windows_signing_settings()),
             str(ROOT / "installer" / "PDFDocuEditProManaged.iss"),
         ]
+        if private_test:
+            command.insert(1, "/DAuthPrivateBuild")
         subprocess.run(command, cwd=ROOT, check=True)
-    output = ROOT / "release" / f"PDFDocuEdit-Pro-v{app_version}-Setup-Windows-x64.exe"
+    label = "Private-Auth-Setup" if private_test else "Setup"
+    output = ROOT / "release" / f"PDFDocuEdit-Pro-v{app_version}-{label}-Windows-x64.exe"
     if not output.is_file():
         raise UpdateError("Inno Setup did not create the expected installer.")
     sha256(output)

@@ -30,6 +30,8 @@ def _windows_pipe_stream(number, mode):
 
 
 def main(argv=None):
+    from auth.guard import require_worker_access
+    require_worker_access()
     with ExitStack() as streams:
         stdin = sys.stdin if sys.stdin is not None else streams.enter_context(_windows_pipe_stream(-10, "r"))
         stdout = sys.stdout if sys.stdout is not None else streams.enter_context(_windows_pipe_stream(-11, "w"))
