@@ -2,8 +2,8 @@
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.6 正在準備雙平台候選，目標提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**。
-GitHub 最新公開版仍為 v3.0.5，原附件保留。v3.0.6 的發布、原生打包及實機驗收狀態見 [本版驗收紀錄](docs/RELEASE_VALIDATION_3.0.6.md)；候選不代表已公開。
+[v3.0.6 已公開](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.6)，提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**；Managed 安裝可使用 Check for Updates。舊版本及附件保留。
+兩平台原生回歸、打包、20 個附件及三個簽章更新入口已核對。本版按擁有者指示公開；Windows 真實帳戶登入及 Mac 登入／離線重開／跨版本更新仍待本版實機補驗，詳見 [本版驗收紀錄](docs/RELEASE_VALIDATION_3.0.6.md)。
 Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
 本版更新及平台限制見 [v3.0.6 Release notes](docs/RELEASE_NOTES_3.0.6.md)。
@@ -45,7 +45,7 @@ Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此�
 
 ## macOS 對齊開發
 
-Apple Silicon 對齊及登入工作已整合；目前公開版本為 v3.0.5，macOS 仍為 Apple Silicon 登入測試版。
+Apple Silicon 對齊及登入工作已整合；目前公開版本為 v3.0.6，macOS 仍為 Apple Silicon 登入測試版。
 專用 Mac CI 建置原生 qpdf、libzbar、Ghostscript 及離線 veraPDF／JRE，再檢查
 Designer、Workflow、Production Review、Barcode 與 PDF／PS 生產功能。
 Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows 共用登入批准、離線使用、撤銷覆核及簽章更新／回退核心。

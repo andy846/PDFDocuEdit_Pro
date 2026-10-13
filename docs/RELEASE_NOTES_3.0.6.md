@@ -36,8 +36,13 @@ continue to use the existing platform services.
 
 ## Validation status
 
-Candidate preparation is in progress. Complete native CI, packaging, signed attachment
-verification and candidate operator checks are required by `UNIFIED_RELEASE.md`.
-The prior development gate passed 2,365 tests (three native macOS cases unavailable on
-Windows); this is not a substitute for this release candidate's native evidence.
+Native candidate verification passed on source `a7bea706311b8542888c46f877ce65be63efb467`:
+Windows: 170 modules, 2,378 passed / 3 platform skips. macOS: 40 modules, 642 passed / 3 platform skips.
+Both native account packages, Managed startup and unauthenticated worker admission checks passed.
+All three update routes and the signed attachment index were verified. Candidate operator login,
+offline restart and cross-version update acceptance remain pending.
+
+### Owner-directed publication
+
+Published at the owner's explicit request after disclosure of the four outstanding candidate operator checks: Windows real-account login; macOS real-account login, offline restart and cross-version update. These remain Pending and are not represented as passed. This decision applies only to v3.0.6 and this frozen source; the normal release gates remain unchanged.
 Real-printer behavior and large/network-file performance are not claimed from synthetic fixtures.
