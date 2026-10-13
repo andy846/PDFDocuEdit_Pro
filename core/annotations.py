@@ -24,6 +24,7 @@ from core.measurement import (
 
 from .page_images import add_page_image, list_page_images, remove_page_image, update_page_image
 from .pdf_engine import DOCUMENT_LOCK
+from .redaction_images import prepare_spot_images
 from .system_fonts import is_pdf_base_font, resolve_system_font
 
 STAMP_IDS: dict[str, int] = {
@@ -854,6 +855,7 @@ def apply_redaction_marks(
     images: int = fitz.PDF_REDACT_IMAGE_PIXELS,
     graphics: int = fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
     text: int = fitz.PDF_REDACT_TEXT_REMOVE,
+    image_conversions: list[tuple[int, int, str, str]] | None = None,
 ) -> int:
     """Permanently apply redaction marks on selected pages and return the count."""
 
@@ -875,8 +877,15 @@ def apply_redaction_marks(
             ]
             if not redactions:
                 continue
-            if page.apply_redactions(images=images, graphics=graphics, text=text):
-                applied += len(redactions)
+            conversions = (
+                prepare_spot_images(page, [annot.rect for annot in redactions])
+                if images == fitz.PDF_REDACT_IMAGE_PIXELS else []
+            )
+            if not page.apply_redactions(images=images, graphics=graphics, text=text):
+                raise AnnotationValidationError(f"Redaction was not applied on page {page_num + 1}.")
+            applied += len(redactions)
+            if image_conversions is not None:
+                image_conversions.extend(conversions)
         return applied
 
 

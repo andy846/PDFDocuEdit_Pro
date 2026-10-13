@@ -62,3 +62,25 @@ Workflow 分檔後，每個套件各自產生 PS、PDF 及選紙對照；File pa
 通用 PS 3 指令可由 profile 配置；最終取紙仍由打印機／DFE 的支援及佇列設定決定。DFE 的強制紙種、雙面、拼版設定可能覆蓋檔案指令。所有 profile 保持 **Device validation: Pending**，不因軟件驗證通過就聲稱實機已通過。
 
 PS 不支援 PDF 的原生透明效果，轉換可能平面化；設定提供 300／600／1200 dpi，預設 600。保留 PDF 用作核對。收到實際 printer 樣本後，先確認 MediaType／MediaPosition 的值，再做小量紙張測試。
+
+
+## Missing Ghostscript before production
+
+Selecting PDF + PostScript requires the bundled, configured or system Ghostscript.
+Production Review checks this before scanning records or approving generation, and
+checks again on confirmation and execution. PDF-only and offline JDF jobs do not
+require this converter. A filter retaining zero records can still be reviewed,
+approved and published as reconciliation reports only without Ghostscript; it
+produces no empty PDF or PS. Missing Ghostscript does not indicate a customer-data,
+font or barcode failure; no production output is published.
+
+For a source checkout / linked worktree, ignored native runtime folders are not
+copied by Git. Prepare the existing Windows runtime bundle before interactive PS
+testing (the verified release preparation entry is
+`scripts/prepare_windows_release.py`), or select an existing Ghostscript executable
+in Settings. Keep its bin, lib, Resource and iccprofiles together; copying only the
+EXE can break conversion. Packaged releases already include the Ghostscript tree.
+
+A failed result states the requested backend without claiming a JDF or embedded
+PostScript was published. After fixing the dependency, review again and start a
+new job; the previous failed report remains available.

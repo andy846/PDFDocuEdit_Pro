@@ -21,6 +21,7 @@ class MediaPreflightResult:
     stock_sheets:dict
     configuration_valid:bool=True
     device_validation:str="pending"
+    backend:str=""
 
 
 @dataclass(frozen=True)
@@ -174,7 +175,8 @@ class PrintPlan:
                 cfg.pages_per_envelope,cfg.output_pages_per_envelope,cfg.sheets_per_envelope,status]
 
     def preflight(self):
-        return MediaPreflightResult(self.output_pages,self.sheets,self.inserted_blanks,dict(self.stock_sheets))
+        return MediaPreflightResult(self.output_pages,self.sheets,self.inserted_blanks,dict(self.stock_sheets),
+            backend=PrinterProfile.from_dict(self.media.printer_profile).backend)
 
 
 def build_print_plan(template,count,*,is_cancelled=None):

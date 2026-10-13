@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from threading import Event
+from threading import Event, get_ident
 from typing import Any
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
-from core.diagnostics import connect_interrupts, log_failure
+from core.diagnostics import connect_interrupts, log_failure, log_lifecycle
 
 
 class TaskSignals(QObject):
@@ -58,6 +58,7 @@ class FunctionTask(QRunnable):
 
     @pyqtSlot()
     def run(self) -> None:
+        log_lifecycle("worker.enter", task=id(self), thread=get_ident())
         self.signals.started.emit()
         try:
             if self.progress_argument:
@@ -88,6 +89,7 @@ class FunctionTask(QRunnable):
                 log_failure("Background task failed")
                 self.signals.error.emit(str(exc) or exc.__class__.__name__)
         finally:
+            log_lifecycle("worker.finished", task=id(self), thread=get_ident())
             self.signals.finished.emit()
 
     def _report_progress(self, current: int, total: int, message: str) -> None:
