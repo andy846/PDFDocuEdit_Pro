@@ -224,7 +224,7 @@ class WorkflowWindow(QMainWindow):
         review_layout.addLayout(navigation)
         navigation=QHBoxLayout()
         for label,handler in (("View PDF region",self.edit_regions),("Correct value",self.correct),
-                              ("Export CSV",self.export_csv),("Accept review",self.accept_review)):
+                              ("Export CSV",self.export_csv),("Accept data",self.accept_review)):
             button=QPushButton(label)
             button.clicked.connect(handler)
             navigation.addWidget(button)
@@ -1106,9 +1106,11 @@ class WorkflowWindow(QMainWindow):
                         self.results.selectRow(row)
             self.review_summary.setText(f"{result['pages']:,} pages · {len(self.run.groups):,} envelopes · {result['issues']:,} unresolved findings · "
                                         +("Review accepted" if self.run.accepted else "Review required"))
-            if self.run.data_summary:
+            if "retained" in self.run.data_summary:
                 counts=self.run.data_summary
                 self.review_summary.setText(self.review_summary.text()+f"\nProduction: {counts['retained']:,} kept · {counts['excluded']:,} excluded · original boundaries retained")
+            from composition.review.presentation import next_step
+            self.review_summary.setText(self.review_summary.text()+"\nNext: "+next_step("Needs review",accepted=self.run.accepted,stale=self.run.data_summary.get("stale",False)))
             if self.spec.node("review"):
                 self.run.statuses[self.spec.node("review").id]="Completed" if self.run.accepted else "Needs review"
             self.canvas.display(self.spec,self.run.statuses,self.selected)

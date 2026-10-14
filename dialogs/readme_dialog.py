@@ -24,6 +24,16 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## Development update: Designer / Workflow settings
+
+* Template Designer owns layout, variable fields, barcode definitions and Paper / Tray settings.
+* New Media Assignment nodes inherit project settings. Select **Workflow override** explicitly to replace printing, Stock and printer profile for the recipe. Legacy nodes keep their existing override behaviour.
+* Check to this step inspects data and plans without publishing output or granting production approval. Review shows logical template pages, physical output pages, sheets and inserted blank backs separately.
+* **Accept data & jobs** accepts checked mappings, records and exclusions; **Production Review** separately checks and confirms the exact generation plan. Changed sources/templates require checking again.
+* Review issues return to their actual settings source. Templates opened from Workflow offer **Return to Workflow**. Production destinations are remembered separately from assets/profiles.
+* An incomplete check displays **Planned barcodes: Not fully checked**, rather than presenting zero as a verified count. Completed output/report history remains available.
+* These development changes are not yet included in the published v3.0.7 installer. Project/Overlay template formats and public version are unchanged. A recipe saved with the new settings-source flag requires this reader; older recipes remain readable.
+
 ## New in v3.0.7: Recovery and Production Reliability
 
 * Reopening an existing PDF focuses its tab/window and clears the opening

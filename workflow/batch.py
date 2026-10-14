@@ -50,7 +50,8 @@ def _validate_summary(summary):
     if type(summary.get("stale",False)) is not bool:
         raise CompositionError("Invalid workflow source freshness.")
     plan=summary.get("print_plan",{})
-    if not isinstance(plan,dict) or any(type(v) is not int or not 0<=v<=100_000_000 for v in plan.values()):
+    if (not isinstance(plan,dict) or plan and not {"sheets","inserted_blank_backs","output_pages"}.issubset(plan)
+            or any(type(v) is not int or not 0<=v<=100_000_000 for v in plan.values())):
         raise CompositionError("Invalid workflow print counts.")
     from .source_state import validate_observations
     validate_observations(summary.get("source_observations",{}))

@@ -456,6 +456,8 @@ class ReviewController:
                   "font_substitutions": "Font substitutions", "conditional_objects": "Conditional objects",
                   "hidden_objects": "Hidden object occurrences"}
         lines = [f"{title}: {summary[key]}" for key, title in titles.items() if key in summary]
+        from .presentation import next_step
+        lines.append("Next: "+next_step(result["status"],stale=not self.session_valid and not self.consumed))
         if "expected_barcodes" in summary:
             count=str(summary["expected_barcodes"]) if summary.get("barcode_check_complete",result.get("complete",False)) else "Not fully checked"
             lines.append("Planned barcodes: "+count)

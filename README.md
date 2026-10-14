@@ -24,6 +24,15 @@ v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發
 - Barcode／QR 明確選擇 Direct Content 或 Barcode Logic；首次設定保留 `{{Seq}}` 等欄位，預覽數字不會被存成固定值。取消、草稿及 Undo 保留既有內容。
 - Blocked 覆核直接顯示原因及 Issues，區分已檢查與預計數量。以上介面修補尚未包含在已發布的 v3.0.7 安裝包。
 
+## 開發更新：Visual Workflow 設定、核對與生產
+
+- 新 Media Assignment 節點預設沿用模板／Overlay 的選紙設定；只有明確選擇 **Workflow override** 才覆寫。舊節點沒有來源旗標時維持原有覆寫行為。
+- 模板頁數與實體輸出頁數分開顯示；雙面但未啟用選紙時亦計入補白背面，Split Output 保留既有實體頁數契約。
+- **Accept data & jobs** 接受資料、映射和工作清單；正式生成仍需独立 **Production Review** 及本次工作階段的批准。
+- 返回 Workflow 以背景檔案檢查提示來源過期；開啟模板的未保存修改亦撤回待生產工作的接受狀態。已完成成果保留，最終生產仍使用內容雜湊驗證。
+- Issues 返回實際的設定來源；從 Workflow 開啟模板可 **Return to Workflow**。生產輸出資料夾獨立記住，不沿用 profile／圖片瀏覽位置。
+- 詳細責任、相容性和驗收見 [Workflow 設定與覆核說明](docs/WORKFLOW_SETTINGS_REVIEW.md)。此更新尚未打包／發布。
+
 ## v3.0.6：文件完整性與生產安全
 
 - 回復／Undo 的記憶體文件仍可 Save／Save As；重複插頁及比例複製共用交易，失敗完整回復。

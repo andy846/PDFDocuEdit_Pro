@@ -322,6 +322,12 @@ def install(window,node):
             source.setCurrentIndex(source.findData(settings_source(node.params)))
             source.setToolTip("Project keeps template / Overlay paper settings. Workflow override replaces them for this recipe only.")
             layout.addWidget(source)
+            from .settings_navigation import edit_project_media
+            project_button=QPushButton("Edit project Paper / Tray…")
+            project_button.clicked.connect(lambda:edit_project_media(window))
+            project_button.setVisible(source.currentData()=="project")
+            source.currentIndexChanged.connect(lambda _,b=project_button:b.setVisible(source.currentData()=="project"))
+            layout.addWidget(project_button)
             window.watch_settings(node,lambda:{**node.params,"settings_source":source.currentData()},[source])
             button.setEnabled(source.currentData()=="workflow")
             source.currentIndexChanged.connect(lambda _,b=button:b.setEnabled(source.currentData()=="workflow"))

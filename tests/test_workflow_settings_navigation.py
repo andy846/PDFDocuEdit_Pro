@@ -140,3 +140,22 @@ def test_invalid_saved_source_metadata_rejected_before_ui():
         BatchJob(data_summary={"source_observations":{"source.pdf":[]}}).validate()
     with pytest.raises(ValueError,match="print counts"):
         BatchJob(data_summary={"print_plan":{"sheets":"many"}}).validate()
+
+
+def test_partial_cached_print_plan_and_branch_observations_rejected(tmp_path):
+    import pytest
+
+    from workflow.batch import BatchJob
+    with pytest.raises(ValueError,match="print counts"):
+        BatchJob(data_summary={"print_plan":{"output_pages":4}}).validate()
+
+
+def test_invalid_cached_branch_source_metadata_rejected(tmp_path):
+    import pytest
+
+    from tests.test_workflow_branch_engine import fixture
+    from workflow.branch_engine import prepare_routes, validate_branch_run
+    run=prepare_routes(fixture(tmp_path),tmp_path/"check")
+    run["source_observations"]={"file.csv":[]}
+    with pytest.raises(ValueError):
+        validate_branch_run(run)

@@ -14,7 +14,7 @@ def batch_context(spec, job, root, *, owner_spec=None, output_root=None):
     from .batch import _signature
     signature, _, _, _ = _signature(spec, job)
     if job.status != "Ready" or not job.approved or not job.prepared_template or signature != job.signature:
-        raise CompositionError("Check and explicitly approve this workflow job before production review.")
+        raise CompositionError("Check and accept this workflow job before production review.")
     identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id")
     if not identity:
         raise CompositionError("Check this job again to reserve its production identity.")
@@ -179,7 +179,7 @@ def open_workflow_review(window, request, continuation):
     controller.rebuild = lambda: open_workflow_review(window, request, continuation)
     def prepared(result):
         if not result["contexts"]:
-            controller.pane.status.setText("No approved production jobs. Check and approve jobs first.")
+            controller.pane.status.setText("No accepted current jobs. Check and accept data & jobs first.")
             return
         controller.start(result["contexts"], continuation)
     # Workflow request callbacks run after worker teardown and retain its reference.

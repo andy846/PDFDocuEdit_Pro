@@ -61,6 +61,8 @@ def validate_branch_run(run):
     try:
         if not isinstance(run, dict):
             raise ValueError("Invalid branch run.")
+        from .source_state import validate_observations
+        validate_observations(run.get("source_observations",{}))
         validate_identifier(run.get("id"), label="branch run")
         validate_identifier(run.get("batch_id"), label="batch")
         jobs = run.get("jobs")

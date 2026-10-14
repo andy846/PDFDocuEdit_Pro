@@ -214,8 +214,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         super().__init__(*args,**kwargs)
         self._build_batch_ui()
         self.apply_spec(WorkflowSpec.mail_merge().upgraded().to_dict())
-        self.actions["generate"].setText("Run Ready Jobs")
-        self.actions["generate"].setIconText("Run Ready Jobs")
+        self.actions["generate"].setText("Review Production")
+        self.actions["generate"].setIconText("Review Production")
         self.setAcceptDrops(True)
         self.undo.setClean()
         self.lock()
@@ -305,7 +305,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         preview_button.clicked.connect(self.preview_job)
         nav.addWidget(preview_button)
         nav.addStretch()
-        self.accept_button=QPushButton("Approve selected jobs")
+        self.accept_button=QPushButton("Accept data & jobs")
         self.accept_button.clicked.connect(self.approve_selected)
         nav.addWidget(self.accept_button)
         preview_layout.addLayout(nav)
@@ -383,7 +383,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         from .registry import EXTRA_KINDS
         self.toolbox.configure(tuple(dict.fromkeys(spec.kinds+EXTRA_KINDS)))
         self.canvas.summaries={"data":f"{len(self.batch.jobs)} batch job(s)","mapping":"Reusable field aliases",
-            "template":"One template per job","sequences":"Independent per job","mail_review":"Check and approve",
+            "template":"One template per job","sequences":"Independent per job","mail_review":"Accept data, then production review",
             "compose":"Background generation","reports":"PDF + CSV + JSON"}
         self.canvas.display(spec,self.run.statuses,self.selected)
         self.select_node(self.selected)
@@ -415,7 +415,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             "mapping":"SETTINGS\nMap original column names to template fields. Missing required fields block that job. Unused columns are allowed.",
             "template":"SETTINGS\nLayouts, fonts, multi-page backgrounds and barcode definitions are edited in Template Designer.",
             "sequences":"SETTINGS\nEach job uses its template's sequence definitions. Override existing sequence starts in Edit Job; imported fields are never overwritten.",
-            "mail_review":"OUTPUT\nCheck all pairs, inspect representative records and approve the jobs to run. Changes require checking again.",
+            "mail_review":"OUTPUT\nCheck all pairs, inspect representative records and accept the data/job selection. Production Review separately confirms generation. Changes require checking again.",
             "compose":"SETTINGS\nGenerate one job at a time in an isolated background process. A failed job does not discard other jobs.",
             "reports":"OUTPUT\nEach job publishes a validated PDF with reconciliation, control CSV and JSON log. The batch also has a summary CSV and JSON record."}
         info=QLabel(descriptions[node.kind])
@@ -488,6 +488,11 @@ class MailMergeWorkflowWindow(WorkflowWindow):
                     self.jobs_table.selectionModel().select(index,QItemSelectionModel.SelectionFlag.Select|QItemSelectionModel.SelectionFlag.Rows)
         counts={status:sum(j.status==status for j in self.batch.jobs) for status in ("Ready","Needs review","Blocked","Completed","Failed","Cancelled")}
         self.batch_summary.setText(f"{len(self.batch.jobs)} jobs · "+" · ".join(f"{count} {status.lower()}" for status,count in counts.items() if count))
+        from composition.review.presentation import next_step
+        pending=[j for j in self.batch.jobs if j.status!="Completed"]
+        status="Blocked" if any(j.status=="Blocked" for j in pending) else self.batch.status
+        guidance=next_step(status,accepted=bool(pending) and all(j.approved for j in pending),stale=any(j.data_summary.get("stale") for j in pending))
+        self.batch_summary.setText(self.batch_summary.text()+"\nNext: "+guidance)
         self.run_header.setText(f"Batch {self.batch.batch_id} · {self.batch.status}\n"+self.batch_summary.text())
         self.canvas.summaries["data"]=f"{len(self.batch.jobs)} batch job(s)"
         self.canvas.display(self.spec,self.run.statuses,self.selected)
@@ -626,7 +631,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.refresh_jobs()
             self.tabs.setCurrentWidget(self.review_page)
             self.message("Checking cancelled. Unfinished jobs require checking again." if self.batch.status=="Cancelled"
-                         else "Check findings, preview records, then approve the jobs to run.")
+                         else "Check findings and preview records, then accept data & jobs. Production Review is the next gate.")
         self.request({"operation":"batch_check","spec":self.spec.to_dict(),"batch":self.batch.to_dict(),"directory":str(self.directory)},ready)
 
     def templates_saved(self):
@@ -660,6 +665,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         detail+="\n"+(job.error or "\n".join(job.warnings) or "Primary fonts, rules and barcode layout come from the template.")
         if job.template_fields:
             detail+="\nTemplate fields: "+", ".join(job.template_fields)
+        from composition.review.presentation import next_step
+        detail+="\nNext: "+next_step(job.status,accepted=job.approved,stale=job.data_summary.get("stale",False))
         self.job_detail.setText(detail)
         from .registry import EXTRA_KINDS
         selected=next((n for n in self.spec.nodes if n.id==self.selected),None)
@@ -705,11 +712,13 @@ class MailMergeWorkflowWindow(WorkflowWindow):
 
     def approve_selected(self):
         from .batch import approve
+        self.source_watch.open_changes()
         jobs=self.selected_jobs()
         approve(self.batch,[j.id for j in jobs])
         self.batch_dirty=True
         self.refresh_jobs()
-        self.message("Selected checked jobs approved. Use Run Ready Jobs to start production.")
+        self.message("Data & job selection accepted. Open Production Review before generation."
+            if any(j.approved and j.status=="Ready" for j in jobs) else "No current checked jobs accepted. Check changed or incomplete jobs again.")
 
     def execute(self,until,*,production_reviews=None):
         if self.spec.project_kind!="mail_merge_workflow":
@@ -722,7 +731,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         ready=[j for j in self.batch.jobs if j.status=="Ready" and j.approved]
         if not ready:
             self.tabs.setCurrentWidget(self.review_page)
-            self.message("Check and approve the batch jobs before running.")
+            self.message("Check and accept data & jobs before Production Review.")
             return
         output=self.spec.node("reports").params.get("directory","")
         if not output:
@@ -789,7 +798,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
     def retry_failed(self):
         if any(j.status in ("Failed","Cancelled","Blocked") for j in self.batch.jobs):
             self.check_jobs()
-            self.message("Rechecking unfinished jobs. Completed outputs are preserved; approve checked jobs before retrying.")
+            self.message("Rechecking unfinished jobs. Completed outputs are preserved; accept checked data/jobs and repeat Production Review before retrying.")
         else:
             self.message("There are no failed jobs to retry.")
 
@@ -853,7 +862,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             busy=bool(self.active_worker or self.close_pending)
             for button in self.batch_buttons:
                 button.setEnabled(not busy)
-            self.accept_button.setEnabled(not busy and bool(self.selected_jobs()))
+            self.accept_button.setEnabled(not busy and any(j.status in ("Needs review","Ready") and j.prepared_template
+                and not j.data_summary.get("stale") for j in self.selected_jobs()))
             self.job_filter.setEnabled(not busy)
             self.run_table.setEnabled(True)
 

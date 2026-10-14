@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -224,7 +225,7 @@ class BranchWorkflowWindow(QMainWindow):
         action("fit","Fit flow",lambda:self.canvas.fit(),symbol="monitor")
         action("step","Check to step",self.check_selected,symbol="search")
         action("scan","Check & Preview",self.check_all,symbol="scan")
-        action("generate","Run approved",self.generate,"Ctrl+Shift+G","printer")
+        action("generate","Review Production",self.generate,"Ctrl+Shift+G","printer")
         action("cancel","Cancel",self.cancel_job,symbol="x")
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         for key in ("scan","generate"):
@@ -363,19 +364,21 @@ class BranchWorkflowWindow(QMainWindow):
         row.addWidget(QLabel("Template page"))
         row.addWidget(self.preview_page)
         layout.addLayout(row)
-        row=QHBoxLayout()
-        for text,callback in (("Preview record",self.preview_job),("Review exceptions",self.review_exceptions),
-                              ("Approve selected",lambda:self.approve(False)),("Approve all checked",lambda:self.approve(True))):
+        row=QGridLayout()
+        for index,(text,callback) in enumerate((("Preview record",self.preview_job),("Review exceptions",self.review_exceptions),
+                              ("Accept selected",lambda:self.approve(False)),("Accept all checked",lambda:self.approve(True)))):
             button=QPushButton(text)
             button.clicked.connect(callback)
-            row.addWidget(button)
+            if index>=2:
+                button.setToolTip("Accept checked data and job selection; Production Review confirms generation separately.")
+            row.addWidget(button,index//2,index%2)
         layout.addLayout(row)
-        self.tabs.addTab(self.review_page,"Review && approve")
+        self.tabs.addTab(self.review_page,"Review && accept")
 
     def setup_production(self):
         self.production_page=QWidget()
         layout=QVBoxLayout(self.production_page)
-        self.production_summary=QLabel("Production runs only explicitly approved branches. Completed outputs are retained on recheck.")
+        self.production_summary=QLabel("Accept checked data/jobs, then confirm Production Review. Completed outputs are retained on recheck.")
         self.production_summary.setWordWrap(True)
         self.production_summary.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.production_summary)
@@ -614,7 +617,7 @@ class BranchWorkflowWindow(QMainWindow):
             edit=QPushButton("Edit in Template Designer")
             edit.clicked.connect(lambda:self.edit_template(path.text()))
             layout.addWidget(edit)
-            media=QPushButton("Configure print media…")
+            media=QPushButton("Workflow media override…")
             media.clicked.connect(lambda:self.configure_media(node.id))
             layout.addWidget(media)
             def getter():
@@ -631,6 +634,20 @@ class BranchWorkflowWindow(QMainWindow):
             source.addItem("Workflow override","workflow")
             source.setCurrentIndex(source.findData(settings_source(node.params)))
             layout.addWidget(source)
+            project_button=QPushButton("Edit project Paper / Tray…")
+            def project_media():
+                if not self.flush_settings():
+                    return
+                branch=self.branch_id(node.id)
+                template=self.spec.execution_plan(self.spec.node("route").id).branches[branch][0]
+                from .settings_navigation import open_design
+                project=open_design(self,template.params.get("path","")) if template.params.get("path") else None
+                if project:
+                    project.edit_print_media()
+            project_button.clicked.connect(project_media)
+            project_button.setVisible(source.currentData()=="project")
+            source.currentIndexChanged.connect(lambda _,b=project_button:b.setVisible(source.currentData()=="project"))
+            layout.addWidget(project_button)
             def getter():
                 return {**node.params,"settings_source":source.currentData()}
             source.currentIndexChanged.connect(self.draft_changed)
@@ -648,7 +665,7 @@ class BranchWorkflowWindow(QMainWindow):
             repair.toggled.connect(self.draft_changed)
         else:
             note=QLabel({"exceptions":"Review records that have invalid data, no route or multiple matches. Exceptions reserve their sequence numbers.",
-                        "mail_review":"Check the entire graph, preview a record and approve this branch on Review & approve.",
+                        "mail_review":"Check the entire graph, preview a record and accept this branch on Review & accept. Production Review confirms generation separately.",
                         "reports":"A job log, branch summary and record reconciliation are produced for every production run.",
                         "collect":"Collects job statuses and reports. It does not merge PDFs or renumber records."}.get(node.kind,""))
             note.setWordWrap(True)
@@ -910,6 +927,7 @@ class BranchWorkflowWindow(QMainWindow):
             effective=resolve_media_settings(result["template"].get("media",{}),media.params if media else None)
             dialog=MediaDialog(effective.media,
                                {"kind":"template","project":result["template"],"records":1},self)
+            dialog.setWindowTitle("Workflow print media override")
             if dialog.exec():
                 new=copy.deepcopy(self.spec)
                 if media:
@@ -958,6 +976,10 @@ class BranchWorkflowWindow(QMainWindow):
                              f"Input {self.run.get('input',0):,} = excluded {self.run.get('excluded',0):,} + candidates {self.run.get('candidates',0):,}\n"
                              f"Candidates = routed {self.run.get('routed',0):,} + exceptions {self.run.get('exceptions',0):,}"+
                              "\n"+"\n".join(f"Blocked source: {Path(s['path']).name} · {s['error']}" for s in self.run.get("sources",[]) if s["status"]=="Blocked"))
+        from composition.review.presentation import next_step
+        pending=[j for j in entries if j["status"] not in ("Completed","No records")]
+        hint=next_step(self.run.get("status","Pending"),accepted=bool(pending) and all(j["approved"] for j in pending),stale=self.run.get("stale",False))
+        self.summary.setText(self.summary.text()+"\nNext: "+hint)
         self.production_summary.setText(self.summary.text()+f"\nPublished {self.run.get('published_records',0):,} · "
                                        f"Unpublished {self.run.get('unpublished_records',self.run.get('routed',0)):,}\n"+self.run.get("report_dir",""))
         for page in (self.input_page,self.output_page,self.issue_page):
@@ -1067,12 +1089,12 @@ class BranchWorkflowWindow(QMainWindow):
         if not self.templates_saved():
             return
         if self.draft_error or self.run.get("stale"):
-            self.error("Apply edits and check the entire workflow before approval.")
+            self.error("Apply edits and check the entire workflow before accepting data & jobs.")
             return
         jobs=self.run.get("jobs",[]) if all_checked else self.selected_jobs()
         identities=[j["id"] for j in jobs if j["status"] in ("Needs review","Ready")]
         if not identities:
-            self.message("Select a checked branch to approve.")
+            self.message("Select a checked branch whose data/jobs you want to accept.")
             return
         self.request({"operation":"branch_approve","identities":identities,"acknowledge":self.acknowledge.isChecked()},self.receive_run)
 
@@ -1093,7 +1115,7 @@ class BranchWorkflowWindow(QMainWindow):
         if not self.templates_saved():
             return
         if self.draft_error or self.run.get("stale") or not any(j["approved"] and j["status"]=="Ready" for j in self.run.get("jobs",[])):
-            self.error("Check, review and explicitly approve the branches before production.")
+            self.error("Check and accept the branch data/jobs before Production Review.")
             return
         output=output_dir or QFileDialog.getExistingDirectory(self,"Production output folder")
         if output:

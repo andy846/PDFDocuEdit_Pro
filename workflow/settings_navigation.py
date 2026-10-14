@@ -99,3 +99,18 @@ def edit_review_issue(window,context,issue):
                 window.jobs_table.selectRow(index.row())
                 break
     window.message("Review the selected job and source settings. Check again after changes.")
+
+
+def edit_project_media(window):
+    """Edit inherited project settings without silently adding an override."""
+    if window.active_worker or not window.flush_settings():
+        return
+    if hasattr(window,"edit_template"):
+        project=window.edit_template()
+    else:
+        node=window.spec.node("overlay")
+        project=open_design(window,node.params["path"]) if node and node.params.get("path") else None
+        if not project:
+            window.message("Choose a saved Overlay project for inherited settings, or select Workflow override.")
+    if project:
+        project.edit_print_media()
