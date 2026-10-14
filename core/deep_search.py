@@ -159,6 +159,8 @@ def search_folder_detailed(
                         searchable_pages += 1
                     page_number = page_index + 1
                     hits = _matches(content, patterns, path_text, path.name, page_number, "text")
+                    if is_cancelled and is_cancelled():
+                        break
                     if search_barcodes:
                         for value in _barcode_values(page):
                             hits.extend(_matches(

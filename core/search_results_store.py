@@ -46,6 +46,15 @@ class SearchResultsStore:
         reader.db.execute("BEGIN")
         return reader
 
+    @classmethod
+    def open_writer(cls, path: str | Path) -> SearchResultsStore:
+        writer = object.__new__(cls)
+        writer.path = Path(path)
+        writer._temporary = None
+        writer.db = sqlite3.connect(writer.path)
+        writer.db.execute("PRAGMA synchronous=NORMAL")
+        return writer
+
     def close(self) -> None:
         if self.db is not None:
             self.db.close()
@@ -59,8 +68,8 @@ class SearchResultsStore:
             self.db.execute("DELETE FROM hits WHERE path NOT IN (SELECT path FROM files)")
 
     def hit_count(self, paths: Sequence[str] | None = None,
-                  keyword: str = "", source: str = "") -> int:
-        where, args = self._where(paths, keyword, source)
+                  keyword: str = "", source: str = "", *, cutoff: int | None = None) -> int:
+        where, args = self._where(paths, keyword, source, cutoff)
         return int(self.db.execute(f"SELECT COUNT(*) FROM hits{where}", args).fetchone()[0])
 
     def add(self, batch: SearchBatch) -> None:
@@ -106,12 +115,15 @@ class SearchResultsStore:
         return int(hits), int(files), int(pages)
 
     def _where(self, paths: Sequence[str] | None, keyword: str,
-               source: str) -> tuple[str, list[str]]:
+               source: str, cutoff: int | None = None) -> tuple[str, list[str | int]]:
         clauses: list[str] = []
-        args: list[str] = []
+        args: list[str | int] = []
+        if cutoff is not None:
+            clauses.append("id <= ?")
+            args.append(cutoff)
         if paths is not None:
             if not paths:
-                return " WHERE 0", args
+                return " WHERE 0", []
             clauses.append("path IN (" + ",".join("?" for _ in paths) + ")")
             args.extend(paths)
         if keyword:
@@ -135,8 +147,9 @@ class SearchResultsStore:
 
     def hit_page(self, offset: int, limit: int, paths: Sequence[str] | None = None,
                  keyword: str = "", source: str = "",
-                 order: str = "path COLLATE NOCASE, page, position, id") -> list[SearchHit]:
-        where, args = self._where(paths, keyword, source)
+                 order: str = "path COLLATE NOCASE, page, position, id",
+                 *, cutoff: int | None = None) -> list[SearchHit]:
+        where, args = self._where(paths, keyword, source, cutoff)
         rows = self.db.execute(
             "SELECT path, filename, page, keyword, source, context, position "
             f"FROM hits{where} ORDER BY {order} LIMIT ? OFFSET ?",

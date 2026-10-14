@@ -82,6 +82,7 @@ CROSS_PLATFORM_TESTS = (
     "tests/test_commands.py",
     "tests/test_deep_search.py",
     "tests/test_deep_search_detailed.py",
+    "tests/test_deep_search_responsive.py",
     "tests/test_font_inspector.py",
     "tests/test_font_preflight.py",
     "tests/test_pdf_runtime.py", "tests/test_prepare_qpdf.py", "tests/test_pdf_operations.py",

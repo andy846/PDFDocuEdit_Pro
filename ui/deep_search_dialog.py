@@ -13,8 +13,8 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QBoxLayout,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -29,14 +29,17 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 
-from core.deep_search import SearchBatch, SearchFile, SearchHit, SearchIssue, search_folder_detailed
+from core.deep_search import SearchBatch, SearchFile, SearchHit, SearchIssue
+from core.deep_search_runtime import SearchRuntime
 from core.diagnostics import log_failure
 from core.search_report import ReportMeta, export_html, export_report, export_text
 from core.search_results_store import SearchResultsStore
 from core.tasks import FunctionTask
 from dialogs.base import SortableTableWidget, ToolDialog, remember_save_directory, start_in_save_directory
 from styles.theme import get_color, get_colors
+from ui.combo_popup import WideComboBox
 from ui.search_hits_model import SearchHitsModel
+from ui.search_queries import SearchQueries
 
 OPEN_NEW_TAB = "new_tab"
 OPEN_CURRENT = "current"
@@ -72,6 +75,8 @@ class DeepSearchDialog(ToolDialog):
         self._task: FunctionTask | None = None
         self._export_task: FunctionTask | None = None
         self._pool = QThreadPool.globalInstance()
+        self._search_pool = QThreadPool(self)
+        self._search_pool.setMaxThreadCount(1)
         self._search_started_at = 0.0
         self._processed_files = 0
         self._total_files = 0
@@ -87,6 +92,22 @@ class DeepSearchDialog(ToolDialog):
         self._run_subfolders = True
         self._run_barcodes = False
         self._refresh_scheduled = False
+        self._runtime = None
+        self._queries = None
+        self._worker_finished = False
+        self._closing_search = False
+        self._clear_pending = False
+        self._preview_generation = 0
+        self._last_revision = -1
+        self._last_refresh = 0.0
+        self._hits_scroll = 0
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(100)
+        self._poll_timer.timeout.connect(self._poll_search)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(200)
+        self._filter_timer.timeout.connect(self._apply_filters)
 
         # --- folder row ---
         folder_row = QHBoxLayout()
@@ -119,6 +140,12 @@ class DeepSearchDialog(ToolDialog):
         self.cancel_button.clicked.connect(self._cancel_search)
         search_row.addWidget(self.query, 1)
         search_row.addWidget(self.search_button)
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.setObjectName("deepSearchPause")
+        self.pause_button.setEnabled(False)
+        self.pause_button.setToolTip("Pause at the next safe page checkpoint; Resume continues this search")
+        self.pause_button.clicked.connect(self._toggle_pause)
+        search_row.addWidget(self.pause_button)
         search_row.addWidget(self.cancel_button)
         self._root.addLayout(search_row)
 
@@ -133,7 +160,7 @@ class DeepSearchDialog(ToolDialog):
             "Scan barcodes and QR codes on every page and match their content.\n"
             "This significantly slows down the search."
         )
-        self.open_option = QComboBox()
+        self.open_option = WideComboBox()
         self.open_option.addItem("Open in new window", OPEN_NEW_TAB)
         self.open_option.addItem("Open in current window", OPEN_CURRENT)
         self.open_option.addItem("Open with system default application", OPEN_SYSTEM)
@@ -149,8 +176,10 @@ class DeepSearchDialog(ToolDialog):
         status_row = QHBoxLayout()
         self.status = QLabel("Ready")
         self.status.setObjectName("secondary")
+        self.status.setWordWrap(True)
         self.current_file = QLabel("")
         self.current_file.setObjectName("deepSearchCurrentFile")
+        self.current_file.setWordWrap(True)
         self.progress = QProgressBar()
         self.progress.setObjectName("deepSearchProgress")
         self.progress.setRange(0, 100)
@@ -170,6 +199,9 @@ class DeepSearchDialog(ToolDialog):
         self.hits_table = QTableView()
         self.hits_table.setObjectName("deepSearchMatchesTable")
         self.hits_table.setModel(self._hits_model)
+        self._hits_model.modelAboutToBeReset.connect(self._capture_hits_view)
+        self._hits_model.viewRestored.connect(self._restore_hits_view)
+        self._hits_model.dataChanged.connect(lambda *_: self._update_hit_preview())
         self.hits_table.setSortingEnabled(True)
         self.hits_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.hits_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -194,10 +226,10 @@ class DeepSearchDialog(ToolDialog):
         self.file_filter = QLineEdit()
         self.file_filter.setPlaceholderText("Filter files by name or path")
         self.file_filter.textChanged.connect(self._refresh_filters)
-        self.keyword_filter = QComboBox()
+        self.keyword_filter = WideComboBox()
         self.keyword_filter.addItem("All keywords", "")
         self.keyword_filter.currentIndexChanged.connect(self._refresh_filters)
-        self.source_filter = QComboBox()
+        self.source_filter = WideComboBox()
         for label, value in (("All sources", ""), ("Text", "text"), ("Barcode", "barcode")):
             self.source_filter.addItem(label, value)
         self.source_filter.currentIndexChanged.connect(self._refresh_filters)
@@ -210,6 +242,7 @@ class DeepSearchDialog(ToolDialog):
         self._root.addLayout(filter_row)
         self.text_notice = QLabel("Image-only PDF pages need OCR before text search.")
         self.text_notice.setObjectName("secondary")
+        self.text_notice.setWordWrap(True)
         self._root.addWidget(self.text_notice)
 
         tip = QLabel(
@@ -227,7 +260,7 @@ class DeepSearchDialog(ToolDialog):
         self.export_button = QPushButton("Export Search Results")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self._export)
-        self.export_scope = QComboBox()
+        self.export_scope = WideComboBox()
         self.export_scope.addItem("Export all results", "all")
         self.export_scope.addItem("Export current filters", "filtered")
         self.open_selected_button = QPushButton("Open Selected Document")
@@ -246,6 +279,24 @@ class DeepSearchDialog(ToolDialog):
         self.hits_table.selectionModel().currentChanged.connect(
             lambda *_args: self._update_hit_preview()
         )
+
+        self._compact_rows = (folder_row, search_row, options_row, filter_row, actions)
+        self._fit_compact_rows()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_compact_rows"):
+            QTimer.singleShot(0, self._fit_compact_rows)
+
+    def _fit_compact_rows(self):
+        scroll = getattr(self, "_responsive_scroll", None)
+        width = scroll.viewport().width() if scroll is not None else self.width()
+        for row in self._compact_rows:
+            widgets = [row.itemAt(i).widget() for i in range(row.count()) if row.itemAt(i).widget()]
+            needed = sum(max(w.minimumWidth(), w.minimumSizeHint().width()) for w in widgets)
+            needed += max(0, len(widgets) - 1) * max(6, row.spacing()) + 28
+            row.setDirection(QBoxLayout.Direction.TopToBottom if needed > width
+                             else QBoxLayout.Direction.LeftToRight)
 
     # --- table setup -------------------------------------------------------
     def _setup_result_table(self) -> None:
@@ -321,10 +372,28 @@ class DeepSearchDialog(ToolDialog):
             self.status.setText("Enter text to search for.")
             return
         folder = self.folder.text().strip()
-        if not Path(folder).expanduser().is_dir():
+        if not folder:
             self.status.setText("Choose a valid folder to search.")
             return
-        self._clear_results()
+        if self._queries is not None and self._queries.task is not None:
+            self.status.setText("Finishing result query…")
+            return
+        if self._queries is not None:
+            self._queries.close()
+            self._queries.deleteLater()
+            self._queries = None
+        self._hits_model.set_async_loader(self._request_query)
+        self._reset_results()
+        self._queries = SearchQueries(self._store.path, self)
+        self._queries.ready.connect(self._query_ready)
+        self._queries.discarded.connect(self._hits_model.discard_query)
+        self._queries.failed.connect(self._query_failed)
+        self._queries.idle.connect(self._query_idle)
+        self._runtime = SearchRuntime(self._store.path)
+        self._worker_finished = False
+        self._last_revision = -1
+        self._last_refresh = 0.0
+        self._hits_model.configure(())
         self._searched_at = datetime.now().astimezone().isoformat(timespec="seconds")
         self._run_query = query
         self._run_folder = folder
@@ -340,27 +409,114 @@ class DeepSearchDialog(ToolDialog):
         self._search_started_at = time.monotonic()
         self._processed_files = 0
         self._total_files = 0
-        task = FunctionTask(
-            search_folder_detailed,
-            folder,
-            query,
-            self._run_subfolders,
-            self._run_barcodes,
-            progress_argument="progress",
-            cancel_argument="is_cancelled",
-            batch_argument="on_batch",
-        )
+        task = FunctionTask(self._runtime.run, folder, query,
+                            self._run_subfolders, self._run_barcodes)
         self._task = task
-        task.signals.progress.connect(self._on_progress)
-        task.signals.batch.connect(self._receive_batch)
         task.signals.result.connect(self._detailed_result)
         task.signals.error.connect(self._on_search_error)
         task.signals.finished.connect(self._search_finished)
-        self._pool.start(task)
+        self.pause_button.setText("Pause")
+        self.pause_button.setEnabled(True)
+        self._poll_timer.start()
+        self._search_pool.start(task)
+
+    def _toggle_pause(self):
+        if self._runtime is None or self._task is None or self._worker_finished:
+            return
+        if self._runtime.pause_requested:
+            self._runtime.resume()
+            self.status.setText("Resuming search…")
+            self.pause_button.setText("Pause")
+        else:
+            self._runtime.pause()
+            self.status.setText("Pausing after the current operation…")
+            self.pause_button.setText("Pausing…")
+        self.pause_button.setEnabled(False)
+
+    def _poll_search(self):
+        if self._runtime is None or self._closing_search:
+            return
+        updates, progress, revision, paused, requested = self._runtime.take_updates()
+        self._on_progress(*progress)
+        if updates:
+            sorting = self.table.isSortingEnabled()
+            self.table.setSortingEnabled(False)
+            self.table.blockSignals(True)
+            try:
+                for batch, context in updates:
+                    if batch.file and batch.file.matches:
+                        self._append_file_result(batch.file, context)
+                    if batch.issue:
+                        self._append_issue(batch.issue)
+            finally:
+                self.table.setSortingEnabled(sorting)
+                self.table.blockSignals(False)
+        if not self._runtime.cancelled and not self._worker_finished and not self._search_error:
+            self.pause_button.setText("Resume" if paused else "Pausing…" if requested else "Pause")
+            self.pause_button.setEnabled(paused or not requested)
+            self.status.setText("Paused · results retained · Resume continues this search" if paused else
+                                "Pausing after the current operation…" if requested else "Searching…")
+        now = time.monotonic()
+        if (revision != self._last_revision and now - self._last_refresh >= .5
+                and self.tabs.currentWidget() is self.hits_table
+                and self._queries.task is None):
+            self._last_refresh = now
+            self._last_revision = revision
+            self._refresh_hit_model()
+        if self._worker_finished and not self._runtime.pending():
+            self._complete_live_search()
+
+    def _append_issue(self, issue):
+        self._errors.append({"path": issue.path, "filename": issue.filename,
+                             "pages": [], "snippets": [], "error": issue.message})
+        row = self.error_table.rowCount()
+        self.error_table.insertRow(row)
+        self.error_table.setItem(row, 0, QTableWidgetItem(issue.filename))
+        self.error_table.setItem(row, 1, QTableWidgetItem(issue.message))
+
+    def _request_query(self, request):
+        if self._queries is not None and not self._closing_search:
+            self._queries.request(request)
+
+    def _query_ready(self, result):
+        if self._closing_search:
+            return
+        if result["kind"] == "preview":
+            if result["generation"] == self._preview_generation:
+                self._render_preview(result["result"], result["rows"], result["counts"][2])
+        else:
+            self._hits_model.apply_query(result)
+
+    def _query_failed(self, failure):
+        request = failure["request"]
+        generation = self._preview_generation if request["kind"] == "preview" else self._hits_model.generation
+        if not self._closing_search and request["generation"] == generation:
+            self._hits_model.discard_query(request)
+            self.status.setText(f"Result query failed: {failure['message']}")
+
+    def _query_idle(self):
+        if self._closing_search:
+            self._try_close_search()
+        elif self._clear_pending:
+            self._clear_pending = False
+            self._clear_results()
+        elif self._task is None and self._export_task is None:
+            self.search_button.setEnabled(True)
+
+    def _capture_hits_view(self):
+        self._hits_scroll = self.hits_table.verticalScrollBar().value()
+
+    def _restore_hits_view(self, row):
+        self.hits_table.verticalScrollBar().setValue(self._hits_scroll)
+        if row >= 0:
+            self.hits_table.setCurrentIndex(self._hits_model.index(row, 0))
 
     def _cancel_search(self) -> None:
         if self._task:
+            if self._runtime is not None:
+                self._runtime.cancel()
             self._task.cancel()
+            self.pause_button.setEnabled(False)
             self.status.setText("Cancelling search…")
             self.cancel_button.setEnabled(False)
 
@@ -394,7 +550,7 @@ class DeepSearchDialog(ToolDialog):
         if self._store.db is not None:
             self._refresh_hit_model()
 
-    def _append_file_result(self, file: SearchFile) -> None:
+    def _append_file_result(self, file: SearchFile, context=None) -> None:
         self._results.append({"path": file.path, "filename": file.filename,
                               "pages": [], "snippets": [],
                               "match_count": file.matches})
@@ -412,8 +568,9 @@ class DeepSearchDialog(ToolDialog):
         count_item = QTableWidgetItem(str(file.matches))
         count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 2, count_item)
-        first_hit = self._store.hit_page(0, 1, (file.path,))
-        context = first_hit[0].context if first_hit else "Select to view occurrences"
+        if context is None:
+            first_hit = self._store.hit_page(0, 1, (file.path,))
+            context = first_hit[0].context if first_hit else "Select to view occurrences"
         self.table.setItem(row, 3, QTableWidgetItem(context))
 
     def _detailed_result(self, run) -> None:
@@ -436,6 +593,48 @@ class DeepSearchDialog(ToolDialog):
         self.status.setText(f"Search failed: {message}")
 
     def _search_finished(self) -> None:
+        if self._runtime is None:
+            self._legacy_search_finished()
+            return
+        self._worker_finished = True
+        self.pause_button.setEnabled(False)
+        if self._closing_search:
+            self._task = None
+            self._try_close_search()
+        else:
+            self._poll_search()
+
+    def _complete_live_search(self):
+        self._poll_timer.stop()
+        was_cancelled = self._runtime.cancelled
+        self._task = None
+        self.pause_button.setText("Pause")
+        self.pause_button.setEnabled(False)
+        self.clear_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.current_file.clear()
+        self._run_elapsed = max(0.0, time.monotonic() - self._search_started_at)
+        occurrences, _, pages = self._runtime.counts
+        self._refresh_hit_model()
+        self.search_button.setEnabled(self._queries.task is None)
+        self.export_button.setEnabled(bool(self._results or self._errors))
+        if was_cancelled:
+            self.status.setText(f"Search cancelled · partial results retained · {occurrences} occurrences")
+        elif self._search_error:
+            pass
+        elif self._total_files == 0:
+            self.progress.setValue(0)
+            self.status.setText("No PDF files were found in the folder.")
+        else:
+            self.progress.setValue(100)
+            self.status.setText(
+                f"Completed in {self._run_elapsed:.2f} s · {self._processed_files} files scanned · "
+                f"{len(self._results)} matching files · {pages} pages · "
+                f"{occurrences} occurrences · {len(self._errors)} errors")
+        if not self._results and self._errors:
+            self.tabs.setCurrentIndex(3)
+
+    def _legacy_search_finished(self) -> None:
         was_cancelled = bool(self._task and self._task.is_cancelled())
         self._task = None
         self.search_button.setEnabled(True)
@@ -547,6 +746,12 @@ class DeepSearchDialog(ToolDialog):
         return tuple(paths)
 
     def _refresh_filters(self, *_args) -> None:
+        if self._queries is not None:
+            self._filter_timer.start()
+        else:
+            self._apply_filters()
+
+    def _apply_filters(self) -> None:
         needle = self.file_filter.text().strip().casefold()
         for row in range(self.table.rowCount()):
             index = self._result_index_for_row(row)
@@ -577,9 +782,13 @@ class DeepSearchDialog(ToolDialog):
         )
 
     def _update_hit_preview(self) -> None:
-        hit = self._hits_model.hit(self.hits_table.currentIndex().row())
+        row = self.hits_table.currentIndex().row()
+        self._hits_model.choose_row(row)
+        hit = self._hits_model.hit(row)
         if hit is None:
             return
+        self._hits_model.selected_hit = hit
+        self._preview_generation += 1
         self.preview.setHtml(
             f"<h3>{html.escape(hit.filename)}</h3>"
             f"<p>{html.escape(hit.path)}</p>"
@@ -612,6 +821,15 @@ class DeepSearchDialog(ToolDialog):
             self.preview.clear()
             return
         result = self._results[index]
+        if self._queries is not None:
+            self._preview_generation += 1
+            self._request_query({"kind": "preview", "generation": self._preview_generation,
+                                 "paths": (str(result["path"]),), "keyword": "", "source": "",
+                                 "result": dict(result)})
+            return
+        self._render_preview(result)
+
+    def _render_preview(self, result, hits=None, matching_pages=None):
         keywords = [keyword for keyword in self._run_query.split(",") if keyword.strip()]
         if not keywords:
             keywords = [keyword for keyword in self.query.text().split(",") if keyword.strip()]
@@ -621,7 +839,7 @@ class DeepSearchDialog(ToolDialog):
             f"<div style='color: {text_color};'>",
             f"<h3>File: {html.escape(str(result['filename']))}</h3>",
             f"<p><b>Path:</b> {html.escape(str(result['path']))}</p>",
-            (f"<p><b>Matching pages:</b> {self._store.counts((str(result['path']),))[2]}</p>"
+            (f"<p><b>Matching pages:</b> {matching_pages if matching_pages is not None else self._store.counts((str(result['path']),))[2]}</p>"
              if "match_count" in result else
              f"<p><b>Page number:</b> {', '.join(map(str, result['pages']))}</p>"),
             f"<p><b>Occurrences:</b> {result.get('match_count', len(result['pages']))}</p>",
@@ -633,7 +851,7 @@ class DeepSearchDialog(ToolDialog):
         else:
             parts.append("<h4>Matching content:</h4><hr/>")
             if "match_count" in result:
-                hits = self._store.hit_page(0, 20, (str(result["path"]),))
+                hits = hits if hits is not None else self._store.hit_page(0, 20, (str(result["path"]),))
                 for hit in hits:
                     parts.append(f"<p><b>Page {hit.page} · {html.escape(hit.keyword)}:</b><br/>"
                                  f"{self._highlight(hit.context, [hit.keyword])}</p>")
@@ -699,6 +917,24 @@ class DeepSearchDialog(ToolDialog):
 
     # --- clearing / exporting -------------------------------------------------
     def _clear_results(self) -> None:
+        if self._task is not None or self._export_task is not None:
+            return
+        if self._queries is not None:
+            self._queries.close()
+            if self._queries.task is not None:
+                self._clear_pending = True
+                self.search_button.setEnabled(False)
+                self.status.setText("Clearing results · waiting for result query…")
+                return
+            self._queries.deleteLater()
+            self._queries = None
+        self._runtime = None
+        self._hits_model.set_async_loader(None)
+        self._reset_results()
+        self.search_button.setEnabled(True)
+
+    def _reset_results(self) -> None:
+        self._hits_model.clear()
         self._results = []
         self._errors = []
         self.table.setRowCount(0)
@@ -710,6 +946,7 @@ class DeepSearchDialog(ToolDialog):
         self.export_button.setEnabled(False)
         self.open_selected_button.setEnabled(False)
         self._selected_file_path = None
+        self._preview_generation += 1
         self._store.close()
         self._store = SearchResultsStore()
         self._hits_model.store = self._store
@@ -732,7 +969,7 @@ class DeepSearchDialog(ToolDialog):
                 table.setColumnWidth(column, minimums.get(column, 80))
 
     def _export(self) -> None:
-        if self._export_task is not None:
+        if self._export_task is not None or self._task is not None:
             return
         if not self._results and not self._errors:
             self.status.setText("No search results available to export")
@@ -782,6 +1019,9 @@ class DeepSearchDialog(ToolDialog):
 
     def _export_finished(self) -> None:
         self._export_task = None
+        if self._closing_search:
+            self._try_close_search()
+            return
         self.export_button.setEnabled(bool(self._results or self._errors))
         self.search_button.setEnabled(True)
         self.clear_button.setEnabled(True)
@@ -795,6 +1035,9 @@ class DeepSearchDialog(ToolDialog):
         export_text(self._store, path, self._report_meta(scope), paths, keyword, source)
 
     def _export_selection(self) -> tuple[tuple[str, ...] | None, str, str, str]:
+        if self._filter_timer.isActive():
+            self._filter_timer.stop()
+            self._apply_filters()
         if self.export_scope.currentData() == "filtered":
             return (self._hits_model.paths, self._hits_model.keyword,
                     self._hits_model.source, "Current filters")
@@ -810,15 +1053,26 @@ class DeepSearchDialog(ToolDialog):
         )
 
     def reject(self) -> None:
-        if self._task and hasattr(self._task, "cancel"):
-            self._task.cancel()
-        super().reject()
+        self.close()
+
+    def _try_close_search(self):
+        if self._task is not None or self._export_task is not None:
+            return
+        if self._queries is not None and self._queries.task is not None:
+            return
+        QTimer.singleShot(0, self.close)
 
     def closeEvent(self, event) -> None:
-        if self._task and hasattr(self._task, "cancel"):
-            self._task.cancel()
-        if self._export_task is not None:
-            self._store.close_after_export = True
-        else:
-            self._store.close()
+        self._closing_search = True
+        self._poll_timer.stop()
+        self._filter_timer.stop()
+        self._cancel_search()
+        if self._queries is not None:
+            self._queries.close()
+        if (self._task is not None or self._export_task is not None
+                or (self._queries is not None and self._queries.task is not None)):
+            self.status.setText("Closing · waiting for background search to stop safely…")
+            event.ignore()
+            return
+        self._store.close()
         super().closeEvent(event)

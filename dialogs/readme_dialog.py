@@ -53,6 +53,19 @@ supports Windows x64, with an account-enabled Apple Silicon Mac testing build (n
 * Inserter I25 — 18 digits uses zero-start group/sheet sequences, physical sheet
   fronts, automatic EOG/check digit, conditional inserts and decoded QC reports.
 
+## Development Update: Deep Search responsiveness
+
+* Deep Search → Pause retains the current run, results and search position.
+  Resume continues without rescanning. Pausing waits for a safe checkpoint;
+  the current PDF text extraction or barcode decode must finish first.
+* Cancel still stops the run and retains completed-file results. Close waits
+  for the search and result readers to finish before clearing temporary data.
+* Search database writes, counts, sorting and preview queries run in the
+  background. Matches load visible pages with a bounded cache; progress is
+  coalesced so the Editor remains usable while searching.
+* Pause applies to the current application session only, not restart recovery.
+  Search rules and complete HTML/Text/CSV exports remain unchanged.
+
 ## PDF tabs and separate windows
 
 * Right-click a PDF tab → Split with… to edit two open documents side by side.

@@ -281,6 +281,8 @@ def test_deep_search_ignores_second_search_while_running(tmp_path: Path) -> None
     task_before = dialog._task
     dialog._search()
     assert dialog._task is task_before
+    # This sentinel is not a running worker and cannot deliver finished.
+    dialog._task = None
     dialog.close()
 
 
