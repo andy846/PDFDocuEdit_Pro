@@ -45,8 +45,8 @@ def validate_options(kind, options):
     if not isinstance(options, dict):
         raise CompositionError("Step settings must be an object.")
     if kind=="media_assignment":
-        from composition.media.model import MediaSpec
-        MediaSpec.from_dict(options)
+        from .media_settings import media_options
+        media_options(options)
         return
     key = {"clean_fields":"operations", "create_fields":"fields", "sort_records":"keys",
            "validate_data":"checks"}.get(kind)
@@ -321,7 +321,10 @@ def transform(source, target, kind, options, *, node_id="", progress=None, is_ca
         if kind=="split_output":
             info["split"]=options
         if kind=="media_assignment":
-            info["media"]=options
+            from .media_settings import media_options, settings_source
+            info["media"]=media_options(options)
+            info["media_source"]=settings_source(options)
+            info["media_node_id"]=node_id
         db.execute("INSERT INTO metadata VALUES('import',?)",(json.dumps(info,ensure_ascii=False),))
         db.commit()
     return DataSet(target)

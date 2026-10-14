@@ -29,8 +29,8 @@ def prepare_records(spec, records, directory, *, template=None, progress=None, i
         if node.kind not in EXTRA_KINDS:
             continue
         if node.kind=="media_assignment" and template:
-            import copy
-            template.media=copy.deepcopy(node.params)
+            from .media_settings import resolve_media_settings
+            template.media=resolve_media_settings(template.media,node.params).media
         if node.kind=="running_sequence" and template:
             name=node.params.get("name","Sequence")
             if name in {seq.name for seq in template.sequences}:
@@ -54,7 +54,9 @@ def summary(source, original_count):
     if original_count!=source.count+excluded:
         raise CompositionError("Data reconciliation failed: input does not equal kept plus excluded.")
     return {"input":original_count,"retained":source.count,"excluded":excluded,"errors":errors,"warnings":warnings,
-            "fields":source.fields,"steps":source.metadata.get("steps",[])}
+            "fields":source.fields,"steps":source.metadata.get("steps",[]),
+            "media_source":source.metadata.get("media_source","project"),
+            "media_node_id":source.metadata.get("media_node_id","")}
 
 
 def split_names(source, output_name):

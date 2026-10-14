@@ -452,10 +452,13 @@ class ReviewController:
                   "input_records": "Input records / envelopes", "excluded_records": "Excluded records / envelopes",
                   "sheets": "Physical sheets", "inserted_blanks": "Inserted blank backs", "printing": "Printing",
                   "source": "Source", "output_name": "PDF name", "output_dir": "Output folder",
-                  "printer_profile": "Printer profile", "expected_barcodes": "Planned barcodes",
+                  "printer_profile": "Printer profile", "media_source": "Print settings source",
                   "font_substitutions": "Font substitutions", "conditional_objects": "Conditional objects",
                   "hidden_objects": "Hidden object occurrences"}
         lines = [f"{title}: {summary[key]}" for key, title in titles.items() if key in summary]
+        if "expected_barcodes" in summary:
+            count=str(summary["expected_barcodes"]) if summary.get("barcode_check_complete",result.get("complete",False)) else "Not fully checked"
+            lines.append("Planned barcodes: "+count)
         backend = summary.get("backend", "pdf")
         lines.append("Output: " + {"pdf": "PDF", "postscript": "PDF + PostScript", "canon_prismasync": "PDF + JDF"}.get(backend, backend))
         lines += [f"Stock {stock}: {count:,} physical sheets" for stock, count in summary.get("stock_sheets", {}).items()]

@@ -256,7 +256,11 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
                           required_scope=project.required_scope if project else "all_source",
                           name=project.name if project else workflow.name,external_fields=external_fields(workflow))
         media=workflow.node("media_assignment")
-        spec.media=media.params.copy() if media else project.media.copy() if project else {}
+        from .media_settings import resolve_media_settings
+        effective=resolve_media_settings(project.media if project else {},media.params if media else None)
+        spec.media=effective.media
+        if media and media.params.get("settings_source")=="workflow":
+            spec.settings.duplex=effective.media.get("duplex",False)
         if project and project.source.sha256==source.sha256:
             spec.source_link=project.source_link
         report = None if external else workflow.node("group").params.get("detection_review")

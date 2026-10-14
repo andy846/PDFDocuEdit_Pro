@@ -223,6 +223,7 @@ def test_blocked_review_explains_error_and_opens_issues(app, tmp_path, monkeypat
         assert "211" in pane.position.text() and "0 checked" in pane.position.text()
         assert not pane.confirm.isEnabled() and not pane.acknowledge.isVisible()
         assert not result["complete"]
+        assert "Planned barcodes: Not fully checked" in pane.overview.text()
         assert pane.confirm.isVisible() and pane.edit.isVisible()
         for control in (pane.confirm, pane.edit, pane.blocker_reason):
             assert pane.rect().contains(control.mapTo(pane, control.rect().bottomRight()))

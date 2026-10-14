@@ -207,3 +207,21 @@ def test_single_panels_remember_visibility_and_fit_narrow_window(window, qt_appl
         assert w.panel_view.parentWidget().geometry().bottom() < w.flow_page.height()
     w.settings_toggle.click()
     assert w.inspector_scroll.isVisible()
+
+
+def test_media_source_draft_and_undo_preserve_workflow_override(window):
+    from PyQt6.QtWidgets import QComboBox
+    spec=window.spec.insert_after(window.spec.node("review").id,
+        WorkflowNode("media_assignment",params=default_options("media_assignment")))
+    window.apply_spec(spec.to_dict())
+    node=window.spec.node("media_assignment")
+    window.select_node(node.id)
+    source=window.inspector.findChild(QComboBox,"mediaSettingsSource")
+    assert source.currentData()=="project"
+    source.setCurrentIndex(source.findData("workflow"))
+    window.select_node(window.spec.node("output").id)
+    assert window.spec.node("media_assignment").params["settings_source"]=="workflow"
+    window.undo.undo()
+    assert window.spec.node("media_assignment").params["settings_source"]=="project"
+    window.undo.redo()
+    assert window.spec.node("media_assignment").params["settings_source"]=="workflow"

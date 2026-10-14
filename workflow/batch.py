@@ -351,8 +351,7 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             job.input_records=with_records.count
             job.pages_per_record=len(template.pages)
             job.expected_pages=job.input_records*job.pages_per_record
-            from composition.engine.barcode_profiles import has_profiles
-            if (template.media.get("enabled") or has_profiles(template)) and job.input_records:
+            if job.input_records:
                 from composition.media.planner import build_print_plan
                 media_plan=build_print_plan(template,job.input_records,is_cancelled=is_cancelled)
                 job.pages_per_record=media_plan.settings_for(1).output_pages_per_envelope
@@ -360,6 +359,10 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
                 if not job.data_summary:
                     job.data_summary={"input":job.input_records,"retained":job.input_records,"excluded":0,
                                       "errors":0,"warnings":0,"steps":[],"fields":list(with_records.fields)}
+                job.data_summary["print_plan"]={"sheets":media_plan.sheets,
+                    "inserted_blank_backs":media_plan.inserted_blanks,"output_pages":media_plan.output_pages,
+                    "logical_pages_per_record":len(template.pages)}
+                job.data_summary.setdefault("media_source","project")
                 if template.media.get("enabled"):
                     job.data_summary["media"]={**asdict(media_plan.preflight()),"profile":template.media["printer_profile"]}
             job.warnings=list(with_records.metadata.get("warnings",[]))

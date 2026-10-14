@@ -168,16 +168,23 @@ def prepare_mailpieces(spec,run,directory,*,progress=None,is_cancelled=None,unti
     reports=root/"review-reports"
     export_audit(current,reports)
     run.data_summary.update(findings_report=str(reports/"findings.csv"),exclusions_report=str(reports/"exclusions.csv"))
+    from .media_settings import pdf_media_settings
+    effective,duplex=pdf_media_settings(spec)
+    run.data_summary["media_source"]=effective.source
     media=spec.node("media_assignment")
-    if media and media.params.get("enabled") and current.count:
+    run.data_summary["media_node_id"]=media.id if media else ""
+    if current.count:
         cfg_groups=[]
         cursor=1
         for _,_,original in current.rows():
             start,end=run.groups[original-1]
             cfg_groups.append([cursor,cursor+end-start])
             cursor+=end-start+1
-        base=EnvelopePlan(cursor-1,EnvelopeSettings(pages_per_envelope=1,groups=cfg_groups,digits=18))
-        run.data_summary["media"]=asdict(PrintPlan(base,media.params,is_cancelled=is_cancelled).preflight())
+        base=EnvelopePlan(cursor-1,EnvelopeSettings(pages_per_envelope=1,groups=cfg_groups,digits=18,duplex=duplex))
+        plan=PrintPlan(base,effective.media,is_cancelled=is_cancelled) if effective.media.get("enabled") else base
+        run.data_summary["print_plan"]={"sheets":plan.sheets,"inserted_blank_backs":plan.inserted_blanks,"output_pages":plan.output_pages}
+        if effective.media.get("enabled"):
+            run.data_summary["media"]=asdict(plan.preflight())
     run.data_steps=[s for s in run.data_steps if s.get("scope")=="page"]+current.metadata.get("steps",[])
     assert_valid(current)
     return current
@@ -380,7 +387,11 @@ def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_onl
             composed=EnvelopeSpec(source,settings,objects=project.objects if project else [],
                 required_scope=project.required_scope if project else "all_source",name=spec.name,external_fields=external_fields(spec))
             media=spec.node("media_assignment")
-            composed.media=copy.deepcopy(media.params if media else project.media if project else {})
+            from .media_settings import resolve_media_settings
+            effective=resolve_media_settings(project.media if project else {},media.params if media else None)
+            composed.media=effective.media
+            if media and media.params.get("settings_source")=="workflow":
+                composed.settings.duplex=effective.media.get("duplex",False)
             prior_detection = store.metadata().get("mailpiece_review")
             composed.detection_review=detection_audit(composed, json.loads(prior_detection) if prior_detection else None)
         composed.validate()

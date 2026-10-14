@@ -239,11 +239,8 @@ def install(window,node):
     layout.addWidget(description)
     def settings_text():
         if node.kind=="media_assignment":
-            printer=node.params.get("printer_profile",{})
-            backend="PDF + PostScript" if printer.get("backend")=="postscript" else "PDF + JDF"
-            return (f"{node.params.get('mode','page')} rules · {len(node.params.get('stocks',[]))} Stocks\n"
-                    f"{'Duplex' if node.params.get('duplex') else 'Simplex'} · blank policy: {node.params.get('blank_policy','block')}\n"
-                    f"{backend} · {printer.get('profile_name') or 'Unnamed profile'}\nDevice validation pending")
+            from .media_settings import media_summary
+            return media_summary(node.params)
         if node.kind in DATA_KINDS:
             key={"clean_fields":"operations","create_fields":"fields","filter_records":"conditions",
                  "sort_records":"keys","validate_data":"checks"}[node.kind]
@@ -282,11 +279,16 @@ def install(window,node):
             elif window.run.groups and window.run.source:
                 context={"kind":"workflow_pdf","source":window.run.source,"groups":window.run.groups,
                          "data_set":window.run.data_set}
-            dialog=MediaDialog(node.params,context,window)
+            from .media_settings import media_options, settings_source
+            current_node=next(n for n in window.spec.nodes if n.id==node.id)
+            if settings_source(current_node.params)=="project":
+                window.message("Print settings come from the project. Select Workflow override to configure this node.")
+                return
+            dialog=MediaDialog(media_options(current_node.params),context,window)
         else:
             dialog=StepDialog(node,fields,window)
         if dialog.exec():
-            window.params(node,dialog.options)
+            window.params(node,{**dialog.options,"settings_source":"workflow"} if node.kind=="media_assignment" else dialog.options)
     button=QPushButton("Configure step…")
     button.setProperty("primary",True)
     button.clicked.connect(configure)
@@ -311,6 +313,21 @@ def install(window,node):
         apply.clicked.connect(window.flush_settings)
         layout.addWidget(apply)
     else:
+        if node.kind=="media_assignment":
+            from .media_settings import settings_source
+            source=QComboBox()
+            source.setObjectName("mediaSettingsSource")
+            source.addItem("Project settings (inherit)","project")
+            source.addItem("Workflow override","workflow")
+            source.setCurrentIndex(source.findData(settings_source(node.params)))
+            source.setToolTip("Project keeps template / Overlay paper settings. Workflow override replaces them for this recipe only.")
+            layout.addWidget(source)
+            window.watch_settings(node,lambda:{**node.params,"settings_source":source.currentData()},[source])
+            button.setEnabled(source.currentData()=="workflow")
+            source.currentIndexChanged.connect(lambda _,b=button:b.setEnabled(source.currentData()=="workflow"))
+            apply=QPushButton("Apply settings source")
+            apply.clicked.connect(window.flush_settings)
+            layout.addWidget(apply)
         layout.addWidget(button)
     report_summary=jobs[0].data_summary if jobs else getattr(window.run,"data_summary",{})
     if node.kind=="media_assignment" and report_summary.get("media"):

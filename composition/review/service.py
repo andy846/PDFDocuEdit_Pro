@@ -195,10 +195,12 @@ def _summary(context, plan, media, output_name, source):
         "output_dir": context.job["output_dir"], "stock_sheets": getattr(plan, "stock_sheets", {}),
         "backend": media.get("printer_profile", {}).get("backend", "pdf") if media.get("enabled") else "pdf",
         "printer_profile": media.get("printer_profile", {}).get("profile_name", "Not configured"),
-        "outputs": context.outputs, "expected_barcodes": 0, "source": source or "Generated records"}
+        "outputs": context.outputs, "expected_barcodes": 0, "source": source or "Generated records",
+        "media_source": data.get("media_source","project")}
 
 
 def _save_review(folder, context, identity, digest, stats, status, summary, issues, complete, session):
+    summary["barcode_check_complete"]=complete
     result = asdict(ReviewSnapshot(identity, digest, status, summary, issues, complete))
     packet = {**result, "context": asdict(context), "stats": stats}
     if session is not None:

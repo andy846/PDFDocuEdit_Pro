@@ -39,8 +39,8 @@ class NodeDefinition:
             except (TypeError, ValueError) as exc:
                 raise CompositionError(f"{self.label}: {exc}") from exc
         elif self.tool_id=="media_assignment":
-            from composition.media.model import MediaSpec
-            MediaSpec.from_dict(options)
+            from .media_settings import media_options
+            media_options(options)
         elif self.tool_id in EXTRA_KINDS:
             from .transforms import validate_options
             validate_options(self.tool_id, options)
@@ -105,8 +105,10 @@ def default_options(kind, field="Name"):
         operation = "flatten" if kind == "flatten_pdf" else "repair"
         return {"options": asdict(PdfOptions(operation=operation, annotations=operation == "flatten"))}
     if kind=="media_assignment":
-        from composition.media.model import default_media
-        return default_media()
+        from dataclasses import asdict
+
+        from composition.media.model import MediaSpec
+        return {**asdict(MediaSpec()), "settings_source": "project"}
     return {
         "clean_fields":{"operations":[{"field":field,"operation":"trim"}]},
         "create_fields":{"fields":[{"field":"NewField","operation":"constant","value":""}]},

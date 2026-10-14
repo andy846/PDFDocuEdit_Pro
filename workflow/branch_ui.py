@@ -622,7 +622,19 @@ class BranchWorkflowWindow(QMainWindow):
             info=QLabel(settings_summary(node,"Print media settings"))
             info.setWordWrap(True)
             layout.addWidget(info)
+            from .media_settings import settings_source
+            source=QComboBox()
+            source.setObjectName("mediaSettingsSource")
+            source.addItem("Project settings (inherit)","project")
+            source.addItem("Workflow override","workflow")
+            source.setCurrentIndex(source.findData(settings_source(node.params)))
+            layout.addWidget(source)
+            def getter():
+                return {**node.params,"settings_source":source.currentData()}
+            source.currentIndexChanged.connect(self.draft_changed)
             button=QPushButton("Stocks / printer profile…")
+            button.setEnabled(source.currentData()=="workflow")
+            source.currentIndexChanged.connect(lambda _,b=button:b.setEnabled(source.currentData()=="workflow"))
             button.clicked.connect(lambda:self.configure_media(node.id))
             layout.addWidget(button)
         elif node.kind=="compose":
@@ -891,14 +903,16 @@ class BranchWorkflowWindow(QMainWindow):
         def ready(result):
             from composition.designer.media_dialog import MediaDialog
             media=next((n for n in path if n.kind=="media_assignment"),None)
-            dialog=MediaDialog(media.params if media else result["template"].get("media",{}),
+            from .media_settings import resolve_media_settings
+            effective=resolve_media_settings(result["template"].get("media",{}),media.params if media else None)
+            dialog=MediaDialog(effective.media,
                                {"kind":"template","project":result["template"],"records":1},self)
             if dialog.exec():
                 new=copy.deepcopy(self.spec)
                 if media:
-                    next(n for n in new.nodes if n.id==media.id).params=dialog.options
+                    next(n for n in new.nodes if n.id==media.id).params={**dialog.options,"settings_source":"workflow"}
                 else:
-                    n=WorkflowNode("media_assignment",params=dialog.options,x=template.x+200,y=template.y+110)
+                    n=WorkflowNode("media_assignment",params={**dialog.options,"settings_source":"workflow"},x=template.x+200,y=template.y+110)
                     connection=next(e for e in new.edges if e["source"]==template.id)
                     new.edges.remove(connection)
                     new.nodes.append(n)

@@ -54,9 +54,8 @@ def settings_summary(node, fallback="Configure step"):
     if node.kind == "running_sequence":
         return f"{params.get('name')} · {params.get('start', 1)} / +{params.get('step', 1)}"
     if node.kind == "media_assignment":
-        profile = params.get("printer_profile", {})
-        backend = "PS" if profile.get("backend") == "postscript" else "JDF"
-        return f"PDF + {backend} · {len(params.get('stocks', []))} stocks · " + ("Duplex" if params.get("duplex") else "Simplex")
+        from .media_settings import media_summary
+        return media_summary(params)
     if node.kind == "split_output":
         return f"By {params.get('field')}" if params.get("method") == "field" else f"{params.get('count', 1000):,} per file"
     return fallback

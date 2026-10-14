@@ -90,7 +90,8 @@ def signature(spec, node_id, job=None, *, hashes=None):
             paths.update(_assets(load_project(job.template_path)))
     else:
         paths.update(spec.node("input").params.get("paths", []))
-        overlay = next((n for n in prefix if n.kind == "overlay" and n.params.get("path")), None)
+        overlay = spec.node("overlay") if any(n.kind in ("media_assignment","overlay","output") for n in prefix) else None
+        overlay = overlay if overlay and overlay.params.get("path") else None
         if overlay:
             from composition.overlay.model import render_template
             from composition.overlay.serializer import load_project as load_overlay
@@ -207,7 +208,8 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
                                         node_id=node.id, is_cancelled=is_cancelled,
                                         progress=lambda done,total,message,callback=report,label=label: callback(done,total,label))
                     if node.kind == "media_assignment" and template:
-                        template.media = copy.deepcopy(node.params)
+                        from .media_settings import resolve_media_settings
+                        template.media = resolve_media_settings(template.media,node.params).media
                     if node.kind == "running_sequence" and template and node.params.get("scope") == "page":
                         from composition.template.model import SequenceSpec
                         if node.params["name"] in {seq.name for seq in template.sequences}:
@@ -235,7 +237,7 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
                     result.plan = _mail_plan(template, current, node, root, report, is_cancelled,
                                              auto_repair=compose.params.get("auto_repair",True) if compose else True)
                 if not template and scope=="envelope" and current and node.kind in ("media_assignment","split_output"):
-                    result.plan=_pdf_plan(run,current,is_cancelled)
+                    result.plan=_pdf_plan(context,run,current,is_cancelled)
                 if composed:
                     result.overlay = composed.to_dict()
                     from composition.media.planner import PrintPlan, overlay_plan
@@ -386,7 +388,7 @@ def _mail_plan(template, current, node, root, progress, cancelled,*,auto_repair=
     return summary
 
 
-def _pdf_plan(run,current,cancelled):
+def _pdf_plan(spec,run,current,cancelled):
     from composition.media.planner import PrintPlan
     from composition.pdf_source.model import EnvelopeSettings
     from composition.pdf_source.planner import EnvelopePlan
@@ -401,9 +403,12 @@ def _pdf_plan(run,current,cancelled):
         start,end=run.groups[original-1]
         groups.append([cursor,cursor+end-start])
         cursor+=end-start+1
-    media=current.metadata.get("media",{})
-    base=EnvelopePlan(cursor-1,EnvelopeSettings(groups=groups,pages_per_envelope=1,digits=18))
-    summary={"pages":base.output_pages,"envelopes":current.count}
+    from .media_settings import pdf_media_settings
+    effective,duplex=pdf_media_settings(spec)
+    media=effective.media
+    base=EnvelopePlan(cursor-1,EnvelopeSettings(groups=groups,pages_per_envelope=1,digits=18,duplex=duplex))
+    summary={"pages":base.output_pages,"envelopes":current.count,"sheets":base.sheets,
+             "inserted_blanks":base.inserted_blanks,"media_source":effective.source}
     if media.get("enabled"):
         source=inspect_source(run.source,EnvelopeSettings(groups=run.groups,pages_per_envelope=1),uniform=True,is_cancelled=cancelled)
         geometry=source.geometries[0]
@@ -531,7 +536,13 @@ def _overlay_check(spec, run, current, root, progress, cancelled):
     source = inspect_source(source_path, settings, uniform=True, progress=progress, is_cancelled=cancelled)
     composed = EnvelopeSpec(source, settings, objects=project.objects if project else [],
                             required_scope=project.required_scope if project else "all_source", external_fields=external_fields(spec),
-                            media=copy.deepcopy(current.metadata.get("media", project.media if project else {})))
+                            media={})
+    from .media_settings import resolve_media_settings
+    media_node=spec.node("media_assignment")
+    effective=resolve_media_settings(project.media if project else {},media_node.params if media_node else None)
+    composed.media=effective.media
+    if media_node and media_node.params.get("settings_source")=="workflow":
+        composed.settings.duplex=effective.media.get("duplex",False)
     # Renderer geometry requires a self-consistent boundary audit. This belongs
     # only to the scratch render context: neither WorkflowRun nor BatchJob is
     # accepted/approved, and this operation has no production/publication path.
