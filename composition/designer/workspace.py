@@ -161,6 +161,7 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.paper_tray_button.setAccessibleName("Paper and tray settings")
         self.paper_tray_button.setStyleSheet("QToolButton { padding: 2px 6px; min-height: 0px; }")
         navigation.addWidget(self.paper_tray_button)
+        self.build_design_settings(navigation)
         layout.addLayout(navigation)
         self.stack = QStackedWidget()
         self.design_page = QWidget()
@@ -235,8 +236,9 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.properties.fontRequested.connect(self._request_font)
         self.properties.insertFieldRequested.connect(self.insert_field_into_text)
         self.properties.glyphRepairRequested.connect(self.edit_glyph_repairs)
-        from .barcode_operations import edit_template_barcode
+        from .barcode_operations import change_template_barcode_source, edit_template_barcode
         self.properties.barcodeProfileRequested.connect(lambda preset: edit_template_barcode(self, preset or None))
+        self.properties.barcodeContentModeRequested.connect(lambda mode: change_template_barcode_source(self, mode))
         self.properties.rulesRequested.connect(self.edit_object_rules)
         self.properties.rulesClearRequested.connect(self.clear_object_rules)
         self.properties.revertRequested.connect(self.revert_content_draft)
@@ -564,6 +566,8 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
             return
         self._designer_last_tab = index
         self.paper_tray_button.setVisible(index == 1)
+        self.design_printing.setVisible(index == 1)
+        self.design_inserter_button.setVisible(index == 1 and bool(self.design_inserter_button.menu().actions()[0].isVisible()))
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 3 if index == 4 else 0)
         self.canvas.set_preview_mode(index == 2)
         self.record_navigation.setVisible(index == 2)

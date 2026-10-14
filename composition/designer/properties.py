@@ -47,6 +47,7 @@ class Properties(QWidget):
     rulesRequested = pyqtSignal()
     rulesClearRequested = pyqtSignal()
     barcodeProfileRequested = pyqtSignal(str)
+    barcodeContentModeRequested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -300,6 +301,12 @@ class Properties(QWidget):
         self.barcode_format.setToolTip("Change format while retaining the object's content, position and size.")
         self.barcode_format.currentIndexChanged.connect(self.apply)
         form.addRow("Format", self.barcode_format)
+        self.barcode_content_source = WideComboBox()
+        self.barcode_content_source.addItem("Direct Content — text / fields", "content")
+        self.barcode_content_source.addItem("Barcode Logic — configured payload", "logic")
+        self.barcode_content_source.setAccessibleName("Barcode content source")
+        self.barcode_content_source.currentIndexChanged.connect(self._barcode_content_source_changed)
+        form.addRow("Content source", self.barcode_content_source)
         self.barcode_preset = WideComboBox()
         self.barcode_preset.addItem("Generic — content / fields", "generic")
         self.barcode_preset.addItem("Inserter I25 — 18 digits", "inserter_i25_18")
@@ -311,6 +318,7 @@ class Properties(QWidget):
         form.addRow(self.barcode_configure)
         self.barcode_profile_summary = QLabel()
         self.barcode_profile_summary.setWordWrap(True)
+        self.barcode_profile_summary.setTextFormat(Qt.TextFormat.PlainText)
         form.addRow(self.barcode_profile_summary)
         self.ecc = QComboBox()
         self.ecc.addItems(["L", "M", "Q", "H"])
@@ -504,7 +512,7 @@ class Properties(QWidget):
             self.barcode_format.setCurrentIndex(self.barcode_format.findData(element.type))
             preset = element.barcode_profile.get("preset", "generic")
             self.barcode_preset.setCurrentIndex(self.barcode_preset.findData(preset))
-            self.barcode_profile_summary.setText(element.barcode_profile.get("name", "Generic — uses Content directly"))
+            self.set_barcode_content_source(element.barcode_profile)
             self.barcode_preset.setEnabled(True)
             self.barcode_configure.setEnabled(True)
             self.barcode_format.setEnabled(preset != "inserter_i25_18")
@@ -528,6 +536,35 @@ class Properties(QWidget):
         self.loading = False
         self._refresh_layout()
 
+    def set_barcode_content_source(self, raw, *, allow_direct=True):
+        profile = raw or {}
+        self.barcode_content_source.blockSignals(True)
+        self.barcode_content_source.setCurrentIndex(1 if profile else 0)
+        self.barcode_content_source.setEnabled(allow_direct and profile.get("preset") != "inserter_i25_18")
+        self.barcode_content_source.blockSignals(False)
+        if profile:
+            lines = ["Barcode Logic is active; direct Content is not used.", "Profile: " + profile.get("name", "Generic")]
+            if profile.get("preset") == "inserter_i25_18":
+                lines.append("Inserter I25: automatic group / sheet sequences, EOG and check digit.")
+            elif profile.get("layout_mode") == "fixed":
+                for segment in profile.get("segments", []):
+                    source = segment.get("source", "fixed")
+                    title = {"sequence": "Running sequence", "data": "Data field", "system": "System value", "fixed": "Fixed value"}.get(source, source)
+                    value = segment.get("value") or ("barcode-only counter" if source == "sequence" else "")
+                    lines.append(f"{title}: {value} ({segment.get('length', 0)} characters)")
+            else:
+                lines.extend(("Field: " if token.get("kind") == "field" else "Fixed value: ") + token.get("value", "")
+                             for token in profile.get("tokens", []))
+            self.barcode_configure.setText("Edit Barcode Logic…")
+        else:
+            lines = ["Direct Content is active: text and {{field}} references are used."]
+            self.barcode_configure.setText("Use Barcode Logic…")
+        self.barcode_profile_summary.setText("\n".join(lines))
+
+    def _barcode_content_source_changed(self, *_):
+        if not self.loading and not self.multi_selection and self.element:
+            self.barcodeContentModeRequested.emit(self.barcode_content_source.currentData())
+
     def _barcode_preset_changed(self, *_):
         if not self.loading and not self.multi_selection and self.element:
             self.barcodeProfileRequested.emit(self.barcode_preset.currentData())
@@ -542,6 +579,7 @@ class Properties(QWidget):
         self.multi_selection = True
         self.barcode_preset.setEnabled(False)
         self.barcode_configure.setEnabled(False)
+        self.barcode_content_source.setEnabled(False)
         self.include_barcode.setVisible(any(e.type in {"code128", "i25"} and e.show_barcode_text for e in selected))
         self.geometry_ids = [e.id for e in selected]
         self.restore_geometry(selected)

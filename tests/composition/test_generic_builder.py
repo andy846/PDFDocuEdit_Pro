@@ -352,3 +352,139 @@ def test_compact_layout_footer_and_popup(qt_application, theme, tmp_path):
         dialog.close()
         dialog.deleteLater()
         apply_theme(qt_application, "system")
+
+
+def test_qr_content_source_is_explicit_and_switch_is_undoable(qt_application, monkeypatch):
+    from composition.designer.workspace import CompositionWindow
+    from composition.template.model import Element, SequenceSpec, Template
+    from tests.composition.test_workspace import close_window
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    profile = BarcodeProfile.fixed_layout(6, [BarcodeSegment(name="Fixed", length=6, value="999999")])
+    model = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", padding=6)])
+    model.elements.append(Element(type="qr", value="{{Seq}}", width_mm=40, height_mm=40, barcode_profile=profile.to_dict()))
+    window = CompositionWindow()
+    try:
+        window._apply_template(model.to_dict(), model.elements[0].id)
+        window.show()
+        window.preview_timer.stop()
+        qt_application.processEvents()
+        assert hasattr(window.properties, "barcode_content_source")
+        source = window.properties.barcode_content_source
+        assert source.currentData() == "logic"
+        assert "Content is not used" in window.properties.barcode_profile_summary.text()
+        assert window.properties.content.isReadOnly()
+        before = window.template.to_dict()
+        source.setCurrentIndex(source.findData("content"))
+        assert not window.template.elements[0].barcode_profile
+        assert window.template.elements[0].value == "{{Seq}}"
+        assert not window.properties.content.isReadOnly()
+        window.undo.undo()
+        assert window.template.to_dict() == before and source.currentData() == "logic"
+    finally:
+        close_window(window)
+
+
+def test_configure_qr_seeds_logic_from_direct_content_without_freezing_seq(qt_application, monkeypatch):
+    from composition.designer.barcode_operations import edit_template_barcode
+    from composition.designer.workspace import CompositionWindow
+    from composition.template.model import Element, SequenceSpec, Template
+    from tests.composition.test_workspace import close_window
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    model = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", start=1, padding=6)])
+    model.elements.append(Element(type="qr", value="REF-{{Seq}}", width_mm=40, height_mm=40))
+    window = CompositionWindow()
+    def configure(dialog):
+        assert dialog.candidate().payload(dialog.fields) == "REF-000001"
+        assert dialog.candidate().tokens[-1].kind == "field" and dialog.candidate().tokens[-1].value == "Seq"
+        dialog.accept()
+        return dialog.result()
+    monkeypatch.setattr(BarcodeSetupDialog, "exec", configure)
+    try:
+        window._apply_template(model.to_dict(), model.elements[0].id)
+        edit_template_barcode(window)
+        saved = BarcodeProfile.from_dict(window.template.elements[0].barcode_profile)
+        assert [saved.payload({"Seq": f"{i:06d}"}) for i in (1, 2, 3)] == ["REF-000001", "REF-000002", "REF-000003"]
+    finally:
+        close_window(window)
+
+
+def test_qr_logic_cancel_keeps_direct_source_and_draft(qt_application, monkeypatch):
+    from composition.designer.workspace import CompositionWindow
+    from composition.template.model import Element, SequenceSpec, Template
+    from tests.composition.test_workspace import close_window
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    monkeypatch.setattr(BarcodeSetupDialog, "exec", lambda _: 0)
+    model = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", padding=6)])
+    model.elements.append(Element(type="qr", value="{{Seq}}", width_mm=40, height_mm=40))
+    window = CompositionWindow()
+    try:
+        window._apply_template(model.to_dict(), model.elements[0].id)
+        before = window.template.to_dict()
+        source = window.properties.barcode_content_source
+        source.setCurrentIndex(source.findData("logic"))
+        assert window.template.to_dict() == before and source.currentData() == "content"
+        window.properties.content.setPlainText("{{Seq")
+        assert window.content_invalid
+        source.setCurrentIndex(source.findData("logic"))
+        assert source.currentData() == "content"
+        assert window.properties.content.toPlainText() == "{{Seq"
+        window.revert_content_draft()
+    finally:
+        close_window(window)
+
+
+def test_long_direct_qr_content_cannot_be_silently_truncated_on_conversion(qt_application, monkeypatch):
+    from composition.designer.barcode_operations import edit_template_barcode
+    from composition.designer.workspace import CompositionWindow
+    from composition.template.model import Element, SequenceSpec, Template
+    from tests.composition.test_workspace import close_window
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    original = "-".join(["{{Seq}}"] * 16)
+    model = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", padding=6)])
+    model.elements.append(Element(type="qr", value=original, width_mm=50, height_mm=50))
+    opened = []
+    def configure(dialog):
+        opened.append(dialog)
+        dialog.accept()
+        return dialog.result()
+    monkeypatch.setattr(BarcodeSetupDialog, "exec", configure)
+    window = CompositionWindow()
+    try:
+        window._apply_template(model.to_dict(), model.elements[0].id)
+        before = window.template.to_dict()
+        edit_template_barcode(window)
+        assert not opened, "Overlong conversion must be rejected before the 30-row editor"
+        assert window.template.to_dict() == before
+        assert "30 tokens" in window.message.text()
+        assert window.properties.barcode_content_source.currentData() == "content"
+    finally:
+        close_window(window)
+
+
+def test_explicit_inserter_choice_does_not_convert_long_unused_direct_content(qt_application, monkeypatch):
+    from composition.designer.barcode_operations import edit_template_barcode
+    from composition.designer.workspace import CompositionWindow
+    from composition.engine.barcode_profiles import INSERTER_I25
+    from composition.template.model import Element, SequenceSpec, Template
+    from tests.composition.test_workspace import close_window
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    model = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", padding=6)])
+    model.elements.append(Element(type="qr", value="-".join(["{{Seq}}"] * 16), width_mm=100, height_mm=40))
+    def configure(dialog):
+        assert dialog.preset.currentData() == INSERTER_I25
+        dialog.accept()
+        return dialog.result()
+    monkeypatch.setattr(BarcodeSetupDialog, "exec", configure)
+    window = CompositionWindow()
+    try:
+        window._apply_template(model.to_dict(), model.elements[0].id)
+        edit_template_barcode(window, INSERTER_I25)
+        assert window.template.elements[0].barcode_profile.get("preset") == INSERTER_I25
+        assert window.template.elements[0].type == "i25"
+    finally:
+        close_window(window)

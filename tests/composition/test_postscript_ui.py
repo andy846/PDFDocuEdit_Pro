@@ -179,3 +179,14 @@ def test_failed_postscript_result_shows_requested_backend_not_jdf(app, tmp_path,
         assert "jdf" not in text.lower() and "embedded" not in text.lower()
     finally:
         close_window(window)
+
+
+@pytest.mark.parametrize("mode", ["attributes", "tray"])
+def test_read_only_plan_shows_profile_name_and_effective_selection(mode):
+    from composition.designer.production_settings import plan_summary
+    summary = plan_summary(model(ps_media(mode)), 2)
+    assert "Printer profile: Test environment" in summary
+    if mode == "tray":
+        assert "MediaPosition 0" in summary and "MediaType LH_A" not in summary
+    else:
+        assert "MediaType LH_A" in summary and "MediaPosition 0" not in summary

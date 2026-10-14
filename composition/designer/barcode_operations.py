@@ -4,10 +4,10 @@ from __future__ import annotations
 import copy
 import sqlite3
 
-from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile, profile_values
+from composition.engine.barcode_profiles import INSERTER_I25, BarcodeProfile, BarcodeToken, profile_values
 from composition.engine.inserter_production import validate_size
 from composition.media.planner import build_print_plan
-from composition.template.model import CompositionError, Template
+from composition.template.model import CompositionError, Template, parse_value
 
 from .repeat_objects import append_exact_copies
 
@@ -97,8 +97,16 @@ def _edit_template_barcode(window, selected_preset=None):
     fields = preview_context(bool(window.template.media.get("duplex")))
     if element.barcode_profile:
         profile = BarcodeProfile.from_dict(element.barcode_profile)
-    else:
+    elif selected_preset == INSERTER_I25:
+        # Inserter uses its own declared payload, not the old direct Content.
         profile = BarcodeProfile.fixed_layout()
+    else:
+        profile = BarcodeProfile(name="Content / variable fields", tokens=[
+            BarcodeToken(kind=kind, value=value) for kind, value in parse_value(element.value) if value
+        ])
+        # The legacy editor has a 30-token limit. Reject before it can drop
+        # rows; Direct Content stays intact and can still be used as-is.
+        profile.validate(profile.fields())
     before = window.template.to_dict()
     dialog = BarcodeSetupDialog(profile, fields, window, symbology=element.type, qr_error=element.qr_error,
         duplex=bool(window.template.media.get("duplex")), printing_locked=bool(window.template.media.get("enabled")),
@@ -123,3 +131,19 @@ def _edit_template_barcode(window, selected_preset=None):
         window.message.setText(summary)
     window._selection("")
     dialog.deleteLater()
+
+
+def change_template_barcode_source(window, mode):
+    if mode == "logic":
+        edit_template_barcode(window)
+    elif mode == "content" and window._rules_editable() and window.properties.element:
+        element = window.properties.element
+        if element.barcode_profile.get("preset") != INSERTER_I25:
+            before = window.template.to_dict()
+            after = copy.deepcopy(before)
+            target = next(e for page in after["pages"] for e in page["elements"] if e["id"] == element.id)
+            target["barcode_profile"] = {}
+            window._commit(before, after, "Use direct barcode Content", element.id)
+    window._selection("")
+    if window.properties.element:
+        window.properties.set_barcode_content_source(window.properties.element.barcode_profile)

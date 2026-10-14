@@ -157,3 +157,55 @@ def test_design_has_visible_paper_tray_button_using_existing_media_action(styled
     finally:
         window.production_worker = None
         cleanup(window)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_design_owns_conditional_inserter_setup_and_production_is_summary(styled_app, monkeypatch, theme):
+    from PyQt6.QtWidgets import QComboBox
+
+    from composition.engine.barcode_profiles import BarcodeProfile
+    from composition.template.model import Element, Template
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    window = CompositionWindow()
+    try:
+        apply_theme(styled_app, theme)
+        styled_app.setStyleSheet(global_style())
+        window.resize(960, 640)
+        window.show()
+        styled_app.processEvents()
+        assert hasattr(window, "design_inserter_button")
+        assert not window.design_inserter_button.isVisible()
+        model = Template(record_mode="generated", generated_count=3)
+        model.elements.append(Element(type="qr", value="123", width_mm=40, height_mm=40))
+        window._apply_template(model.to_dict())
+        assert not window.design_inserter_button.isVisible()
+        model.elements[0] = Element(type="i25", width_mm=100, height_mm=14, barcode_profile=BarcodeProfile.inserter().to_dict())
+        window._apply_template(model.to_dict())
+        assert window.design_inserter_button.isVisible()
+        assert "Apply barcode to required fronts" in window.design_inserter_button.menu().actions()[0].text()
+        before = window.template.to_dict()
+        window.tabs.setCurrentIndex(3)
+        assert not window.design_inserter_button.isVisible()
+        assert not window.production_page.findChildren(QComboBox)
+        assert "Printing: Simplex" in window.production_plan.text()
+        window.production_media_button.click()
+        assert window.tabs.currentIndex() == 1 and window.design_inserter_button.isVisible()
+        assert window.template.to_dict() == before
+        from composition.designer.production_review import template_pane
+        template_pane(window)  # Keep the fifth Review tab in the layout check.
+        styled_app.processEvents()
+        assert window.width() == 960
+        for control in (window.paper_tray_button, window.design_printing, window.design_inserter_button):
+            assert control.isVisible()
+            assert window.rect().contains(control.mapTo(window, control.rect().bottomRight()))
+        import os
+        from pathlib import Path
+        directory = os.environ.get("PDFDOC_DESIGN_QA_DIR")
+        if directory:
+            Path(directory).mkdir(parents=True, exist_ok=True)
+            window.canvas.select_ids([window.template.elements[0].id])
+            styled_app.processEvents()
+            window.grab().save(str(Path(directory) / f"design-settings-{theme}.png"))
+    finally:
+        cleanup(window)

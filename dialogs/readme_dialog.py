@@ -159,6 +159,14 @@ template layout, **PDF Overlay** for finished PDFs, and **Visual Workflow** for
 production workflows.
 
 ### Template Designer: Templates, Fields and Data
+
+* Design owns **Paper / Tray…**, Simplex/Duplex and template-page Stocks / printer mappings.
+  **Inserter… → Apply barcode to required fronts…** appears only for Inserter I25 controls.
+  Production shows the plan and provides **Edit template settings in Design…**.
+* Barcode / QR **Content source** explicitly chooses Direct Content or Barcode Logic.
+  Logic overrides direct Content; the inspector lists its sources. First-time setup
+  preserves literal text and field references such as `{{Seq}}`; displayed numbers
+  are resolved previews. Cancel preserves the previous source; switches support Undo.
 * Start with a blank page or a multi-page PDF background. One customer record
   can produce several fixed template pages; the background remains intact.
 * Import CSV, delimited/tab-delimited TXT and Excel data; select import options,

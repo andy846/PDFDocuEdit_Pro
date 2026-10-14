@@ -4,17 +4,19 @@ from __future__ import annotations
 import copy
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
 )
 
@@ -64,6 +66,26 @@ def plan_summary(template, count):
             f"Output pages: {plan.output_pages if count else 0:,} · "
             f"Physical sheets: {plan.sheets if count else 0:,} · "
             f"Inserted blank backs: {plan.inserted_blanks if count else 0:,}")
+    media = template.media
+    profile = media.get("printer_profile", {})
+    backend = profile.get("backend", "pdf") if media.get("enabled") else "pdf"
+    text += "\nOutput: " + {"pdf": "PDF", "postscript": "PDF + PostScript", "canon_prismasync": "PDF + JDF"}.get(backend, backend)
+    if media.get("enabled"):
+        text += "\nPrinter profile: " + (profile.get("profile_name") or "Unnamed profile")
+        stocks = {stock["id"]: stock for stock in media.get("stocks", [])}
+        for stock, sheets in plan.stock_sheets.items():
+            mapping = profile.get("mappings", {}).get(stock, {})
+            if backend == "postscript":
+                from composition.media.model import PrinterProfile
+                from composition.media.postscript import selection_request
+                effective = selection_request(PrinterProfile.from_dict(profile), stocks[stock])
+                request = " · ".join(f"{key} {value}" for key, value in effective.items()
+                                     if key != "PageSize" and value is not None)
+            else:
+                request = mapping.get("catalog_id") or mapping.get("name") or ""
+            text += f"\nStock {stocks[stock]['name']}: {sheets if count else 0:,} sheets" + (" · " + request if request else "")
+    barcodes = [element for element in template.all_elements() if element.type in {"qr", "code128", "i25"}]
+    text += f"\nTemplate Barcode / QR objects: {len(barcodes)}"
     if has_inserter(template):
         text += (f"\nRequired control barcodes: {plan.sheets if count else 0:,} — one per sheet front.\n"
                  "Group: first envelope 00, unchanged within an envelope.\n"
@@ -119,7 +141,7 @@ class ProductionReviewDialog(QDialog):
         layout = QVBoxLayout(self)
         self.printing = printing_combo(self)
         self.printing.setCurrentIndex(int(bool(template.media.get("duplex"))))
-        self.printing.setEnabled(not template.media.get("enabled"))
+        self.printing.setEnabled(False)
         layout.addWidget(self.printing)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
@@ -127,8 +149,9 @@ class ProductionReviewDialog(QDialog):
         self.summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         from ui.responsive import scroll_container
         layout.addWidget(scroll_container(self.summary), 1)
-        self.settings_button = QPushButton("Review Media / barcode placement in Production…")
-        self.settings_button.clicked.connect(self.reject)
+        self.settings_button = QPushButton("Return to Design settings…")
+        self.return_to_design = False
+        self.settings_button.clicked.connect(self.edit_settings)
         layout.addWidget(self.settings_button)
         self.footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.footer.button(QDialogButtonBox.StandardButton.Ok).setText("Generate production PDF")
@@ -138,9 +161,12 @@ class ProductionReviewDialog(QDialog):
         self.printing.currentIndexChanged.connect(self.refresh)
         self.refresh()
 
+    def edit_settings(self):
+        self.return_to_design = True
+        self.reject()
+
     def refresh(self):
         value = self.template.to_dict()
-        value["media"]["duplex"] = bool(self.printing.currentData())
         try:
             self.summary.setText(plan_summary(Template.from_dict(value), self.count) +
                                  ("\nPrinting follows Print Media / Stocks." if self.template.media.get("enabled") else ""))
@@ -156,16 +182,36 @@ class ProductionSettings:
                     or getattr(self, "batch_pending", False)
                     or any(getattr(w, "task", "") == "background" for w in self.workers))
 
+    def build_design_settings(self, navigation):
+        self.design_printing = printing_combo(self)
+        self.design_printing.setItemText(0, "Simplex")
+        self.design_printing.setItemText(1, "Duplex")
+        self.design_printing.setToolTip("Template printing: Simplex = one page per sheet; Duplex = front / back with odd envelopes padded.")
+        self.design_printing.setMaximumWidth(self.fontMetrics().horizontalAdvance("Duplex") + 50)
+        self.design_printing.setMinimumWidth(0)
+        self.design_printing.setStyleSheet("QComboBox { padding: 2px 4px; min-height: 0px; }")
+        self.design_printing.currentIndexChanged.connect(self.change_design_printing)
+        navigation.addWidget(self.design_printing)
+        self.design_inserter_button = QToolButton()
+        self.design_inserter_button.setText("Inserter…")
+        self.design_inserter_button.setToolTip("Apply or update existing Inserter I25 control barcodes")
+        self.design_inserter_button.setStyleSheet("QToolButton { padding: 2px 6px; min-height: 0px; }")
+        menu = QMenu(self.design_inserter_button)
+        self.design_place_barcode = QAction("Apply barcode to required fronts…", self)
+        self.design_place_barcode.triggered.connect(self.place_inserter_fronts)
+        menu.addAction(self.design_place_barcode)
+        self.design_update_i25 = QAction("Update I25 sequences…", self)
+        self.design_update_i25.triggered.connect(lambda: confirm_i25_update(self, self.template.to_dict()))
+        menu.addAction(self.design_update_i25)
+        self.design_inserter_button.setMenu(menu)
+        self.design_inserter_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.design_inserter_button.hide()
+        navigation.addWidget(self.design_inserter_button)
+
     def build_production_settings(self, layout):
-        form = QFormLayout()
-        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        self.production_printing = printing_combo(self)
-        self.production_printing.currentIndexChanged.connect(self.change_production_printing)
-        form.addRow("Printing", self.production_printing)
-        self.production_media_button = QPushButton("Print Media / Stocks…")
-        self.production_media_button.clicked.connect(self.edit_print_media)
-        form.addRow(self.production_media_button)
-        layout.addLayout(form)
+        self.production_media_button = QPushButton("Edit template settings in Design…")
+        self.production_media_button.clicked.connect(self.return_to_design_settings)
+        layout.addWidget(self.production_media_button)
         self.production_plan = QLabel()
         self.production_plan.setWordWrap(True)
         self.production_plan.setTextFormat(Qt.TextFormat.PlainText)
@@ -175,40 +221,40 @@ class ProductionSettings:
         plan_scroll.setMinimumHeight(self.fontMetrics().lineSpacing()*10+12)
         plan_scroll.setMaximumHeight(self.fontMetrics().lineSpacing()*13+12)
         layout.addWidget(plan_scroll)
-        self.production_update_i25 = QPushButton("Update I25 sequences…")
-        self.production_update_i25.clicked.connect(lambda: confirm_i25_update(self, self.template.to_dict()))
-        layout.addWidget(self.production_update_i25)
-        self.production_place_barcode = QPushButton("Apply barcode to required fronts…")
-        self.production_place_barcode.clicked.connect(self.place_inserter_fronts)
-        layout.addWidget(self.production_place_barcode)
+
+    def return_to_design_settings(self):
+        self.tabs.setCurrentIndex(1)
+        self.paper_tray_button.setFocus()
 
     def refresh_production_settings(self):
-        if not hasattr(self, "production_printing"):
+        if not hasattr(self, "design_printing"):
             return
         editable = self.production_settings_editable()
-        self.production_printing.blockSignals(True)
-        self.production_printing.setCurrentIndex(int(bool(self.template.media.get("duplex"))))
-        self.production_printing.blockSignals(False)
-        self.production_printing.setEnabled(editable and not self.template.media.get("enabled"))
+        self.design_printing.blockSignals(True)
+        self.design_printing.setCurrentIndex(int(bool(self.template.media.get("duplex"))))
+        self.design_printing.blockSignals(False)
+        self.design_printing.setEnabled(editable and not self.template.media.get("enabled"))
         self.production_media_button.setEnabled(editable)
         inserter = has_inserter(self.template)
-        self.production_place_barcode.setVisible(inserter)
-        self.production_place_barcode.setEnabled(editable)
-        self.production_update_i25.setVisible(any(needs_inserter_update(e.barcode_profile)
+        self.design_place_barcode.setVisible(inserter)
+        self.design_place_barcode.setEnabled(editable)
+        self.design_inserter_button.setVisible(inserter and self.tabs.currentIndex() == 1)
+        self.design_inserter_button.setEnabled(editable)
+        self.design_update_i25.setVisible(any(needs_inserter_update(e.barcode_profile)
             for e in self.template.all_elements() if e.barcode_profile))
-        self.production_update_i25.setEnabled(editable)
+        self.design_update_i25.setEnabled(editable)
         try:
             text = plan_summary(self.template, self.record_count)
             if self.template.media.get("enabled"):
                 text += "\nPrinting follows Print Media / Stocks."
-            if not self.production_update_i25.isHidden():
+            if self.design_update_i25.isVisible():
                 text += "\nLegacy I25 requires an explicit sequence update before generation."
             self.production_plan.setText(text)
         except ValueError as exc:
             self.production_plan.setText(str(exc))
 
-    def change_production_printing(self):
-        duplex = bool(self.production_printing.currentData())
+    def change_design_printing(self):
+        duplex = bool(self.design_printing.currentData())
         if self.template.media.get("enabled") or not self.production_settings_editable():
             self.refresh_production_settings()
             return
@@ -218,7 +264,7 @@ class ProductionSettings:
         before = self.template.to_dict()
         after = copy.deepcopy(before)
         after["media"]["duplex"] = duplex
-        self._commit(before, after, "Change production printing")
+        self._commit(before, after, "Change template printing")
 
     def review_production_printing(self):
         if not self.production_settings_editable():
@@ -231,11 +277,9 @@ class ProductionSettings:
         dialog = ProductionReviewDialog(self.template, self.record_count, self)
         try:
             if dialog.exec() != QDialog.DialogCode.Accepted:
+                if dialog.return_to_design:
+                    self.return_to_design_settings()
                 return False
-            before = self.template.to_dict()
-            after = copy.deepcopy(before)
-            after["media"]["duplex"] = bool(dialog.printing.currentData())
-            self._commit(before, after, "Confirm production printing")
             return True
         finally:
             dialog.deleteLater()

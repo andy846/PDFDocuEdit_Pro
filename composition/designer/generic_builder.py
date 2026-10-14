@@ -408,7 +408,7 @@ class GenericLayoutBuilder(QWidget):
                 self.table.item(row, 4).setText(value.formatted)
                 self.table.item(row, 4).setToolTip(f"Full value: {value.raw}\nEncoded: {value.formatted}" + ("\nCycled within segment length" if value.cycled else ""))
             parts = " | ".join(v.formatted for v in result.segments)
-            self.preview.setText(f"{parts}\n\n{result.payload} — {len(result.payload)} characters")
+            self.preview.setText(f"Resolved preview — current record / page:\n{parts}\n\n{result.payload} — {len(result.payload)} characters")
         else:
             self.image.clear()
             self.preview.setText("Data not loaded — payload pending production validation." if pending else "")

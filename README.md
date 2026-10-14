@@ -17,6 +17,13 @@ v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發
 
 詳細內容與限制見 [v3.0.7 Release notes](docs/RELEASE_NOTES_3.0.7.md)。上一版 [v3.0.6](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.6) 及其附件保留。
 
+## 開發分支：Template Designer 設定分工（尚未發布）
+
+- Design 集中 **Paper / Tray…**、Simplex／Duplex；僅有 Inserter I25 才顯示 **Inserter… → Apply barcode to required fronts…**。
+- Production 顯示唯讀紙種、Printer Profile、有效選紙指令及條碼數量摘要；修改返回 Design，正式覆核／批准保持原有安全關口。
+- Barcode／QR 明確選擇 Direct Content 或 Barcode Logic；首次設定保留 `{{Seq}}` 等欄位，預覽數字不會被存成固定值。取消、草稿及 Undo 保留既有內容。
+- Blocked 覆核直接顯示原因及 Issues，區分已檢查與預計數量。以上介面修補尚未包含在已發布的 v3.0.7 安裝包。
+
 ## v3.0.6：文件完整性與生產安全
 
 - 回復／Undo 的記憶體文件仍可 Save／Save As；重複插頁及比例複製共用交易，失敗完整回復。

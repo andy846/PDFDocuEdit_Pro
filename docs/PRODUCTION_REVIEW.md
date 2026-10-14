@@ -4,7 +4,7 @@
 
 ## 操作
 
-1. Template Designer／PDF Overlay 設定資料、模板、雙面、Barcode 及 Media，按 **Generate PDF** 或 **Review Production…**。
+1. Template Designer 在 Design 設定資料、模板、雙面、Barcode 及 Paper / Tray；PDF Overlay 沿用自身設定入口，按 **Generate PDF** 或 **Review Production…**。
 2. Workflow 先完成既有 Check／Review／Approve，再使用 **Review Production**、Run Ready Jobs 或 Review production。
 3. 選輸出資料夾，背景準備及檢查完整生產輸入。檢查時可切換應用程式模式，不會取消工作。
 4. Summary 核對數量、輸出名稱、紙張及 backend。Mailpieces 每頁 50 筆，Enter 搜尋資料；可按封號／輸出頁跳轉。
@@ -90,3 +90,15 @@ flowchart TD
 - 切換工作、窄窗、深淺色與加大字體驗收列於相關 UI 測試；沒有發布新的安裝包。
 - 本輪針對性驗收：覆核 UI、服務、Workflow 及批准保護共 **50 tests passed**；另在 `QT_SCALE_FACTOR=2` 執行本輪 UI 案例，**11 tests passed**。960／1280 寬度、深淺色及大字體截圖已核對；Ruff 與差異空白檢查通過。
 - 寬窗／窄窗往返時維持 Issues 及返回設定按鈕可見，修正 Qt 分頁移回 splitter 後仍隱藏的狀態；獨立代碼覆核確認此案例。
+
+Template Review 的「返回設定」會切換至 Design；Media 問題亦先顯示 Design 才開啟同一 Paper / Tray 設定視窗，避免頁籤與內容不一致。
+
+
+### Template Design 設定分工驗收（2026-10-14，尚未發布）
+
+- Design 集中單雙面、Paper / Tray 與條件式 Inserter 菜單；Production 保留唯讀計畫及返回 Design 的入口。Print Media 啟用時仍由同一 Media 設定決定雙面。
+- Barcode / QR 明確標示 Direct Content 或 Barcode Logic；首次 Logic 設定保留原文字與欄位。取消／無效草稿不切換來源；切換支援 Undo。Generic 轉換超過 30 tokens 時拒絕轉換並保留原 Content。
+- 既有 Production Printing 操作測試改為在 Design 修改及核對 Undo；覆核確認視窗改為唯讀，仍檢查頁數與取消不改模板。沒有停用測試或減少生產批准要求。
+- 7 個相關測試模組共 **105 tests passed**；新入口、條碼來源及單雙面操作另在 200% 縮放下 **10 tests passed**。深淺色、960×640、包含 Production Review 的五分頁版面已核對。
+- QR Direct Content／Logic 各以三筆合成資料保存重開、正式覆核生成，再獨立解碼得到 `REF-000001`、`REF-000002`、`REF-000003`；無條碼的既有 Template／Overlay 案例正常生成。
+- Ruff、差異檢查及獨立代碼覆核通過。圖片與臨時探測位於本機 `build/probes/`；本輪未打包、未發布、不改公開版本或專案格式。

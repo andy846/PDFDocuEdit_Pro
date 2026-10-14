@@ -172,7 +172,7 @@ def test_overlay_preset_updates_required_read_scope_and_printing(qt_application,
         finish(window)
 
 
-def test_production_printing_is_visible_changes_counts_and_undo(qt_application, monkeypatch):
+def test_design_printing_is_visible_changes_counts_and_undo(qt_application, monkeypatch):
     from composition.designer.workspace import CompositionWindow
     from tests.composition.test_inserter_production import template_for
     from tests.composition.test_workspace import close_window
@@ -183,23 +183,23 @@ def test_production_printing_is_visible_changes_counts_and_undo(qt_application, 
         model = template_for(pages=2, count=200, duplex=False)
         model.pages[1].elements.clear()
         window._apply_template(model.to_dict())
-        window.tabs.setCurrentIndex(3)
+        window.tabs.setCurrentIndex(1)
         window.show()
         window.resize(960, 640)
         qt_application.processEvents()
-        assert window.production_printing.isVisible() and window.production_printing.isEnabled()
+        assert window.design_printing.isVisible() and window.design_printing.isEnabled()
         assert "Physical sheets: 400" in window.production_plan.text()
         assert "pages without an I25 control barcode: 2" in window.production_plan.text()
         before = window.template.to_dict()
-        window.production_printing.setCurrentIndex(1)
+        window.design_printing.setCurrentIndex(1)
         assert window.template.media["duplex"]
         assert "Physical sheets: 200" in window.production_plan.text()
         assert "Required control barcodes: 200" in window.production_plan.text()
         assert "pages without" not in window.production_plan.text()
         window.undo.undo()
-        assert window.template.to_dict() == before and window.production_printing.currentData() is False
+        assert window.template.to_dict() == before and window.design_printing.currentData() is False
         window.undo.redo()
-        assert window.production_printing.currentData() is True
+        assert window.design_printing.currentData() is True
     finally:
         close_window(window)
 
@@ -254,8 +254,9 @@ def test_production_review_duplex_and_footer_fit(qt_application, theme):
         dialog.show()
         qt_application.processEvents()
         assert "Physical sheets: 400" in dialog.summary.text()
+        assert not dialog.printing.isEnabled(), "Review must not edit template printing"
         dialog.printing.setCurrentIndex(1)
-        assert "Physical sheets: 200" in dialog.summary.text() and "pages without" not in dialog.summary.text()
+        assert "Physical sheets: 400" in dialog.summary.text() and "pages without" in dialog.summary.text()
         ok = dialog.footer.button(QDialogButtonBox.StandardButton.Ok)
         qt_application.processEvents()
         corner = ok.mapTo(dialog, QPoint(ok.width(), ok.height()))

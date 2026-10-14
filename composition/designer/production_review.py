@@ -22,7 +22,7 @@ def template_pane(window):
         if issue.get("action") == "source" and window.project_host:
             window.project_host.open_pdf_page(issue["path"], issue["page"])
             return
-        window.stack.setCurrentIndex(2)
+        window.return_to_design_settings()
         if issue.get("action") == "media":
             window.edit_print_media()
         elif issue.get("object_id"):

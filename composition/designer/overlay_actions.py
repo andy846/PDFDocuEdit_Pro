@@ -54,7 +54,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             self.properties.barcode_preset.blockSignals(True)
             self.properties.barcode_preset.setCurrentIndex(self.properties.barcode_preset.findData(preset))
             self.properties.barcode_preset.blockSignals(False)
-            self.properties.barcode_profile_summary.setText(obj.profile.name)
+            self.properties.set_barcode_content_source(obj.profile.to_dict(), allow_direct=False)
             self.properties.barcode_format.setEnabled(preset != INSERTER_I25 and editable)
             if preset == INSERTER_I25:
                 self.scope.setEnabled(False)

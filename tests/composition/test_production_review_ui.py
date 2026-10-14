@@ -291,3 +291,24 @@ def test_blocked_issues_remain_visible_when_window_becomes_narrow(app, tmp_path,
         owner.close()
         owner.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.parametrize("action", ["settings", "media"])
+def test_template_review_settings_return_to_design(app, monkeypatch, action):
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    window = CompositionWindow()
+    opened = []
+    monkeypatch.setattr(window, "edit_print_media", lambda: opened.append(
+        (window.tabs.currentIndex(), window.stack.currentWidget())))
+    try:
+        controller = template_pane(window)
+        window.tabs.setCurrentIndex(4)
+        before = window.template.to_dict()
+        controller.pane.editRequested.emit({"action": action})
+        assert window.tabs.currentIndex() == 1 and window.stack.currentWidget() is window.design_page
+        if action == "media":
+            assert opened == [(1, window.design_page)]
+        assert window.template.to_dict() == before
+    finally:
+        cleanup(window)

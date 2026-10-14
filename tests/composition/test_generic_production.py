@@ -291,3 +291,29 @@ def test_cycle_audit_preserves_source_rows_after_sorting(tmp_path):
         records = list(csv.DictReader(stream))
     assert [r["Record ordinal"] for r in records] == ["1", "2", "3"]
     assert [r["Source row"] for r in records] == ["20", "30", "10"]
+
+
+@pytest.mark.parametrize("configured_logic", [False, True])
+def test_qr_sequence_reopen_and_real_pdf_decode_remain_variable(tmp_path, configured_logic):
+    import fitz
+    from PIL import Image
+    from pyzbar.pyzbar import ZBarSymbol, decode
+
+    from composition.engine.barcode_profiles import BarcodeToken
+
+    template = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", start=1, padding=6)])
+    profile = BarcodeProfile(name="Content / variable fields", tokens=[
+        BarcodeToken(kind="literal", value="REF-"), BarcodeToken(value="Seq")])
+    template.elements.append(Element(type="qr", value="REF-{{Seq}}", width_mm=40, height_mm=40,
+                                     barcode_profile=profile.to_dict() if configured_logic else {}))
+    reopened = load_project(save_project(template, tmp_path / "qr.pdcx"))
+    result = generate(ProductionJob(reopened.to_dict(), "", str(tmp_path / "output")))
+    assert result.status == "completed", result.error
+    assert result.generated_pages == 3
+    payloads = []
+    with fitz.open(result.output_pdf) as document:
+        for page in document:
+            pixels = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image = Image.frombytes("RGB", (pixels.width, pixels.height), pixels.samples)
+            payloads.append([mark.data.decode("utf-8") for mark in decode(image, symbols=[ZBarSymbol.QRCODE])])
+    assert payloads == [["REF-000001"], ["REF-000002"], ["REF-000003"]]
