@@ -112,3 +112,48 @@ def test_long_message_stays_one_line_and_preserves_full_details(styled_app, monk
     finally:
         window.production_worker = None
         cleanup(window)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_design_has_visible_paper_tray_button_using_existing_media_action(styled_app, monkeypatch, theme):
+    from composition.designer.media_dialog import MediaDialog
+
+    apply_theme(styled_app, theme)
+    monkeypatch.setattr(CompositionWindow, "_load_windows_fonts", lambda _: None)
+    monkeypatch.setattr(CompositionWindow, "_render_preview", lambda _: None)
+    opened = []
+    def configure(dialog):
+        opened.append(dialog)
+        dialog.enabled.setChecked(False)
+        dialog.duplex.setChecked(True)
+        dialog.accept()
+        return dialog.result()
+    monkeypatch.setattr(MediaDialog, "exec", configure)
+    window = CompositionWindow()
+    try:
+        window.resize(960, 640)
+        window.show()
+        window.preview_timer.stop()
+        styled_app.processEvents()
+        assert hasattr(window, "paper_tray_button"), "Paper / Tray must be visible in Design"
+        button = window.paper_tray_button
+        assert button.isVisible() and "Paper / Tray" in button.text()
+        assert button.defaultAction() is window.actions["media"]
+        assert window.rect().contains(button.mapTo(window, button.rect().bottomRight()))
+        before = window.template.to_dict()
+        button.click()
+        assert len(opened) == 1 and window.template.media["duplex"]
+        window.undo.undo()
+        assert window.template.to_dict() == before
+        window.tabs.setCurrentIndex(3)
+        assert not button.isVisible()
+        window.tabs.setCurrentIndex(1)
+        assert button.isVisible()
+        window.production_worker = object()
+        window._update_actions()
+        assert not button.isEnabled()
+        button.click()
+        assert len(opened) == 1
+    finally:
+        window.production_worker = None
+        cleanup(window)

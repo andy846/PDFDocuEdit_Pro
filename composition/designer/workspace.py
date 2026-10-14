@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -150,7 +151,17 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
             self.tabs.addTab(name)
         self.tabs.setCurrentIndex(1)
         self.tabs.currentChanged.connect(self._mode_changed)
-        layout.addWidget(self.tabs)
+        navigation = QHBoxLayout()
+        navigation.addWidget(self.tabs, 1)
+        self.paper_tray_button = QToolButton()
+        self.paper_tray_button.setDefaultAction(self.actions["media"])
+        self.actions["media"].setIconText("Paper / Tray…")
+        self.paper_tray_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.actions["media"].setToolTip("Set simplex / duplex, page Stocks and printer profile / tray mappings.")
+        self.paper_tray_button.setAccessibleName("Paper and tray settings")
+        self.paper_tray_button.setStyleSheet("QToolButton { padding: 2px 6px; min-height: 0px; }")
+        navigation.addWidget(self.paper_tray_button)
+        layout.addLayout(navigation)
         self.stack = QStackedWidget()
         self.design_page = QWidget()
         design_layout = QVBoxLayout(self.design_page)
@@ -552,6 +563,7 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
             self.tabs.blockSignals(False)
             return
         self._designer_last_tab = index
+        self.paper_tray_button.setVisible(index == 1)
         self.stack.setCurrentIndex(1 if index == 0 else 2 if index == 3 else 3 if index == 4 else 0)
         self.canvas.set_preview_mode(index == 2)
         self.record_navigation.setVisible(index == 2)

@@ -2,7 +2,7 @@
 
 ## 開啟
 
-- 一般 Document Designer：`Page → Print Media / Stocks…`。
+- Template Designer：Design 分頁列右邊的 **Paper / Tray…**；亦可用 `Page → Print Media / Stocks…`。兩個入口開啟同一設定視窗，無須先加入 Barcode。
 - PDF Overlay：`Production → Print Media / Stocks…`。
 - Visual Workflow：選取 `Media Assignment` 節點，再開啟 `Configure step`。
 
