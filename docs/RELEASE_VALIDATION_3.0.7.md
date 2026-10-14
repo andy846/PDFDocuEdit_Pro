@@ -1,69 +1,65 @@
 # Release Validation — 3.0.7
 
-Started 2026-10-14T00:10:24.263371+00:00. Preparing v3.0.7 from main cfc19778e98a5ae86b967a864f6b6b0c8d34a5c8.
-此模板不是驗收證據；未執行項目保持 Pending，不把舊結果自動填成 Passed。
-主流程見 [GitHub 發布標準流程](UNIFIED_RELEASE.md)。
+## Status
 
-## 來源及產物
+Native candidates and signing passed. GitHub draft upload and remote verification passed (20 attachments). **Not public.**
+Real-account Windows/Mac login, Mac offline restart and Mac cross-version update remain Pending.
+The [standard release procedure](UNIFIED_RELEASE.md) requires current-candidate results; prior versions are not substituted.
 
-| 項目 | 記錄 |
+## Frozen source and evidence
+
+| Item | Evidence |
 |---|---|
-| 版本 / Tag | 3.0.7 / v3.0.7 — not yet published |
-| Repository / Branch / 產品工作區 | andy846/PDFDocuEdit_Pro / codex/unified-release-v3.0.7 / existing print-composition-v3 linked worktree |
-| 凍結完整 SHA / 來源 fingerprint | Pending |
-| GitHub run ID / URL / run headSha | Pending |
-| 候選 / 簽署目錄（不包含私鑰位置） | Pending |
-| Windows / Mac 平台、Python / 工具鏈 / 依賴設定 | Pending |
-| Candidate index / 原生回歸及 smoke 報告 | Pending |
-| Signed release index hash / 附件 hash 清單 | Pending |
-| Release URL / 公開時間 | Pending |
+| Version / tag | 3.0.7 / v3.0.7 |
+| Repository / branch | andy846/PDFDocuEdit_Pro / codex/unified-release-v3.0.7 |
+| Product workspace | Existing print-composition-v3 linked worktree |
+| Frozen product SHA | `ea046836faf8b19eaea004b91a2176e9f1cfc711` |
+| Source fingerprint | `1beebae1c24064b10dd6da9ef77018cd0ae3b98484e5d8c3f5e54b19a078cfd5` |
+| Native run | [38492470140](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/38492470140); headSha equals frozen source |
+| Local staging | `build/probes/release-v3.0.7-38492470140/` in the product workspace |
+| Candidate evidence | `windows/release-candidate/candidate-windows-x64.json`, `macos/release-candidate/candidate-macos-arm64.json` |
+| Regression reports | `windows/build/ci-release/result.json`, `macos/build/macos-tests/result.json` |
+| Signed index SHA256 | `60b3f860ac75ee84703f3c810770170c6a2b8b73911dab6f683d931185f327ba` |
+| Attachments | 18 files declared in signed index plus index and signature = 20; all 20 remote names/sizes/SHA256 digests verified |
+| Draft | [GitHub draft](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/untagged-6a4c5e41a939354d7b85); owner access required |
 
-## 驗收
+## Acceptance
 
-| 項目 | 狀態（Pending / Passed / Failed） | 證據、SHA及版本 |
+| Check | Status | Measured evidence |
 |---|---|---|
-| Windows 完整回歸 / 原生打包 | Pending | |
-| Mac 原生發布計劃 / 原生打包 | Pending | |
-| Windows frozen 登入及未登入 worker 拒絕 | Pending | |
-| Mac frozen 登入 / Managed shell | Pending | |
-| Windows v3.0.3 原 Launcher 連續兩次升級 | Pending | |
-| Windows 候選真實帳戶登入 | Pending | |
-| Mac 候選真實帳戶登入 | Pending | |
-| Mac 候選離線重開 | Pending | |
-| Mac 候選跨版本更新 | Pending | |
-| 偏好 / 專案位置 / 原文件保留 | Pending | |
-| 本輪改動的針對性實測 | Pending | |
-| 簽章 / 來源 / 平台 / 帳戶項目 | Pending | |
-| 草稿附件遠端 hash / 大小 / 名稱 | Pending | |
-| operator-acceptance 與候選 SHA 一致 | Pending | |
-| 公開 tag / manifests / 簽章 / 附件及三個更新入口 | Pending | |
+| Windows complete isolated regression | Passed | 176 modules; 2,469 passed, 3 existing skips, 0 failures/errors |
+| Windows native packaging | Passed | Installer, Managed portable, private and legacy-compatible update ZIPs in native candidate |
+| Mac native release plan / packaging | Passed | 42 modules; 684 passed, 3 existing skips, 0 failures/errors; Managed DMG/update ZIP |
+| Windows frozen login-ready / worker admission | Passed | Real frozen Launcher, accepted before login; three unauthenticated worker routes blocked |
+| Mac frozen login / Managed shell | Passed | Login shell, handshake, duplicate/direct launch routing, unauthenticated admission blocked |
+| Windows original v3.0.3 Launcher, two upgrades | Passed | 3.0.3 → 3.0.6 → 3.0.7; `D:/Python_Project/PDFdocuEdit_Pro/build/Q7/result.json` |
+| QA Launcher / preferences preservation | Passed | Launcher SHA256 `172dbae78ff8951e13de3aae4e3378d5a4a6995d03fc05e47a46814050d37522` unchanged; preferences sentinel preserved |
+| Windows candidate real-account login | Pending | Operator confirmation required; synthetic smoke does not establish this |
+| Mac candidate real-account login | Pending | Operator confirmation required |
+| Mac candidate offline restart | Pending | Operator confirmation required |
+| Mac candidate cross-version update | Pending | Signed candidate helper report and operator confirmation required |
+| Signatures / provenance / account project | Passed | Existing sealed validator; both candidates share source/version/fingerprint/account target; unchanged update trust anchor |
+| Remote attachment names / sizes / hashes | Passed | Publisher completed successfully; independent API comparison verified all 20; `remote-draft-validation.json` |
+| Operator acceptance complete | Pending | `signed/operator-acceptance.json`: only Windows two upgrades true; other four false; frozen SHA matches |
+| Public tag / downloads / three update routes | Pending | Publication has not occurred |
 
-## 耗時及續做
+## Timing
 
-| 階段 | 開始 / 結束 | 耗時 | run / 產物 / 錯誤及續做 |
-|---|---|---|---|
-| 來源準備 | | | |
-| Windows 回歸及打包 | | | |
-| Mac 回歸及打包 | | | |
-| 候選下載核對 | | | |
-| 簽署 | | | |
-| 草稿上傳及核對 | | | |
-| 實機等待及驗收 | | | |
-| 公開及發布後核對 | | | |
+Times below are UTC, measured from GitHub run metadata; Windows/Mac ran in parallel.
 
-總 wall-clock：Pending。平行工作不把兩邊耗時相加當作發布總時間。
-如重用證據，列出原 run/報告、吻合條件及驗證結果；不能只記「以前通過」。
+| Stage | Start / end | Elapsed |
+|---|---|---|
+| Native dispatch | 2026-10-14 00:51:00 | |
+| Windows native regression and build | 00:51:04 / 01:23:59 | 32m 55s |
+| Mac native regression and build | 00:51:07 / 01:01:45 | 10m 38s |
+| Download / signing | Completed; candidates and signed files retained | No separate stage timings inferred |
+| Draft upload / remote verification | Completed; `remote-draft-validation.json` records verification UTC | Measured end recorded; separate upload start not inferred |
+| Operator checks / publication | Waiting for actual results | Pending |
 
-## 交付及限制
+## Preparation and limits
 
-- Windows 下載 / 更新方式：Pending
-- Mac 下載 / 更新方式：Pending
-- Mac Developer ID / 公證實際狀態：Pending
-- 已知限制 / 未驗收能力：Pending
-- 使用者交付結果：Pending
+Preparation contracts were observed failing before changes: version remained 3.0.6 and the Mac native plan omitted error recovery / queued-open lifecycle modules. The existing gates were updated; no tests or assertions disabled. Scoped preparation verification: 21 contracts plus one in-app README construction test passed; full Ruff and diff whitespace checks passed. Independent review: no actionable findings after fixing the stale in-app README. Full candidate regressions above ran once per platform; no redundant local full regression was run.
 
-## Preparation evidence
+Windows x64 account-enabled Managed builds; macOS 13+ Apple Silicon ad-hoc signed testing build, **not Apple notarized**. Intel/Mac OCR, physical printer/inserter proof and antivirus vendor clearance are not claimed. Customer-specific native deadlock was not reproduced; generic lifecycle faults were fixed and tested. No customer files or account credentials were included in release artifacts. Existing user test applications were not terminated; upgrade smoke owned only its empty QA child processes.
 
-Version-contract and Mac release-plan tests failed before preparation: version remained 3.0.6 and the native plan omitted error recovery / queued-open lifecycle modules. Update the same existing gates; no assertions or tests disabled. Native candidate/operator results remain Pending until measured.
-
-Scoped preparation verification: 21 source/release-plan contracts and 1 in-app README construction test passed; full Ruff and diff whitespace checks passed. Independent review found the stale in-app README header, then verified its dynamic APP_VERSION replacement and v3.0.7 overview. Final review: no actionable findings. No local complete regression was rerun; the mandatory candidate-native suites will execute in the unified workflow.
+Any follow-up documentation commit records these results without relabeling the frozen artifacts as that newer commit.
