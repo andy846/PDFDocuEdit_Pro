@@ -2,9 +2,9 @@
 
 ## Status
 
-Native candidates and signing passed. GitHub draft upload and remote verification passed (20 attachments). **Not public.**
+Native candidates, signing and all 20 remote attachments passed. **Published as latest on 2026-10-14 01:46:04 UTC (09:46:04 Hong Kong).**
 Real-account Windows/Mac login, Mac offline restart and Mac cross-version update remain Pending.
-The [standard release procedure](UNIFIED_RELEASE.md) requires current-candidate results; prior versions are not substituted.
+The [standard release procedure](UNIFIED_RELEASE.md) normally requires current-candidate operator results. After the four outstanding checks were explicitly disclosed, the repository owner instructed “Release”. This release-specific publication instruction overrides the wait for those checks; it does not supply test results. `operator-acceptance.json` remains unchanged: the four untested checks stay false. No prior-version results are substituted.
 
 ## Frozen source and evidence
 
@@ -21,7 +21,7 @@ The [standard release procedure](UNIFIED_RELEASE.md) requires current-candidate 
 | Regression reports | `windows/build/ci-release/result.json`, `macos/build/macos-tests/result.json` |
 | Signed index SHA256 | `60b3f860ac75ee84703f3c810770170c6a2b8b73911dab6f683d931185f327ba` |
 | Attachments | 18 files declared in signed index plus index and signature = 20; all 20 remote names/sizes/SHA256 digests verified |
-| Draft | [GitHub draft](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/untagged-6a4c5e41a939354d7b85); owner access required |
+| Public Release | [v3.0.7](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.7); published at 2026-10-14T01:46:04Z |
 
 ## Acceptance
 
@@ -41,7 +41,7 @@ The [standard release procedure](UNIFIED_RELEASE.md) requires current-candidate 
 | Signatures / provenance / account project | Passed | Existing sealed validator; both candidates share source/version/fingerprint/account target; unchanged update trust anchor |
 | Remote attachment names / sizes / hashes | Passed | Publisher completed successfully; independent API comparison verified all 20; `remote-draft-validation.json` |
 | Operator acceptance complete | Pending | `signed/operator-acceptance.json`: only Windows two upgrades true; other four false; frozen SHA matches |
-| Public tag / downloads / three update routes | Pending | Publication has not occurred |
+| Public tag / downloads / three update routes | Passed | Frozen tag SHA correct; latest/non-prerelease; all 20 remote names/sizes/hashes match; three anonymously downloaded manifest/signature pairs pass existing production validator; all six binary download HEAD requests succeed |
 
 ## Timing
 
@@ -54,7 +54,8 @@ Times below are UTC, measured from GitHub run metadata; Windows/Mac ran in paral
 | Mac native regression and build | 00:51:07 / 01:01:45 | 10m 38s |
 | Download / signing | Completed; candidates and signed files retained | No separate stage timings inferred |
 | Draft upload / remote verification | Completed; `remote-draft-validation.json` records verification UTC | Measured end recorded; separate upload start not inferred |
-| Operator checks / publication | Waiting for actual results | Pending |
+| Operator checks | Four current-candidate checks remain untested; owner requested publication after disclosure | Pending |
+| Publication / public verification | 2026-10-14 01:46:04 / 01:46:53.804 UTC | ~50s from publication to verification; `post-publication-validation.json` |
 
 ## Preparation and limits
 
@@ -63,3 +64,10 @@ Preparation contracts were observed failing before changes: version remained 3.0
 Windows x64 account-enabled Managed builds; macOS 13+ Apple Silicon ad-hoc signed testing build, **not Apple notarized**. Intel/Mac OCR, physical printer/inserter proof and antivirus vendor clearance are not claimed. Customer-specific native deadlock was not reproduced; generic lifecycle faults were fixed and tested. No customer files or account credentials were included in release artifacts. Existing user test applications were not terminated; upgrade smoke owned only its empty QA child processes.
 
 Any follow-up documentation commit records these results without relabeling the frozen artifacts as that newer commit.
+
+## Publication evidence
+
+- `owner-publication-instruction.json`: exact latest human instruction, context and four pending checks; not an operator-test result.
+- `post-publication-validation.json`: release ID/tag/source/latest status, 20 assets, three manifests/signatures and six publicly accessible binary downloads.
+- Existing unified publisher was rerun in draft mode for complete sealed/remote verification. The owner-directed final publication used GitHub release edit, keeping the standard automated operator gate and acceptance JSON unchanged. No program logic, update keys or public attachments were altered.
+- Windows Managed updates can check the Windows legacy or account manifest. Mac account Managed updates use the Mac manifest; source/non-Managed installations still require the corresponding Managed installer. Unknown old launchers remain subject to the existing route checks.
