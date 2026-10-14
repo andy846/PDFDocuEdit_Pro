@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from contextlib import closing
 from pathlib import Path
+from time import monotonic
 
 import fitz
 
@@ -37,21 +38,52 @@ def validate_output_backend(media):
             ghostscript_executable()
 
 
-def _run(executable, arguments, directory, is_cancelled):
-    """File-backed diagnostics and cooperative subprocess cancellation."""
+def _run(executable, arguments, directory, is_cancelled, *, progress=None, total=0,
+         stage="PostScript processing"):
+    """Keep diagnostics on disk and report bounded page updates / live heartbeats."""
     log = Path(directory)/"ghostscript.log"
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-    with log.open("w+b") as stream:
-        process = subprocess.Popen([str(executable), "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", *arguments],
+    with log.open("w+b") as stream, log.open("rb") as reader:
+        # -q suppresses Ghostscript's PDF page notifications. Keep them in the
+        # file-backed log, never an undrained pipe or the worker event protocol.
+        process = subprocess.Popen([str(executable), "-dSAFER", "-dBATCH", "-dNOPAUSE", *arguments],
                                    cwd=directory, stdout=stream, stderr=subprocess.STDOUT, **options)
+        started = last_page_at = monotonic()
+        last_report, reported_page, page = started-1, -1, 0
+        buffer = b""
+
+        def report(*, finished=False):
+            nonlocal buffer, page, last_page_at, last_report, reported_page
+            data = reader.read(65536)
+            lines = (buffer + data).split(b"\n")
+            buffer = lines.pop()[-4096:]
+            now = monotonic()
+            for line in lines:
+                match = re.fullmatch(rb"Page (\d+)\s*", line)
+                if match and page < int(match[1]) <= total:
+                    page = int(match[1])
+                    last_page_at = now
+            if not progress or (page == reported_page and now-last_report < 1 and not finished):
+                return
+            elapsed = int(now-started)
+            position = f"processing page {page:,} / {total:,}" if page else "waiting for page progress"
+            activity = "process finished" if finished else "process running"
+            quiet = int(now-last_page_at)
+            notice = f" · no new page report for {quiet}s" if quiet >= 30 and not finished else ""
+            progress(max(0, page-1), total if page else 0,
+                     f"{stage} · {position} · stage elapsed {elapsed//60:02d}:{elapsed%60:02d} · {activity}{notice}")
+            last_report, reported_page = now, page
+
         try:
+            report()
             while True:
                 check_cancel(is_cancelled)
                 try:
                     process.wait(timeout=.2)
                     break
                 except subprocess.TimeoutExpired:
-                    continue
+                    report()
+            report(finished=True)
             if process.returncode:
                 stream.seek(max(0, stream.seek(0, 2)-4000))
                 detail = stream.read(4000).decode("utf-8", errors="replace")
@@ -100,7 +132,7 @@ def request_code(request):
             + " >> setpagedevice\n").encode("ascii")
 
 
-def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancelled=None):
+def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancelled=None, progress=None):
     """Accept only converter-produced sequential DSC pages; keep reads bounded."""
     spec = MediaSpec.from_dict(media)
     profile = PrinterProfile.from_dict(spec.printer_profile)
@@ -110,6 +142,8 @@ def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancel
     pending = None
     setups = 0
     saw_prolog = False
+    if progress:
+        progress(0, expected_pages, "PostScript media · programming sheet selections")
     with Path(source).open("rb") as input_stream, Path(target).open("wb") as output, Path(audit).open("w", encoding="utf-8-sig", newline="") as audit_stream:
         writer = csv.writer(audit_stream)
         writer.writerow(["File page", "Stock", "Side", "Selection programmed", "Request JSON"])
@@ -149,6 +183,8 @@ def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancel
                 writer.writerow([page, stock, side, programmed, json.dumps(request if programmed else {}, ensure_ascii=False)])
                 pending = None
                 setups += 1
+                if progress and (setups % 100 == 0 or setups == expected_pages):
+                    progress(setups, expected_pages, "PostScript media · programming sheet selections")
             start_of_line = line.endswith(b"\n")
     if page != expected_pages or setups != page or next(rows, None) is not None:
         raise CompositionError(f"PostScript reconciliation failed: {page} pages / {setups} setups; expected {expected_pages}.")
@@ -171,33 +207,41 @@ def export_postscript(directory, media, pdf_name, *, is_cancelled=None, progress
     with fitz.open(pdf) as source:
         count = source.page_count
     if progress:
-        progress(0, count, "Converting validated PDF to PostScript")
+        progress(0, 0, "PostScript conversion · starting converter")
     with tempfile.TemporaryDirectory(prefix=".postscript-", dir=directory) as temporary:
         folder = Path(temporary)
         raw, candidate, checked = folder/"converted.ps", folder/"production.ps", folder/"checked.pdf"
         audit = folder/"postscript-pages.csv"
+        conversion_started = monotonic()
         _run(executable, ["-sDEVICE=ps2write", "-dProduceDSC=true", f"-r{profile.resolution_dpi}",
                           "-dAutoRotatePages=/None", "-dEmbedAllFonts=true", "-dSubsetFonts=true",
-                          f"-sOutputFile={raw.name}", "-f", str(pdf.resolve())], folder, is_cancelled)
+                          f"-sOutputFile={raw.name}", "-f", str(pdf.resolve())], folder, is_cancelled,
+             progress=progress, total=count, stage="PostScript conversion")
+        conversion_seconds = monotonic()-conversion_started
         with closing(sqlite3.connect(directory/"media-plan.sqlite")) as db:
             rows = db.execute("SELECT * FROM pages ORDER BY file_page")
-            program_dsc(raw, candidate, rows, media, count, audit, is_cancelled=is_cancelled)
+            program_dsc(raw, candidate, rows, media, count, audit, is_cancelled=is_cancelled, progress=progress)
         if progress:
-            progress(count, count, "Interpreting PostScript and checking output pages")
+            progress(0, 0, "PostScript validation · interpreting generated PostScript")
+        validation_started = monotonic()
         _run(executable, ["-sDEVICE=pdfwrite", "-dAutoRotatePages=/None", f"-r{profile.resolution_dpi}",
-                          f"-sOutputFile={checked.name}", "-f", candidate.name], folder, is_cancelled)
+                          f"-sOutputFile={checked.name}", "-f", candidate.name], folder, is_cancelled,
+             progress=progress, total=count, stage="PostScript validation")
         with fitz.open(pdf) as source, fitz.open(checked) as verified:
             if verified.page_count != count:
                 raise CompositionError("PostScript interpretation changed the output page count.")
-            for original, page in zip(source, verified, strict=True):
+            for index, (original, page) in enumerate(zip(source, verified, strict=True), 1):
                 check_cancel(is_cancelled)
                 if abs(original.rect.width-page.rect.width) > .5 or abs(original.rect.height-page.rect.height) > .5:
                     raise CompositionError("PostScript interpretation changed an output page size.")
+                if progress and (index % 100 == 0 or index == count):
+                    progress(index, count, "PostScript validation · checking page count and sizes")
         check_cancel(is_cancelled)
         summary = {"postscript": target.name, "postscript_pages": count, "postscript_sha256": file_hash(candidate),
                    "postscript_size": candidate.stat().st_size, "postscript_validation": "interpreted_page_count_and_size",
                    "selection_method": profile.selection_mode, "resolution_dpi": profile.resolution_dpi,
-                   "device_validation": "pending"}
+                   "device_validation": "pending", "postscript_conversion_seconds": round(conversion_seconds, 3),
+                   "postscript_validation_seconds": round(monotonic()-validation_started, 3)}
         candidate.rename(target)
         audit.rename(directory/"postscript-pages.csv")
         (directory/"postscript-report.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

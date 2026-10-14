@@ -34,6 +34,13 @@ v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發
 - Issues 返回實際的設定來源；從 Workflow 開啟模板可 **Return to Workflow**。生產輸出資料夾獨立記住，不沿用 profile／圖片瀏覽位置。
 - 詳細責任、相容性和驗收見 [Workflow 設定與覆核說明](docs/WORKFLOW_SETTINGS_REVIEW.md)。此更新尚未打包／發布。
 
+## 開發更新：PostScript 生產進度
+
+- Production 頁頂部固定顯示目前階段、已用時間、頁數進度及 Cancel job；Template Designer 與 PDF Overlay 共用，不受選單提示或結果區捲動遮蓋。
+- PDF → PS 轉換、選紙指令、PS 回讀驗證分開顯示。Ghostscript 有回報頁碼才顯示數值進度；未有頁碼時顯示活動指示及定時心跳，不把未知進度顯示成 0%。
+- 長時間沒有新頁碼會提示「等待頁數回報」，只表示程序尚未退出，不保證實際有前進或提供完成時間估算。取消仍等待安全清理。
+- 生產報告記錄 PS 轉換與驗證耗時；沒有降低解析度、跳過驗證、改動選紙指令或繞過原子發布。此修正需重開測試版後才生效，尚未打包／發布。
+
 ## v3.0.6：文件完整性與生產安全
 
 - 回復／Undo 的記憶體文件仍可 Save／Save As；重複插頁及比例複製共用交易，失敗完整回復。

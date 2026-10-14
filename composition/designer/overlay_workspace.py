@@ -273,6 +273,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.tabs.addTab(self.splitter, "Design & preview")
         production = QWidget()
         prod_layout = QVBoxLayout(production)
+        from .production_activity import ProductionActivity
+        self.production_activity = ProductionActivity(self.cancel_job)
+        prod_layout.addWidget(self.production_activity)
         review_button = QPushButton("Review Production…")
         review_button.clicked.connect(self.generate_pdf)
         prod_layout.addWidget(review_button)
@@ -378,6 +381,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         if self.close_pending:
             return None
         worker = Worker(self.directory, request, self)
+        worker.task = request["task"]
         self.workers.append(worker)
         if active:
             self.active_worker = worker
@@ -406,9 +410,11 @@ class OverlayWindow(OverlayActions, QMainWindow):
             self.close()
 
     def show_progress(self, done, total, message):
-        self.progress.setRange(0, max(1, total))
+        self.progress.setRange(0, max(0, total))
         self.progress.setValue(done)
         self.error(message)
+        if self.active_worker and getattr(self.active_worker, "task", "") == "overlay_generate":
+            self.production_activity.update_progress(done, total, message)
 
     def busy(self):
         locked = bool(self.active_worker or self.font_token or getattr(self,"batch_pending",False) or getattr(self,"workflow_binding",False))
@@ -434,6 +440,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.fields.setEnabled(valid and not locked)
         self.layers.setEnabled(valid and not locked)
         self.progress.setVisible(bool(self.active_worker))
+        self.production_activity.set_running(bool(self.active_worker and
+            getattr(self.active_worker, "task", "") == "overlay_generate"))
         self.auto_repair.setEnabled(not locked)
         control_required = bool(self.spec and self.spec.requires_control_barcode)
         self.required_scope.setEnabled(valid and not locked and control_required)

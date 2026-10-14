@@ -326,7 +326,14 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.production_actions.addWidget(self.open_font_report_button)
         self.last_font_report = ""
         self.last_output = ""
-        self.stack.addWidget(ProductionScroll(self.production_page, self.production_actions))
+        from .production_activity import ProductionActivity
+        production_view = QWidget()
+        production_view_layout = QVBoxLayout(production_view)
+        production_view_layout.setContentsMargins(0, 0, 0, 0)
+        self.production_activity = ProductionActivity(self.cancel_job)
+        production_view_layout.addWidget(self.production_activity)
+        production_view_layout.addWidget(ProductionScroll(self.production_page, self.production_actions), 1)
+        self.stack.addWidget(production_view)
         layout.addWidget(self.stack, 1)
         self.message = CompactMessage(self)
         self.record_navigation = QWidget()
@@ -550,6 +557,7 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.auto_repair.setEnabled(not busy)
         self._update_actions()
         self.progress.setVisible(busy)
+        self.production_activity.set_running(bool(self.production_worker))
         self.cancel_button.setVisible(busy)
         self.cancel_button.setEnabled(busy)
         if self.embedded:
@@ -1061,6 +1069,8 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         self.progress.setRange(0, total if total else 0)
         self.progress.setValue(done)
         self.message.setText(message)
+        if self.production_worker:
+            self.production_activity.update_progress(done, total, message)
 
     def _auto_repair_changed(self, enabled):
         self.preferences.setValue("auto_glyph_repair", enabled)
@@ -1193,6 +1203,8 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
     def cancel_job(self):
         worker = self.production_worker or self.import_worker
         if worker:
+            if worker is self.production_worker:
+                self.production_activity.cancel_pending()
             worker.cancel()
             self.message.setText("Cancelling at the next safe checkpoint…")
             self.cancel_button.setEnabled(False)

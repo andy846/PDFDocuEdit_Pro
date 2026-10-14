@@ -229,6 +229,7 @@ class OverlayFiles:
 
     def cancel_job(self):
         if self.active_worker:
+            self.production_activity.cancel_pending()
             self.active_worker.cancel()
             self.error("Cancelling at the next safe checkpoint…")
 

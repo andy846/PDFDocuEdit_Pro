@@ -34,3 +34,33 @@ Usage: [PostScript / profile guide](POSTSCRIPT_USER_GUIDE.md).
 - Added a device/type-filtered library dialog with readable settings preview. Listing/import use the existing isolated worker; cancellation retains completed imports. Loading changes only the media draft, with explicit full-setup versus printer-only scope. Foreign template-page identities are blocked before any draft mutation.
 - Private reference profiles use neutral names and are stored only in the local settings directory. Customer presets and source documents are not bundled or published.
 - 40 targeted tests passed: library core/UI, existing Media/PS UI and CI selection. Light/dark layout checks passed at 760×520 (library), 960×640 (Media) and 100%/200% scaling. Two four-page/two-Stock duplex proofs passed Ghostscript interpretation. Hardware paper selection remains pending; this development change has not been re-packaged or released.
+
+
+## Live progress — 2026-10-15
+
+The converter formerly ran with `-q` and `_run()` waited without progress callbacks.
+An active converter could therefore leave the GUI at 0% throughout a long PS stage.
+The initial production report was not a live log, and status-bar menu tips could hide
+its only changing message. This did not establish that a live process was making
+page-level forward progress.
+
+- Keep Ghostscript page notifications in a file-backed diagnostic log; read bounded
+  64 KiB chunks, handle split lines, and forward at most one update per wait cycle.
+  Report a heartbeat once per second during silence. Never parse converter text as code.
+- A reported `Page N` means page N is being processed, so the completed count is N-1.
+  Without a reliable page report the progress range is indeterminate. A heartbeat
+  means the process has not exited, not proof of forward progress or an ETA.
+- Distinguish conversion, media programming, interpretation and page-size validation.
+  Record `postscript_conversion_seconds` and `postscript_validation_seconds` in the
+  existing media report. Keep quality, profile commands, validation and publication unchanged.
+- A shared Qt activity panel stays above the scrollable Template production settings;
+  Overlay uses the same component. It shows job elapsed time, delayed worker updates
+  and cooperative cancellation. It is separate from the result report and menu tips.
+- Existing jobs are not hot-patched or restarted. The observed customer job was left
+  running; no customer PDF/template contents were read, rewritten or copied. Its slow
+  conversion rate has not been attributed to a specific font, transparency or page feature.
+
+Targeted tests cover fragmented page notifications, silence, callback cleanup, actual
+GS conversion / interpretation, timings, media commands, cancellation, split packages,
+light/dark narrow layouts, fixed status while scrolling and 200% scaling. Native printer
+acceptance, full regression, packaging and release retain their existing deferred gates.
