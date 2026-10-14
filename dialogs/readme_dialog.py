@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QDialogButtonBox, QTextEdit, QVBoxLayout
 
+from core.resources import APP_VERSION
+
 from .base import ToolDialog
 
 README_CONTENT = """# PDFDocuEdit Pro
 
-PDF Editing & Print Production Suite — v3.0.5
+PDF Editing & Print Production Suite — v__APP_VERSION__
 
 **Program Developer:** Andy Leung (andy846@gmail.com)
 
@@ -21,6 +23,21 @@ window. PDF Workspace handles document editing; Document Designer handles
 reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
+
+## New in v3.0.7: Recovery and Production Reliability
+
+* Reopening an existing PDF focuses its tab/window and clears the opening
+  activity without hiding another task or discarding dirty edits and Undo.
+* Operation-error recovery retains live readers, uses bounded waits, guards
+  Qt callbacks and keeps close controls operable. Pending cleanup explains
+  why a native task still owns the document; no unsafe forced close.
+* Active PDF tabs, Split View and detached windows refresh page dimensions.
+* Supported spot-colour scans can be genuinely pixel-redacted with an explicit
+  process-colour conversion warning; Font Preflight uses shared native qpdf.
+* PS Production Review checks Ghostscript before approval. Zero retained
+  records still publish approved reports only without a PS converter.
+* Results distinguish requested media output from actually published PS/JDF.
+  Existing Windows/Mac account update routes, public key and formats remain.
 
 ## New in v3.0.2
 
@@ -435,7 +452,7 @@ at: **andy846@gmail.com**
 ---
 
 Thank you for using PDFDocuEdit Pro!
-"""
+""".replace("__APP_VERSION__", APP_VERSION)
 
 
 class ReadmeDialog(ToolDialog):

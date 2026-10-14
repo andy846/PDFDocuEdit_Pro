@@ -1,12 +1,21 @@
-# PDFDocuEdit Pro V3.0.6
+# PDFDocuEdit Pro V3.0.7
 
-**PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、現有 PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
+**PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-[v3.0.6 已公開](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.6)，提供 **Windows x64 登入版**及 **macOS Apple Silicon 登入測試版**；Managed 安裝可使用 Check for Updates。舊版本及附件保留。
-兩平台原生回歸、打包、20 個附件及三個簽章更新入口已核對。本版按擁有者指示公開；Windows 真實帳戶登入及 Mac 登入／離線重開／跨版本更新仍待本版實機補驗，詳見 [本版驗收紀錄](docs/RELEASE_VALIDATION_3.0.6.md)。
-Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+本輪原生打包及實機結果見 [v3.0.7 驗收紀錄](docs/RELEASE_VALIDATION_3.0.7.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
-本版更新及平台限制見 [v3.0.6 Release notes](docs/RELEASE_NOTES_3.0.6.md)。
+## v3.0.7：操作回復與生產可靠性
+
+- 重開已有 PDF 直接聚焦原分頁／視窗，清理開檔狀態而不遮蓋其他任務；保留未保存內容與 Undo。
+- 操作失敗後保留 reader／文件生命週期；有限等待、Qt callback 防護及明確關閉進度，保留可操作的自訂關閉按鈕。
+- 切換分頁、Split View 或獨立視窗時，狀態列頁面尺寸同步。
+- 支援對適用的特別色掃描圖片作真正像素遮蔽，轉為 process colour 前會提示；保留交易回復及安全保存。
+- Windows／Mac 共用原生 qpdf，讓 Font Preflight / Safe Embed Fonts 獨立驗證及打包一致。
+- PS 生成前先檢查 Ghostscript；零筆資料的報告工作不需要 PS 元件。失敗摘要保留 PS／JDF 的實際選擇，不聲稱未發布成果已完成。
+- 原生 Mac 發布計劃加入本輪錯誤回復與重複開檔測試。更新路由、公鑰及專案格式保持一致。
+
+詳細內容與限制見 [v3.0.7 Release notes](docs/RELEASE_NOTES_3.0.7.md)。上一版 [v3.0.6](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.6) 及其附件保留。
 
 ## v3.0.6：文件完整性與生產安全
 
@@ -45,7 +54,7 @@ Mac 測試版尚未完成 Apple Developer ID／公證，OCR 及 Intel 不在此�
 
 ## macOS 對齊開發
 
-Apple Silicon 對齊及登入工作已整合；目前公開版本為 v3.0.6，macOS 仍為 Apple Silicon 登入測試版。
+Apple Silicon 對齊及登入工作已整合；目前發布狀態以 GitHub Releases 為準，macOS 仍為 Apple Silicon 登入測試版。
 專用 Mac CI 建置原生 qpdf、libzbar、Ghostscript 及離線 veraPDF／JRE，再檢查
 Designer、Workflow、Production Review、Barcode 與 PDF／PS 生產功能。
 Mac 分支新增 Managed DMG、自動更新及私人帳戶登入：與 Windows 共用登入批准、離線使用、撤銷覆核及簽章更新／回退核心。

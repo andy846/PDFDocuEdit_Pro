@@ -127,7 +127,8 @@ def test_mac_release_invokes_current_integrity_and_production_gates(monkeypatch)
         "tests/test_mutation_transactions.py", "tests/test_production_authorization.py",
         "tests/test_production_output_safety.py", "tests/test_production_recovery.py",
         "tests/test_workflow_branch_ui.py", "tests/test_document_windows.py",
-        "tests/test_overlay_ui.py",
+        "tests/test_overlay_ui.py", "tests/test_error_recovery_lifecycle.py",
+        "tests/test_queued_open_lifecycle.py",
     } <= set(selected)
     assert len(selected) == len(set(selected))
 
