@@ -190,6 +190,8 @@ class BranchWorkflowWindow(QMainWindow):
         self.undo.setClean()
         self.resize(1280,800)
         QTimer.singleShot(0,self.start_view)
+        from .source_watch import SourceWatch
+        self.source_watch=SourceWatch(self)
 
     def setup_chrome(self):
         toolbar=QToolBar("Visual Workflow")
@@ -664,7 +666,8 @@ class BranchWorkflowWindow(QMainWindow):
             self.message("Choose and apply a saved template first.")
             return
         if self.project_host:
-            self.project_host.open_project(path)
+            from .settings_navigation import open_design
+            open_design(self,path)
         else:
             self.error("Open this workflow within Document Designer to edit its template.")
 
@@ -1250,7 +1253,8 @@ class BranchWorkflowWindow(QMainWindow):
 
     def open_project(self,checked=False,path=None):
         if self.project_host:
-            self.project_host.open_project(path)
+            from .settings_navigation import open_design
+            open_design(self,path)
 
     def load_path(self,path):
         def ready(result):

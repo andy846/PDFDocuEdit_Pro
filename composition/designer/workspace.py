@@ -1075,7 +1075,8 @@ class CompositionWindow(ProductionSettings, SequenceOperations, BulkTypography, 
         if not self._store() or self.production_worker or self.import_worker:
             self._error("Import data or choose generated records in Running sequences before production.")
             return
-        output = QFileDialog.getExistingDirectory(self, "Production output folder")
+        from .output_location import choose_output_directory
+        output = choose_output_directory(self,settings=self.preferences)
         if output:
             self.start_production(output)
 

@@ -173,7 +173,8 @@ class OverlayFiles:
         if not confirm_i25_update(self, self.spec.to_dict(), overlay=True):
             return
         if not output_dir:
-            output_dir = QFileDialog.getExistingDirectory(self, "Output folder: a new job subfolder will be created")
+            from .output_location import choose_output_directory
+            output_dir = choose_output_directory(self)
         if not output_dir:
             return
         from .production_review import open_overlay_review

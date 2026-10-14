@@ -297,6 +297,8 @@ class WorkflowWindow(QMainWindow):
         self.setCentralWidget(central)
         self.statusBar().hide()
         self.apply_spec(self.spec.to_dict())
+        from .source_watch import SourceWatch
+        self.source_watch=SourceWatch(self)
         from .chrome import install
         install(self)
         self.lock()

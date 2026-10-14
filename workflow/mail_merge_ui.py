@@ -665,7 +665,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         selected=next((n for n in self.spec.nodes if n.id==self.selected),None)
         if selected and selected.kind in EXTRA_KINDS:
             self.select_node(selected.id)
-        self.accept_button.setEnabled(not self.active_worker and any(j.status in ("Needs review","Ready") and j.prepared_template for j in jobs))
+        self.accept_button.setEnabled(not self.active_worker and any(j.status in ("Needs review","Ready") and j.prepared_template and not j.data_summary.get("stale") for j in jobs))
         self.schedule_preview()
 
     def last_record(self):
@@ -674,7 +674,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
     def schedule_preview(self,*_):
         self.preview_generation+=1
         jobs=self.selected_jobs()
-        if not self.active_worker and jobs and jobs[0].prepared_template and jobs[0].status in ("Ready","Needs review"):
+        if not self.active_worker and jobs and jobs[0].prepared_template and jobs[0].status in ("Ready","Needs review") and not jobs[0].data_summary.get("stale"):
             self.preview_timer.start()
         else:
             self.preview_timer.stop()
@@ -685,7 +685,7 @@ class MailMergeWorkflowWindow(WorkflowWindow):
         if self.active_worker or not selected:
             return
         job=selected[0]
-        if not job.prepared_template or job.status not in ("Ready","Needs review"):
+        if not job.prepared_template or job.status not in ("Ready","Needs review") or job.data_summary.get("stale"):
             self.message("Check the job before previewing.")
             return
         self.preview_generation+=1
@@ -833,7 +833,8 @@ class MailMergeWorkflowWindow(WorkflowWindow):
             self.tabs.setCurrentWidget(self.review_page)
             self.message(f"Assign a letter template to '{job.name}' using Edit Job first.")
             return
-        return self.project_host.open_project(job.template_path)
+        from .settings_navigation import open_design
+        return open_design(self,job.template_path)
 
     def locate_issue(self):
         jobs=self.selected_jobs()

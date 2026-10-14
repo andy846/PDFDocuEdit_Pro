@@ -152,31 +152,11 @@ def pane_for(window):
     pane = ProductionReviewPane(window)
     window.tabs.addTab(pane, "Production Review")
     def edit(issue):
-        if issue.get("action") == "source" and window.project_host:
-            window.project_host.open_pdf_page(issue["path"], issue["page"])
-            return
         controller = window.production_review
         selected = controller.pane.jobs.currentIndex()
         context = controller.contexts[max(0, selected)] if controller.contexts else None
-        if context and context["kind"] == "template" and window.project_host:
-            files = context.get("binding", {}).get("files", [])
-            template = next((p for p in files if str(p).lower().endswith(".pdcx")), None)
-            if template:
-                project = window.project_host.open_project(template)
-                if project and issue.get("object_id"):
-                    for index, page in enumerate(project.template.pages):
-                        if any(e.id == issue["object_id"] for e in page.elements):
-                            project.tabs.setCurrentIndex(1)
-                            project.select_template_page(index)
-                            project.canvas.select_ids([issue["object_id"]])
-                            project._show_properties(True)
-                            break
-                return
-        window.tabs.setCurrentWidget(window.review_page)
-        if issue.get("action") == "media" and window.spec.node("media_assignment"):
-            window.select_node(window.spec.node("media_assignment").id)
-        elif issue.get("object_id") and hasattr(window, "edit_overlay"):
-            window.edit_overlay()
+        from .settings_navigation import edit_review_issue
+        edit_review_issue(window,context,issue)
     controller = ReviewController(window, pane, lambda: workflow_state(window), edit)
     window.undo.indexChanged.connect(controller.invalidate)
     window.production_review = controller

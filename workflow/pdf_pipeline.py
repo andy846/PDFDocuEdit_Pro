@@ -163,7 +163,11 @@ def prepare_mailpieces(spec,run,directory,*,progress=None,is_cancelled=None,unti
         if node.id==until_id:
             break
     run.data_set=str(current.path)
+    observations=run.data_summary.get("source_observations",{})
     run.data_summary=summary(current,len(groups))
+    from .source_state import observe_files
+    overlay=spec.node("overlay")
+    run.data_summary["source_observations"]={**observations,**observe_files([overlay.params.get("path","")] if overlay else [])}
     run.data_summary["outputs"]=split_names(current,"production.pdf")
     reports=root/"review-reports"
     export_audit(current,reports)

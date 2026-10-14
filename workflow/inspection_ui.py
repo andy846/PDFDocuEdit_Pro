@@ -123,7 +123,7 @@ class InspectionController:
         if w.spec.project_kind=="mail_merge_workflow" and any(n.kind=="template" for n in prefix):
             path=self.job().template_path
         else:
-            overlay=next((n for n in prefix if n.kind=="overlay"),None)
+            overlay=w.spec.node("overlay") if any(n.kind in ("media_assignment","overlay","output") for n in prefix) else None
             path=overlay.params.get("path","") if overlay else ""
         if path and w.project_host:
             key=w.project_host.identity(path)

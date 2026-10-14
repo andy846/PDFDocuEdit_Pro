@@ -17,6 +17,9 @@ from .registry import EXTRA_KINDS
 
 def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
     operation=request["operation"]
+    if operation=="source_status":
+        from .source_state import changed_files
+        return {"changed":changed_files(request["observations"])}
     if operation == "production_review_prepare":
         from .production_review import prepare_contexts
         return prepare_contexts(request, progress=progress, is_cancelled=cancelled)

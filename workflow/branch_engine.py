@@ -190,9 +190,12 @@ def prepare_routes(spec,directory,*,previous=None,target_id=None,progress=None,i
     root=Path(directory).resolve()/"branch-runs"/run_id
     root.mkdir(parents=True)
     signature=common_signature(spec)
+    from .source_state import observe_files
+    source_observations=observe_files([item["path"] for item in items])
     run={"id":run_id,"batch_id":(previous or {}).get("batch_id",run_id),"signature":signature,
          "directory":str(root),"status":"Checking","sources":[],"jobs":[],"stages":[],"acknowledged":False,
-         "input":0,"excluded":0,"candidates":0,"exceptions":0,"routed":0,"target_id":target_id or ""}
+         "input":0,"excluded":0,"candidates":0,"exceptions":0,"routed":0,"target_id":target_id or "",
+         "source_observations":source_observations}
     routes=spec.node("route").params["routes"]
     matchers={r["id"]:condition(r["condition"]) for r in routes if not r.get("fallback")}
     fallback=next((r["id"] for r in routes if r.get("fallback")),"")

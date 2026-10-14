@@ -45,6 +45,15 @@ def _validate_summary(summary):
             or not isinstance(steps,list) or len(steps)>64
             or not isinstance(outputs,list) or len(outputs)>10000):
         raise CompositionError("Invalid workflow data summary.")
+    if summary.get("media_source","project") not in ("project","workflow") or not isinstance(summary.get("media_node_id",""),str):
+        raise CompositionError("Invalid workflow media source.")
+    if type(summary.get("stale",False)) is not bool:
+        raise CompositionError("Invalid workflow source freshness.")
+    plan=summary.get("print_plan",{})
+    if not isinstance(plan,dict) or any(type(v) is not int or not 0<=v<=100_000_000 for v in plan.values()):
+        raise CompositionError("Invalid workflow print counts.")
+    from .source_state import validate_observations
+    validate_observations(summary.get("source_observations",{}))
     for step in steps:
         if not isinstance(step,dict) or any(not isinstance(step.get(k),str) for k in ("node_id","kind")):
             raise CompositionError("Invalid workflow step findings.")
@@ -368,6 +377,8 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
             job.warnings=list(with_records.metadata.get("warnings",[]))
             if job.data_summary.get("warnings"):
                 job.warnings.append(f"Data validation: {job.data_summary['warnings']} warning(s). Review findings.csv.")
+            from .source_state import observe_files
+            job.data_summary["source_observations"]=observe_files(before)
             job.signature=signature
             job.approved=was_approved
             job.status="Ready" if was_approved else "Needs review"
@@ -406,7 +417,7 @@ def prepare(spec: WorkflowSpec, run: BatchRun, directory, *, progress=None, is_c
 def approve(run, identities):
     selected=set(identities)
     for job in run.jobs:
-        if job.id in selected and job.status in ("Needs review","Ready") and job.prepared_template:
+        if job.id in selected and job.status in ("Needs review","Ready") and job.prepared_template and not job.data_summary.get("stale"):
             job.approved=True
             job.status="Ready"
     return run
