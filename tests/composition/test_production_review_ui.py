@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from composition.designer.production_review import template_pane
 from composition.designer.workspace import CompositionWindow
@@ -152,3 +152,142 @@ def test_physical_sheet_preview_themes_and_narrow_layout(app, tmp_path, monkeypa
     finally:
         cleanup(window)
         apply_theme(app, "system")
+
+
+def blocked_review_controller(app, tmp_path, monkeypatch):
+    from dataclasses import asdict
+
+    from composition.production.model import ProductionJob
+    from composition.review.service import create_review, review_rows
+    from composition.template.model import CompositionError, PageSpec
+    from tests.composition.test_postscript import ps_media
+
+    def missing_runtime():
+        raise CompositionError("PostScript output requires Ghostscript. Select its executable in Settings.")
+
+    monkeypatch.setattr("composition.media.postscript.ghostscript_executable", missing_runtime)
+    template = Template(pages=[PageSpec(), PageSpec()], record_mode="generated",
+                        generated_count=211, media=ps_media())
+    directory = tmp_path / "review"
+    context = {"kind":"template", "job":asdict(ProductionJob(
+        template.to_dict(), "", str(tmp_path / "output"))), "label":"Review fixture"}
+    result = create_review(directory, context)
+    assert result["status"] == "blocked" and result["summary"]["records"] == 211
+    assert result["summary"]["pages"] == 422
+    assert not (tmp_path / "output").exists()
+    owner = QWidget()
+    owner.directory, owner.workers = directory, []
+    pane = ProductionReviewPane(owner)
+    QVBoxLayout(owner).addWidget(pane)
+    controller = ReviewController(owner, pane, lambda: context, lambda _: None)
+    controller.contexts, controller.results = [context], [result]
+    controller.original_state, controller.session_valid = controller.state(), True
+    pane.jobs.addItem("Review fixture")
+
+    def request(task, callback, **values):
+        assert task == "rows"
+        callback(review_rows(directory, values["snapshot_id"], offset=values.get("offset", 0)))
+
+    monkeypatch.setattr(controller, "_request", request)
+    return owner, pane, controller, result
+
+
+@pytest.mark.parametrize("width", [1280, 960])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("font_size", [9, 18])
+def test_blocked_review_explains_error_and_opens_issues(app, tmp_path, monkeypatch, width, theme, font_size):
+    from PyQt6.QtGui import QFont
+
+    from styles.theme import apply_theme
+
+    original = app.font()
+    apply_theme(app, theme)
+    font = QFont(original)
+    font.setPointSize(font_size)
+    app.setFont(font)
+    owner, pane, controller, result = blocked_review_controller(app, tmp_path, monkeypatch)
+    try:
+        owner.resize(width, 640)
+        owner.show()
+        app.processEvents()
+        controller.select_job()
+        app.processEvents()
+        assert hasattr(pane, "blocker_reason"), "Blocked needs a prominent explanation"
+        assert pane.blocker_reason.isVisible()
+        assert "Ghostscript" in pane.blocker_reason.text()
+        assert pane.details.currentWidget() is pane.issue_page
+        if width < 1080:
+            assert pane.compact.currentWidget() is pane.details
+        assert pane.issues.currentRow() == 0
+        assert pane.envelopes.rowCount() == 0
+        assert "211" in pane.position.text() and "0 checked" in pane.position.text()
+        assert not pane.confirm.isEnabled() and not pane.acknowledge.isVisible()
+        assert not result["complete"]
+        assert pane.confirm.isVisible() and pane.edit.isVisible()
+        for control in (pane.confirm, pane.edit, pane.blocker_reason):
+            assert pane.rect().contains(control.mapTo(pane, control.rect().bottomRight()))
+        directory = os.environ.get("PDFDOC_REVIEW_QA_DIR")
+        if directory:
+            Path(directory).mkdir(parents=True, exist_ok=True)
+            owner.grab().save(str(Path(directory) / f"blocked-{width}-{theme}-{font_size}.png"))
+    finally:
+        owner.close()
+        owner.deleteLater()
+        app.processEvents()
+        apply_theme(app, "system")
+        app.setFont(original)
+
+
+def test_switching_to_checked_job_clears_old_blocker(app, tmp_path, monkeypatch):
+    owner, pane, controller, result = blocked_review_controller(app, tmp_path, monkeypatch)
+    try:
+        owner.show()
+        app.processEvents()
+        controller.select_job()
+        assert hasattr(pane, "blocker_reason"), "Blocked needs a prominent explanation"
+        controller.results = [{**result, "status":"checked", "complete":True, "issues":[]}]
+        controller.select_job()
+        assert not pane.blocker_reason.isVisible()
+        assert pane.confirm.isEnabled()
+    finally:
+        owner.close()
+        owner.deleteLater()
+        app.processEvents()
+
+
+def test_checked_warning_still_requires_acknowledgement(app, tmp_path, monkeypatch):
+    owner, pane, controller, result = blocked_review_controller(app, tmp_path, monkeypatch)
+    try:
+        owner.show()
+        warning = {**result["issues"][0], "severity": "warning", "reason": "Printer validation pending"}
+        controller.results = [{**result, "status": "checked", "complete": True, "issues": [warning]}]
+        controller.select_job()
+        assert not pane.blocker_reason.isVisible()
+        assert pane.acknowledge.isVisible() and not pane.confirm.isEnabled()
+        pane.acknowledge.setChecked(True)
+        assert pane.confirm.isEnabled()
+    finally:
+        owner.close()
+        owner.deleteLater()
+        app.processEvents()
+
+
+def test_blocked_issues_remain_visible_when_window_becomes_narrow(app, tmp_path, monkeypatch):
+    owner, pane, controller, _ = blocked_review_controller(app, tmp_path, monkeypatch)
+    try:
+        owner.resize(1280, 640)
+        owner.show()
+        app.processEvents()
+        controller.select_job()
+        assert pane.details.currentWidget() is pane.issue_page
+        for width in (960, 1280, 960):
+            owner.resize(width, 640)
+            app.processEvents()
+            assert pane.edit.isVisible(), (width, pane._narrow, pane.details.isHidden(), pane.compact.currentIndex())
+            assert pane.details.currentWidget() is pane.issue_page
+            if pane._narrow:
+                assert pane.compact.currentWidget() is pane.details
+    finally:
+        owner.close()
+        owner.deleteLater()
+        app.processEvents()

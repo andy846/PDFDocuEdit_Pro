@@ -98,6 +98,13 @@ class ProductionReviewPane(QWidget):
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.status)
+        self.blocker_reason = QLabel()
+        self.blocker_reason.setWordWrap(True)
+        self.blocker_reason.setTextFormat(Qt.TextFormat.PlainText)
+        self.blocker_reason.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.blocker_reason.setMinimumWidth(0)
+        self.blocker_reason.hide()
+        layout.addWidget(self.blocker_reason)
         self.list_page = QWidget()
         lists = QVBoxLayout(self.list_page)
         lists.setContentsMargins(0, 0, 0, 0)
@@ -119,6 +126,8 @@ class ProductionReviewPane(QWidget):
         pager = QHBoxLayout()
         self.previous, self.next = QPushButton("Previous 50"), QPushButton("Next 50")
         self.position = QLabel("0 records")
+        self.position.setWordWrap(True)
+        self.position.setMinimumWidth(0)
         pager.addWidget(self.previous)
         pager.addWidget(self.position, 1)
         pager.addWidget(self.next)
@@ -223,11 +232,15 @@ class ProductionReviewPane(QWidget):
                 self._wide_sizes = self.splitter.sizes()
                 self.compact.addTab(self.list_page, "Mailpieces")
                 self.compact.addTab(self.details, "Details")
+                if not self.blocker_reason.isHidden() and self.details.currentWidget() is self.issue_page:
+                    self.compact.setCurrentWidget(self.details)
             else:
                 while self.compact.count():
                     self.compact.removeTab(0)
                 self.splitter.addWidget(self.list_page)
                 self.splitter.addWidget(self.details)
+                self.list_page.show()
+                self.details.show()
                 self.splitter.setSizes(self._wide_sizes)
             self.splitter.setVisible(not narrow)
             self.compact.setVisible(narrow)
@@ -375,6 +388,8 @@ class ReviewController:
             view.setRowCount(0)
         self.pane.front.clear("Select a checked sheet")
         self.pane.back.clear("Select a checked sheet")
+        self.pane.blocker_reason.clear()
+        self.pane.blocker_reason.hide()
         self.pane.overview.setText("Checking complete production inputs…")
         self.pane.payload.setText("Select a checked sheet to inspect barcode values.")
         self.pane.source.hide()
@@ -455,6 +470,25 @@ class ReviewController:
         for row, issue in enumerate(result["issues"]):
             self.fill(self.pane.issues, row, [issue["severity"], issue["envelope"] or "—",
                 issue['output_page'] or '—', issue['field'] or issue['object_id'] or '—', issue["reason"]], issue)
+        errors = [(row, issue) for row, issue in enumerate(result["issues"])
+                  if issue["severity"] == "error"]
+        blocked = result["status"] == "blocked"
+        self.pane.blocker_reason.setVisible(blocked or bool(errors))
+        if blocked or errors:
+            reason = errors[0][1]["reason"] if errors else "Check Issues and return to settings before checking again."
+            concise = " ".join(reason.split())
+            if len(concise) > 280:
+                concise = concise[:277] + "…"
+            self.pane.blocker_reason.setText(f"Production blocked: {concise} — See Issues for details.")
+            self.pane.blocker_reason.setToolTip(reason)
+            self.pane.details.setCurrentWidget(self.pane.issue_page)
+            if self.pane._narrow:
+                self.pane.compact.setCurrentWidget(self.pane.details)
+            if errors:
+                self.pane.issues.selectRow(errors[0][0])
+        else:
+            self.pane.blocker_reason.clear()
+            self.pane.blocker_reason.setToolTip("")
         self.pane.front.clear("Select a sheet to preview its front")
         self.pane.back.clear("Select a sheet to preview its back")
         self.pane.pages.setRowCount(0)
@@ -492,7 +526,11 @@ class ReviewController:
                 self.fill(view, index, [row["envelope"], row["source_record"],
                     f"{row['output_start']}–{row['output_end']}", row["sheets"]], row)
             view.blockSignals(False)
-            self.pane.position.setText(f"{offset+1 if data['rows'] else 0}–{offset+len(data['rows'])} / {data['total']:,}")
+            if result["status"] == "blocked" and not data["total"] and not self.pane.search.text():
+                planned = result["summary"].get("records", 0)
+                self.pane.position.setText(f"0 checked / {planned:,} planned — See Issues")
+            else:
+                self.pane.position.setText(f"{offset+1 if data['rows'] else 0}–{offset+len(data['rows'])} / {data['total']:,}")
             self.pane.previous.setEnabled(self.offset > 0)
             self.pane.next.setEnabled(self.offset + 50 < data["total"])
         self._request("rows", ready, snapshot_id=result["snapshot_id"], offset=offset, search=self.pane.search.text())
@@ -598,7 +636,7 @@ class ReviewController:
     def refresh_confirm(self, *_):
         if not self.alive() or getattr(self.owner, "close_pending", False):
             return
-        warnings = any(r["issues"] for r in self.results)
+        warnings = any(issue["severity"] == "warning" for r in self.results for issue in r["issues"])
         self.pane.acknowledge.setVisible(warnings)
         valid = self.session_valid and bool(self.contexts) and len(self.results) == len(self.contexts) and not self.check_worker
         valid = valid and all(r["complete"] and r["status"] == "checked" for r in self.results)

@@ -9,7 +9,7 @@
 3. 選輸出資料夾，背景準備及檢查完整生產輸入。檢查時可切換應用程式模式，不會取消工作。
 4. Summary 核對數量、輸出名稱、紙張及 backend。Mailpieces 每頁 50 筆，Enter 搜尋資料；可按封號／輸出頁跳轉。
 5. 選一封及一頁，Paper sheets 顯示該實體紙的正反面，包含補白背面。Fit 顯示整頁，亦可放大。Barcode values 顯示目前所選面之 payload、各段、物件尺寸及位置。
-6. Issues 可返回設定或對應 Template Designer 物件。Paper sheets 的 **Open source PDF at this page** 使用 PDF Workspace 異步開檔及定位；Workflow 使用原始 PDF／頁碼對照。自動字體替代可開啟檢查 CSV。
+6. 如檢查被阻止，畫面直接顯示第一項錯誤並打開 **Issues**；窄窗亦會切至 Details。檢查尚未開始逐封處理時，清單顯示「0 checked / 預計封數 planned」，不代表已完成或資料不存在。Issues 可返回設定或對應 Template Designer 物件。Paper sheets 的 **Open source PDF at this page** 使用 PDF Workspace 異步開檔及定位；Workflow 使用原始 PDF／頁碼對照。自動字體替代可開啟檢查 CSV。
 7. 修正設定後 **Check again**。警告須明確勾選已覆核；全量檢查完成且沒有錯誤才可 **Confirm production**。
 8. 正式生成返回原有 Production／Run 頁，沿用原有 atomic output、解碼、驗證、reconciliation 及報告。
 
@@ -81,3 +81,12 @@ flowchart TD
 - 測試日誌、JUnit 及最新結果彙總保存在本機 `production-review/validation` 驗收資料夾；初次失敗與修正後重跑紀錄均保留。
 
 完整回歸、Windows 打包／安裝 smoke test 及新版本發佈留待統一驗收；本機生成合成 fixtures 的結果不代表所有客戶文件或硬件均已驗證。
+
+### Blocked 原因顯示修補（2026-10-14，開發分支）
+
+- Template Designer、Overlay 與 Workflow 共用介面顯示實際阻擋原因，選取首項錯誤並保留完整原因 tooltip；修正後重新檢查，不會略過批准或驗證。
+- 僅有錯誤時不顯示警告確認方格；真正警告仍須明確確認。
+- 211 筆、422 頁的合成 PS 工作以缺少執行工具作故障注入，驗證預計數量可存在而已檢查清單為零；這是介面驗收 fixture，並非對客戶文件的故障判定。
+- 切換工作、窄窗、深淺色與加大字體驗收列於相關 UI 測試；沒有發布新的安裝包。
+- 本輪針對性驗收：覆核 UI、服務、Workflow 及批准保護共 **50 tests passed**；另在 `QT_SCALE_FACTOR=2` 執行本輪 UI 案例，**11 tests passed**。960／1280 寬度、深淺色及大字體截圖已核對；Ruff 與差異空白檢查通過。
+- 寬窗／窄窗往返時維持 Issues 及返回設定按鈕可見，修正 Qt 分頁移回 splitter 後仍隱藏的狀態；獨立代碼覆核確認此案例。
