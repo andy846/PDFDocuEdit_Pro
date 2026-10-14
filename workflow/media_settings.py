@@ -38,16 +38,25 @@ def resolve_media_settings(project_media, options=None):
     return MediaResolution(value, source)
 
 
+def requires_project_media(options):
+    # Legacy disabled-media Overlay jobs retain project duplex. Explicit
+    # overrides and enabled legacy media have no downstream project dependency.
+    return settings_source(options)=="project" or (
+        "settings_source" not in options and not options.get("enabled"))
+
+
 def pdf_media_settings(spec):
-    """Read the selected Overlay project in the worker, never a GUI document."""
+    """Resolve only declared media dependencies, without reading unrelated drafts."""
     from composition.overlay.serializer import load_project
-    overlay = getattr(spec,"spec",spec).node("overlay")
-    project = load_project(overlay.params["path"]) if overlay and overlay.params.get("path") else None
-    node = spec.node("media_assignment")
-    result = resolve_media_settings(project.media if project else {}, node.params if node else None)
-    duplex = result.media.get("duplex", False) if result.media.get("enabled") or (node and node.params.get("settings_source")=="workflow") else (
-        project.settings.duplex if project else result.media.get("duplex", False))
-    return result, duplex
+    node=spec.node("media_assignment")
+    options=node.params if node else None
+    needed=options is None or requires_project_media(options)
+    overlay=getattr(spec,"spec",spec).node("overlay")
+    project=load_project(overlay.params["path"]) if needed and overlay and overlay.params.get("path") else None
+    result=resolve_media_settings(project.media if project else {},options)
+    duplex=result.media.get("duplex",False) if result.media.get("enabled") or (node and options.get("settings_source")=="workflow") else (
+        project.settings.duplex if project else result.media.get("duplex",False))
+    return result,duplex
 
 
 def media_summary(options):

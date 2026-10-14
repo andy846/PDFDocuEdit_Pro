@@ -3,6 +3,14 @@ import os
 from pathlib import Path
 
 
+def pdf_sources(spec):
+    paths=list(spec.node("input").params.get("paths",[]))
+    overlay=spec.node("overlay")
+    if overlay and overlay.params.get("path"):
+        paths.append(overlay.params["path"])
+    return paths
+
+
 def observe_files(paths):
     result={}
     for raw in paths:

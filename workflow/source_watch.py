@@ -33,12 +33,21 @@ class SourceWatch(QObject):
 
     def observations(self):
         w=self.window
+        controller=getattr(w,"inspections",None)
+        checked={p:v for item in getattr(controller,"results",{}).values() if item.get("status")=="Checked"
+                 for p,v in item.get("source_observations",{}).items()}
+        # Formal job/data acceptance owns its older baseline even if a newer
+        # ad-hoc inspection exists. A step check cannot refresh that acceptance.
         if hasattr(w,"batch"):
-            return {p:v for j in w.batch.jobs if j.status!="Completed" for p,v in j.data_summary.get("source_observations",{}).items()}
-        if isinstance(w.run,dict):
-            return {**w.run.get("source_observations",{}),**{p:v for j in w.run.get("jobs",[]) if j["status"]!="Completed"
-                for raw in j.get("batch",{}).get("jobs",[]) for p,v in raw.get("data_summary",{}).get("source_observations",{}).items()}}
-        return w.run.data_summary.get("source_observations",{})
+            checked.update({p:v for j in w.batch.jobs if j.status!="Completed"
+                for p,v in j.data_summary.get("source_observations",{}).items()})
+        elif isinstance(w.run,dict):
+            checked.update(w.run.get("source_observations",{}))
+            checked.update({p:v for j in w.run.get("jobs",[]) if j["status"]!="Completed"
+                for raw in j.get("batch",{}).get("jobs",[]) for p,v in raw.get("data_summary",{}).get("source_observations",{}).items()})
+        else:
+            checked.update(w.run.data_summary.get("source_observations",{}))
+        return checked
 
     def open_changes(self,*_):
         w=self.window
@@ -50,7 +59,8 @@ class SourceWatch(QObject):
             if project is w or not project.project_path:
                 continue
             if path_key(str(project.project_path)) in watched and (not project.undo.isClean() or
-                    getattr(project,"content_invalid",False) or getattr(project,"draft_error","")):
+                    getattr(project,"content_invalid",False) or getattr(project,"draft_error","") or
+                    getattr(project.properties,"has_batch_draft",lambda:False)()):
                 changed.append(str(project.project_path))
         self.invalidate(changed)
 

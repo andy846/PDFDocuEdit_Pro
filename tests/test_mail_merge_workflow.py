@@ -102,7 +102,7 @@ def test_source_change_after_approval_requires_review_and_snapshot_preview_is_fi
     preview=dispatch({"operation":"batch_preview","spec":spec.to_dict(),"batch":run.to_dict(),
         "job_id":job.id,"record":1,"page":2,"target":str(tmp_path/"preview.png")},None,None)
     assert Path(preview["image"]).is_file()
-    with pytest.raises(CompositionError, match="Check and explicitly approve"):
+    with pytest.raises(CompositionError, match="Check and accept"):
         execute_batch(spec,run,tmp_path/"out")
     prepare(spec,run,tmp_path/"scratch")
     assert job.status=="Needs review" and not job.result

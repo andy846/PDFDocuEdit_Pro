@@ -39,3 +39,19 @@ Media issues use the effective source and exact node ID. Inherited project issue
 - Review returns to correct branch/node or source template; output picker remembers only explicit production selection.
 - Data acceptance does not sign a ProductionAuthorization. Existing direct-worker/engine negative approval tests remain mandatory.
 - Related Qt checks include narrow 960×640 layouts, light/dark and scale 2. Full regression, native Windows/macOS packaging and actual printer/inserter proof remain separate release gates.
+
+## Review hardening
+
+- Upstream checks read only their real dependencies: explicit Workflow media overrides do not load downstream Overlay drafts. Inherited media checks still require their selected project. Data-only prefixes defer final physical output planning to Overlay/Production Review.
+- PDF review navigation preserves stale rejection even if the extraction database contains an earlier accepted flag. Stale data cannot be reaccepted until Check & Preview.
+- Plain PDF workflows observe their selected Overlay path without opening its content during the input/data scan. Open multi-selection font/geometry drafts use the existing Designer dirty predicate.
+- Step-only inspections register source observations too; a newer inspection cannot replace an older formal acceptance baseline. Byte hashes and signed production gates still control publishing.
+
+## Verification — 2026-10-15
+
+- Combined affected suite: **232 passed** (Workflow core/UI/data/inspection, Mail Merge, branches, production review, media, Designer review).
+- Scale 2 / dark and light / narrow UI subset: **12 passed**.
+- Ruff on every changed Python file and Git whitespace checks passed.
+- Independent whole-branch review found four P2 issues; their five reproductions were observed failing, fixed, and included in the green suite. An additional step-only source-observation regression was also verified RED→GREEN.
+- One older test assertion was updated for the intentional “Check and accept” wording; its changed-source refusal and no-output checks remain intact.
+- No full application regression, native platform package, GitHub publication or printer/inserter certification was performed in this round. Native printer behaviour and a genuinely stalled network filesystem still need the appropriate environment; background observations do not claim to interrupt an individual OS filesystem call.

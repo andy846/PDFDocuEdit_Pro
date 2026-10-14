@@ -1072,17 +1072,23 @@ class WorkflowWindow(QMainWindow):
     def review(self,*,action="",after=None,**values):
         if not self.run.database or self.active_worker:
             return
+        if action=="accept" and self.run.data_summary.get("stale"):
+            self.message("Source or project changed. Check & Preview again before accepting data.")
+            return
         self.review_generation+=1
         generation=self.review_generation
         def ready(result):
             if generation!=self.review_generation:
                 return
-            self.run.accepted=result["accepted"]
+            stale=self.run.data_summary.get("stale",False)
+            self.run.accepted=result["accepted"] and not stale
             self.run.groups=result["groups"]
             if "data_summary" in result:
                 self.run.data_summary=result["data_summary"]
                 self.run.data_steps=result["data_steps"]
                 self.run.data_set=result["data_set"]
+                if stale:
+                    self.run.data_summary["stale"]=True
             self.groups_model.update(self.run.groups)
             self.page.blockSignals(True)
             self.page.setMaximum(result["pages"])

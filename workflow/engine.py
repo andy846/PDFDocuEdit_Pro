@@ -89,10 +89,10 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                 # Rebuild and demand review rather than reusing missing/tampered data.
                 run=WorkflowRun()
         run.fingerprint=fingerprint
-        from .source_state import observe_files
+        from .source_state import observe_files, pdf_sources
         if until!="output":
             run.data_summary.pop("stale",None)
-            run.data_summary["source_observations"]=observe_files(spec.node("input").params.get("paths",[]))
+            run.data_summary["source_observations"]=observe_files(pdf_sources(spec))
         if until=="output" and spec.node("output"):
             run.statuses.pop(spec.node("output").id,None)
         signatures={}
@@ -144,7 +144,7 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                 progress(0,0,"Workflow: "+node.kind)
             if node.kind=="input":
                 run.data_summary.pop("stale",None)
-                run.data_summary["source_observations"]=observe_files(spec.node("input").params.get("paths",[]))
+                run.data_summary["source_observations"]=observe_files(pdf_sources(spec))
                 paths=node.params.get("paths",[])
                 if not isinstance(paths,list) or not paths or any(not isinstance(p,str) for p in paths):
                     raise CompositionError("Add one or more source PDFs.")

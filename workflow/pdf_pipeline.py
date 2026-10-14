@@ -152,6 +152,7 @@ def prepare_mailpieces(spec,run,directory,*,progress=None,is_cancelled=None,unti
                 yield envelope,values
         current=snapshot(rows(),fields,root/"input.sqlite",metadata={
             "source":{"path":run.source,"sha256":store.metadata()["sha256"]},"source_records":len(groups),"mailpieces":True},is_cancelled=is_cancelled)
+    media=None
     for node in _post_nodes(spec):
         run.statuses[node.id]="Running"
         if node.kind=="running_sequence" and node.params.get("scope")=="page":
@@ -160,6 +161,8 @@ def prepare_mailpieces(spec,run,directory,*,progress=None,is_cancelled=None,unti
         current=transform(current,root/(node.id+".sqlite"),node.kind,node.params,node_id=node.id,
                           progress=progress,is_cancelled=is_cancelled)
         run.statuses[node.id]="Completed"
+        if node.kind=="media_assignment":
+            media=node
         if node.id==until_id:
             break
     run.data_set=str(current.path)
@@ -172,23 +175,25 @@ def prepare_mailpieces(spec,run,directory,*,progress=None,is_cancelled=None,unti
     reports=root/"review-reports"
     export_audit(current,reports)
     run.data_summary.update(findings_report=str(reports/"findings.csv"),exclusions_report=str(reports/"exclusions.csv"))
-    from .media_settings import pdf_media_settings
-    effective,duplex=pdf_media_settings(spec)
-    run.data_summary["media_source"]=effective.source
-    media=spec.node("media_assignment")
-    run.data_summary["media_node_id"]=media.id if media else ""
-    if current.count:
-        cfg_groups=[]
-        cursor=1
-        for _,_,original in current.rows():
-            start,end=run.groups[original-1]
-            cfg_groups.append([cursor,cursor+end-start])
-            cursor+=end-start+1
-        base=EnvelopePlan(cursor-1,EnvelopeSettings(pages_per_envelope=1,groups=cfg_groups,digits=18,duplex=duplex))
-        plan=PrintPlan(base,effective.media,is_cancelled=is_cancelled) if effective.media.get("enabled") else base
-        run.data_summary["print_plan"]={"sheets":plan.sheets,"inserted_blank_backs":plan.inserted_blanks,"output_pages":plan.output_pages}
-        if effective.media.get("enabled"):
-            run.data_summary["media"]=asdict(plan.preflight())
+    if media:
+        from .media_settings import pdf_media_settings
+        # Full production resolves project media after Overlay loading. Data-only
+        # prefix checks must not inspect an unrelated downstream project.
+        effective,duplex=pdf_media_settings(spec)
+        run.data_summary["media_source"]=effective.source
+        run.data_summary["media_node_id"]=media.id if media else ""
+        if current.count:
+            cfg_groups=[]
+            cursor=1
+            for _,_,original in current.rows():
+                start,end=run.groups[original-1]
+                cfg_groups.append([cursor,cursor+end-start])
+                cursor+=end-start+1
+            base=EnvelopePlan(cursor-1,EnvelopeSettings(pages_per_envelope=1,groups=cfg_groups,digits=18,duplex=duplex))
+            plan=PrintPlan(base,effective.media,is_cancelled=is_cancelled) if effective.media.get("enabled") else base
+            run.data_summary["print_plan"]={"sheets":plan.sheets,"inserted_blank_backs":plan.inserted_blanks,"output_pages":plan.output_pages}
+            if effective.media.get("enabled"):
+                run.data_summary["media"]=asdict(plan.preflight())
     run.data_steps=[s for s in run.data_steps if s.get("scope")=="page"]+current.metadata.get("steps",[])
     assert_valid(current)
     return current
@@ -401,6 +406,10 @@ def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_onl
         composed.validate()
         plan=overlay_plan(composed,is_cancelled=is_cancelled)
         if _review_only:
+            run.data_summary.update(media_source=effective.source,media_node_id=media.id if media else "",
+                print_plan={"sheets":plan.sheets,"inserted_blank_backs":plan.inserted_blanks,"output_pages":plan.output_pages})
+            if composed.media.get("enabled"):
+                run.data_summary["media"]={**asdict(plan.preflight()),"profile":composed.media["printer_profile"]}
             from core.variables import VariableContext
             job=OverlayJob(composed.to_dict(),folder,output_name=spec.node("output").params.get("output_name","production.pdf"))
             job.variable_context=VariableContext.for_job(input_path=spec.node("input").params["paths"][0],

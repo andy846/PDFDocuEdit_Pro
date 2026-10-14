@@ -76,3 +76,29 @@ def test_batch_media_source_used_by_inspection_review_and_generation(tmp_path, s
     assert result.status=="Completed",job.error
     with fitz.open(job.result["output_pdf"]) as pdf:
         assert len(pdf)==expected
+
+
+def test_explicit_media_inspection_does_not_load_downstream_overlay(tmp_path):
+    from tests.test_workflow_core import configured, fixture_pdf
+    from workflow.inspection import inspect_step
+    from workflow.model import WorkflowNode
+    spec=configured(fixture_pdf(tmp_path/"source.pdf"),tmp_path/"out").upgraded(4)
+    spec=spec.insert_after(spec.node("review").id,WorkflowNode("overlay",params={"path":str(tmp_path/"not-yet-saved.pdcx")}))
+    spec=spec.insert_after(spec.node("review").id,WorkflowNode("media_assignment",params={"duplex":True,"settings_source":"workflow"}))
+    checked=inspect_step(spec,spec.node("media_assignment").id,tmp_path/"check")
+    assert checked["result"]["status"]=="Checked",checked["result"]["error"]
+    assert checked["result"]["plan"]["pages"]==8
+
+
+def test_check_data_prefix_does_not_require_downstream_overlay(tmp_path):
+    from tests.test_workflow_core import configured, fixture_pdf
+    from workflow.engine import execute
+    from workflow.model import WorkflowNode, WorkflowRun
+    from workflow.registry import default_options
+    spec=configured(fixture_pdf(tmp_path/"source.pdf"),tmp_path/"out").upgraded(4)
+    spec=spec.insert_after(spec.node("review").id,WorkflowNode("overlay",params={"path":str(tmp_path/"not-yet-saved.pdcx")}))
+    spec=spec.insert_after(spec.node("group").id,WorkflowNode("clean_fields",params=default_options("clean_fields","Account_No")))
+    target=spec.node("clean_fields")
+    run=execute(spec,WorkflowRun(),tmp_path/"check",until=target.id)
+    assert not run.error,run.error
+    assert run.statuses[target.id]=="Completed"

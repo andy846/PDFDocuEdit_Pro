@@ -51,6 +51,7 @@ class StepInspectionResult:
     template: dict = field(default_factory=dict)
     overlay: dict = field(default_factory=dict)
     source_hashes: dict = field(default_factory=dict)
+    source_observations: dict = field(default_factory=dict)
     materialized_sequences: list = field(default_factory=list)
 
 
@@ -90,13 +91,17 @@ def signature(spec, node_id, job=None, *, hashes=None):
             paths.update(_assets(load_project(job.template_path)))
     else:
         paths.update(spec.node("input").params.get("paths", []))
-        overlay = spec.node("overlay") if any(n.kind in ("media_assignment","overlay","output") for n in prefix) else None
+        from .media_settings import requires_project_media
+        rendered=any(n.kind in ("overlay","output") for n in prefix)
+        inherited=any(n.kind=="media_assignment" and requires_project_media(n.params) for n in prefix)
+        overlay = spec.node("overlay") if rendered or inherited else None
         overlay = overlay if overlay and overlay.params.get("path") else None
         if overlay:
             from composition.overlay.model import render_template
             from composition.overlay.serializer import load_project as load_overlay
             paths.add(overlay.params["path"])
-            paths.update(_assets(render_template(load_overlay(overlay.params["path"]))))
+            if rendered:
+                paths.update(_assets(render_template(load_overlay(overlay.params["path"]))))
     cached = hashes if hashes is not None else {}
     digests = {}
     for raw in sorted(paths):
@@ -245,6 +250,8 @@ def inspect_step(spec, node_id, directory, *, job=None, progress=None, is_cancel
                     result.plan = asdict(plan.preflight()) if isinstance(plan, PrintPlan) else {"pages": plan.output_pages, "envelopes": plan.envelopes}
                 result.input_scope = incoming_scope
                 # Recheck the actual bytes after processing, not just timestamps.
+                from .source_state import observe_files
+                result.source_observations=observe_files(result.source_hashes)
                 live, _ = signature(spec, node.id, job)
                 if live != result.signature:
                     raise CompositionError("Source or template assets changed during checking. Check again.")

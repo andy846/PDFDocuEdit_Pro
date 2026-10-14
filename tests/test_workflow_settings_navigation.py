@@ -159,3 +159,94 @@ def test_invalid_cached_branch_source_metadata_rejected(tmp_path):
     run["source_observations"]={"file.csv":[]}
     with pytest.raises(ValueError):
         validate_branch_run(run)
+
+
+def test_pdf_check_observes_optional_overlay_without_loading_it(tmp_path):
+    from tests.test_workflow_core import configured, fixture_pdf
+    from workflow.engine import execute
+    from workflow.model import WorkflowNode, WorkflowRun
+    spec=configured(fixture_pdf(tmp_path/"source.pdf"),tmp_path/"out")
+    missing=str(tmp_path/"draft-overlay.pdcx")
+    spec=spec.insert_after(spec.node("review").id,WorkflowNode("overlay",params={"path":missing}))
+    run=execute(spec,WorkflowRun(),tmp_path/"check",until="review")
+    assert not run.error,run.error
+    assert missing in run.data_summary["source_observations"]
+
+
+def test_pdf_review_navigation_cannot_restore_stale_acceptance(qt_application,tmp_path):
+    from tests.composition.test_workspace import wait_until
+    from tests.test_workflow_core import configured, fixture_pdf
+    from workflow.engine import execute
+    from workflow.extraction import ExtractionStore
+    from workflow.model import WorkflowRun
+    from workflow.workspace import WorkflowWindow
+    w=WorkflowWindow()
+    try:
+        spec=configured(fixture_pdf(tmp_path/"source.pdf"),tmp_path/"out")
+        w.apply_spec(spec.to_dict())
+        w.run=execute(spec,WorkflowRun(),tmp_path/"check")
+        with ExtractionStore(w.run.database) as store:
+            store.accept()
+        w.run.accepted=True
+        w.source_watch.invalidate([str(tmp_path/"source.pdf")])
+        assert not w.run.accepted and w.run.data_summary["stale"]
+        w.review()
+        wait_until(lambda:not w.workers,timeout=20)
+        assert not w.run.accepted
+        assert w.run.data_summary["stale"]
+        assert w.run.statuses[w.spec.node("review").id]=="Needs review"
+        w.review(action="accept")
+        wait_until(lambda:not w.workers,timeout=20)
+        assert not w.run.accepted
+    finally:
+        w._close_approved=True
+        w.close()
+        wait_until(lambda:not w.workers)
+
+
+def test_unapplied_designer_batch_draft_invalidates_job(qt_application,tmp_path):
+    from types import SimpleNamespace
+
+    from tests.composition.test_workspace import wait_until
+    from workflow.batch import approve
+    from workflow.mail_merge_ui import MailMergeWorkflowWindow
+    w=MailMergeWorkflowWindow()
+    try:
+        job=pair(tmp_path,"Draft")
+        spec=recipe([job])
+        w.apply_spec(spec.to_dict())
+        w.batch=prepare(spec,BatchRun(jobs=[job]),tmp_path/"check")
+        approve(w.batch,[job.id])
+        project=SimpleNamespace(project_path=job.template_path,undo=SimpleNamespace(isClean=lambda:True),
+            properties=SimpleNamespace(has_batch_draft=lambda:True))
+        w.project_host=SimpleNamespace(projects=[project])
+        w.source_watch.open_changes()
+        assert not job.approved
+        assert job.data_summary["stale"]
+    finally:
+        w.project_host=None
+        w._close_approved=True
+        w.close()
+        wait_until(lambda:not w.workers)
+
+
+def test_inspection_only_sources_are_observed(qt_application,tmp_path):
+    from tests.composition.test_workspace import wait_until
+    from workflow.inspection import inspect_step
+    from workflow.mail_merge_ui import MailMergeWorkflowWindow
+    w=MailMergeWorkflowWindow()
+    try:
+        job=pair(tmp_path,"Inspection")
+        spec=recipe([job]).upgraded(4)
+        w.apply_spec(spec.to_dict())
+        w.batch.jobs=[job]
+        target=spec.node("template").id
+        checked=inspect_step(spec,target,w.directory,job=job)
+        result=checked["result"]
+        assert result["status"]=="Checked",result["error"]
+        w.inspections.results[(job.id,target)]=result
+        assert job.template_path in w.source_watch.observations()
+    finally:
+        w._close_approved=True
+        w.close()
+        wait_until(lambda:not w.workers)

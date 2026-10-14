@@ -164,6 +164,9 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
             spec=ExtractionSpec.from_dict(json.loads(store.metadata()["spec"]))
             groups=request["groups"]
             action=request.get("action","")
+            stale=request.get("workflow_run",{}).get("data_summary",{}).get("stale",False)
+            if action=="accept" and stale:
+                raise CompositionError("Source or project changed. Check & Preview again before accepting data.")
             checked=None
             has_pipeline=request.get("workflow",{}).get("workflow_version",1)>=3 and any(
                 n["kind"] in EXTRA_KINDS for n in request["workflow"]["nodes"])
@@ -207,7 +210,7 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
                     prepare_mailpieces(WorkflowSpec.from_dict(request["workflow"]),checked,request["directory"],
                                        progress=progress,is_cancelled=cancelled)
                 pipeline={"data_summary":checked.data_summary,"data_steps":checked.data_steps,"data_set":checked.data_set}
-            return {**pipeline,"groups":[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")],"cells":rows,"page":number,"issues":store.issues(),"accepted":store.metadata()["accepted"]=="true",
+            return {**pipeline,"groups":[list(r) for r in store.db.execute("SELECT start,end FROM groups ORDER BY envelope")],"cells":rows,"page":number,"issues":store.issues(),"accepted":store.metadata()["accepted"]=="true" and not stale,
                     "pages":int(store.metadata()["pages"]),"envelope":envelope[0] if envelope else None,
                     "envelope_cells":[dict(r) for r in store.db.execute("SELECT * FROM envelope_cells WHERE envelope=?",(envelope[0],))] if envelope else []}
     if operation in ("make_overlay","bind_overlay"):
