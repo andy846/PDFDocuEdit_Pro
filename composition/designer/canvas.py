@@ -400,7 +400,6 @@ class Canvas(QGraphicsView):
         rect = self.group_bounds(items)
         dx = -rect.left() if rect.left() < 0 else min(0, self.page_width-rect.right())
         dy = -rect.top() if rect.top() < 0 else min(0, self.page_height-rect.bottom())
-        dx, dy = max(dx, -min(item.pos().x() for item in items)), max(dy, -min(item.pos().y() for item in items))
         for item in items:
             item.moveBy(dx, dy)
 

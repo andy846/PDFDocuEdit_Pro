@@ -420,7 +420,8 @@ def validate_template(template: Template, *, check_assets: bool = True) -> None:
         if not isinstance(element.type, str) or element.type not in ELEMENT_TYPES:
             raise CompositionError(f"Unsupported element type: {element.type}")
         for prop in ("x_mm", "y_mm"):
-            _number(getattr(element, prop), f"{element.id}: {prop}", 0, 2000)
+            # The unrotated origin may be negative while the rotated box is fully on page.
+            _number(getattr(element, prop), f"{element.id}: {prop}", -2000, 2000)
         for prop in ("width_mm", "height_mm"):
             _number(getattr(element, prop), f"{element.id}: {prop}", 0.1, 2000)
         _number(element.rotation_deg, "Rotation angle", -360, 360)

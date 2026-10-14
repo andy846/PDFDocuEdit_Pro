@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from composition.engine.fonts import FAMILIES
+from composition.template.geometry import element_bounds
 from core.system_fonts import font_platform_label
 from ui.combo_popup import WideComboBox
 
@@ -115,7 +116,7 @@ class Properties(QWidget):
             control.setAccessibleName("Rotation degrees" if key == "rotation_deg" else label + " millimetres")
             control.setToolTip("Clockwise rotation around the box centre." if key == "rotation_deg" else
                                "Unrotated box dimension in millimetres." if key in {"width_mm", "height_mm"} else
-                               "Position in millimetres from the page top-left.")
+                               "Rotated bounding-box position in millimetres from the page top-left.")
             self.numbers[key] = control
             cell = QWidget()
             row = QVBoxLayout(cell)
@@ -426,8 +427,9 @@ class Properties(QWidget):
         loading = self.loading
         self.loading = True
         mixed = []
+        visible = dict(zip(("x_mm", "y_mm"), element_bounds(selected[0])[:2], strict=True))
         for key in ("x_mm", "y_mm", "width_mm", "height_mm", "rotation_deg"):
-            self.numbers[key].setValue(getattr(selected[0], key))
+            self.numbers[key].setValue(visible[key] if key in visible else getattr(selected[0], key))
             self.displayed_numbers[key] = self.numbers[key].value()
             if key in self.geometry_checks:
                 self.geometry_checks[key].setChecked(False)
@@ -473,8 +475,10 @@ class Properties(QWidget):
             self.font_choice = asdict(element.font)
             self.rules_summary.setText(rules_summary(element.rules))
             self.rules_clear.setEnabled(bool(element.rules.visible_when or element.rules.alternative))
+            visible = dict(zip(("x_mm", "y_mm"), element_bounds(element)[:2], strict=True))
             for key, control in self.numbers.items():
-                control.setValue(element.font.size_pt if key == "font_size" else getattr(element, key))
+                control.setValue(visible[key] if key in visible else
+                                 element.font.size_pt if key == "font_size" else getattr(element, key))
             self.displayed_numbers = {key: control.value() for key, control in self.numbers.items()}
             if self.content.toPlainText() != element.value:
                 self.content.setPlainText(element.value)
@@ -769,9 +773,17 @@ class Properties(QWidget):
         if self.multi_selection:
             return self.batch_resolver()
         values = {key: control.value() for key, control in self.numbers.items() if key != "font_size"}
+        moved = {key: values[key] for key in ("x_mm", "y_mm")
+                 if values[key] != self.displayed_numbers.get(key)}
         for key in values:
-            if values[key] == self.displayed_numbers.get(key):
+            if key in {"x_mm", "y_mm"} or values[key] == self.displayed_numbers.get(key):
                 values[key] = getattr(self.element, key)
+        # Saved geometry retains its original centre-based rotation convention.
+        # Only explicitly edited UI coordinates translate the rotated visible box.
+        bounds = element_bounds({**asdict(self.element), **values})
+        for index, key in enumerate(("x_mm", "y_mm")):
+            if key in moved:
+                values[key] += moved[key] - bounds[index]
         font = dict(self.font_choice)
         font["size_pt"] = (self.element.font.size_pt if self.numbers["font_size"].value() ==
                            self.displayed_numbers.get("font_size") else self.numbers["font_size"].value())

@@ -22,6 +22,7 @@ v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發
 - Design 集中 **Paper / Tray…**、Simplex／Duplex；僅有 Inserter I25 才顯示 **Inserter… → Apply barcode to required fronts…**。
 - Production 顯示唯讀紙種、Printer Profile、有效選紙指令及條碼數量摘要；修改返回 Design，正式覆核／批准保持原有安全關口。
 - Barcode／QR 明確選擇 Direct Content 或 Barcode Logic；首次設定保留 `{{Seq}}` 等欄位，預覽數字不會被存成固定值。取消、草稿及 Undo 保留既有內容。
+- 旋轉物件的 X／Y 以實際外框左上角顯示；條碼轉 90° 後仍可拖動、微移或對齊至頁邊。已有模板位置保持不變，W／H 仍為旋轉前尺寸。
 - Blocked 覆核直接顯示原因及 Issues，區分已檢查與預計數量。以上介面修補尚未包含在已發布的 v3.0.7 安裝包。
 
 ## 開發更新：Visual Workflow 設定、核對與生產

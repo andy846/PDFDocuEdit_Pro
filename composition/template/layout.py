@@ -83,8 +83,6 @@ def arrange_elements(elements, selected_ids, operation, page_size, *, reference=
             e["x_mm" if operation in {"left", "center", "right"} else "y_mm"] += delta
     for e in selected:
         x0, y0, x1, y1 = element_bounds(e)
-        if min(x0, y0, e["x_mm"], e["y_mm"]) < -1e-8 or x1 > width+1e-8 or y1 > height+1e-8:
+        if min(x0, y0) < -1e-8 or x1 > width+1e-8 or y1 > height+1e-8:
             raise CompositionError(f"Object {e['id']}: arrangement exceeds the supported page bounds; no objects were changed.")
-        # Clear floating point noise at zero without rounding general positions.
-        e["x_mm"], e["y_mm"] = max(0, e["x_mm"]), max(0, e["y_mm"])
     return selected
