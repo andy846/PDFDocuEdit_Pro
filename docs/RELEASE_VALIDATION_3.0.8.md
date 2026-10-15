@@ -16,7 +16,7 @@ Owner requested **Windows Managed update packages only**. Installer, Portable an
 | Local evidence | `build/probes/release-v3.0.8-38659777253/` in the product worktree |
 | Signed index SHA256 | `1319e76489bdf6790ebb5eb90346be1d6a72a60f54395db1bed8c56dcd2891e9` |
 | Attachments | 8 declared files plus signed index/signature = 10; Windows update ZIPs, checksums and signed manifests only |
-| Release | GitHub draft; public publication pending |
+| Release | [v3.0.8](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.8); public/latest/non-prerelease, 2026-10-15T01:20:02Z |
 
 ## Acceptance
 
@@ -33,7 +33,7 @@ Owner requested **Windows Managed update packages only**. Installer, Portable an
 | Signatures / provenance / archive integrity | Passed | Existing candidate and sealed validators; unchanged public key and account project |
 | Current-candidate real-account login | Pending | Not established by pre-login QA. `signed/operator-acceptance.json` keeps this false |
 | Remote draft attachments | Passed | All 10 exact remote names/sizes/SHA256 match signed index; `remote-draft-validation.json`, 2026-10-15 01:02:53 UTC |
-| Public publication / public routes | Pending | Await current-candidate login acceptance or explicit owner exception |
+| Public publication / public routes | Passed | Frozen tag SHA, all 10 remote assets and hashes, both anonymously verified signed Windows manifests and both ZIP HEAD downloads; `post-publication-validation.json` |
 | Installer / Portable / Mac | Out of scope | Explicit owner instruction |
 
 ## Recovery and process
@@ -51,3 +51,11 @@ Only empty QA child processes were stopped; the user's running application and w
 The latest Windows-only release has no Mac update manifest; older Mac update checks will report a missing Mac attachment. Existing Mac installation remains usable. Installer/Portable users needing first installation can use [v3.0.7](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.7) and then update.
 
 The reported customer PS throughput problem remains uncharacterised; v3.0.8 improves progress visibility, not a proven conversion speed cause. Printer/inserter hardware proof, new real-account login and this version's Mac operation are not claimed.
+
+## Owner-directed publication
+
+After disclosure that current-candidate real-account login was untested, the owner explicitly instructed **「直接公開」**. `owner-publication-instruction.json` preserves this instruction and scope. The actual acceptance JSON remains unchanged: two successive upgrades true, real-account login false.
+
+The existing publisher revalidated the sealed draft and every remote attachment immediately before the explicit GitHub publication. The normal automated operator gate was not changed or given a false result. Public verification confirmed the release is latest and non-prerelease, its tag points to the frozen product SHA, all ten assets match the signed index, both Windows update routes resolve signed v3.0.8 manifests and both public update ZIP downloads are reachable. No Installer, Portable or Mac artifacts were uploaded.
+
+This documentation-only follow-up does not change the released binary, source provenance or update assets. The pending real-account login and Mac latest-release limitation remain disclosed above.
