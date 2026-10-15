@@ -1,9 +1,17 @@
-# PDFDocuEdit Pro V3.0.8
+# PDFDocuEdit Pro V3.0.9
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.8 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
-本輪原生打包及實機結果見 [v3.0.7 驗收紀錄](docs/RELEASE_VALIDATION_3.0.7.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+v3.0.9 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+本輪原生打包及實機結果見 [v3.0.9 驗收紀錄](docs/RELEASE_VALIDATION_3.0.9.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+
+## v3.0.9：列印與關閉狀態修補
+
+- Single / Batch Print 共用紙張能力驗證；不支援或回報不一致時先確認輸出紙張，保留取消及批次略過。
+- Fit 使用列印啟動後的可列印範圍重新計算；修正重複邊距及批次橫直向設定保留。實際公司打印機待驗收。
+- Deep Search 首次開啟恢復緊湊版面。
+- PDF / Designer 共用安全關閉狀態條；平常隱藏，等待超過三秒或失敗才出現。清理前可返回工作，清理後安全重試；保留跨視窗退出邊界。
+- 詳情見 [Release notes](docs/RELEASE_NOTES_3.0.9.md) 及 [驗收記錄](docs/RELEASE_VALIDATION_3.0.9.md)。僅 Windows 更新包；首次安裝及 Mac 附件沿用上一個完整版本。
 
 ## v3.0.8：Windows 更新專用發布
 

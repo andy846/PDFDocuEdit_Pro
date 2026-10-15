@@ -24,6 +24,17 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## New in v3.0.9: Print paper safety and visible shutdown
+
+* Windows Managed update only; no new Installer, Portable or Mac artifact.
+* Single and Batch Print validate requested paper and ask before using a fallback.
+  Fit uses the live printable area after the driver starts; margins are not added
+  twice. Native batch orientation choices are retained. Hardware proof is pending.
+* Deep Search restores its compact layout on first opening.
+* A shared safe-shutdown strip is hidden normally and appears after a three-second
+  wait or an error in either mode, including empty Designer. Return is available
+  only before cleanup; retries coordinate all participating PDF windows.
+
 ## New in v3.0.8: Windows Managed update
 
 * This release contains Windows x64 update packages only, including the signed
