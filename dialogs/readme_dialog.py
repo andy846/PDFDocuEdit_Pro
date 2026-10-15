@@ -100,6 +100,11 @@ supports Windows x64, with an account-enabled Apple Silicon Mac testing build (n
   Designer and tool/project tabs stay in their original window.
 * Main-window exit, sign-out and updates include all windows' unsaved documents.
   Closing a separate window only closes its documents. Account lock applies to all.
+* **Safe shutdown status:** Normal work has no extra status bar. If closing waits
+  longer than three seconds, or fails, a shared notice appears below the top toolbar
+  in both modes. Before cleanup starts you can retry or return to work; once cleanup
+  starts, editing stays locked and you can retry close or open diagnostics.
+  The notice shows elapsed time and pending work/readers without hiding in PDF mode.
 
 ## New in v3.0.5: PDF Workspace Tool Navigation
 

@@ -7308,45 +7308,71 @@ class PDFViewer(QMainWindow):
         self._close_lifecycle.defer(reason)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        lifecycle = self._close_lifecycle
+        if lifecycle.handling_close:
+            event.ignore()
+            return
+        lifecycle.handling_close = True
         try:
+            lifecycle.start_attempt()
             self._close_event_checked(event)
-            if not event.isAccepted() and not self._closing and not self._mutation_controller.active and not self.document_windows.pending_exit:
-                self._close_lifecycle.cancel_preflight()
+            if (not event.isAccepted() and not self._closing and not lifecycle.is_failed
+                    and not self._mutation_controller.active and not self.document_windows.pending_exit):
+                lifecycle.cancel_preflight()
         except Exception:
             event.ignore()
-            # Failed save/confirmation is not an approval. Re-enable work and
-            # revoke approvals already collected from other windows, but do
-            # not reopen sessions once irreversible shutdown has begun.
-            if not self._closing and not self.document_windows.pending_exit:
-                self.document_windows._reset_approvals(self.document_windows.live_windows())
-            self._close_lifecycle.failed()
+            lifecycle.failed()
+        finally:
+            lifecycle.handling_close = False
 
     def _close_event_checked(self, event: QCloseEvent) -> None:
+        lifecycle = self._close_lifecycle
         if self._mutation_controller.active:
             event.ignore()
             self._defer_close("mutation")
             return
         manager = getattr(self, "document_windows", None)
+        dialog = getattr(self, "_update_dialog", None)
+        if self._printing or (dialog is not None and dialog.busy()):
+            event.ignore()
+            lifecycle.failed('printing_or_update')
+            return
         if manager and self is manager.primary and not manager.prepare_application_close():
             event.ignore()
             return
         controller = getattr(self, "_mode_controller", None)
         merge_only = getattr(self, "_merge_controller", None) if controller is None else None
         if controller:
-            dialog = getattr(self, "_update_dialog", None)
-            if self._printing or (dialog is not None and dialog.busy()):
-                log_lifecycle("close.blocked_print_or_update")
-                self.info_bar.show_message("Finish printing or the update download before closing.", "warning")
-                event.ignore()
-                return
             if not controller.prepare_exit():
                 event.ignore()
                 return
-            self.workspace.end_pair()
+        elif merge_only:
+            if not merge_only.prepare_exit():
+                event.ignore()
+                return
+        elif not self._window_exit_approved:
+            previous = self._session
+            try:
+                for session in list(self._sessions):
+                    self._session = session
+                    if not self._confirm_discard_changes():
+                        event.ignore()
+                        return
+            finally:
+                self._session = previous
+        # Every recoverable check happens before cancellation or reader retirement.
+        lifecycle.prepare_preferences()
+        lifecycle.mark_teardown_started()
+        self.workspace.end_pair()
+        if controller:
             if not controller.shutdown_workspaces():
                 event.ignore()
                 self._defer_close("workspace_readers" if not self._tasks else "pdf_tasks")
                 return
+        elif merge_only and not merge_only.shutdown():
+            event.ignore()
+            self._defer_close("tool_workers")
+            return
         comparisons = list(getattr(self, "_comparison_dialogs", []))
         for comparison in comparisons:
             comparison.close()
@@ -7354,59 +7380,13 @@ class PDFViewer(QMainWindow):
             event.ignore()
             self._defer_close("comparison")
             return
-        dialog = getattr(self, "_update_dialog", None)
-        if dialog is not None and dialog.busy():
-            dialog.reject()
-            self.info_bar.show_message("Cancelling the update download. Please close again when it finishes.", "info", 0)
-            event.ignore()
-            return
-        if self._printing:
-            log_lifecycle("close.blocked_print")
-            self.info_bar.show_message("Finish printing before closing.", "warning")
-            event.ignore()
-            return
-        if merge_only:
-            if not merge_only.prepare_exit():
-                event.ignore()
-                return
-            if not merge_only.shutdown():
-                event.ignore()
-                self._defer_close("tool_workers")
-                return
-        self._closing = True
-        try:
-            for session in ([] if controller or merge_only or self._window_exit_approved else list(self._sessions)):
-                self._session = session
-                if not self._confirm_discard_changes():
-                    event.ignore()
-                    self._closing = False
-                    self._session = self.workspace.current_session()
-                    return
-        except Exception:
-            # Save/confirmation failed before retirement began. Restore normal
-            # document routing rather than leaving every operation "closing".
-            self._closing = False
-            self._session = self.workspace.current_session()
-            raise
-        self._close_lifecycle.begin()
-        self.workspace.end_pair()
         pdf_operations = list(getattr(self, "_pdf_operation_dialogs", []))
         for operation in pdf_operations:
             operation.reject()
         if any(operation.worker for operation in pdf_operations):
-            self._closing = True
             event.ignore()
             self._defer_close("pdf_tools")
             return
-        if not self._pdf_only_window:
-            self.settings.update(
-                {
-                    "window_size": [self.width(), self.height()],
-                    "window_position": [self.x(), self.y()],
-                    "window_maximized": self.isMaximized(),
-                    "left_panel_collapsed": False if getattr(self, "_auto_collapsed_sidebar", False) else self.side_panel.is_collapsed(),
-                }
-            )
         for task in list(self._tasks):
             task.cancel()
         self._pending_searches.clear()
@@ -7422,7 +7402,7 @@ class PDFViewer(QMainWindow):
                 self._defer_close("pdf_readers")
                 return
         self._window_closed = True
-        self._close_lifecycle.finished()
+        lifecycle.finished()
         if manager:
             manager.window_closed(self)
         event.accept()

@@ -20,6 +20,7 @@ class DocumentWindows(QObject):
         self.windows = []
         self.last_active = primary
         self.pending_exit = False
+        self.exit_teardown_started = False
         self._drag_session = None
         self._drag_token = None
         self._press = None
@@ -211,10 +212,8 @@ class DocumentWindows(QObject):
             for window in [self.primary, *others]:
                 dialog = getattr(window, "_update_dialog", None)
                 if window._printing or (dialog is not None and dialog.busy()):
-                    self.primary.info_bar.show_message(
-                        "Finish printing or the update download before exiting.", "warning"
-                    )
                     self._reset_approvals(approved)
+                    self.primary._close_lifecycle.failed('printing_or_update')
                     return False
                 controller = getattr(window, "_mode_controller", None)
                 if controller:
@@ -241,11 +240,18 @@ class DocumentWindows(QObject):
                 if merge:
                     merge.exit_approved = True
                 approved.append(window)
+            # No participant may retire documents until all preferences save.
+            for window in approved:
+                window._close_lifecycle.prepare_preferences()
             self.pending_exit = True
+            self.exit_teardown_started = any(w._close_lifecycle.teardown_started for w in approved)
             for window in approved:
                 window._close_lifecycle.begin()
         for window in others:
             window.close()
+        if any(w._close_lifecycle.is_failed for w in others if w in self.live_windows()):
+            self.primary._close_lifecycle.failed('detached_windows')
+            return False
         if any(w.isVisible() for w in others):
             self.primary._defer_close("detached_windows")
             return False

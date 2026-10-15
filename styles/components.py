@@ -35,6 +35,13 @@ def global_style() -> str:
         QWidget#commandBar, QWidget#statusBar {{
             background: {c['bg_surface']};
         }}
+        QFrame#closeStatusBar {{
+            background: {c['bg_elevated']};
+            border: 1px solid {c['border_strong']};
+            border-left: 3px solid {c['warning']};
+            border-radius: 6px;
+        }}
+        QFrame#closeStatusBar[failed="true"] {{ border-left: 3px solid {c['error']}; }}
         QLabel#organizerTitle {{
             font-size: 20px;
             font-weight: 700;

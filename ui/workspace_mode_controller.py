@@ -272,8 +272,9 @@ class WorkspaceModeController(QObject):
     def shutdown_workspaces(self):
         window = self.window
         if not self.shutdown_started:
+            window._close_lifecycle.prepare_preferences()
+            window._close_lifecycle.mark_teardown_started()
             self.shutdown_started = True
-            window._closing = True
             window._queued_open_paths.clear()
             window._pending_searches.clear()
             for task in list(window._tasks):
