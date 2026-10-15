@@ -23,7 +23,6 @@ from PyQt6.QtCore import (
     QIODevice,
     QPoint,
     QRectF,
-    QSizeF,
     Qt,
     QThreadPool,
     QTimer,
@@ -39,8 +38,6 @@ from PyQt6.QtGui import (
     QGuiApplication,
     QImage,
     QKeySequence,
-    QPageLayout,
-    QPageSize,
     QPainter,
     QPen,
     QShortcut,
@@ -3643,13 +3640,6 @@ class PDFViewer(QMainWindow):
         # Name the print job after the document (visible in the print queue),
         # matching the legacy version.
         printer.setDocName(Path(doc.name).name)
-        first_page = doc.load_page(list(details["pages"])[0])
-        self._configure_print_layout(printer, first_page, details)
-        if details.get("confirm_system_dialog"):
-            native_dialog = QPrintDialog(printer, self)
-            native_dialog.setWindowTitle("System Print")
-            if native_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
         try:
             with DOCUMENT_LOCK:
                 snapshot = doc.tobytes()
@@ -3745,6 +3735,8 @@ class PDFViewer(QMainWindow):
         details = dict(details)
         guard = ExitStack()
         guard.enter_context(self._suspend_print_actions())
+        from ui.print_layout import PrintLayoutPolicy
+        layout_policy = PrintLayoutPolicy(self, batch=dialog is not None)
         confirmed = False
         native_layout = None
         batch_printer = getattr(dialog, "selected_printer", None)
@@ -3752,21 +3744,29 @@ class PDFViewer(QMainWindow):
             from dialogs.print_profile import apply_printer_settings
             apply_printer_settings(batch_printer, details, dialog.selected_printer_profile)
 
+        def paper_log(message):
+            if dialog is not None and hasattr(dialog, "log_message"):
+                dialog.log_message(message)
+            else:
+                self.bottom_bar.set_status(message)
+
         def make_printer(job, prepared):
             nonlocal confirmed, native_layout, batch_printer
-            if printer is not None:
-                return printer
             if batch_printer is None:
-                batch_printer = self._create_printer(details)
+                batch_printer = printer if printer is not None else self._create_printer(details)
             result = batch_printer
             result.setDocName(job.name)
-            self._configure_print_layout(result, fitz.Rect(0, 0, *prepared.first_size), details)
+            page = fitz.Rect(0, 0, *prepared.first_size)
+            effective = details
             if native_layout is not None:
-                result.setPageLayout(native_layout)
+                if result.setPageLayout(native_layout) is False:
+                    raise ValueError("The printer did not accept the confirmed batch layout.")
+                effective = {**details, "paper": "Printer settings"}
+            layout_policy.configure(result, page, effective, log=paper_log)
             if not confirmed and details.get("confirm_system_dialog"):
                 original_layout = result.pageLayout()
                 native = QPrintDialog(result, self)
-                native.setWindowTitle("Confirm Batch Print")
+                native.setWindowTitle("Confirm Batch Print" if dialog is not None else "System Print")
                 if hasattr(native, "setOption"):
                     for option in (QPrintDialog.PrintDialogOption.PrintPageRange,
                                    QPrintDialog.PrintDialogOption.PrintSelection,
@@ -3781,6 +3781,8 @@ class PDFViewer(QMainWindow):
                                 if key not in {"paper", "orientation"}})
                 if result.pageLayout() != original_layout:
                     native_layout = result.pageLayout()
+                layout_policy.invalidate(result)
+                layout_policy.configure(result, page, {**details, **accepted}, log=paper_log)
                 if isinstance(dialog, BatchPrintDialog):
                     from dialogs.print_profile import restore_print_profile
                     restore_print_profile(dialog, {**details, **accepted})
@@ -3916,46 +3918,8 @@ class PDFViewer(QMainWindow):
     def _configure_print_layout(
         printer: QPrinter, page: fitz.Page | fitz.Rect, details: dict[str, object]
     ) -> None:
-        page_rect = page if isinstance(page, fitz.Rect) else page.rect
-        paper = str(details["paper"])
-        if paper == "Printer settings":
-            orientation = int(details["orientation"])
-            landscape = page_rect.width > page_rect.height if orientation == 0 else orientation == 2
-            printer.setPageOrientation(QPageLayout.Orientation.Landscape
-                                      if landscape else QPageLayout.Orientation.Portrait)
-            return
-        sizes = {
-            "A4": QPageSize.PageSizeId.A4,
-            "A3": QPageSize.PageSizeId.A3,
-            "A5": QPageSize.PageSizeId.A5,
-            "Letter": QPageSize.PageSizeId.Letter,
-        }
-        if paper == "PDF page size":
-            # QPageSize stores sizes in portrait convention, so the shorter
-            # side must be the width; the orientation below then produces
-            # the correct full-page rectangle for landscape pages.
-            width, height = page_rect.width, page_rect.height
-            if width > height:
-                width, height = height, width
-            printer.setPageSize(
-                QPageSize(
-                    QSizeF(width, height),
-                    QPageSize.Unit.Point,
-                    "PDF page",
-                )
-            )
-        else:
-            printer.setPageSize(QPageSize(sizes[paper]))
-        orientation = int(details["orientation"])
-        if orientation == 0:
-            landscape = page_rect.width > page_rect.height
-        else:
-            landscape = orientation == 2
-        printer.setPageOrientation(
-            QPageLayout.Orientation.Landscape
-            if landscape
-            else QPageLayout.Orientation.Portrait
-        )
+        from ui.print_layout import apply_page_layout
+        apply_page_layout(printer, page if isinstance(page, fitz.Rect) else page.rect, details)
 
     # --- Tools -----------------------------------------------------------
     ANNOTATION_TOOL_KEYS = {

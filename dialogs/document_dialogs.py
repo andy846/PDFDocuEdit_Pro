@@ -1421,7 +1421,7 @@ class PrintOptionsDialog(ToolDialog):
         layout_group = QGroupBox("Paper and placement")
         layout_form = QFormLayout(layout_group)
         self.paper = QComboBox()
-        self.paper.addItems(["PDF page size", "A4", "A3", "A5", "Letter"])
+        self.paper.addItems(["PDF page size", "A4", "A3", "A5", "Letter", "Printer settings"])
         self.orientation = QComboBox()
         self.orientation.addItems(["Automatic", "Portrait", "Landscape"])
         self.scale_mode = QComboBox()

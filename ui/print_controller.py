@@ -11,6 +11,7 @@ from PyQt6.QtPrintSupport import QPrinter
 from core.diagnostics import log_failure
 from core.printing import PrintSession, prepare_print_job, render_print_page
 from core.tasks import FunctionTask, TaskCancelled
+from ui.print_layout import PrintJobSkipped
 
 
 class PrintController(QObject):
@@ -148,6 +149,8 @@ class PrintController(QObject):
                 self._next_page()
             else:
                 self._paint(value)
+        except PrintJobSkipped as exc:
+            self._fail(str(exc), skipped=True)
         except TaskCancelled:
             self._cancel.set()
             self._finish()
