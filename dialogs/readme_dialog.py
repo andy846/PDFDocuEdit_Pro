@@ -24,7 +24,19 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
-## Development update: Designer / Workflow settings
+## New in v3.0.8: Windows Managed update
+
+* This release contains Windows x64 update packages only, including the signed
+  account and legacy-compatible routes. Installers, Portable and macOS builds
+  remain at v3.0.7; they were not rebuilt for this Windows update.
+* Deep Search runs responsively with cooperative Pause / Resume.
+* Designer centralises Paper / Tray and barcode content-source settings.
+  Rotated objects use their visible bounding box for X / Y and page-edge movement.
+* Production shows live PS phases, elapsed time, page reports and cancellation.
+  Unknown converter progress is indeterminate. This fixes status visibility;
+  it does not establish the cause of the reported slow customer conversion.
+
+## Designer / Workflow settings
 
 * Template Designer owns layout, variable fields, barcode definitions and Paper / Tray settings.
 * New Media Assignment nodes inherit project settings. Select **Workflow override** explicitly to replace printing, Stock and printer profile for the recipe. Legacy nodes keep their existing override behaviour.
@@ -32,7 +44,7 @@ supports Windows x64, with an account-enabled Apple Silicon Mac testing build (n
 * **Accept data & jobs** accepts checked mappings, records and exclusions; **Production Review** separately checks and confirms the exact generation plan. Changed sources/templates require checking again.
 * Review issues return to their actual settings source. Templates opened from Workflow offer **Return to Workflow**. Production destinations are remembered separately from assets/profiles.
 * An incomplete check displays **Planned barcodes: Not fully checked**, rather than presenting zero as a verified count. Completed output/report history remains available.
-* These development changes are not yet included in the published v3.0.7 installer. Project/Overlay template formats and public version are unchanged. A recipe saved with the new settings-source flag requires this reader; older recipes remain readable.
+* These settings are included in v3.0.8. Project/Overlay template formats remain unchanged. A recipe saved with the new settings-source flag requires this reader; older recipes remain readable.
 
 ## New in v3.0.7: Recovery and Production Reliability
 

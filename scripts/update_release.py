@@ -94,7 +94,7 @@ def build_launcher(*, target=None) -> Path:
     return ROOT / "dist" / "Launcher"
 
 
-def create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey | None, *, target=DEFAULT_TARGET) -> list[Path]:
+def create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey | None, *, target=DEFAULT_TARGET, updates_only=False) -> list[Path]:
     from scripts.build import _clean_portable_tree
 
     for path in dist.rglob("*"):
@@ -104,10 +104,10 @@ def create_packages(dist: Path, launcher: Path, release: Path, app_version: str,
         clean = Path(temporary) / "application"
         shutil.copytree(dist, clean, symlinks=True)
         _clean_portable_tree(clean)
-        return _create_packages(clean, launcher, release, app_version, key, target=target)
+        return _create_packages(clean, launcher, release, app_version, key, target=target, updates_only=updates_only)
 
 
-def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey, *, target=DEFAULT_TARGET) -> list[Path]:
+def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str, key: Ed25519PrivateKey, *, target=DEFAULT_TARGET, updates_only=False) -> list[Path]:
     version(app_version)
     from updates.trust import PUBLIC_KEY_HEX
 
@@ -154,6 +154,10 @@ def _create_packages(dist: Path, launcher: Path, release: Path, app_version: str
         metadata.update(channel=target.channel, auth_project=target.auth_project)
     from scripts.release_signing import write_update_metadata
     manifest_path, signature_path = write_update_metadata(release, metadata, key)
+    if updates_only:
+        checksum = zip_path.with_suffix(".zip.sha256")
+        checksum.write_text(f"{metadata['sha256']}  {zip_path.name}\n", encoding="utf-8")
+        return [zip_path, manifest_path, signature_path, checksum]
     suffix = "-Private" if target.channel == "private" else ""
     deployment = release / f"PDFDocuEdit-Pro-v{app_version}-Managed-Portable-Windows-x64{suffix}.zip"
     with tempfile.TemporaryDirectory(prefix="pdfdocuedit-deployment-") as temporary:

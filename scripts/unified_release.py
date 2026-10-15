@@ -14,18 +14,22 @@ from updates.target import DEFAULT_TARGET, UpdateTarget
 from updates.trust import PUBLIC_KEY_HEX, REPOSITORY
 
 
-def validate_candidates(folder, expected_version, expected_commit):
+def validate_candidates(folder, expected_version, expected_commit, *, scope="all"):
+    if scope not in {"all", "windows-update"}:
+        raise UpdateError("Unknown release scope.")
     folder = Path(folder)
     version(expected_version)
     if len(expected_commit) != 40 or any(c not in "0123456789abcdef" for c in expected_commit):
         raise UpdateError("Specify the frozen 40-character source commit.")
     projects, fingerprints, records = set(), set(), []
-    for platform in ("windows-x64", "macos-arm64"):
+    for platform in (("windows-x64",) if scope == "windows-update" else ("windows-x64", "macos-arm64")):
         data = json.loads((folder / f"candidate-{platform}.json").read_text(encoding="utf-8"))
         if (data.get("version"), data.get("source_commit"), data.get("platform"), data.get("channel")) != (
             expected_version, expected_commit, platform, "private"
         ):
             raise UpdateError("Both platforms must have the same committed account release version.")
+        if data.get("release_scope", "all") != scope:
+            raise UpdateError("Candidate release scope differs from requested scope.")
         target = UpdateTarget(platform, "private", data["auth_project"])
         projects.add(target.auth_project)
         fingerprints.add(data["source_fingerprint"])
@@ -53,9 +57,14 @@ def validate_candidates(folder, expected_version, expected_commit):
                 raise UpdateError(f"Candidate attachment changed: {name}")
         required = {target.asset(expected_version), f"candidate-{target.metadata}.json"}
         if platform == "windows-x64":
-            required |= {DEFAULT_TARGET.asset(expected_version), "candidate-update.json",
-                         f"PDFDocuEdit-Pro-v{expected_version}-Managed-Portable-Windows-x64-Private.zip",
-                         f"PDFDocuEdit-Pro-v{expected_version}-Setup-Windows-x64.exe"}
+            required |= {DEFAULT_TARGET.asset(expected_version), "candidate-update.json"}
+            if scope == "all":
+                required |= {f"PDFDocuEdit-Pro-v{expected_version}-Managed-Portable-Windows-x64-Private.zip",
+                             f"PDFDocuEdit-Pro-v{expected_version}-Setup-Windows-x64.exe"}
+            else:
+                allowed = required | {target.asset(expected_version)+".sha256", DEFAULT_TARGET.asset(expected_version)+".sha256"}
+                if names != allowed:
+                    raise UpdateError("Windows update-only candidate contains unexpected or missing attachments.")
         else:
             required.add(f"PDFDocuEdit-Pro-v{expected_version}-Managed-macOS-arm64-Private.dmg")
         if not required <= names:
@@ -76,14 +85,14 @@ def validate_candidates(folder, expected_version, expected_commit):
     return records
 
 
-def seal(folder, output, app_version, commit, key):
+def seal(folder, output, app_version, commit, key, *, scope="all"):
     folder, output = Path(folder), Path(output)
-    records = validate_candidates(folder, app_version, commit)
+    records = validate_candidates(folder, app_version, commit, scope=scope)
     if output.exists():
         raise UpdateError("Use a fresh signing output directory; never overwrite signed release assets.")
     output.mkdir(parents=True)
-    targets = [DEFAULT_TARGET, UpdateTarget("windows-x64", "private", records[0]["auth_project"]),
-               UpdateTarget("macos-arm64", "private", records[0]["auth_project"])]
+    targets = [DEFAULT_TARGET, *[UpdateTarget(record["platform"], "private", record["auth_project"])
+                                for record in records]]
     names = []
     try:
         for record in records:
@@ -116,8 +125,8 @@ def seal(folder, output, app_version, commit, key):
             names.extend([metadata.name, signature.name])
         if digest_file(output / targets[0].asset(app_version)) != digest_file(output / targets[1].asset(app_version)):
             raise UpdateError("Legacy and private Windows packages must be identical.")
-        index = {"schema": 1, "version": app_version, "source_commit": commit, "auth_project": records[0]["auth_project"],
-                 "platforms": ["windows-x64", "macos-arm64"], "native_evidence": records,
+        index = {"schema": 1, "release_scope": scope, "version": app_version, "source_commit": commit, "auth_project": records[0]["auth_project"],
+                 "platforms": [record["platform"] for record in records], "native_evidence": records,
                  "files": [{"name": name, "size": (output / name).stat().st_size, "sha256": digest_file(output / name)}
                            for name in sorted(set(names))]}
         atomic_json(output / "release-index.json", index)
@@ -140,6 +149,10 @@ def validate_sealed(folder):
     except Exception as error:
         raise UpdateError("Release index signature is invalid.") from error
     data = json.loads(raw)
+    scope = data.get("release_scope", "all")
+    expected = ["windows-x64"] if scope == "windows-update" else ["windows-x64", "macos-arm64"]
+    if scope not in {"all", "windows-update"} or data.get("platforms") != expected:
+        raise UpdateError("Signed release scope and platforms differ.")
     for row in data["files"]:
         name = row["name"]
         if Path(name).name != name or "/" in name or "\\" in name:
@@ -208,7 +221,9 @@ def publish(folder, notes, *, make_public=False):
         if not acceptance.is_file():
             raise UpdateError("Real operator acceptance is missing; release remains a draft.")
         approval = json.loads(acceptance.read_text(encoding="utf-8"))
-        required = ("windows_two_upgrades", "windows_account_login", "mac_account_login", "mac_offline_restart", "mac_cross_version_update")
+        required = ("windows_two_upgrades", "windows_account_login")
+        if data.get("release_scope", "all") == "all":
+            required += ("mac_account_login", "mac_offline_restart", "mac_cross_version_update")
         if approval.get("source_commit") != data["source_commit"] or not all(approval.get(item) is True for item in required):
             raise UpdateError("Operator acceptance is incomplete; release remains a draft.")
         subprocess.run(["gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=false", "--prerelease=false", "--latest"], check=True)
@@ -224,13 +239,14 @@ def main():
     signing.add_argument("--version", required=True)
     signing.add_argument("--commit", required=True)
     signing.add_argument("--key", type=Path, required=True)
+    signing.add_argument("--scope", choices=("all", "windows-update"), default="all")
     publication = sub.add_parser("publish")
     publication.add_argument("--folder", type=Path, required=True)
     publication.add_argument("--notes", type=Path, required=True)
     publication.add_argument("--make-public", action="store_true")
     args = parser.parse_args()
     if args.command == "seal":
-        seal(args.candidates, args.output, args.version, args.commit, load_signing_key(args.key))
+        seal(args.candidates, args.output, args.version, args.commit, load_signing_key(args.key), scope=args.scope)
     else:
         print(publish(args.folder, args.notes, make_public=args.make_public))
     return 0

@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "PDFDocuEdit Pro"
-VERSION = "3.0.7"
+VERSION = "3.0.8"
 VERAPDF_VERSION = "1.30.2"
 VERAPDF_INSTALLER_SHA256 = (
     "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838"
@@ -284,7 +284,7 @@ def _inno_signing_args(settings: tuple[str, str, str] | None) -> list[str]:
     return [f"/S{name}={command}", f"/DMySignTool={name}"]
 
 
-def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
+def build_windows(*, portable_only: bool = False, updates_only: bool = False) -> tuple[Path | None, Path | None]:
     validate_tesseract_bundle()
     validate_verapdf_bundle()
     run(
@@ -299,6 +299,8 @@ def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
     executable = ROOT / "dist" / APP_NAME / f"{APP_NAME}.exe"
     if signing:
         _sign_windows_file(executable, signing)
+    if updates_only:
+        return None, None
     portable = build_portable_zip()
     if portable_only:
         return None, portable
@@ -316,6 +318,7 @@ def build_windows(*, portable_only: bool = False) -> tuple[Path | None, Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--updates-only", action="store_true", help="Build only the Windows application for update packaging")
     parser.add_argument("--portable-only", action="store_true", help="Build Windows ZIP without Inno Setup")
     parser.add_argument("--run-tests", action="store_true", help="Explicitly run the full local suite (normally covered by CI)")
     parser.add_argument("--composition", "--document-designer", action="store_true", help="Build Document Designer with verified platform assets")
@@ -339,14 +342,18 @@ def main(argv: list[str] | None = None) -> int:
         test_environment.setdefault("QT_QPA_PLATFORM", "offscreen")
         run(sys.executable, "-m", "pytest", env=test_environment)
     system = platform.system()
+    if args.updates_only and system != "Windows":
+        parser.error("--updates-only requires Windows.")
     if system == "Darwin":
         output = build_macos()
         print(f"Created {output}")
     elif system == "Windows":
-        setup_exe, portable_zip = build_windows(portable_only=True) if args.portable_only else build_windows()
+        setup_exe, portable_zip = (build_windows(updates_only=True) if args.updates_only else
+                                   build_windows(portable_only=True) if args.portable_only else build_windows())
         if setup_exe is not None:
             print(f"Created {setup_exe}")
-        print(f"Created {portable_zip}")
+        if portable_zip is not None:
+            print(f"Created {portable_zip}")
     else:
         raise RuntimeError("Release builds are supported only on Windows and macOS.")
     return 0

@@ -1,8 +1,10 @@
 """Native account release candidates; contains no update signing key or publish."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,13 +18,13 @@ from updates.target import UpdateTarget
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def candidate_record(output, target, files, checks):
+def candidate_record(output, target, files, checks, *, scope="all"):
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     rows = []
     for file in files:
         if file is not None:
             rows.append({"name": file.name, "size": file.stat().st_size, "sha256": digest_file(file)})
-    data = {"schema": 1, "version": APP_VERSION, "source_commit": commit,
+    data = {"schema": 1, "release_scope": scope, "version": APP_VERSION, "source_commit": commit,
             "source_fingerprint": source_fingerprint(), "platform": target.platform,
             "channel": target.channel, "auth_project": target.auth_project,
             "checks": checks, "files": rows}
@@ -31,6 +33,11 @@ def candidate_record(output, target, files, checks):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--updates-only", action="store_true")
+    args = parser.parse_args()
+    if args.updates_only and sys.platform != "win32":
+        raise UpdateError("Update-only candidates require Windows x64.")
     changes = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).splitlines()
     # The Mac native preparer refreshes this tracked runtime manifest, not code.
     allowed = {"build_assets/composition/BUNDLE_INFO.json"} if sys.platform == "darwin" else set()
@@ -51,23 +58,33 @@ def main():
         from scripts.build_managed_installer import build_installer, extract_deployment
         from scripts.private_auth_packaged_qa import shell
         from scripts.update_release import build_launcher, create_legacy_auth_bridge, create_packages
-        subprocess.run([sys.executable, "-m", "scripts.build", "--composition", "--portable-only"], cwd=ROOT, check=True)
+        subprocess.run([sys.executable, "-m", "scripts.build", "--composition",
+                        "--updates-only" if args.updates_only else "--portable-only"], cwd=ROOT, check=True)
         app = ROOT / "dist/PDFDocuEdit Pro"
         _clean_portable_tree(app)
         assert_public_distribution(app)
         launcher = build_launcher(target=target)
-        files = create_packages(app, launcher, output, APP_VERSION, None, target=target)
+        files = create_packages(app, launcher, output, APP_VERSION, None, target=target, updates_only=args.updates_only)
         files.extend(create_legacy_auth_bridge(output, APP_VERSION, target))
-        installer = build_installer(files[3], APP_VERSION, account_release=True)
-        import shutil
-        shutil.copy2(installer, output / installer.name)
-        shutil.copy2(installer.with_suffix(".exe.sha256"), output / (installer.name + ".sha256"))
-        files.extend([output / installer.name, output / (installer.name + ".sha256")])
+        if not args.updates_only:
+            installer = build_installer(files[3], APP_VERSION, account_release=True)
+            shutil.copy2(installer, output / installer.name)
+            shutil.copy2(installer.with_suffix(".exe.sha256"), output / (installer.name + ".sha256"))
+            files.extend([output / installer.name, output / (installer.name + ".sha256")])
         smoke = ROOT / "build/windows-release-smoke"
         if smoke.exists():
             raise UpdateError("Use a fresh native smoke directory.")
         smoke.mkdir()
-        deployment = extract_deployment(files[3], smoke, APP_VERSION)
+        if args.updates_only:
+            # The frozen smoke needs a managed tree, not a distributable Portable ZIP.
+            deployment = smoke / "PDFDocuEditPro"
+            shutil.copytree(launcher, deployment)
+            application = deployment / "versions" / APP_VERSION
+            shutil.copytree(app, application)
+            (application / ".managed-update").write_text(APP_VERSION, encoding="utf-8")
+            atomic_json(deployment / "state.json", {"current": APP_VERSION, "previous": None, "phase": "stable"})
+        else:
+            deployment = extract_deployment(files[3], smoke, APP_VERSION)
         from auth.store import ApprovalStore
         if ApprovalStore(target.auth_project).load() is not None:
             raise UpdateError("Login-shell acceptance requires an isolated OS test account, not an existing real approval.")
@@ -89,7 +106,6 @@ def main():
         subprocess.run([sys.executable, "-m", "scripts.macos_private_smoke", "--app", "dist/PDFDocuEdit Pro.app",
                         "--shell", "dist-mac-shell/PDFDocuEdit Pro.app", "--output", "build/macos-release-smoke"],
                        cwd=ROOT, check=True)
-        import shutil
         names = [target.asset(APP_VERSION), target.asset(APP_VERSION) + ".sha256",
                  f"candidate-{target.metadata}.json",
                  f"PDFDocuEdit-Pro-v{APP_VERSION}-Managed-macOS-arm64-Private.dmg"]
@@ -109,7 +125,7 @@ def main():
         raise UpdateError("Native regression evidence is missing or has failures.")
     checks["regression"] = {"passed": True, "modules": len(rows), "tests": sum(row.get("tests", 0) for row in rows),
                             "evidence_sha256": digest_file(evidence)}
-    candidate_record(output, target, files, checks)
+    candidate_record(output, target, files, checks, scope="windows-update" if args.updates_only else "all")
     return 0
 
 

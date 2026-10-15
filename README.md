@@ -1,9 +1,18 @@
-# PDFDocuEdit Pro V3.0.7
+# PDFDocuEdit Pro V3.0.8
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+v3.0.8 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
 本輪原生打包及實機結果見 [v3.0.7 驗收紀錄](docs/RELEASE_VALIDATION_3.0.7.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+
+## v3.0.8：Windows 更新專用發布
+
+- Deep Search 改善執行時的 UI 回應，支援 Pause／Resume，暫停不清除已完成搜尋。
+- Template Designer 集中紙張／Call Tray 及條碼內容來源設定；旋轉物件可按可見外框移至頁邊。
+- Visual Workflow 沿用模板選紙設定、區分資料接受與正式生產覆核，來源改動後提示重新檢查。
+- PS 生成顯示階段、已用時間及可取得頁數；未知進度不再長停 0%。實際客戶文件轉換緩慢的成因仍待核實。
+- 只發布 Windows 更新包、兩組簽章及校驗附件。Mac 保留 v3.0.7；舊 Mac 更新器查看此 Windows-only latest Release 會提示缺少 Mac 更新附件，已安裝程式可照常使用。
+- 本版發布與驗收狀態見 [v3.0.8 驗收記錄](docs/RELEASE_VALIDATION_3.0.8.md)。
 
 ## v3.0.7：操作回復與生產可靠性
 
@@ -17,13 +26,13 @@ v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發
 
 詳細內容與限制見 [v3.0.7 Release notes](docs/RELEASE_NOTES_3.0.7.md)。上一版 [v3.0.6](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.6) 及其附件保留。
 
-## 開發分支：Template Designer 設定分工（尚未發布）
+## v3.0.8：Template Designer 設定分工
 
 - Design 集中 **Paper / Tray…**、Simplex／Duplex；僅有 Inserter I25 才顯示 **Inserter… → Apply barcode to required fronts…**。
 - Production 顯示唯讀紙種、Printer Profile、有效選紙指令及條碼數量摘要；修改返回 Design，正式覆核／批准保持原有安全關口。
 - Barcode／QR 明確選擇 Direct Content 或 Barcode Logic；首次設定保留 `{{Seq}}` 等欄位，預覽數字不會被存成固定值。取消、草稿及 Undo 保留既有內容。
 - 旋轉物件的 X／Y 以實際外框左上角顯示；條碼轉 90° 後仍可拖動、微移或對齊至頁邊。已有模板位置保持不變，W／H 仍為旋轉前尺寸。
-- Blocked 覆核直接顯示原因及 Issues，區分已檢查與預計數量。以上介面修補尚未包含在已發布的 v3.0.7 安裝包。
+- Blocked 覆核直接顯示原因及 Issues，區分已檢查與預計數量。以上介面修補包含於 v3.0.8 Windows 更新包。
 
 ## 開發更新：Visual Workflow 設定、核對與生產
 
@@ -32,14 +41,14 @@ v3.0.7 提供 Windows x64 登入版與 macOS Apple Silicon 登入測試版；發
 - **Accept data & jobs** 接受資料、映射和工作清單；正式生成仍需独立 **Production Review** 及本次工作階段的批准。
 - 返回 Workflow 以背景檔案檢查提示來源過期；開啟模板的未保存修改亦撤回待生產工作的接受狀態。已完成成果保留，最終生產仍使用內容雜湊驗證。
 - Issues 返回實際的設定來源；從 Workflow 開啟模板可 **Return to Workflow**。生產輸出資料夾獨立記住，不沿用 profile／圖片瀏覽位置。
-- 詳細責任、相容性和驗收見 [Workflow 設定與覆核說明](docs/WORKFLOW_SETTINGS_REVIEW.md)。此更新尚未打包／發布。
+- 詳細責任、相容性和驗收見 [Workflow 設定與覆核說明](docs/WORKFLOW_SETTINGS_REVIEW.md)。此更新包含於 v3.0.8 Windows 更新包。
 
 ## 開發更新：PostScript 生產進度
 
 - Production 頁頂部固定顯示目前階段、已用時間、頁數進度及 Cancel job；Template Designer 與 PDF Overlay 共用，不受選單提示或結果區捲動遮蓋。
 - PDF → PS 轉換、選紙指令、PS 回讀驗證分開顯示。Ghostscript 有回報頁碼才顯示數值進度；未有頁碼時顯示活動指示及定時心跳，不把未知進度顯示成 0%。
 - 長時間沒有新頁碼會提示「等待頁數回報」，只表示程序尚未退出，不保證實際有前進或提供完成時間估算。取消仍等待安全清理。
-- 生產報告記錄 PS 轉換與驗證耗時；沒有降低解析度、跳過驗證、改動選紙指令或繞過原子發布。此修正需重開測試版後才生效，尚未打包／發布。
+- 生產報告記錄 PS 轉換與驗證耗時；沒有降低解析度、跳過驗證、改動選紙指令或繞過原子發布。此修正包含於 v3.0.8 Windows 更新包，升級重開後生效。
 
 ## v3.0.6：文件完整性與生產安全
 

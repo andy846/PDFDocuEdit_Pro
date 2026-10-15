@@ -265,3 +265,16 @@ python -m scripts.unified_release publish --folder <簽署目錄> --notes <RELEA
 ## CI 重複工作控制
 
 `codex/unified-release-v*` 分支由 `unified-release.yml` 執行 Windows 全部隔離回歸、Mac 原生計劃及兩邊打包。一般 `CI` 保留 Source quality，但不再重跑同分支的 focused tests；其他開發分支及 PR 的測試規則不變。這只消除重複執行，不略過正式原生 gate。
+
+
+## 明確指定 Windows 更新專用發布
+
+只有擁有人明確要求時使用；預設仍為雙平台完整發布。此模式不把缺少的 Mac／Installer／Portable 標成 Passed，不改更新信任或 Windows 測試門檻。
+
+1. 使用 `codex/windows-update-v<VERSION>` 分支凍結來源；一般 CI 保留 Source quality，正式 Windows 全部隔離回歸交由 native workflow 執行一次。
+2. 派送 `gh workflow run unified-release.yml --ref <分支> -f release_scope=windows-update --repo andy846/PDFDocuEdit_Pro`。Mac job 明確略過；Windows 仍跑完整回歸、PyInstaller、frozen login-ready 及未登入 worker 拒絕。
+3. `scripts.build_release_candidate --updates-only` 不建立 Installer 或 Portable ZIP。僅在隔離 smoke 目錄建立測試用 Managed 樹；不是發布產物。
+4. 收集 Windows candidate 後，沿用 `scripts.unified_release seal`，額外傳 `--scope windows-update`。簽署 index 綁定範圍及唯一 Windows 平台，候選只接受 private／legacy 更新 ZIP、各 SHA256 及兩份 candidate metadata。
+5. Publish 沿用清單上傳／遠端 hash 核對。Windows update scope 的 operator gate 仍要求本 SHA 的 `windows_two_upgrades`、`windows_account_login`，不要求本輪未製作的 Mac。
+6. 不上傳舊 Mac 包來冒充新版。舊 Mac updater 嚴格只讀 latest，故此 Windows-only latest 會提示缺少 Mac 附件；事先說明並在 Notes 記錄，已安裝 Mac 程式不受影響。後續雙平台版本提供新的 Mac 更新入口。
+7. 其餘簽章、immutable attachments、測試證據、來源 SHA 及公開後核對保持本文件原有要求。未測項目不得代填 true；擁有人若另有明確發布例外，保留原始未完成記錄及具體指示。
