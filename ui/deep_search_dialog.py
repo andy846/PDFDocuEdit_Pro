@@ -283,6 +283,10 @@ class DeepSearchDialog(ToolDialog):
         self._compact_rows = (folder_row, search_row, options_row, filter_row, actions)
         self._fit_compact_rows()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._fit_compact_rows)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_compact_rows"):
@@ -290,7 +294,12 @@ class DeepSearchDialog(ToolDialog):
 
     def _fit_compact_rows(self):
         scroll = getattr(self, "_responsive_scroll", None)
-        width = scroll.viewport().width() if scroll is not None else self.width()
+        # ResponsiveDialog creates its viewport during showEvent. Its initial
+        # width is provisional and can otherwise stack every row permanently.
+        margins = self.layout().contentsMargins()
+        width = self.contentsRect().width() - margins.left() - margins.right()
+        if scroll is not None:
+            width -= 2 * scroll.frameWidth() + scroll.verticalScrollBar().sizeHint().width()
         for row in self._compact_rows:
             widgets = [row.itemAt(i).widget() for i in range(row.count()) if row.itemAt(i).widget()]
             needed = sum(max(w.minimumWidth(), w.minimumSizeHint().width()) for w in widgets)

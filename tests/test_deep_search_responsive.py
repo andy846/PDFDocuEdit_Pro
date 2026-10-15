@@ -378,3 +378,31 @@ def test_pause_resume_control_remains_visible_with_large_fonts(search, font_size
     viewport = dialog._responsive_scroll.viewport()
     rect = QRect(dialog.pause_button.mapTo(viewport, QPoint()), dialog.pause_button.size())
     assert viewport.rect().contains(rect), (viewport.rect(), rect)
+
+
+@pytest.mark.parametrize("size", [(960, 640), (1160, 760)])
+def test_first_show_preserves_compact_search_rows_and_results(qt_application, monkeypatch, tmp_path, size):
+    from PyQt6.QtCore import QPoint, QRect
+
+    monkeypatch.setattr("ui.responsive.available_area", lambda _: QRect(0, 0, 1920, 1080))
+    dialog = DeepSearchDialog(str(tmp_path))
+    dialog._animations_enabled = False
+    dialog.resize(*size)
+    try:
+        dialog.show()
+        for _ in range(12):
+            qt_application.processEvents()
+        viewport = dialog._responsive_scroll.viewport()
+        query = dialog.query.geometry()
+        search = dialog.search_button.geometry()
+        pause = dialog.pause_button.geometry()
+        assert abs(query.center().y() - search.center().y()) <= 2
+        assert abs(query.center().y() - pause.center().y()) <= 2
+        assert dialog.tabs.height() >= dialog.height() * .45
+        for control in (dialog.query, dialog.pause_button, dialog.open_option,
+                        dialog.export_button, dialog.export_scope):
+            rect = QRect(control.mapTo(viewport, QPoint()), control.size())
+            assert viewport.rect().contains(rect), (viewport.rect(), rect)
+    finally:
+        dialog.close()
+        qt_application.processEvents()
