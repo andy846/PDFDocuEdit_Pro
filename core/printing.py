@@ -177,6 +177,10 @@ def render_page_image(page, settings: PrintRenderSettings):
 
 
 def place_print_image(image, page_width, page_height, settings):
+    if settings.width <= 0 or settings.height <= 0 or settings.dpi <= 0:
+        raise ValueError("The printer returned an invalid printable area or resolution.")
+    if image.isNull() or page_width <= 0 or page_height <= 0:
+        raise ValueError("The print page image is empty or invalid.")
     if settings.scale_mode == 0:
         if (settings.width > settings.height) != (page_width > page_height):
             image = image.transformed(QTransform().rotate(90), Qt.TransformationMode.SmoothTransformation)
@@ -196,19 +200,34 @@ def place_print_image(image, page_width, page_height, settings):
     return image, int(x), int(y)
 
 
+@dataclass(frozen=True)
+class PrintPageFrame:
+    image: QImage
+    page_width: float
+    page_height: float
+
+
+def place_print_frame(frame, settings, *, is_cancelled=None):
+    _check_cancel(is_cancelled)
+    result = place_print_image(frame.image, frame.page_width, frame.page_height, settings)
+    _check_cancel(is_cancelled)
+    return result
+
+
 def render_print_page(prepared: PreparedPrintJob, index: int,
-                      settings: PrintRenderSettings, *, is_cancelled=None):
+                      settings: PrintRenderSettings, *, is_cancelled=None, raw=False):
     _check_cancel(is_cancelled)
     frame = prepared.session.request("render_page", index=index, dpi=settings.dpi)
     _check_cancel(is_cancelled)
     path = prepared.session.directory / "page.rgb"
     try:
-        raw = path.read_bytes()
-        if len(raw) != frame["stride"] * frame["height"]:
+        pixels = path.read_bytes()
+        if len(pixels) != frame["stride"] * frame["height"]:
             raise RuntimeError("Incomplete print raster data.")
-        image = QImage(raw, frame["width"], frame["height"], frame["stride"],
+        image = QImage(pixels, frame["width"], frame["height"], frame["stride"],
                        QImage.Format.Format_RGB888).copy()
-        result = place_print_image(image, *frame["page_size"], settings)
+        prepared_frame = PrintPageFrame(image, *frame["page_size"])
+        result = prepared_frame if raw else place_print_frame(prepared_frame, settings, is_cancelled=is_cancelled)
     finally:
         path.unlink(missing_ok=True)
     _check_cancel(is_cancelled)

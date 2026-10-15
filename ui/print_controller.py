@@ -9,9 +9,9 @@ from PyQt6.QtGui import QPainter
 from PyQt6.QtPrintSupport import QPrinter
 
 from core.diagnostics import log_failure
-from core.printing import PrintSession, prepare_print_job, render_print_page
+from core.printing import PrintSession, place_print_frame, prepare_print_job, render_print_page
 from core.tasks import FunctionTask, TaskCancelled
-from ui.print_layout import PrintJobSkipped
+from ui.print_layout import PrintJobSkipped, effective_render_settings
 
 
 class PrintController(QObject):
@@ -20,11 +20,12 @@ class PrintController(QObject):
     finished = pyqtSignal(int, int, int, bool)
 
     def __init__(self, jobs, printer_factory, settings_factory, *, parent=None,
-                 thread_pool=None, should_cancel=None):
+                 thread_pool=None, should_cancel=None, confirm_layout=None):
         super().__init__(parent)
         self.jobs = tuple(jobs)
         self.printer_factory = printer_factory
         self.settings_factory = settings_factory
+        self.confirm_layout = confirm_layout
         self.pool = thread_pool or QThreadPool.globalInstance()
         self.should_cancel = should_cancel
         self._cancel = Event()
@@ -77,7 +78,7 @@ class PrintController(QObject):
         self._kind = kind
         self._outcome = None
         cleanup = kind in {"close", "reset", "shutdown"}
-        kwargs = {"session": self._render_session} if kind == "prepare" else {}
+        kwargs = {"session": self._render_session} if kind == "prepare" else {"raw": True} if kind == "render" else {}
         task = FunctionTask(function, *args,
                             cancel_argument=None if cleanup else "is_cancelled",
                             discard_result=self._discard_prepared if kind == "prepare" else None,
@@ -147,6 +148,8 @@ class PrintController(QObject):
                 self._settings = self.settings_factory(self._printer)
                 # Do not start a spool job until the first page is ready.
                 self._next_page()
+            elif self._kind == "render":
+                self._begin_frame(value)
             else:
                 self._paint(value)
         except PrintJobSkipped as exc:
@@ -200,13 +203,23 @@ class PrintController(QObject):
             return
         self._submit("render", render_print_page, self._prepared, self._page, self._settings)
 
-    def _paint(self, rendered):
+    def _begin_frame(self, frame):
         if self._painter is None:
             self._painter = QPainter(self._printer)
             if not self._painter.isActive():
                 raise RuntimeError("The selected printer could not start a print job.")
         elif not self._printer.newPage():
             raise RuntimeError("The printer could not create the next page.")
+        final = effective_render_settings(self._printer, self._settings, self._painter)
+        if self.confirm_layout is not None:
+            self.confirm_layout(self._printer, self._settings, final)
+        if self._cancelled():
+            raise TaskCancelled
+        self._settings = final
+        # A worker scales the retained raw frame; it never touches QPrinter.
+        self._submit("place", place_print_frame, frame, final)
+
+    def _paint(self, rendered):
         image, x, y = rendered
         self._painter.drawImage(x, y, image)
         self._page += 1

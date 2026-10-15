@@ -3720,14 +3720,14 @@ class PDFViewer(QMainWindow):
             yield
 
     @staticmethod
-    def _print_render_settings(printer, details):
-        rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-        size = rect.size().toSize()
-        return PrintRenderSettings(
-            printer.resolution(), size.width(), size.height(), rect.x(), rect.y(),
+    def _print_render_settings(printer, details, painter=None):
+        from ui.print_layout import effective_render_settings
+        base = PrintRenderSettings(
+            printer.resolution(), 1, 1, 0, 0,
             int(details["scale_mode"]), float(details["scale"]), bool(details["center"]),
             float(details["offset_x"]), float(details["offset_y"]),
         )
+        return effective_render_settings(printer, base, painter)
 
     def _start_print_jobs(self, jobs, details, *, printer=None, dialog=None):
         if self._printing or self._tasks:
@@ -3838,6 +3838,7 @@ class PDFViewer(QMainWindow):
                 jobs, make_printer, lambda value: self._print_render_settings(value, details),
                 parent=self, thread_pool=self._thread_pool,
                 should_cancel=dialog.cancel_requested if dialog is not None else None,
+                confirm_layout=layout_policy.confirm_effective,
             )
             self._print_controller = controller
             controller.progress.connect(progress)
@@ -3910,7 +3911,7 @@ class PDFViewer(QMainWindow):
         page: fitz.Page,
         details: dict[str, object],
     ) -> None:
-        settings = PDFViewer._print_render_settings(printer, details)
+        settings = PDFViewer._print_render_settings(printer, details, painter)
         image, x, y = render_page_image(page, settings)
         painter.drawImage(x, y, image)
 

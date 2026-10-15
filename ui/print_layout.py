@@ -3,7 +3,7 @@
 Capabilities describe a driver, never the stock physically loaded in a tray.
 """
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PyQt6.QtCore import QSizeF
 from PyQt6.QtGui import QPageLayout, QPageSize
@@ -214,3 +214,30 @@ class PrintLayoutPolicy:
         if self._log:
             self._log(f"Driver printable area confirmed: {old[0]} × {old[1]} → {new[0]} × {new[1]} px; "
                       f"{after.dpi} dpi. Scaling uses the confirmed area.")
+
+
+def effective_render_settings(printer, settings, painter=None):
+    """Snapshot live device geometry on the GUI thread, in painter coordinates."""
+    dpi = printer.resolution()
+    if painter is None:
+        width, height = printer.width(), printer.height()
+        left = top = 0
+    else:
+        viewport = painter.viewport()
+        width, height = viewport.width(), viewport.height()
+        left, top = viewport.x(), viewport.y()
+    if printer.fullPage():
+        # Full-page coordinates include device margins; StandardMode already
+        # places the origin at the drawable area's top-left corner.
+        layout = QPageLayout(printer.pageLayout())
+        layout.setUnits(QPageLayout.Unit.Point)
+        minimum = layout.minimumMargins()
+        l, t, r, b = (max(0, math.ceil(v * dpi / 72)) for v in
+                      (minimum.left(), minimum.top(), minimum.right(), minimum.bottom()))
+        left += l
+        top += t
+        width -= l + r
+        height -= t + b
+    if width <= 0 or height <= 0 or dpi <= 0:
+        raise PaperLayoutError("The printer returned an invalid printable area or resolution.")
+    return replace(settings, dpi=dpi, width=width, height=height, left=left, top=top)
