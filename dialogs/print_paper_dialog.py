@@ -14,8 +14,11 @@ class PrintPaperDialog(ToolDialog):
         if area_text:
             text = area_text
         else:
-            text = (f"PDF / requested paper: {size_label(issue.requested)}\n"
-                    f"Printer's previous setting: {size_label(issue.current)}\n\n{issue.reason}")
+            source = (f"PDF page: {issue.source_mm[0]:.1f} × {issue.source_mm[1]:.1f} mm\n"
+                      if issue.source_mm else "")
+            text = (source + f"Requested paper: {size_label(issue.requested)}\n"
+                    f"Printer's previous setting: {size_label(issue.current)}\n"
+                    f"Scaling: {issue.scaling}\n\n{issue.reason}")
         heading = QLabel(text)
         heading.setWordWrap(True)
         self._root.addWidget(heading)

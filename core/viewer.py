@@ -3761,7 +3761,11 @@ class PDFViewer(QMainWindow):
             if native_layout is not None:
                 if result.setPageLayout(native_layout) is False:
                     raise ValueError("The printer did not accept the confirmed batch layout.")
-                effective = {**details, "paper": "Printer settings"}
+                # The native dialog's explicit orientation applies to every
+                # file, even when the app originally requested Automatic.
+                from PyQt6.QtGui import QPageLayout
+                orientation = (2 if native_layout.orientation() == QPageLayout.Orientation.Landscape else 1)
+                effective = {**details, "paper": "Printer settings", "orientation": orientation}
             layout_policy.configure(result, page, effective, log=paper_log)
             if not confirmed and details.get("confirm_system_dialog"):
                 original_layout = result.pageLayout()
@@ -3807,7 +3811,10 @@ class PDFViewer(QMainWindow):
                     dialog.set_file_status(key, "Cancelled")
                     dialog.log_message("Batch print cancelled.")
                 else:
-                    dialog.mark_file_error(key)
+                    if status == "skipped":
+                        dialog.set_file_status(key, "Skipped")
+                    else:
+                        dialog.mark_file_error(key)
                     label = "Skipped" if status == "skipped" else "Failed"
                     dialog.log_message(f"{label} {Path(key).name}: {message}")
             elif status in {"failed", "skipped"}:

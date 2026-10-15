@@ -432,7 +432,7 @@ def test_batch_print_skips_unreadable_files(tmp_path, monkeypatch):
         with fitz.open(tmp_path / f"output-{index}.pdf") as output:
             assert output.page_count == 2
     assert any("Skipped bad.pdf" in line for line in fake.logs)
-    assert fake.status[str(bad)] == "Error"
+    assert fake.status[str(bad)] == "Skipped"
     assert fake.status[str(good1)] == "Done"
     assert fake.status[str(good2)] == "Done"
     assert any("Sent 2 PDF file(s)" in line for line in fake.logs)

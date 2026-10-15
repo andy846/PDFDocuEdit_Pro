@@ -445,6 +445,13 @@ production workflows.
 * **PDF to Word:** Convert the open PDF into an editable `.docx`.
 * **Batch Print:** Print multiple PDFs with printer, paper, orientation,
   margins, copies and duplex settings.
+* **Print paper safety:** Single and Batch Print distinguish PDF size from output
+  paper. Unsupported or uncertain paper requires confirmation; identical batch
+  cases can share a temporary choice. **Printer settings** preserves the driver's
+  configured paper, not detected tray stock. Fit uses the live printable area;
+  changed driver geometry requires confirmation. Actual Size / Custom Scale keep
+  your chosen scale and can intentionally exceed the paper. Non-full-page margins
+  are applied once. Driver/DFE stock substitution still requires a physical proof.
 * **PDF Overlay:** Batch overlay a template PDF onto all target files.
 
 ### 6. Utilities & Tools

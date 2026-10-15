@@ -94,3 +94,67 @@ def test_single_printer_settings_choice_retains_custom_stock(device):
     policy.configure(device, fitz.Rect(0, 0, 900, 600), details("Printer settings", 2))
     assert device.pageLayout().pageSize().size(QPageSize.Unit.Millimeter).width() == pytest.approx(160, abs=.5)
     assert device.pageLayout().orientation() == QPageLayout.Orientation.Landscape
+
+
+@pytest.mark.parametrize("action", ["cancel", "skip"])
+def test_paper_decision_can_cancel_or_skip_without_changing_device(device, action):
+    from core.tasks import TaskCancelled
+    from ui.print_layout import PrintJobSkipped
+    policy = PrintLayoutPolicy(None, batch=True, capabilities=lambda _: caps(),
+                               choose=lambda *_: PaperDecision(action))
+    with pytest.raises(TaskCancelled if action == "cancel" else PrintJobSkipped):
+        policy.configure(device, fitz.Rect(0, 0, 1300, 1500), details())
+    assert device.pageLayout().pageSize().id() == QPageSize.PageSizeId.A4
+
+
+def test_batch_skip_preserves_next_file_and_does_not_start_skipped_output(tmp_path):
+    from core.printing import PrintJob
+    from core.viewer import PDFViewer
+    from tests.test_printing import app, wait_for
+    from ui.print_controller import PrintController
+    app()
+    paths = []
+    for name, width, height in [("large", 1300, 1500), ("a4", 595, 842)]:
+        path = tmp_path / (name + ".pdf")
+        with fitz.open() as pdf:
+            pdf.new_page(width=width, height=height)
+            pdf.save(path)
+        paths.append(path)
+    policy = PrintLayoutPolicy(None, batch=True, capabilities=lambda _: caps(),
+                               choose=lambda *_: PaperDecision("skip"))
+    def create(job, prepared):
+        printer = QPrinter()
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(str(tmp_path / (job.name + "-printed.pdf")))
+        printer.setResolution(72)
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        policy.configure(printer, fitz.Rect(0, 0, *prepared.first_size), details())
+        return printer
+    result = []
+    controller = PrintController([PrintJob(str(p), p.stem, p.stem) for p in paths], create,
+                                 lambda p: PDFViewer._print_render_settings(p, {
+                                     **details(), "scale":100, "center":True, "offset_x":0, "offset_y":0}))
+    controller.finished.connect(lambda *v: result.append(v))
+    controller.start()
+    wait_for(lambda: bool(result), timeout=15)
+    assert result == [(1, 0, 1, False)]
+    assert not (tmp_path / "large-printed.pdf").exists()
+    assert (tmp_path / "a4-printed.pdf").exists()
+    controller.deleteLater()
+
+
+def test_confirmation_dialog_explains_source_and_output_and_safe_cancel(qt_application):
+    from PyQt6.QtWidgets import QLabel, QPushButton
+
+    from dialogs.print_paper_dialog import PrintPaperDialog
+    from ui.print_layout import PaperIssue
+    issue = PaperIssue(size(450, 500), size(210, 297), "Driver limit", (450, 500), "Fit to printable area")
+    dialog = PrintPaperDialog(issue, [size(210, 297)], True)
+    try:
+        text = " ".join(w.text() for w in dialog.findChildren(QLabel))
+        assert "PDF page: 450.0" in text and "Scaling: Fit" in text
+        assert "Requested paper:" in text and "previous setting:" in text
+        assert any(b.isDefault() and b.text() == "Cancel batch" for b in dialog.findChildren(QPushButton))
+        assert dialog.decision.action == "cancel"
+    finally:
+        dialog.close()

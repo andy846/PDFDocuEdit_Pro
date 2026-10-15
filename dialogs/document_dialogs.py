@@ -1450,9 +1450,13 @@ class PrintOptionsDialog(ToolDialog):
         layout_form.addRow("Shift from right", self.offset_right)
         layout_form.addRow("Shift from top", self.offset_top)
         layout_form.addRow("Shift from bottom", self.offset_bottom)
-        paper_note = QLabel(
-            "One print job uses one paper size. “PDF page size” follows the first selected page."
-        )
+        from dialogs.print_profile import describe_paper_choices
+        paper_note = QLabel()
+        def update_paper_note():
+            paper_note.setText(describe_paper_choices(self, "first selected page"))
+        self.paper.currentIndexChanged.connect(update_paper_note)
+        self.scale_mode.currentIndexChanged.connect(update_paper_note)
+        update_paper_note()
         paper_note.setObjectName("secondary")
         paper_note.setWordWrap(True)
         layout_form.addRow("", paper_note)

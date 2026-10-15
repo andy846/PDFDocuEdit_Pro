@@ -153,3 +153,38 @@ def test_custom_paper_preserved_with_orientation_overrides(tmp_path, orientation
                                      {"paper": "Printer settings", "orientation": orientation})
     assert printer.pageLayout().pageSize() == original
     assert printer.pageLayout().orientation() == expected
+
+
+def test_batch_native_orientation_overrides_automatic_for_every_file(tmp_path, monkeypatch):
+    import core.viewer as viewer_module
+    window = window_for(tmp_path, monkeypatch)
+    dialog = BatchPrintDialog(window)
+    output = device(tmp_path)
+    monkeypatch.setattr(window.__class__, "_create_printer", staticmethod(lambda _: output))
+    class Native:
+        def __init__(self, printer, parent):
+            self.printer = printer
+        def setWindowTitle(self, title):
+            pass
+        def exec(self):
+            self.printer.setPageSize(QPageSize(QPageSize.PageSizeId.A5))
+            self.printer.setPageOrientation(QPageLayout.Orientation.Landscape)
+            return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(viewer_module, "QPrintDialog", Native)
+    details = {"printer":"", "copies":1, "collate":True, "colour":0, "duplex":1,
+               "dpi":72, "paper":"PDF page size", "orientation":0, "scale_mode":0,
+               "scale":100, "center":True, "offset_x":0, "offset_y":0, "confirm_system_dialog":True}
+    seen = []
+    original = window._print_render_settings
+    def capture(printer, choices):
+        seen.append(printer.pageLayout().orientation())
+        return original(printer, choices)
+    monkeypatch.setattr(window, "_print_render_settings", capture)
+    try:
+        jobs = [PrintJob(str(pdf(tmp_path / f"native-{i}.pdf", 1)), f"{i}.pdf", str(i)) for i in range(2)]
+        window._start_print_jobs(jobs, details, dialog=dialog)
+        wait_for(lambda: window._print_controller is None, timeout=15)
+        assert seen == [QPageLayout.Orientation.Landscape] * 2
+    finally:
+        dialog.close()
+        window.close()

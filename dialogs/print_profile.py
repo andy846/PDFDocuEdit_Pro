@@ -106,3 +106,10 @@ def apply_printer_settings(printer, details, previous=None):
     for key, setter in setters.items():
         if key in details and details[key] != previous.get(key):
             setter(details[key])
+
+
+def describe_paper_choices(owner, source):
+    return (f"PDF size: {source}. Output paper: {owner.paper.currentText()}. "
+            f"Scaling: {owner.scale_mode.currentText()}.\n"
+            "PDF page size requests matching paper; it does not automatically select A4. "
+            "Printer settings use the driver's configured paper, not tray detection.")

@@ -221,9 +221,13 @@ class BatchPrintDialog(ToolDialog):
                               Qt.ItemDataRole.ToolTipRole)
         paper_form.addRow("Shift from top", self.top)
         paper_form.addRow("Shift from bottom", self.bottom)
-        paper_note = QLabel(
-            "Each PDF prints as its own job. “PDF page size” follows each file’s first page."
-        )
+        from dialogs.print_profile import describe_paper_choices
+        paper_note = QLabel()
+        def update_paper_note():
+            paper_note.setText(describe_paper_choices(self, "first page of each PDF file"))
+        self.paper.currentIndexChanged.connect(update_paper_note)
+        self.scale_mode.currentIndexChanged.connect(update_paper_note)
+        update_paper_note()
         paper_note.setObjectName("secondary")
         paper_note.setWordWrap(True)
         paper_form.addRow(paper_note)

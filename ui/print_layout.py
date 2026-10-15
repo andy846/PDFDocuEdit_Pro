@@ -9,6 +9,7 @@ from PyQt6.QtCore import QSizeF
 from PyQt6.QtGui import QPageLayout, QPageSize
 from PyQt6.QtPrintSupport import QPrinter, QPrinterInfo
 
+from core.diagnostics import log_lifecycle
 from core.tasks import TaskCancelled
 
 
@@ -34,6 +35,8 @@ class PaperIssue:
     requested: QPageSize
     current: QPageSize
     reason: str
+    source_mm: tuple = ()
+    scaling: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,6 +159,7 @@ class PrintLayoutPolicy:
             margins = default.margins(QPageLayout.Unit.Point)
             key = (name, round(mm.width(), 2), round(mm.height(), 2), int(details["orientation"]),
                    rect.width > rect.height, details.get("scale_mode"), details.get("dpi"),
+                   details.get("scale"), details.get("center"), details.get("offset_x"), details.get("offset_y"),
                    default.pageSize().sizePoints().width(), default.pageSize().sizePoints().height(),
                    margins.left(), margins.top(), margins.right(), margins.bottom(), reason)
             decision = self._approved.get(key)
@@ -164,7 +168,9 @@ class PrintLayoutPolicy:
                 if not any(size.isEquivalentTo(existing) for existing in choices):
                     choices.append(size)
             if decision is None:
-                issue = PaperIssue(requested, default.pageSize(), reason)
+                mode = ("Fit to printable area", "Actual size", "Custom scale")[int(details.get("scale_mode", 0))]
+                issue = PaperIssue(requested, default.pageSize(), reason,
+                                   (rect.width * 25.4 / 72, rect.height * 25.4 / 72), mode)
                 if self._choose is None:
                     from dialogs.print_paper_dialog import choose_paper
                     decision = choose_paper(self.parent, issue, choices, self.batch)
@@ -188,13 +194,22 @@ class PrintLayoutPolicy:
                 self._approved[key] = decision
             if log:
                 log(f"Paper confirmed: {size_label(requested)} → {size_label(decision.size)}. {reason}")
-        elif log:
-            log(f"Output paper: {size_label(printer.pageLayout().pageSize())}.")
+        if log:
+            mode = ("Fit to printable area", "Actual size", "Custom scale")[int(details.get("scale_mode", 0))]
+            log(f"PDF page: {rect.width * 25.4 / 72:.1f} × {rect.height * 25.4 / 72:.1f} mm; "
+                f"output paper: {size_label(printer.pageLayout().pageSize())}; scaling: {mode}.")
+
+        mm = requested.size(QPageSize.Unit.Millimeter)
+        log_lifecycle("print_layout", requested_width_um=round(mm.width()*1000),
+                      requested_height_um=round(mm.height()*1000), dpi=printer.resolution(),
+                      device_width_px=printer.width(), device_height_px=printer.height(),
+                      full_page=printer.fullPage(), capability_known=capabilities.known,
+                      custom_supported=capabilities.custom is True)
 
     def confirm_effective(self, printer, before, after):
         old = (before.width, before.height, before.dpi, before.left, before.top)
         new = (after.width, after.height, after.dpi, after.left, after.top)
-        if all(abs(a-b) <= 1 for a, b in zip(old, new, strict=True)):
+        if before.dpi == after.dpi and all(abs(a-b) <= 1 for a, b in zip(old, new, strict=True)):
             return
         key = (printer.printerName(), old, new, after.scale_mode, after.scale, after.center,
                after.offset_x, after.offset_y)
@@ -232,12 +247,13 @@ def effective_render_settings(printer, settings, painter=None):
         layout = QPageLayout(printer.pageLayout())
         layout.setUnits(QPageLayout.Unit.Point)
         minimum = layout.minimumMargins()
-        l, t, r, b = (max(0, math.ceil(v * dpi / 72)) for v in
-                      (minimum.left(), minimum.top(), minimum.right(), minimum.bottom()))
-        left += l
-        top += t
-        width -= l + r
-        height -= t + b
+        margin_left, margin_top, margin_right, margin_bottom = (
+            max(0, math.ceil(v * dpi / 72)) for v in
+            (minimum.left(), minimum.top(), minimum.right(), minimum.bottom()))
+        left += margin_left
+        top += margin_top
+        width -= margin_left + margin_right
+        height -= margin_top + margin_bottom
     if width <= 0 or height <= 0 or dpi <= 0:
         raise PaperLayoutError("The printer returned an invalid printable area or resolution.")
     return replace(settings, dpi=dpi, width=width, height=height, left=left, top=top)

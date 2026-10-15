@@ -93,3 +93,49 @@ def test_controller_rechecks_area_after_begin_without_rerasterising(tmp_path, mo
                 assert pdf[0].rect.contains(fitz.Rect(images[0]["bbox"]))
                 assert pdf[0].rect.width == pytest.approx(595, abs=1)
     controller.deleteLater()
+
+
+@pytest.mark.parametrize("mode,scale,expected_width", [(1, 100, 1275), (2, 40, 510)])
+def test_actual_and_custom_scale_are_not_silently_changed_to_fit(mode, scale, expected_width):
+    from PyQt6.QtGui import QImage
+    image = QImage(900, 1000, QImage.Format.Format_RGB32)
+    config = PrintRenderSettings(72, 595, 842, 0, 0, mode, scale, True, 0, 0)
+    output, _, _ = place_print_image(image, 450 / 25.4 * 72, 500 / 25.4 * 72, config)
+    assert output.width() == pytest.approx(expected_width, abs=1)
+
+
+def test_pdf_output_margin_geometry_keeps_image_inside_printable_area(tmp_path):
+    from PyQt6.QtGui import QPainter
+    app()
+    output = tmp_path / "margins.pdf"
+    device = printer(output)
+    device.setPageMargins(QMarginsF(10, 12, 15, 20), QPageLayout.Unit.Millimeter)
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=450 / 25.4 * 72, height=500 / 25.4 * 72)
+        painter = QPainter(device)
+        PDFViewer._draw_print_page(painter, device, page, choices())
+        painter.end()
+    with fitz.open(output) as pdf:
+        bounds = fitz.Rect(pdf[0].get_image_info()[0]["bbox"])
+        assert bounds.x0 == pytest.approx(28, abs=1)
+        assert bounds.x1 <= 595 - 42 + 1
+
+
+def test_late_consent_is_scoped_and_actual_size_warning_remains(qt_application, tmp_path):
+    from dataclasses import replace
+
+    from ui.print_layout import PaperDecision, PrintLayoutPolicy
+    calls = []
+    def confirm(before, after, batch):
+        calls.append((before, after, batch))
+        return PaperDecision("use", remember=True)
+    policy = PrintLayoutPolicy(None, batch=True, confirm_area=confirm)
+    device = printer(tmp_path / "none.pdf")
+    old = PrintRenderSettings(72, 1276, 1417, 0, 0, 1, 100, True, 0, 0)
+    new = replace(old, width=595, height=842)
+    policy.confirm_effective(device, old, new)
+    policy.confirm_effective(device, old, new)
+    assert len(calls) == 1 and new.scale_mode == 1
+    policy.invalidate(device)
+    policy.confirm_effective(device, old, new)
+    assert len(calls) == 2
