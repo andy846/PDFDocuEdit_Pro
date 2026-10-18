@@ -68,6 +68,8 @@ def _resources(context):
     else:
         value = EnvelopeSpec.from_dict(project)
         paths.append(value.source.path)
+        if value.detection_review.get("report_version") == 3:
+            paths.append(value.detection_review["classification_asset"]["path"])
         elements = [o.element for o in value.objects]
     for e in elements:
         paths += [e.image, e.font.file, *(f.file for f in e.glyph_repairs.values())]

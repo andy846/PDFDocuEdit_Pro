@@ -133,6 +133,8 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
                 (obj.element.image,obj.element.font.file,
                  *(font.file for font in obj.element.glyph_repairs.values()),
                  obj.element.rules.alternative.image if obj.element.rules.alternative else "") if path]
+        if spec.detection_review.get("report_version") == 3:
+            assets.append(spec.detection_review["classification_asset"]["path"])
         asset_hashes={path:file_hash(Path(path)) for path in assets}
         with ExitStack() as resources:
             source=resources.enter_context(fitz.open(snapshot))

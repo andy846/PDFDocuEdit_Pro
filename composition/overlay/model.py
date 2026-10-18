@@ -55,7 +55,7 @@ class EnvelopeSpec:
         validate_link(self.source_link)
         if self.source_link and (len(self.source_link["page_map"]) != self.source.pages or self.source_link["sha256"] != self.source.sha256):
             raise CompositionError("PDF source provenance does not match the source snapshot.")
-        if type(self.overlay_version) is not int or self.overlay_version != 8 or self.project_kind != "pdf_overlay":
+        if type(self.overlay_version) is not int or self.overlay_version not in (8, 9) or self.project_kind != "pdf_overlay":
             raise CompositionError("Unsupported envelope project version.")
         if (not isinstance(self.external_fields,list) or len(self.external_fields)>400
                 or any(not isinstance(v,str) or not re.fullmatch(r"(?:Page_|Envelope_)?[A-Za-z_][A-Za-z0-9_]{0,63}",v)
@@ -92,7 +92,12 @@ class EnvelopeSpec:
                 self.detection_review.get("groups") != self.settings.groups or
                 self.detection_review.get("excluded_pages") != self.settings.excluded_pages):
             raise CompositionError("Review and accept detection boundaries for this source before production.")
-        if self.settings.groups:
+        if self.settings.groups and self.detection_review.get("report_version") == 3:
+            if self.overlay_version != 9:
+                raise CompositionError("Classified mailpieces require overlay version 9.")
+            from composition.pdf_source.classification import validate_descriptor
+            validate_descriptor(self.detection_review, self.source, self.settings.groups, self.settings.excluded_pages)
+        elif self.settings.groups:
             from composition.pdf_source.detection import DetectionConfig
             try:
                 DetectionConfig(**self.detection_review["config"]).validate()
@@ -150,7 +155,7 @@ class EnvelopeSpec:
         try:
             data = dict(raw)
             version = data.get("overlay_version", 1)
-            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7, 8):
+            if type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise CompositionError("Unsupported envelope project version.")
             if version<6 and data.get("media"):
                 raise CompositionError("Print Media requires overlay version 6.")
@@ -169,7 +174,9 @@ class EnvelopeSpec:
             if version < 8 and any(obj.get("profile", {}).get("layout_mode") == "fixed"
                                    for obj in data.get("objects", []) if obj.get("profile")):
                 raise CompositionError("Fixed-length barcode layouts require overlay version 8.")
-            data["overlay_version"] = 8
+            if version < 9 and data.get("detection_review", {}).get("report_version") == 3:
+                raise CompositionError("Classified mailpieces require overlay version 9.")
+            data["overlay_version"] = 9 if version == 9 else 8
             data["source"] = SourceInfo(**data["source"])
             data["settings"] = EnvelopeSettings(**data["settings"])
             stub = Template(width_mm=2000, height_mm=2000).to_dict()

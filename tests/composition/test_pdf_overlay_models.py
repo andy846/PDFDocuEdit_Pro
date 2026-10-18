@@ -84,7 +84,7 @@ def test_save_restore_and_version(tmp_path):
     assert EnvelopeSpec.from_dict(raw).to_dict()==raw
     target=save_project(spec,tmp_path / "job.pdcx")
     assert load_project(target).to_dict()==raw
-    raw["overlay_version"]=9
+    raw["overlay_version"]=10  # v9 is now the classified-mailpiece schema; v10 remains unsupported.
     with pytest.raises(CompositionError,match="version"):
         EnvelopeSpec.from_dict(raw)
     spec.source.path=str(tmp_path / "missing.pdf")

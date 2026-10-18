@@ -79,6 +79,13 @@ def save_workflow(spec, path, *, is_cancelled=None):
         digest=file_hash(Path(overlay.params["path"]))
         copied=save_overlay(project,assets/(digest+".pdcx"))
         overlay.params["path"]=copied.relative_to(target.parent).as_posix()
+    for node in value.nodes:
+        review = node.params.get("detection_review", {})
+        if review.get("report_version") == 3:
+            from composition.pdf_source.classification import copy_asset
+            review = copy_asset(review, assets)
+            review["classification_asset"]["path"] = Path(review["classification_asset"]["path"]).relative_to(target.parent).as_posix()
+            node.params["detection_review"] = review
     check_cancel(is_cancelled)
     with atomic_output(target) as temp:
         temp.write_text(json.dumps(value.to_dict(),ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
@@ -110,4 +117,12 @@ def load_workflow(path):
     overlay=spec.node("overlay")
     if overlay and overlay.params.get("path"):
         overlay.params["path"]=str((target.parent/overlay.params["path"]).resolve())
+    for node in spec.nodes:
+        review = node.params.get("detection_review", {})
+        if review.get("report_version") == 3:
+            asset = review["classification_asset"]
+            resolved = (target.parent / asset["path"]).resolve()
+            if Path(asset["path"]).is_absolute() or not resolved.is_relative_to(target.parent):
+                raise CompositionError("Classification asset must belong to the saved workflow.")
+            asset["path"] = str(resolved)
     return spec

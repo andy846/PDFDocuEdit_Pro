@@ -13,6 +13,8 @@ from .model import EnvelopeSpec
 
 
 def _references(value):
+    if value.get("detection_review", {}).get("report_version") == 3:
+        yield value["detection_review"]["classification_asset"], "path", False
     for obj in value["objects"]:
         element = obj["element"]
         yield element, "image", False
@@ -26,6 +28,9 @@ def _references(value):
 
 def save_project(spec, path):
     spec.validate()
+    if spec.detection_review.get("report_version") == 3:
+        from composition.pdf_source.classification import load_report
+        load_report(spec.detection_review)
     target = Path(path).resolve().with_suffix(".pdcx")
     value = spec.to_dict()
     assets = target.parent / (target.stem+".assets")
@@ -42,6 +47,9 @@ def save_project(spec, path):
         if not copied.exists():
             with atomic_output(copied, overwrite=False) as temp:
                 shutil.copyfile(source, temp)
+        if key == "path" and file_hash(copied) != owner["sha256"]:
+            from composition.template.model import CompositionError
+            raise CompositionError("Saved classification evidence changed.")
         owner[key] = copied.relative_to(target.parent).as_posix()
     source = Path(value["source"]["path"]).resolve()
     if spec.source_link.get("managed"):
@@ -79,6 +87,10 @@ def load_project(path):
     value = EnvelopeSpec.from_dict(value).to_dict()
     for owner, key, _font in _references(value):
         if owner[key]:
-            owner[key] = str((source.parent / owner[key]).resolve())
+            resolved = (source.parent / owner[key]).resolve()
+            if key == "path" and (Path(owner[key]).is_absolute() or not resolved.is_relative_to(source.parent)):
+                from composition.template.model import CompositionError
+                raise CompositionError("Classification asset must belong to the saved project.")
+            owner[key] = str(resolved)
     value["source"]["path"] = str((source.parent / value["source"]["path"]).resolve())
     return EnvelopeSpec.from_dict(value)

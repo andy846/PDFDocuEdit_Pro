@@ -67,6 +67,8 @@ def page_records(spec, plan, job_id, is_cancelled=None, external_values=None):
 class OverlayRenderer:
     def __init__(self, spec, *, auto_repair=True, fallback_directory=None, is_cancelled=None):
         self.spec = spec
+        from composition.pdf_source.classification import rows_for_spec
+        self.classifications = rows_for_spec(spec)
         self._profiles_checked = False
         self.renderer = Renderer(render_template(spec), auto_repair=auto_repair,
                                  fallback_directory=fallback_directory, is_cancelled=is_cancelled)

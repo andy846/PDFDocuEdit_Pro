@@ -348,7 +348,11 @@ def group(spec,run,*,progress=None,is_cancelled=None):
             report = cfg.get("detection_review", {})
             if not isinstance(report, dict) or report.get("accepted") is not True or not report.get("groups"):
                 raise CompositionError("Analyze and accept mailpiece boundaries before using automatic detection.")
-            DetectionConfig(**report.get("config", {})).validate()
+            if report.get("report_version") == 3:
+                from composition.pdf_source.classification import load_report
+                load_report(report)
+            else:
+                DetectionConfig(**report.get("config", {})).validate()
             if report.get("source_sha256") != store.metadata()["sha256"] or report.get("pages") != pages:
                 raise CompositionError("Detection source changed. Analyze and accept the current PDF again.")
             if report.get("excluded_pages"):
@@ -366,7 +370,20 @@ def group(spec,run,*,progress=None,is_cancelled=None):
         run.accepted=False
 
 
-def detection_audit(spec, review=None):
+def detection_audit(spec, review=None, *, selected=None, directory=None):
+    if review and review.get("report_version") == 3:
+        import copy
+
+        from composition.pdf_source.classification import remap_report, validate_descriptor
+        if review["source_sha256"] == spec.source.sha256 and review["groups"] == spec.settings.groups:
+            validate_descriptor(review, spec.source, spec.settings.groups, spec.settings.excluded_pages)
+            value = copy.deepcopy(review)
+        elif selected is not None and directory is not None:
+            value = remap_report(review, spec.source, spec.settings.groups, selected, directory)
+        else:
+            raise CompositionError("Classified source/grouping changed without original-envelope provenance. Review again.")
+        spec.overlay_version = 9
+        return value
     if review:
         import copy
         result = copy.deepcopy(review)
