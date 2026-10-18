@@ -1,5 +1,7 @@
 # PDFDocuEdit Pro V3.0.9
 
+> Windows 日常開發／實測固定使用 `D:\Python_Project\PDFdocuEdit_Pro` 及 `.venv-dev`；啟動請用 `scripts\launch_dev.cmd`。[開發位置、環境及回退說明](docs/DEVELOPMENT_WORKSPACE.md)。
+
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
 v3.0.9 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。

@@ -1,5 +1,7 @@
 # Smart Mailpiece / Customer Production Profiles
 
+> Development moved to the canonical D: workspace on 2026-10-19; see [Development workspace](DEVELOPMENT_WORKSPACE.md). C: paths below identify the original implementation/QA baseline and remain historical evidence.
+
 ## Approved implementation contract
 
 Baseline checkpoint: b9975ea on codex/deep-search-restore-layout (public 3.0.9).
