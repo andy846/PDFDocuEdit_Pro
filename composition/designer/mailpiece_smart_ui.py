@@ -12,11 +12,13 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QGraphicsView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QWidget,
 )
 
 from composition.pdf_source.detection import DetectionConfig
@@ -32,10 +34,11 @@ class SmartDetectionControls:
         self.teaching = False
         self.taught_marker = None
         self.taught_ids = []
+        self.lesson_dirty = False
+        self.pending_profile_save = False
         self.cache_path = self.window.directory / ("mailpiece-" + self.context_sha256 + ".sqlite")
         self.analyze_button = QPushButton("Analyze PDF")
         self.analyze_button.clicked.connect(self.analyze)
-        self.form.insertRow(0, self.analyze_button)
         self.suggestions = QComboBox()
         self.suggestions.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.suggestions.setMinimumContentsLength(10)
@@ -49,12 +52,12 @@ class SmartDetectionControls:
         self.suggestion_examples.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.suggestion_examples.currentIndexChanged.connect(self.show_example)
         self.form.insertRow(3, "Example pages", self.suggestion_examples)
-        for row, (name, callback) in enumerate((("Teach a feature…", self.begin_teaching),
-                               ("Open profile…", self.open_profile),
-                               ("Save profile…", self.save_profile)), 4):
-            button = QPushButton(name)
-            button.clicked.connect(callback)
-            self.form.insertRow(row, button)
+        self.teach_button = QPushButton("Teach a feature…")
+        self.teach_button.clicked.connect(self.begin_teaching)
+        self.open_profile_button = QPushButton("Open profile…")
+        self.open_profile_button.clicked.connect(self.open_profile)
+        self.save_profile_button = QPushButton("Save profile…")
+        self.save_profile_button.clicked.connect(self.save_profile)
         self.first_sample, self.continuation_sample = QSpinBox(), QSpinBox()
         for control, default in ((self.first_sample, 1), (self.continuation_sample, 2)):
             control.setRange(1, self.window.spec.source.pages)
@@ -75,7 +78,7 @@ class SmartDetectionControls:
         self.try_teaching.clicked.connect(self.teach_scan)
         self.finish_teaching = QPushButton("Review boundaries")
         self.finish_teaching.clicked.connect(self.end_teaching)
-        self.lesson_status = QLabel("Draw a small static feature on the first sample. Identity regions must include their labels.")
+        self.lesson_status = QLabel("Draw a short static PDF text heading on the first sample. QR/image matching is not supported. Identity regions must include their labels.")
         self.lesson_status.setWordWrap(True)
         self.lesson_status.setTextFormat(Qt.TextFormat.PlainText)
         self.lesson_controls = [self.first_sample, self.continuation_sample, self.static_marker,
@@ -106,7 +109,14 @@ class SmartDetectionControls:
         self.profile_label.setMinimumWidth(0)
         self.profile_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.profile_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.form.insertRow(0, self.library_button)
+        self.profile_bar = QWidget(self)
+        actions = QHBoxLayout(self.profile_bar)
+        actions.setContentsMargins(0, 0, 0, 0)
+        for button in (self.analyze_button, self.teach_button, self.library_button,
+                       self.open_profile_button, self.save_profile_button):
+            button.setAutoDefault(False)
+            actions.addWidget(button)
+        self.layout().insertWidget(0, self.profile_bar)
         self.form.insertRow(1, self.profile_label)
         self.update_smart_controls()
 
@@ -117,6 +127,8 @@ class SmartDetectionControls:
         self.teaching = False
         self.invalidate()
         self.customer_profile = value
+        self.lesson_dirty = False
+        self.pending_profile_save = False
         self.profile_label.setText(f"{value['name']} · revision {value['revision']} · {len(value['rule_sets'])} rule sets")
         self.update_method()
 
@@ -155,6 +167,7 @@ class SmartDetectionControls:
         self.scan_status.show()
         self.cancel_button.setEnabled(True)
         self.form.parentWidget().setEnabled(False)
+        self.profile_bar.setEnabled(False)
         self.acknowledge.setEnabled(False)
         def delivered(value):
             if token == self.scan_generation and self.isVisible():
@@ -192,6 +205,7 @@ class SmartDetectionControls:
             self.clear_collection_profile()
         suggestion = self.suggestions.currentData()
         self.smart_config = copy.deepcopy(suggestion["config"]) if suggestion else None
+        self.lesson_dirty = False
         self.invalidate()
         self.suggestion_examples.blockSignals(True)
         self.suggestion_examples.clear()
@@ -223,11 +237,14 @@ class SmartDetectionControls:
         self.clear_collection_profile()
         self.method.setCurrentIndex(self.method.findData("smart"))
         self.teaching = True
+        self.taught_marker = None
+        self.taught_ids = []
+        self.invalidate_lesson()
         self.whole.setChecked(False)
         self.pair_mode.setCurrentIndex(self.pair_mode.findData("teaching"))
         self.update_method()
         self.refresh_pair()
-        self.summary.setText("Teaching: draw a static first-page feature, capture its region, then try the rule.")
+        self.summary.setText("Teaching: select a static PDF text heading. Save profile checks the rule before saving; Try taught rule lets you review its matches.")
         QTimer.singleShot(0, self.scroll_to_lesson)
 
     def scroll_to_lesson(self):
@@ -236,8 +253,19 @@ class SmartDetectionControls:
 
     def lesson_changed(self, *_):
         if self.teaching:
-            self.invalidate()
+            self.invalidate_lesson()
             self.refresh_pair()
+
+    def invalidate_lesson(self):
+        self.lesson_dirty = True
+        self.smart_config = None
+        self.pending_profile_save = False
+        self.invalidate()
+
+    def region_selected(self):
+        # The first deliberate drag is the marker; later drags can capture IDs.
+        if self.teaching and self.taught_marker is None:
+            self.remember_marker()
 
     def end_teaching(self):
         self.teaching = False
@@ -247,34 +275,51 @@ class SmartDetectionControls:
 
     def remember_marker(self):
         self.taught_marker = [c.value() for c in self.region]
-        self.invalidate()
-        self.lesson_status.setText(f"First-page region saved. {len(self.taught_ids)} identity region(s).")
+        self.invalidate_lesson()
+        self.lesson_status.setText(f"First-page region selected. Enter its fixed heading if needed, then Save profile or Try taught rule. {len(self.taught_ids)} identity region(s).")
 
     def remember_identity(self):
         region = [c.value() for c in self.region]
         if region not in self.taught_ids and len(self.taught_ids) < 8:
             self.taught_ids.append(region)
-        self.invalidate()
+        self.invalidate_lesson()
         self.lesson_status.setText(f"{len(self.taught_ids)} identity region(s). Each must include a static label and its value.")
 
     def clear_taught_ids(self):
         self.taught_ids.clear()
-        self.invalidate()
+        self.invalidate_lesson()
         self.lesson_status.setText("Identity regions cleared. The first-page feature is retained.")
 
-    def teach_scan(self):
-        if self.taught_marker is None:
-            self.summary.setText("Draw the first-page feature and choose Use marker region first.")
+    def teach_scan(self, *, save_after=False):
+        if self.scan_worker or self.window.active_worker or self.window.draft_error:
             return
+        if self.taught_marker is None:
+            self.summary.setText("Draw a static text heading on the first-page preview, or enter its region and choose Use marker region. Then Save profile will test the rule before saving.")
+            return
+        self.pending_profile_save = save_after
         terms = [t.strip() for t in self.static_marker.text().split("|") if t.strip()]
         def ready(value):
             self.set_suggestions([{"title": "Taught first-page rule", "config": value["config"],
                                    "examples": [self.first_sample.value()],
                                    "reason": "Taught rule tested against all cached pages. Compare the first / continuation examples before saving a profile."}])
             self.scanned(value)
+            self.lesson_dirty = False
         self.run_smart_task({"task": "mailpiece_teach", "first_page": self.first_sample.value(),
                              "continuation_page": self.continuation_sample.value(), "marker_region": self.taught_marker,
                              "id_regions": self.taught_ids, "marker_terms": terms or None}, ready)
+
+    def queue_profile_save(self):
+        if not self.pending_profile_save:
+            return
+        self.pending_profile_save = False
+        if not self.smart_config or self.lesson_dirty or not self.report:
+            return
+        checked_config = copy.deepcopy(self.smart_config)
+        def save_checked():
+            if (not sip.isdeleted(self) and self.isVisible() and not self.lesson_dirty
+                    and self.smart_config == checked_config and not self.scan_worker):
+                self.save_profile()
+        QTimer.singleShot(0, save_checked)
 
     def open_profile(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open mailpiece profile", "", "Mailpiece profiles (*.pdmp *.pdmpx)")
@@ -295,6 +340,15 @@ class SmartDetectionControls:
         self.run_smart_task({"task": "mailpiece_profile_load", "path": path}, ready)
 
     def save_profile(self):
+        if self.method.currentData() != "smart":
+            self.summary.setText("Choose Auto analysis / detection profile, then analyze or teach a spatial rule before saving.")
+            return
+        if self.scan_worker or self.window.active_worker:
+            self.summary.setText("Wait for the current check, or cancel it before saving a profile.")
+            return
+        if self.lesson_dirty and (self.teaching or self.taught_marker is not None):
+            self.teach_scan(save_after=True)
+            return
         if self.customer_profile:
             from core.resources import data_dir
             path, _ = QFileDialog.getSaveFileName(self, "Export detection profile", "", "Customer detection profile (*.pdmpx)")
@@ -306,7 +360,7 @@ class SmartDetectionControls:
                                    self.scan_failed)
             return
         if not self.smart_config:
-            self.summary.setText("Analyze or teach a rule before saving its profile.")
+            self.summary.setText("Choose Analyze PDF or Teach a feature first. For teaching, draw a static text heading; Save profile tests it before saving. QR/image matching is not supported.")
             return
         path, _ = QFileDialog.getSaveFileName(self, "Save mailpiece profile", "", "Mailpiece profiles (*.pdmp)")
         if path:
@@ -318,6 +372,9 @@ class SmartDetectionControls:
                                lambda message: self.summary.setText(message))
 
     def smart_scan(self):
+        if self.teaching and self.lesson_dirty:
+            self.teach_scan()
+            return
         if self.customer_profile:
             self.run_smart_task({"task": "mailpiece_collection_scan", "profile": copy.deepcopy(self.customer_profile)}, self.scanned)
             return

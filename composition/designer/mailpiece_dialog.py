@@ -100,7 +100,11 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.context_settings = asdict(window.spec.settings)
         self.context_review = copy.deepcopy(window.spec.detection_review)
         self.setWindowTitle("Auto Detect Mailpieces · Analyze → Review → Apply")
-        self.resize(880, 650)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        screen = self.screen()
+        available = screen.availableGeometry() if screen is not None else None
+        self.resize(min(1400, int(available.width() * .92)) if available else 1320,
+                    min(900, int(available.height() * .90)) if available else 860)
         self.report = self.source = None
         self.scan_worker = None
         self.scan_generation = 0
@@ -108,6 +112,8 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.review_undo, self.review_redo = [], []
         outer = QVBoxLayout(self)
         splitter = QSplitter()
+        self.main_splitter = splitter
+        splitter.setChildrenCollapsible(False)
         outer.addWidget(splitter, 1)
         left = QWidget()
         form = QFormLayout(left)
@@ -165,6 +171,7 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         scroll = QScrollArea()
         self.controls_scroll = scroll
         scroll.setWidgetResizable(True)
+        scroll.setMaximumWidth(430)
         scroll.setWidget(left)
         splitter.addWidget(scroll)
         right = QWidget()
@@ -249,9 +256,11 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.export_index_button.clicked.connect(self.export_index)
         classification_actions.addWidget(self.export_index_button)
         layout.addLayout(classification_actions)
-        self.review_splitter.setSizes([130, 365])
+        self.review_splitter.setSizes([140, 600])
         splitter.addWidget(right)
-        splitter.setSizes([300, 560])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([340, 1000])
         self.summary = QLabel("Configure detection, scan, then review every boundary before applying. No barcode is added by scanning.")
         self.summary.setWordWrap(True)
         outer.addWidget(self.summary)
@@ -444,7 +453,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.update_apply()
         self.analyze_button.setEnabled(True)
         self.form.parentWidget().setEnabled(True)
+        self.profile_bar.setEnabled(True)
         self.acknowledge.setEnabled(True)
+        self.queue_profile_save()
         if self.pending_smart_scan:
             self.pending_smart_scan = False
             QTimer.singleShot(0, self.scan)
@@ -475,6 +486,11 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.show_report()
 
     def scan_failed(self, message):
+        if self.pending_profile_save:
+            message = "Profile not saved: " + message
+            if "small static first-page feature" in message:
+                message += " Choose a short PDF text heading; QR/image matching is not supported."
+        self.pending_profile_save = False
         self.summary.setText(message)
         self.report = None
         self.clear_results()

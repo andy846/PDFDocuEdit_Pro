@@ -290,3 +290,146 @@ def test_workflow_auto_detect_shared_dialog_handoff(app, tmp_path):
         window._close_approved = True
         window.close()
         wait_until(lambda:not window.workers)
+
+
+
+def test_default_detection_window_uses_available_screen(overlay, monkeypatch):
+    from types import SimpleNamespace
+
+    from PyQt6.QtCore import QRect
+
+    monkeypatch.setattr(MailpieceDialog, "screen", lambda self: SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 1440, 1000)))
+    monkeypatch.setattr(overlay, "worker", lambda *a, **k: None)
+    dialog = MailpieceDialog(overlay)
+    try:
+        assert 1250 <= dialog.width() <= 1440
+        assert 800 <= dialog.height() <= 1000
+    finally:
+        dialog.reject()
+
+
+def test_profile_actions_remain_visible_when_teaching_is_scrolled(overlay, app, monkeypatch):
+    monkeypatch.setattr(overlay, "worker", lambda *a, **k: None)
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    try:
+        dialog.begin_teaching()
+        dialog.resize(960, 640)
+        app.processEvents()
+        dialog.controls_scroll.verticalScrollBar().setValue(dialog.controls_scroll.verticalScrollBar().maximum())
+        app.processEvents()
+        assert dialog.save_profile_button.isVisible()
+        assert not dialog.controls_scroll.isAncestorOf(dialog.save_profile_button)
+        assert dialog.save_profile_button.mapTo(dialog, dialog.save_profile_button.rect().bottomRight()).x() < 960
+        assert dialog.save_profile_button.mapTo(dialog, dialog.save_profile_button.rect().bottomRight()).y() < 640
+    finally:
+        dialog.reject()
+
+
+def test_save_profile_compiles_drawn_lesson_without_try_step(overlay, app, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtTest import QTest
+
+    original = overlay.spec.to_dict()
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.begin_teaching()
+    wait_until(lambda: not dialog.preview.loading and not overlay.workers)
+    target = tmp_path / "direct-save.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    start = dialog.preview.mapFromScene(QPointF(8, 19))
+    end = dialog.preview.mapFromScene(QPointF(78, 27))
+    QTest.mousePress(dialog.preview.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    QTest.mouseMove(dialog.preview.viewport(), end)
+    QTest.mouseRelease(dialog.preview.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    dialog.save_profile()
+    assert dialog.scan_worker is not None
+    wait_until(lambda: target.exists() and not overlay.workers)
+    assert load_profile(target)["rules"][0]["terms"] == ["Dear"]
+    assert overlay.spec.to_dict() == original and overlay.undo.count() == 0
+    assert not dialog.acknowledge.isChecked()
+    dialog.reject()
+
+
+def test_save_revalidates_edited_lesson_instead_of_exporting_old_rule(overlay, tmp_path, monkeypatch):
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.begin_teaching()
+    for control, value in zip(dialog.region, [8, 19, 70, 8], strict=True):
+        control.setValue(value)
+    dialog.remember_marker()
+    dialog.teach_scan()
+    wait_until(lambda: dialog.report is not None and not overlay.workers)
+    dialog.static_marker.setText("UNMATCHED STATIC HEADING")
+    target = tmp_path / "stale.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    dialog.save_profile()
+    assert dialog.scan_worker is not None
+    wait_until(lambda: not overlay.workers)
+    assert not target.exists()
+    assert "not saved" in dialog.summary.text().lower()
+    assert not dialog.apply_button.isEnabled()
+    dialog.reject()
+
+
+def test_cancel_teach_and_save_never_opens_save_picker(overlay, monkeypatch):
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.begin_teaching()
+    for control, value in zip(dialog.region, [8, 19, 70, 8], strict=True):
+        control.setValue(value)
+    dialog.remember_marker()
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: pytest.fail("Cancelled lesson opened save picker"))
+    dialog.save_profile()
+    assert dialog.scan_worker is not None
+    dialog.cancel_button.click()
+    wait_until(lambda: not overlay.workers)
+    assert not dialog.pending_profile_save
+    dialog.reject()
+
+
+
+def test_save_pending_lesson_after_returning_to_boundary_review(overlay, tmp_path, monkeypatch):
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.begin_teaching()
+    for control, value in zip(dialog.region, [8, 19, 70, 8], strict=True):
+        control.setValue(value)
+    dialog.remember_marker()
+    dialog.end_teaching()
+    target = tmp_path / "review-save.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    dialog.save_profile()
+    assert dialog.scan_worker is not None
+    wait_until(lambda: target.exists() and not overlay.workers)
+    assert load_profile(target)["rules"][0]["terms"] == ["Dear"]
+    dialog.reject()
+
+
+def test_image_or_blank_feature_never_saves_an_empty_profile(overlay, monkeypatch):
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.begin_teaching()
+    for control, value in zip(dialog.region, [120, 100, 20, 10], strict=True):
+        control.setValue(value)
+    dialog.remember_marker()
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: pytest.fail("No PDF text must not offer Save"))
+    dialog.save_profile()
+    assert dialog.scan_worker is not None
+    wait_until(lambda: not overlay.workers)
+    assert "not saved" in dialog.summary.text().lower()
+    assert "QR/image" in dialog.summary.text()
+    assert not dialog.apply_button.isEnabled()
+    dialog.reject()
+
+
+
+def test_save_cannot_export_stale_smart_rule_after_method_change(overlay, monkeypatch):
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.smart_config = analyzed(overlay.spec.source.path, overlay.directory / "save-method.sqlite")["detection"]["config"]
+    dialog.method.setCurrentIndex(dialog.method.findData("page_number"))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: pytest.fail("Wrong method exported a previous smart rule"))
+    dialog.save_profile()
+    assert "Auto analysis" in dialog.summary.text()
+    dialog.reject()

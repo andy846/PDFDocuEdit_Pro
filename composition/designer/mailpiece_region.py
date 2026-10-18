@@ -128,6 +128,7 @@ class RegionView(QGraphicsView):
                     control.setValue(value)
                     control.blockSignals(False)
                 self.dialog.invalidate()
+                self.dialog.region_selected()
             self.update_region()
             event.accept()
         else:

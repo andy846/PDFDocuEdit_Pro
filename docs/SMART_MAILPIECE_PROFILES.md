@@ -343,3 +343,47 @@ working-tree status are recorded in the local delivery manifest after committing
 **Milestones M0, M1, M2, M3, M4 and M5: Implemented and automated-tested.**
 **Ready for owner review and real eMPF UAT: Yes.**
 This is readiness for owner acceptance, not customer-file or physical machine certification.
+
+
+## Auto Detect window / direct profile saving — UAT follow-up 2026-10-19
+
+Baseline: `bdb891f`, canonical D: worktree, same development branch. The reported
+window started at only 880 x 650 and Profile actions scrolled with the configuration.
+Drawing/capturing a region did not compile a spatial rule; Save required a prior
+Try taught rule. Editing a lesson could also leave an older smart_config available.
+
+The default is now bounded to 92% of the current available screen width and 90% of
+height, capped at 1400 x 900 logical pixels, with a maximize control. Profile/Analyze/
+Teach actions stay in one fixed top row; the bounded settings pane gives remaining
+space to the source previews. Narrow 960 x 640 layouts and existing scroll controls
+remain supported.
+
+During teaching the first deliberate page drag captures the marker region; later
+drags can still capture ID regions. Explicit Use marker region remains available.
+Choose representative first/continuation pages and a short **static PDF text heading**.
+Unknown headings must be entered explicitly to avoid persisting extracted customer
+values. Save profile tests the current lesson in the existing worker, then opens the
+file picker after successful completion. Try taught rule remains available for review.
+Returning to boundary review does not discard a pending lesson. Editing the lesson
+invalidates the prior rule; changing detection methods cannot export an obsolete rule.
+
+Cancellation, failed teaching, a closed dialog or a superseded configuration cannot
+continue the deferred Save. Missing-text/image/QR selections explain why no profile
+was saved. **QR/image recognition is not supported by this text-layer detector.**
+No extraction/detection algorithm, profile schema, source verification, boundary
+acceptance or production authorization rule changed. Existing customer collection
+exports and .pdmp compatibility remain intact.
+
+Verification: 19 shared-dialog integration tests plus 103 tests across seven related
+modules passed (122 total, no failures/skips). A separate four-case 200% layout run
+passed. Existing narrow light/dark, new direct Save, edited/incorrect lesson, cancel,
+return-to-review, blank/image area and stale-method cases are covered. Ruff, compileall,
+source verification and whitespace checks passed. The full product suite was not
+repeated for this UI follow-up; its earlier D-drive baseline is recorded separately.
+
+Synthetic source previews were visually inspected in both themes using hidden native
+Windows Qt windows at devicePixelRatio 2. Headless offscreen font rendering was not
+used as evidence of native text appearance. The owner's open customer document/app
+was not restarted or manipulated; save the project and restart through the D-drive
+entry point to load the fix. No packaging, version change or publication occurred.
+Local RED/GREEN, regression and visual evidence: `build/probes/mailpiece-dialog-save/`.
