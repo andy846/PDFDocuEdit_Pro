@@ -1,7 +1,9 @@
+> 歷史封存：保留原有版本、日期及驗證記錄；本文件不代表目前產品状态。原位置为專案根目錄，於 2026-10-11 歸入 reviews。
+
 # PDFDocuEdit Pro stability and V2.6 architecture preparation report
 
 Stability checkpoint: 2026-09-06. Background printing follow-up: 2026-09-07. Base source: V2.5.3. Current version metadata remains V2.5.4.
-Scope: completed stability stages A–E, background printing, page/annotation/watermark/redaction transactions, failure-safe undo/redo navigation, mutation controller extraction and shared atomic output for the migrated paths. See [V2.6 architecture report](docs/V2.6_ARCHITECTURE_REPORT.md) for the latest implementation, evidence and remaining release work.
+Scope: completed stability stages A–E, background printing, page/annotation/watermark/redaction transactions, failure-safe undo/redo navigation, mutation controller extraction and shared atomic output for the migrated paths. See [V2.6 architecture report](../../V2.6_ARCHITECTURE_REPORT.md) for the latest implementation, evidence and remaining release work.
 
 ## 1. Modified files
 
@@ -117,8 +119,8 @@ The CI configuration has Windows full pytest, Ruff and Linux/macOS core tests. A
 
 PDF save/encryption format, page ordering, undo granularity, shortcuts, icons, UI layout and theme visual design were not redesigned.
 
-The V2.6 preparation adds an explicit `mutation_transaction()` API and migrates all viewer page actions to a single successful-action undo entry. Failed actions restore document state without clearing redo. Annotation, watermark and redaction migration plus controller/atomic-IO extraction have now followed. See [latest architecture validation](docs/V2.6_ARCHITECTURE_REPORT.md).
+The V2.6 preparation adds an explicit `mutation_transaction()` API and migrates all viewer page actions to a single successful-action undo entry. Failed actions restore document state without clearing redo. Annotation, watermark and redaction migration plus controller/atomic-IO extraction have now followed. See [latest architecture validation](../../V2.6_ARCHITECTURE_REPORT.md).
 
-Latest follow-up: applied redactions now require a full garbage-collected save to remove unreachable old content streams, including encrypted and repeated outputs. See [redaction save validation](docs/REDACTION_SAVE_REPORT.md), including the test-lifecycle investigation and final 389-case pass.
+Latest follow-up: applied redactions now require a full garbage-collected save to remove unreachable old content streams, including encrypted and repeated outputs. See [redaction save validation](../../REDACTION_SAVE_REPORT.md), including the test-lifecycle investigation and final 389-case pass.
 
-Windows release build completed on 2026-09-08: [build and artifact verification](docs/RELEASE_BUILD_2.5.4.md). Earlier checkpoint reports describe their original pre-release status.
+Windows release build completed on 2026-09-08: [build and artifact verification](../../RELEASE_BUILD_2.5.4.md). Earlier checkpoint reports describe their original pre-release status.
