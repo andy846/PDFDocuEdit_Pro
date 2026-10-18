@@ -83,7 +83,7 @@ def detect_index(index, profile, *, progress=None, is_cancelled=None):
                 if item["config"]["combine"] == "all":
                     missing = (("first_text" in rules and not marker)
                                or ("page_number" in rules and not (counter and counter[0] == 1 <= counter[1]))
-                               or ("document_id" in rules and (ident is None or issue is not None)))
+                               or ("document_id" in rules and (ident is None or bool(issue))))
                     if missing:
                         warn(number, "required_signal_missing", "A required corroborating signal is missing or ambiguous; inspect and explicitly resolve before acceptance.", blocking=True, rule_id=key)
                 eligible.append(item)

@@ -409,8 +409,10 @@ def copy_asset(descriptor, directory):
     return result
 
 
-def remap_report(descriptor, source, groups, selected, directory):
+def remap_report(descriptor, source, groups, selected, directory, *, original_groups=None):
     original = load_report(descriptor)
+    if original_groups is None or original_groups != original["groups"]:
+        raise CompositionError("Original mailpiece boundaries changed since classification. Reopen Auto Detect and review again.")
     if not isinstance(selected, list) or len(selected) != len(groups):
         raise CompositionError("Missing original-envelope classification mapping.")
     EnvelopePlan(source.pages, EnvelopeSettings(groups=groups))

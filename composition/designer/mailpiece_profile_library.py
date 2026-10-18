@@ -270,9 +270,21 @@ class ProfileLibraryDialog(QDialog):
                     self.primary.addItem({"first_text": "Required first-page marker", "page_number": "Printed page restart"}[name], name)
             self.primary.setCurrentIndex(self.primary.findData(rule["primary"]))
             self.combination.setCurrentIndex(self.combination.findData(rule["config"]["combine"]))
-            lines = [f"Rule: {rule['rule_id']}", f"Primary boundary signal: {rule['primary']}"]
+            def region_text(region):
+                return "Whole page" if region is None else "X / Y / W / H: " + " / ".join(f"{v:g}" for v in region) + " mm"
+            lines = [f"Rule: {rule['name']} · {rule['template_id']}", "Primary: " + self.primary.currentText(),
+                     "Verification: " + self.combination.currentText()]
             for signal in rule["config"]["rules"]:
-                lines.append(str(signal))
+                kind = signal["kind"]
+                if kind == "first_text":
+                    lines.append("First-page text (all markers): " + " + ".join(signal["terms"]))
+                elif kind == "page_number":
+                    lines.append("Printed counter: " + ("Automatic recognition" if signal.get("auto") else signal["pattern"]))
+                else:
+                    lines.append("Identity labels (values are never saved):")
+                    for field in signal["fields"]:
+                        lines.append("  " + field["label"] + " · " + region_text(field.get("region_mm")))
+                lines.append("  " + region_text(signal.get("region_mm")))
             self.rule_detail.setPlainText("\n".join(lines))
         else:
             self.rule_detail.clear()
@@ -285,8 +297,10 @@ class ProfileLibraryDialog(QDialog):
                 "Teach a static first-page feature in the detection preview first (maximum 16 rule sets)."
             )
             return
+        used = {rule["template_id"] for rule in self.value["rule_sets"]}
+        template_id = next(f"TYPE_{index:02}" for index in range(1, 18) if f"TYPE_{index:02}" not in used)
         self.value["rule_sets"].append(
-            new_rule(f"Document type {len(self.value['rule_sets']) + 1}", self.taught_config)
+            new_rule(f"Document type {len(self.value['rule_sets']) + 1}", self.taught_config, template_id=template_id)
         )
         self.populate_rules()
         self.rules.selectRow(len(self.value["rule_sets"]) - 1)

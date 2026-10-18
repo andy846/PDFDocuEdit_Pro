@@ -282,13 +282,17 @@ def test_i25_type_positions_preserve_existing_group_sheet_eog_semantics(tmp_path
     assert [r["Payload"] for r in actual] == [p["payload"] for p in expected]
 
 
-
 def test_customer_profile_identity_follows_application_and_output_audit(tmp_path):
     from composition.pdf_source.production_profiles import apply_profile, from_spec
+
     spec = sample(tmp_path)
     value = from_spec(spec, name="eMPF approved layout", revision=7)
     applied = apply_profile(spec, value)
-    assert applied.customer_profile == {"profile_id": value["profile_id"], "name": value["name"], "revision": 7}
+    assert applied.customer_profile == {
+        "profile_id": value["profile_id"],
+        "name": value["name"],
+        "revision": 7,
+    }
     detection = scan_pdf(spec.source.path, value["detection_profile"], cache_path=tmp_path / "reused.sqlite")
     applied.settings.groups = detection["detection"]["groups"]
     applied.detection_review = accept_report(detection["detection"], tmp_path / "accepted-new")
@@ -306,3 +310,43 @@ def test_legacy_serialization_does_not_emit_new_empty_schema_fields(tmp_path):
     assert raw["overlay_version"] == 8
     assert "template_ids" not in raw["objects"][0]
     assert "customer_profile" not in raw
+
+
+def test_bounded_parts_preserve_template_routes_and_global_sequences(tmp_path):
+    spec = sample(tmp_path)
+    result = overlay_generate(
+        OverlayJob(spec.to_dict(), str(tmp_path / "parts"), output_policy={"envelopes": 1})
+    )
+    assert result.status == "completed", result.error
+    assert len(result.output_files) == 2
+    for part, template, sequence, pages in zip(
+        result.output_files, ["REGULAR", "REMINDER"], ["000001", "000002"], [4, 2], strict=True
+    ):
+        with fitz.open(part["output_pdf"]) as pdf:
+            assert pdf.page_count == pages
+            assert template in pdf[0].get_text() and sequence in pdf[0].get_text()
+    assert result.expected_barcodes == result.decoded_barcodes == 3
+
+
+def test_customer_profile_preserves_only_workflow_field_declarations(tmp_path):
+    from composition.pdf_source.production_profiles import (
+        apply_profile,
+        export_profile,
+        from_spec,
+        read_profile,
+    )
+
+    spec = sample(tmp_path)
+    spec.external_fields = ["Page_Account"]
+    spec.objects.append(OverlayObject(Element(value="{{Page_Account}}")))
+    spec.validate()
+    value = from_spec(spec, name="eMPF workflow")
+    target = export_profile(tmp_path / "workflow-layout.pdpp", value)
+    loaded = read_profile(target)
+    assert loaded["layout"]["external_fields"] == ["Page_Account"]
+    assert "Page_Account" in target.read_text(encoding="utf-8")
+    current = copy.deepcopy(spec)
+    current.external_fields.append("Envelope_Account")
+    applied = apply_profile(current, loaded)
+    assert applied.external_fields == ["Page_Account", "Envelope_Account"]
+    assert not applied.detection_review.get("accepted")

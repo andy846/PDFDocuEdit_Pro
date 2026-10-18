@@ -55,7 +55,8 @@ def validate_profile(raw):
     layout = raw["layout"]
     if (
         not isinstance(layout, dict)
-        or set(layout) != {"objects", "required_scope"}
+        or not {"objects", "required_scope"} <= set(layout)
+        or set(layout) - {"objects", "required_scope", "external_fields"}
         or not isinstance(layout["objects"], list)
         or len(layout["objects"]) > 200
     ):
@@ -77,13 +78,16 @@ def validate_profile(raw):
         },
         "settings": {"pages_per_envelope": 1},
         "objects": layout["objects"],
+        "external_fields": layout.get("external_fields", []),
         "required_scope": layout["required_scope"],
         "detection_review": {"required": True, "accepted": False, "profile": detection},
     }
     EnvelopeSpec.from_dict(spec)
     if len(json.dumps(raw, ensure_ascii=False).encode("utf-8")) > MAX_BYTES:
         raise CompositionError("Customer production profile exceeds 5 MB.")
-    return copy.deepcopy(raw)
+    value = copy.deepcopy(raw)
+    value["layout"].setdefault("external_fields", [])
+    return value
 
 
 def from_spec(spec, *, name, description="", revision=1, profile_id=None):
@@ -104,7 +108,11 @@ def from_spec(spec, *, name, description="", revision=1, profile_id=None):
             "description": description,
             "revision": revision,
             "detection_profile": detection,
-            "layout": {"objects": spec.to_dict()["objects"], "required_scope": spec.required_scope},
+            "layout": {
+                "objects": spec.to_dict()["objects"],
+                "required_scope": spec.required_scope,
+                "external_fields": list(spec.external_fields),
+            },
         }
     )
 
@@ -179,6 +187,12 @@ def apply_profile(spec, value):
     raw = spec.to_dict()
     raw["overlay_version"] = 9
     raw["customer_profile"] = {key: value[key] for key in ("profile_id", "name", "revision")}
+    declared = value["layout"]["external_fields"]
+    if spec.external_fields and not set(declared) <= set(spec.external_fields):
+        raise CompositionError(
+            "Customer profile requires missing Workflow field declarations. Use a matching extraction mapping."
+        )
+    raw["external_fields"] = list(spec.external_fields or declared)
     raw["objects"] = value["layout"]["objects"]
     raw["required_scope"] = value["layout"]["required_scope"]
     # Recognition rules are reusable; the previous job's acceptance never is.

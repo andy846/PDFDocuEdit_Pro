@@ -161,11 +161,14 @@ def test_mixed_page_geometry_remains_explicitly_rejected(tmp_path):
         api().scan_pdf(source, profile(), cache_path=tmp_path / "index.sqlite")
 
 
-
 def test_restart_without_matching_template_is_unknown_and_review_blocking():
     value = profile("Regular")
-    value["rule_sets"][0]["config"]["rules"].append({"kind": "page_number", "pattern": "Page {CURRENT} of {TOTAL}"})
-    report = api().detect_index(index("Regular Page 1 of 2", "Page 2 of 2", "Unseen Page 1 of 2", "Page 2 of 2"), value)
+    value["rule_sets"][0]["config"]["rules"].append(
+        {"kind": "page_number", "pattern": "Page {CURRENT} of {TOTAL}"}
+    )
+    report = api().detect_index(
+        index("Regular Page 1 of 2", "Page 2 of 2", "Unseen Page 1 of 2", "Page 2 of 2"), value
+    )
     assert report["groups"] == [[1, 2], [3, 4]]
     assert report["classifications"][1]["classification_status"] == "unknown"
     assert not api().can_accept(report)
@@ -181,10 +184,10 @@ def test_all_configured_signals_missing_identity_requires_operator_resolution():
     assert any(f["code"] == "required_signal_missing" and f["blocking"] for f in report["findings"])
 
 
-
 @pytest.mark.parametrize("phase", ["index", "rules"])
 def test_mid_scan_cancel_releases_index_and_never_returns_partial_groups(tmp_path, phase):
     from composition.production.generator import JobCancelled
+
     source = tmp_path / "source.pdf"
     with fitz.open() as pdf:
         for number in range(150):
@@ -194,10 +197,12 @@ def test_mid_scan_cancel_releases_index_and_never_returns_partial_groups(tmp_pat
     if phase == "rules":
         api().scan_pdf(source, profile(), cache_path=cache)
     stopped = False
+
     def progress(done, total, message):
         nonlocal stopped
         if message.startswith("Analyzing text positions" if phase == "index" else "Evaluating"):
             stopped = True
+
     with pytest.raises(JobCancelled):
         api().scan_pdf(source, profile(), cache_path=cache, progress=progress, is_cancelled=lambda: stopped)
     assert cache.exists() == (phase == "rules")
@@ -220,3 +225,13 @@ def test_source_hash_change_cannot_reuse_previous_profile_scan(tmp_path):
         api().scan_pdf(source, profile(), cache_path=cache, expected_sha256=original["source"]["sha256"])
     fresh = api().scan_pdf(source, profile(), cache_path=cache)
     assert fresh["source"]["sha256"] != original["source"]["sha256"]
+
+
+def test_all_signals_valid_identity_does_not_require_manual_override():
+    value = profile("Regular")
+    config = value["rule_sets"][0]["config"]
+    config["combine"] = "all"
+    config["rules"].append({"kind": "document_id", "fields": [{"label": "Account No."}]})
+    result = api().detect_index(index("Regular Account No.: 001"), value)
+    assert api().can_accept(result)
+    assert not any(f["code"] == "required_signal_missing" for f in result["findings"])

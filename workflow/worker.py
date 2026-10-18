@@ -273,7 +273,7 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
             spec.source_link=project.source_link
         report = workflow.node("group").params.get("detection_review")
         if report and report.get("report_version") == 3:
-            spec.detection_review = detection_audit(spec, report, selected=_selected, directory=assets / "classified-designer")
+            spec.detection_review = detection_audit(spec, report, selected=_selected, directory=assets / "classified-designer", original_groups=request["groups"])
         else:
             report = None if external else report
             if report and report.get("source_sha256") != source.sha256:

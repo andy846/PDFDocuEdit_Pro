@@ -292,7 +292,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         for control in self.region:
             control.valueChanged.connect(self.invalidate)
         saved = window.spec.detection_review if window.spec else {}
-        if saved.get("report_version") == 3 and window.spec.settings.groups:
+        if getattr(window, "pending_detection_profile", None):
+            QTimer.singleShot(0, lambda: self.load_classified_review(window.pending_detection_profile, profile_only=True))
+        elif saved.get("report_version") == 3 and window.spec.settings.groups:
             QTimer.singleShot(0, lambda: self.load_classified_review(saved))
         elif saved.get("profile"):
             self.set_collection_profile(saved["profile"])
@@ -650,7 +652,7 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             from composition.pdf_source.classification import classify
             self.record_boundary_edit(classify(self.report, index, chosen), index)
 
-    def load_classified_review(self, descriptor):
+    def load_classified_review(self, descriptor, *, profile_only=False):
         def ready(value):
             report = value["detection"]
             if report.get("source_sha256") != self.context_sha256:
@@ -658,6 +660,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
                 return
             self.set_collection_profile(report["profile"])
             self.source = self.window.spec.to_dict()["source"]
+            if profile_only:
+                self.summary.setText("Workflow boundaries changed. Rules restored; scan and review this PDF again before acceptance.")
+                return
             self.report = report
             self.report["accepted"] = False
             self.show_report()

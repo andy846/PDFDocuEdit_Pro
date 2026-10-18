@@ -214,26 +214,73 @@ def test_workflow_mapping_uses_original_envelope_not_new_ordinal(tmp_path):
     mapped_source = source()
     mapped_source.pages = 1
     mapped_source.sha256 = "b" * 64
-    remapped = m.remap_report(descriptor, mapped_source, [[1, 1]], [2], tmp_path / "new")
+    remapped = m.remap_report(
+        descriptor, mapped_source, [[1, 1]], [2], tmp_path / "new", original_groups=descriptor["groups"]
+    )
     loaded = m.load_report(remapped)
     assert loaded["classifications"][0]["template_id"] == "REMINDER"
     assert loaded["source_sha256"] == "b" * 64
     assert loaded["edits"][-1]["original_source_sha256"] == "a" * 64
     assert loaded["edits"][-1]["selected"] == [2]
     with pytest.raises(CompositionError):
-        m.remap_report(descriptor, mapped_source, [[1, 1]], [1], tmp_path / "bad")
-
+        m.remap_report(
+            descriptor, mapped_source, [[1, 1]], [1], tmp_path / "bad", original_groups=descriptor["groups"]
+        )
 
 
 def test_large_boundary_edit_does_not_rescan_every_classification_per_row():
     class CountedRows(list):
         iterations = 0
+
         def __iter__(self):
             type(self).iterations += 1
             return super().__iter__()
+
     value = detect().detect_index(index(*(["Regular"] * 300)), profile())
     value["classifications"] = CountedRows(value["classifications"])
     CountedRows.iterations = 0
     changed = api().edit_report(value, 1, merge_previous=True)
     assert len(changed["groups"]) == 299 and changed["groups"][0] == [1, 2]
     assert CountedRows.iterations <= 10, "Boundary editing repeatedly scanned all mailpieces"
+
+
+def test_remap_rejects_missing_original_range_proof_after_workflow_edits(tmp_path):
+    m = api()
+    value = detect().detect_index(
+        index("Regular", "Reminder", "Third", "continued"), profile("Regular", "Reminder", "Third")
+    )
+    value["source_sha256"] = "a" * 64
+    accepted = m.accept_report(value, tmp_path / "accepted")
+    derived = source()
+    derived.sha256 = "b" * 64
+    derived.pages = 1
+    # Current Review merge/split: [1-2], [3], [4]. Retained current ordinal 2
+    # comes from old THIRD, while old ordinal 2 was REMINDER (both one page).
+    with pytest.raises(CompositionError, match="original|boundar|classif"):
+        m.remap_report(accepted, derived, [[1, 1]], [2], tmp_path / "wrong-map")
+
+
+def test_remap_rejects_changed_original_ranges_even_when_lengths_match(tmp_path):
+    m = api()
+    value = detect().detect_index(
+        index("Regular", "Reminder", "Third", "continued"), profile("Regular", "Reminder", "Third")
+    )
+    value["source_sha256"] = "a" * 64
+    accepted = m.accept_report(value, tmp_path / "accepted")
+    derived = source()
+    derived.sha256 = "b" * 64
+    derived.pages = 1
+    with pytest.raises(CompositionError, match="original|boundar|classif"):
+        m.remap_report(
+            accepted, derived, [[1, 1]], [2], tmp_path / "wrong-map", original_groups=[[1, 2], [3, 3], [4, 4]]
+        )
+
+
+
+def test_original_range_proof_is_required_even_if_derived_snapshot_matches(tmp_path):
+    from composition.overlay.model import EnvelopeSpec
+    from workflow.engine import detection_audit
+    descriptor = api().accept_report(report(), tmp_path / "accepted")
+    spec = EnvelopeSpec(source(), EnvelopeSettings(groups=descriptor["groups"]), overlay_version=9, detection_review=descriptor)
+    with pytest.raises(CompositionError, match="original|boundar|classif"):
+        detection_audit(spec, descriptor, selected=[1, 2], directory=tmp_path / "mapped", original_groups=[[1, 1], [2, 3]])

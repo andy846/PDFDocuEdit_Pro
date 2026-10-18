@@ -371,16 +371,18 @@ def group(spec,run,*,progress=None,is_cancelled=None):
         run.accepted=False
 
 
-def detection_audit(spec, review=None, *, selected=None, directory=None):
+def detection_audit(spec, review=None, *, selected=None, directory=None, original_groups=None):
     if review and review.get("report_version") == 3:
         import copy
 
         from composition.pdf_source.classification import remap_report, validate_descriptor
+        if selected is not None and original_groups != review["groups"]:
+            raise CompositionError("Original mailpiece boundaries changed; scan and accept the classification again.")
         if review["source_sha256"] == spec.source.sha256 and review["groups"] == spec.settings.groups:
             validate_descriptor(review, spec.source, spec.settings.groups, spec.settings.excluded_pages)
             value = copy.deepcopy(review)
         elif selected is not None and directory is not None:
-            value = remap_report(review, spec.source, spec.settings.groups, selected, directory)
+            value = remap_report(review, spec.source, spec.settings.groups, selected, directory, original_groups=original_groups)
         else:
             raise CompositionError("Classified source/grouping changed without original-envelope provenance. Review again.")
         spec.overlay_version = 9

@@ -158,11 +158,11 @@ def test_split_clears_classification_and_blocks_acceptance(overlay, monkeypatch)
     dialog.reject()
 
 
-
 def test_template_scope_canvas_and_customer_profile_actions(overlay, tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QFileDialog
 
     from tests.composition.test_template_overlay_routing import sample
+
     spec = sample(tmp_path)
     overlay.apply_spec(spec.to_dict())
     overlay.envelope.setValue(2)
@@ -193,9 +193,9 @@ def test_template_scope_canvas_and_customer_profile_actions(overlay, tmp_path, m
     dialog.reject()
 
 
-
 def test_layer_selection_navigates_to_applicable_template(overlay, tmp_path):
     from tests.composition.test_template_overlay_routing import sample
+
     spec = sample(tmp_path)
     overlay.apply_spec(spec.to_dict())
     overlay.envelope.setValue(2)
@@ -204,11 +204,11 @@ def test_layer_selection_navigates_to_applicable_template(overlay, tmp_path):
     assert overlay.canvas.selected_ids() == [spec.objects[0].element.id]
 
 
-
 def test_export_draft_index_preserves_unknown_and_does_not_accept(overlay, tmp_path, monkeypatch):
     import csv
 
     from PyQt6.QtWidgets import QFileDialog
+
     dialog = MailpieceDialog(overlay)
     dialog.show()
     dialog.set_collection_profile(profile())
@@ -226,9 +226,9 @@ def test_export_draft_index_preserves_unknown_and_does_not_accept(overlay, tmp_p
     dialog.reject()
 
 
-
 def test_profile_rule_required_signals_editable_without_reteaching(overlay, tmp_path):
     from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+
     config = profile()["rule_sets"][0]["config"]
     config["rules"].append({"kind": "page_number", "pattern": "Page {CURRENT} of {TOTAL}"})
     manager = ProfileLibraryDialog(overlay, config, root=tmp_path / "library")
@@ -246,7 +246,6 @@ def test_profile_rule_required_signals_editable_without_reteaching(overlay, tmp_
     manager.reject()
 
 
-
 def test_review_history_budget_retains_latest_edit(overlay):
     dialog = MailpieceDialog(overlay)
     latest = ({"groups": [[1, 1]] * 1000, "findings": [], "edits": []}, 7)
@@ -256,9 +255,9 @@ def test_review_history_budget_retains_latest_edit(overlay):
     dialog.reject()
 
 
-
 def test_reinspect_new_source_keeps_rules_and_layouts_but_revokes_acceptance(overlay, tmp_path):
     from tests.composition.test_template_overlay_routing import sample
+
     spec = sample(tmp_path)
     overlay.apply_spec(spec.to_dict())
     other = tmp_path / "new-source.pdf"
@@ -273,3 +272,52 @@ def test_reinspect_new_source_keeps_rules_and_layouts_but_revokes_acceptance(ove
     assert overlay.spec.detection_review["profile"]["profile_id"] == spec.detection_review["profile_id"]
     assert overlay.spec.objects[0].template_ids == ["REGULAR"]
     assert not overlay.actions["generate"].isEnabled()
+
+
+def test_workflow_changed_boundaries_can_reopen_detection_without_old_acceptance(app, tmp_path):
+    from dataclasses import asdict
+
+    from composition.designer.mailpiece_workflow import WorkflowDetectionHost
+    from tests.composition.test_template_overlay_routing import sample
+    from workflow.model import WorkflowRun
+    from workflow.workspace import WorkflowWindow
+
+    spec = sample(tmp_path)
+    owner = WorkflowWindow()
+    owner.show()
+    owner.spec.node("group").params = {
+        "method": "reviewed_detection",
+        "detection_review": spec.detection_review,
+    }
+    owner.run = WorkflowRun(
+        source=spec.source.path, database=str(tmp_path / "unused.sqlite"), groups=[[1, 2], [3, 4]]
+    )
+    dialog = None
+    try:
+        host = WorkflowDetectionHost(owner, asdict(spec.source))
+        dialog = MailpieceDialog(host)
+        dialog.show()
+        wait_until(lambda: dialog.customer_profile is not None and not dialog.scan_worker)
+        assert dialog.report is None and not dialog.apply_button.isEnabled()
+        assert dialog.customer_profile["profile_id"] == spec.detection_review["profile_id"]
+    finally:
+        if dialog:
+            dialog.reject()
+        owner.undo.setClean()
+        owner.close()
+        wait_until(lambda: not owner.workers)
+
+
+def test_library_displays_recognition_rules_as_operator_text(overlay, tmp_path):
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+
+    manager = ProfileLibraryDialog(overlay, profile()["rule_sets"][0]["config"], root=tmp_path / "library")
+    manager.show()
+    wait_until(lambda: not manager.busy)
+    manager.create_profile()
+    manager.add_taught_rule()
+    detail = manager.rule_detail.toPlainText()
+    assert "Regular" in detail and "Whole page" in detail
+    assert "'kind':" not in detail
+    assert manager.value["rule_sets"][0]["template_id"] == "TYPE_01"
+    manager.reject()

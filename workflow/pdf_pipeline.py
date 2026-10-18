@@ -389,7 +389,7 @@ def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_onl
                 composed.settings.duplex=effective.media.get("duplex",False)
             prior_detection = store.metadata().get("mailpiece_review")
             composed.detection_review=detection_audit(composed, json.loads(prior_detection) if prior_detection else None,
-                selected=selected, directory=root/"classified-production")
+                selected=selected, directory=root/"classified-production", original_groups=run.groups)
         composed.validate()
         plan=overlay_plan(composed,is_cancelled=is_cancelled)
         if _review_only:

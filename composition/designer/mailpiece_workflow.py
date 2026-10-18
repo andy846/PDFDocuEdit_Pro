@@ -25,8 +25,14 @@ class WorkflowDetectionHost(QWidget):
         report = owner.spec.node("group").params.get("detection_review")
         if report and owner.run.groups and report.get("source_sha256") == source["sha256"]:
             from workflow.engine import detection_audit
-            self.spec.settings.groups = copy.deepcopy(owner.run.groups)
-            self.spec.detection_review = detection_audit(self.spec, report)
+            if report.get("report_version") == 3 and report.get("groups") != owner.run.groups:
+                # Review edits invalidate old ordinal/type associations. Reuse only
+                # its rule profile, loaded in the shared background worker.
+                self.pending_detection_profile = copy.deepcopy(report)
+                self.spec.detection_review = {"required": True, "accepted": False}
+            else:
+                self.spec.settings.groups = copy.deepcopy(owner.run.groups)
+                self.spec.detection_review = detection_audit(self.spec, report)
 
     @property
     def close_pending(self):

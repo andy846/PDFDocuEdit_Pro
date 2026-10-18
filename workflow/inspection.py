@@ -559,7 +559,7 @@ def _overlay_check(spec, run, current, root, progress, cancelled):
         prior = store.metadata().get("mailpiece_review")
     reviewed = json.loads(prior) if prior else None
     if reviewed and reviewed.get("report_version") == 3:
-        composed.detection_review = detection_audit(composed, reviewed, selected=selected, directory=root / "classified-inspection")
+        composed.detection_review = detection_audit(composed, reviewed, selected=selected, directory=root / "classified-inspection", original_groups=run.groups)
     else:
         composed.detection_review=detection_audit(composed)
         composed.detection_review["edits"].append({"method":"inspection_render_context_not_operator_approval"})
