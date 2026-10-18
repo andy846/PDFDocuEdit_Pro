@@ -19,6 +19,7 @@ class OverlayObject:
     letter_page: int = 1
     control: bool = False
     profile: BarcodeProfile | None = None
+    template_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -34,6 +35,7 @@ class EnvelopeSpec:
     detection_review: dict = field(default_factory=dict)
     source_link: dict = field(default_factory=dict)
     media: dict = field(default_factory=dict)
+    customer_profile: dict = field(default_factory=dict)
 
     @property
     def requires_control_barcode(self) -> bool:
@@ -47,6 +49,21 @@ class EnvelopeSpec:
     @property
     def needs_source_review(self):
         return self.source_link.get("review_required", False)
+
+    @property
+    def template_ids(self):
+        review = self.detection_review
+        if review.get("report_version") == 3:
+            return review.get("template_ids", [])
+        if review.get("profile"):
+            from composition.pdf_source.profile_library import validate_profile
+            profile = validate_profile(review["profile"], for_scan=True)
+            return sorted({r["template_id"] for r in profile["rule_sets"]})
+        return []
+
+    @property
+    def contextual_fields(self):
+        return {"TemplateID"} if self.overlay_version == 9 and self.template_ids else set()
 
     def validate(self):
         from composition.media.model import MediaSpec
@@ -123,11 +140,26 @@ class EnvelopeSpec:
                 raise CompositionError("Invalid detection audit record.") from exc
         if self.required_scope not in SCOPES[:-1]:
             raise CompositionError("Choose a supported required barcode read scope.")
+        if (not isinstance(self.customer_profile, dict) or (self.customer_profile and (
+                self.overlay_version != 9 or set(self.customer_profile) != {"profile_id", "name", "revision"}
+                or not isinstance(self.customer_profile["profile_id"], str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", self.customer_profile["profile_id"])
+                or not isinstance(self.customer_profile["name"], str) or not 1 <= len(self.customer_profile["name"]) <= 120
+                or type(self.customer_profile["revision"]) is not int or not 1 <= self.customer_profile["revision"] <= 1000000))):
+            raise CompositionError("Invalid customer production profile identity.")
+        contextual = self.contextual_fields
+        if contextual & set(self.external_fields):
+            raise CompositionError("TemplateID is reserved for the classified mailpiece; rename the extraction field.")
         template = render_template(self)
-        unknown = required_fields(template)-SYSTEM_FIELDS-set(self.external_fields)-{barcode_field(obj) for obj in self.objects if obj.profile}
+        unknown = required_fields(template)-SYSTEM_FIELDS-contextual-set(self.external_fields)-{barcode_field(obj) for obj in self.objects if obj.profile}
         if unknown:
             raise CompositionError("Unknown overlay fields: " + ", ".join(sorted(unknown)))
         for obj in self.objects:
+            if (not isinstance(obj.template_ids, list) or len(obj.template_ids) > 16
+                    or any(not isinstance(t, str) or t not in self.template_ids for t in obj.template_ids)
+                    or len(set(obj.template_ids)) != len(obj.template_ids)
+                    or (obj.template_ids and self.overlay_version != 9)):
+                raise CompositionError("Overlay TemplateID scope must use a known type in a version 9 profile.")
             page_limit = self.source.pages if self.needs_detection_review else plan.max_source_pages
             if self.needs_source_review:
                 page_limit = max(100, self.source.pages)
@@ -140,7 +172,7 @@ class EnvelopeSpec:
             if obj.element.type in ("code128", "i25", "qr"):
                 if obj.profile is None:
                     raise CompositionError("Barcode objects need a declarative profile.")
-                obj.profile.validate(self.external_fields)
+                obj.profile.validate(set(self.external_fields) | contextual)
                 if obj.profile.preset == INSERTER_I25 and (
                         obj.element.type != "i25" or not obj.control or obj.scope != "front"):
                     raise CompositionError("Inserter I25 must be an I25 control barcode on sheet fronts.")
@@ -148,7 +180,13 @@ class EnvelopeSpec:
                 raise CompositionError("Only barcode objects use barcode profiles.")
 
     def to_dict(self):
-        return asdict(self)
+        value = asdict(self)
+        if self.overlay_version < 9:
+            value.pop("customer_profile", None)
+            for obj in value["objects"]:
+                if not obj["template_ids"]:
+                    obj.pop("template_ids")
+        return value
 
     @classmethod
     def from_dict(cls, raw):
@@ -174,6 +212,10 @@ class EnvelopeSpec:
             if version < 8 and any(obj.get("profile", {}).get("layout_mode") == "fixed"
                                    for obj in data.get("objects", []) if obj.get("profile")):
                 raise CompositionError("Fixed-length barcode layouts require overlay version 8.")
+            if version < 9 and data.get("customer_profile"):
+                raise CompositionError("Customer production profiles require overlay version 9.")
+            if version < 9 and any(obj.get("template_ids") for obj in data.get("objects", [])):
+                raise CompositionError("TemplateID scopes require overlay version 9.")
             if version < 9 and data.get("detection_review", {}).get("report_version") == 3:
                 raise CompositionError("Classified mailpieces require overlay version 9.")
             data["overlay_version"] = 9 if version == 9 else 8

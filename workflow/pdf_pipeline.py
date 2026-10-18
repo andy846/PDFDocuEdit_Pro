@@ -380,6 +380,7 @@ def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_onl
             source=inspect_source(production_source,settings,uniform=True,is_cancelled=is_cancelled)
             composed=EnvelopeSpec(source,settings,objects=project.objects if project else [],
                 required_scope=project.required_scope if project else "all_source",name=spec.name,external_fields=external_fields(spec))
+            composed.customer_profile = dict(project.customer_profile) if project else {}
             media=spec.node("media_assignment")
             from .media_settings import resolve_media_settings
             effective=resolve_media_settings(project.media if project else {},media.params if media else None)

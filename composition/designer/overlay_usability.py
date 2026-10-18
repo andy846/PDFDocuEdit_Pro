@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import QListWidgetItem, QMessageBox
 
 from composition.engine.barcodes import validate_payload
 from composition.media.planner import preview_plan
-from composition.pdf_source.planner import applies
 
 from .overlay_dialogs import SCOPE_LABELS
 
@@ -32,7 +31,7 @@ class OverlayUsability:
     def sync_layers(self):
         objects = self.spec.objects if self.spec else []
         signature = [(obj.element.id, obj.element.type, obj.element.value, obj.scope,
-                      obj.letter_page, obj.control, obj.profile.name if obj.profile else "") for obj in objects]
+                      obj.letter_page, obj.control, obj.profile.name if obj.profile else "", tuple(obj.template_ids)) for obj in objects]
         self.layers.blockSignals(True)
         try:
             if signature != getattr(self, "layer_signature", None):
@@ -44,7 +43,7 @@ class OverlayUsability:
                     suffix = " [Control]" if obj.control else ""
                     item = QListWidgetItem(f"{obj.element.type.upper()}{suffix} · {content[:70]}")
                     item.setData(Qt.ItemDataRole.UserRole, obj.element.id)
-                    item.setToolTip(f"{content}\n{scopes[obj.scope]}\nObject: {obj.element.id}")
+                    item.setToolTip(f"{content}\n{scopes[obj.scope]}\nTypes: {', '.join(obj.template_ids) or 'All'}\nObject: {obj.element.id}")
                     self.layers.addItem(item)
                 self.layers.verticalScrollBar().setValue(scroll)
                 self.layer_signature = signature
@@ -68,16 +67,26 @@ class OverlayUsability:
             self.canvas.select_ids([])
             return
         plan = preview_plan(self.spec)
+        from composition.overlay.renderer import object_applies, template_fields
         current = self.print_page.value()
-        candidates = [current, *[page for page in range(1, plan.settings_for(self.envelope.value()).output_pages_per_envelope + 1) if page != current]]
-        for page in candidates:
-            fields = plan.page(self.envelope.value(), page).fields("preview")
-            if all(applies(obj.scope, fields, obj.letter_page) for obj in chosen):
-                if self.preview_only.isChecked():
-                    self.preview_only.setChecked(False)
-                self.print_page.setValue(page)
-                self.canvas.select_ids([obj.element.id for obj in chosen])
-                return
+        envelopes = [self.envelope.value()]
+        if any(obj.template_ids for obj in chosen):
+            mapping = self.spec.detection_review.get("template_map", [])
+            envelopes.extend(i for i, template in enumerate(mapping, 1) if i not in envelopes
+                             and all(not obj.template_ids or template in obj.template_ids for obj in chosen))
+        for envelope in envelopes:
+            maximum = plan.settings_for(envelope).output_pages_per_envelope
+            candidates = [min(current, maximum), *[page for page in range(1, maximum + 1) if page != min(current, maximum)]]
+            for number in candidates:
+                page = plan.page(envelope, number)
+                fields = {**page.fields("preview"), **template_fields(self.spec, page)}
+                if all(object_applies(obj, fields) for obj in chosen):
+                    if self.preview_only.isChecked():
+                        self.preview_only.setChecked(False)
+                    self.envelope.setValue(envelope)
+                    self.print_page.setValue(number)
+                    self.canvas.select_ids([obj.element.id for obj in chosen])
+                    return
         if self.spec.needs_source_review and len(chosen) == 1:
             answer = QMessageBox.question(self, "Review object page scope",
                 "This object's page scope is unavailable in the updated PDF.\n"
@@ -96,12 +105,13 @@ class OverlayUsability:
         if not obj or not obj.profile:
             return
         try:
-            fields = preview_plan(self.spec).page(
-                self.envelope.value(), self.print_page.value()).fields("preview")
+            from composition.overlay.renderer import page_values
+            page = preview_plan(self.spec).page(self.envelope.value(), self.print_page.value())
+            fields = page_values(self.spec, page, "preview")
             payload = obj.profile.payload(fields)
             validate_payload(obj.element.type, payload)
             text = f"Payload: {payload}\n{len(payload)} characters · {obj.profile.name}"
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             text = "Payload needs attention: " + str(exc)
         self.payload_summary.setText(text)
         self.payload_summary.setToolTip(text)

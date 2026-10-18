@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from dataclasses import asdict
 
-from PyQt6.QtWidgets import QDialog, QInputDialog
+from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog
 
 from composition.engine.barcode_profiles import INSERTER_I25
 from composition.media.planner import preview_plan
@@ -20,6 +20,45 @@ from .overlay_usability import OverlayUsability
 
 
 class OverlayActions(OverlayUsability, OverlayFiles):
+    def save_customer_profile(self):
+        if not self.spec or self.active_worker or self.font_token or self.draft_error:
+            return
+        name, ok = QInputDialog.getText(self, "Save customer production profile", "Profile name (recognition rules and overlay objects only)", text=self.spec.detection_review.get("profile_name", "Customer profile"))
+        if not ok:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save customer production profile", "", "Customer production profile (*.pdpp)")
+        if path:
+            self.worker({"task": "customer_profile_export", "project": self.spec.to_dict(), "path": path, "name": name},
+                        lambda value: self.preview_status.setText("Customer profile saved: " + value["path"]), active=True)
+
+    def open_customer_profile(self):
+        if not self.spec or self.active_worker or self.font_token or self.draft_error:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open customer production profile", "", "Customer production profile (*.pdpp)")
+        if not path:
+            return
+        before = self.spec.to_dict()
+        results = []
+        worker = self.worker({"task": "customer_profile_apply", "project": before, "path": path}, results.append, active=True)
+        def ended():
+            if not self.close_pending and results:
+                if self.spec.to_dict() != before:
+                    self.error("The project changed while loading the profile. Open it again.")
+                    return
+                if self.commit(results[-1]["project"], "Apply customer production profile (rescan required)"):
+                    self.preview_status.setText("Profile applied. Open Auto Detect, scan this PDF and explicitly review its new boundaries.")
+        if worker:
+            worker.ended.connect(ended)
+
+    def template_scope_edited(self, *_):
+        if not self.spec or self.active_worker or self.font_token or self.draft_error or len(self.canvas.selected_ids()) != 1:
+            return
+        raw = self.spec.to_dict()
+        item = next(o for o in raw["objects"] if o["element"]["id"] == self.canvas.selected_ids()[0])
+        item["template_ids"] = self.template_scope.currentData() or []
+        if not self.commit(raw, "Change overlay document type"):
+            self.selection_changed()
+
     def selection_changed(self, *args):
         ids = self.canvas.selected_ids()
         if hasattr(self, "batch_editor") and not self.batch_editor.selection(ids):
@@ -37,6 +76,17 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         for control in (self.scope, self.control, self.letter_page):
             control.blockSignals(True)
         obj = selected[0] if len(selected) == 1 else None
+        self.template_scope.blockSignals(True)
+        self.template_scope.clear()
+        self.template_scope.addItem("All document types", [])
+        if self.spec:
+            for template_id in self.spec.template_ids:
+                self.template_scope.addItem(template_id, [template_id])
+        if obj and len(obj.template_ids) > 1:
+            self.template_scope.addItem(", ".join(obj.template_ids), obj.template_ids)
+        self.template_scope.setCurrentIndex(max(0, self.template_scope.findData(obj.template_ids if obj else [])))
+        self.template_scope.blockSignals(False)
+        self.template_scope.setVisible(bool(self.spec and self.spec.contextual_fields))
         if obj:
             self.scope.setCurrentIndex(self.scope.findData(obj.scope))
             self.letter_page.setValue(obj.letter_page)
@@ -45,6 +95,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         for key in ("rotate_cw", "rotate_ccw", "rotate_reset"):
             if key in self.actions:
                 self.actions[key].setEnabled(bool(selected) and editable)
+        self.template_scope.setEnabled(bool(obj and editable and self.spec.contextual_fields))
         self.scope.setEnabled(obj is not None and editable)
         self.letter_page.setEnabled(bool(obj and obj.scope == "letter_page" and editable))
         self.control.setEnabled(bool(obj and obj.profile and editable))
@@ -152,7 +203,7 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         self.commit(raw, "Add overlay "+kind, [element.id])
 
     def insert_field(self):
-        name, ok = QInputDialog.getItem(self, "Insert system field", "Field", sorted(SYSTEM_FIELDS | set(self.spec.external_fields)), 0, False)
+        name, ok = QInputDialog.getItem(self, "Insert system field", "Field", sorted(SYSTEM_FIELDS | self.spec.contextual_fields | set(self.spec.external_fields)), 0, False)
         if ok:
             self.properties.content.insertPlainText("{{"+name+"}}")
 
@@ -166,15 +217,18 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         if not obj.profile:
             return
         plan = preview_plan(self.spec)
-        fields = plan.page(self.envelope.value(), self.print_page.value()).fields("preview")
-        first = next((page for page in plan.pages() if applies(obj.scope, page.fields("preview"), obj.letter_page)), None)
+        from composition.overlay.renderer import object_applies, template_fields
+        def sample_fields(page):
+            return {**page.fields("preview"), **template_fields(self.spec, page)}
+        fields = sample_fields(plan.page(self.envelope.value(), self.print_page.value()))
+        first = next((page for page in plan.pages() if object_applies(obj, sample_fields(page))), None)
         last = next((plan.page(env, p) for env in range(plan.envelopes, 0, -1)
                      for p in range(plan.settings_for(env).output_pages_per_envelope, 0, -1)
-                     if applies(obj.scope, plan.page(env, p).fields("preview"), obj.letter_page)), None)
+                     if object_applies(obj, sample_fields(plan.page(env, p)))), None)
         if not first or not last:
             self.error("This barcode has no applicable page in the reviewed mailpieces.")
             return
-        samples = [("First applicable mark", first.fields("preview")), ("Last applicable mark", last.fields("preview"))]
+        samples = [("First applicable mark", sample_fields(first)), ("Last applicable mark", sample_fields(last))]
         data_loaded = False
         if self.spec.external_fields:
             fields.update(dict.fromkeys(self.spec.external_fields,""))
@@ -215,10 +269,10 @@ class OverlayActions(OverlayUsability, OverlayFiles):
         def context(sample, system):
             typed = {**system, "JobId": "00000000-000000-00000000"}
             return {**sample, **system, CONTEXT_KEY: BarcodeContext(
-                data={name: sample.get(name, "") for name in self.spec.external_fields},
+                data={name: sample.get(name, "") for name in set(self.spec.external_fields) | self.spec.contextual_fields},
                 system=typed, data_loaded=data_loaded)}
-        fields = context(fields, plan.page(self.envelope.value(), self.print_page.value()).fields("preview"))
-        samples = [(label, context(sample, page.fields("preview")))
+        fields = context(fields, sample_fields(plan.page(self.envelope.value(), self.print_page.value())))
+        samples = [(label, context(sample, sample_fields(page)))
                    for (label, sample), page in zip(samples, (first, last), strict=True)]
         dialog = BarcodeSetupDialog(obj.profile, fields, self, symbology=obj.element.type, samples=samples, qr_error=obj.element.qr_error,
             duplex=plan.settings.duplex, printing_locked=bool(self.spec.media.get("enabled")),
@@ -229,15 +283,15 @@ class OverlayActions(OverlayUsability, OverlayFiles):
             from composition.overlay.model import EnvelopeSpec
             planned = preview_plan(EnvelopeSpec.from_dict(raw))
             scope = "front" if dialog.preset.currentData() == INSERTER_I25 else obj.scope
-            initial = next((p for p in planned.pages() if applies(scope, p.fields("preview"), obj.letter_page)), None)
+            initial = next((p for p in planned.pages() if (not obj.template_ids or sample_fields(p).get("TemplateID") in obj.template_ids) and applies(scope, sample_fields(p), obj.letter_page)), None)
             final = next((planned.page(env, p) for env in range(planned.envelopes, 0, -1)
                           for p in range(planned.settings_for(env).output_pages_per_envelope, 0, -1)
-                          if applies(scope, planned.page(env, p).fields("preview"), obj.letter_page)), None)
+                          if (not obj.template_ids or sample_fields(planned.page(env, p)).get("TemplateID") in obj.template_ids) and applies(scope, sample_fields(planned.page(env, p)), obj.letter_page)), None)
             if initial and final:
-                dialog.samples = [("First applicable mark", context(samples[0][1], initial.fields("preview"))),
-                                  ("Last applicable mark", context(samples[1][1], final.fields("preview")))]
-            return context(fields, planned.page(self.envelope.value(), min(self.print_page.value(),
-                     planned.settings_for(self.envelope.value()).output_pages_per_envelope)).fields("preview"))
+                dialog.samples = [("First applicable mark", context(samples[0][1], sample_fields(initial))),
+                                  ("Last applicable mark", context(samples[1][1], sample_fields(final)))]
+            return context(fields, sample_fields(planned.page(self.envelope.value(), min(self.print_page.value(),
+                     planned.settings_for(self.envelope.value()).output_pages_per_envelope))))
         dialog.preview_context = preview_context
         dialog.refresh()
         if dialog.exec() == QDialog.DialogCode.Accepted:

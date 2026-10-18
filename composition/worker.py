@@ -138,6 +138,20 @@ def dispatch(request: dict, *, session=None) -> dict:
             image.unlink(missing_ok=True)
             raise CompositionError("Source changed during preview.")
         return {"image": str(image), "geometry": geom}
+    if task in ("customer_profile_export", "customer_profile_apply"):
+        from composition.overlay.model import EnvelopeSpec
+        from composition.pdf_source.production_profiles import (
+            apply_profile,
+            export_profile,
+            from_spec,
+            read_profile,
+        )
+        project = EnvelopeSpec.from_dict(request["project"])
+        if task == "customer_profile_export":
+            value = from_spec(project, name=request["name"])
+            return {"path": str(export_profile(request["path"], value))}
+        value = read_profile(request["path"])
+        return {"project": apply_profile(project, value).to_dict()}
     if task == "mailpiece_library":
         from composition.pdf_source.profile_library import ProfileLibrary, export_profile, read_profile
         library = ProfileLibrary(request["root"])
@@ -161,6 +175,9 @@ def dispatch(request: dict, *, session=None) -> dict:
         from composition.pdf_source.multi_detection import scan_pdf
         return scan_pdf(request["source"], request["profile"], cache_path=request["cache"],
                         expected_sha256=request.get("expected_sha256"), progress=progress, is_cancelled=cancelled)
+    if task == "mailpiece_index_export":
+        from composition.pdf_source.classification import export_index
+        return {"path": str(export_index(request["report"], request["path"], is_cancelled=cancelled))}
     if task == "mailpiece_review_load":
         from composition.pdf_source.classification import load_report
         return {"detection": load_report(request["descriptor"])}
@@ -208,8 +225,16 @@ def dispatch(request: dict, *, session=None) -> dict:
 
         from composition.pdf_source.model import EnvelopeSettings
         from composition.pdf_source.source import inspect_source
-        return asdict(inspect_source(request["source"], EnvelopeSettings(**request["settings"]),
+        info = asdict(inspect_source(request["source"], EnvelopeSettings(**request["settings"]),
                                      progress=progress, is_cancelled=cancelled, uniform=request.get("uniform", False)))
+        previous = request.get("detection_review", {})
+        if previous.get("report_version") == 3:
+            from composition.pdf_source.classification import load_report
+            info["detection_profile"] = load_report(previous)["profile"]
+        elif previous.get("profile"):
+            from composition.pdf_source.profile_library import validate_profile
+            info["detection_profile"] = validate_profile(previous["profile"], for_scan=True)
+        return info
     if task == "overlay_preview":
         import fitz
 

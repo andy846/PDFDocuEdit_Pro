@@ -223,6 +223,7 @@ def execute(spec, run, directory, *, until="review", progress=None, is_cancelled
                 composed=EnvelopeSpec(source,settings,objects=project.objects if project else [],
                                       required_scope=project.required_scope if project else "all_source",
                                       name=spec.name,external_fields=external_fields(spec))
+                composed.customer_profile = dict(project.customer_profile) if project else {}
                 composed.detection_review=detection_audit(composed)
                 with ExtractionStore(run.database) as store:
                     if store.metadata()["sha256"]!=source.sha256:

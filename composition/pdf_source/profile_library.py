@@ -173,7 +173,8 @@ class ProfileLibrary:
                 break
             try:
                 value = self.read(folder.name)
-                entries.append(value)
+                entries.append({key: value[key] for key in ("profile_id", "name", "description", "revision")}
+                               | {"rule_count": len(value["rule_sets"])})
             except (OSError, ValueError, CompositionError) as exc:
                 errors.append(f"{folder.name}: {exc}")
         entries.sort(key=lambda item: item["name"].casefold())
@@ -219,6 +220,11 @@ class ProfileLibrary:
                     "Imported profile conflicts with an existing revision. Duplicate it first."
                 )
             return value
+        paths = self._files(value["profile_id"])
+        if not paths and len(self.list()["entries"]) >= MAX_PROFILES:
+            raise CompositionError("Library profile limit reached.")
+        if len(paths) >= MAX_REVISIONS:
+            raise CompositionError("Profile revision limit reached.")
         # Imported revision numbers are preserved, including historical snapshots.
         with atomic_output(target, overwrite=False) as temporary:
             temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")

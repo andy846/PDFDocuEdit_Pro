@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -33,7 +34,7 @@ from PyQt6.QtWidgets import (
 from composition.media.planner import preview_plan
 from composition.overlay.geometry import validate_changed_geometry
 from composition.overlay.model import EnvelopeSpec
-from composition.pdf_source.planner import SYSTEM_FIELDS, applies
+from composition.pdf_source.planner import SYSTEM_FIELDS
 from composition.template.model import MM_TO_PT, Template
 from ui.combo_popup import WideComboBox
 from ui.icons import icon
@@ -147,6 +148,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.actions["detect"].setText("Auto Detect Mailpieces…")
         self.actions["detect"].setIconText("Auto Detect")
         toolbar.widgetForAction(self.actions["detect"]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        action("customer_open", "Open customer production profile…", self.open_customer_profile, "&File", symbol="folder-open")
+        action("customer_save", "Save customer production profile…", self.save_customer_profile, "&File", symbol="save")
         action("reinspect", "Reinspect / locate source PDF…", lambda: self.choose_source(replace=True), "&File")
         action("close", "Close overlay designer", self.close, "&File", "Ctrl+W", "x")
         for name in ("undo", "redo"):
@@ -333,6 +336,12 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.control.toggled.connect(self.scope_edited)
         self.profile_button = QPushButton("Configure barcode…")
         self.profile_button.clicked.connect(self.edit_profile)
+        self.template_scope = WideComboBox()
+        self.template_scope.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.template_scope.addItem("All document types", [])
+        self.template_scope.currentIndexChanged.connect(self.template_scope_edited)
+        self.template_scope.setToolTip("Reuse the existing object on every type, or only on one detected TemplateID. Sequence and sheet numbering stay global.")
+        scope_form.addRow("Document type", self.template_scope)
         scope_form.addRow("Apply to", self.scope)
         scope_form.addRow("Letter page", self.letter_page)
         scope_form.addRow(self.control)
@@ -422,8 +431,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
     def busy(self):
         locked = bool(self.active_worker or self.font_token or getattr(self,"batch_pending",False) or getattr(self,"workflow_binding",False))
         valid = self.spec is not None and not self.draft_error
-        for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate", "media"):
+        for name in ("source", "open", "save", "save_as", "grouping", "detect", "reinspect", "insert_text", "insert_code128", "insert_i25", "insert_qr", "generate", "media", "customer_open", "customer_save"):
             self.actions[name].setEnabled(not locked and (valid or name in ("source", "open")))
+        self.actions["customer_save"].setEnabled(bool(valid and not locked and self.spec.template_ids))
         if self.spec and self.spec.needs_detection_review:
             self.actions["generate"].setEnabled(False)
         if self.spec and self.spec.needs_source_review:
@@ -455,7 +465,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.envelope.setEnabled(not self.draft_error and not locked)
         self.print_page.setEnabled(not self.draft_error and not locked)
         if locked:
-            for control in (self.scope, self.control, self.letter_page, self.profile_button):
+            for control in (self.scope, self.control, self.letter_page, self.profile_button, self.template_scope):
                 control.setEnabled(False)
         elif not self.draft_error:
             self.selection_changed()
@@ -504,7 +514,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
             return False
         self.spec = candidate
         self.fields.clear()
-        self.fields.addItems(sorted(SYSTEM_FIELDS | set(self.spec.external_fields)))
+        self.fields.addItems(sorted(SYSTEM_FIELDS | self.spec.contextual_fields | set(self.spec.external_fields)))
         self.filter_system_fields(self.field_filter.text())
         self.draft_error = ""
         self.properties.revert_content.hide()
@@ -591,7 +601,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
             plan = preview_plan(self.spec)
             self.sync_preview_indices(plan)
             page = plan.page(self.envelope.value(), self.print_page.value())
-            fields = page.fields("preview")
+            from composition.overlay.renderer import template_fields
+            fields = {**page.fields("preview"), **template_fields(self.spec, page)}
             geom = self.spec.source.page_geometry(page)
         except (ValueError, KeyError, TypeError) as exc:
             self.invalidate_preview(str(exc))
@@ -599,7 +610,8 @@ class OverlayWindow(OverlayActions, QMainWindow):
         if editor:
             editor.last_page = (self.envelope.value(), self.print_page.value())
         chosen = self.canvas.selected_ids() if selected is None else selected
-        elements = [copy.deepcopy(obj.element) for obj in self.spec.objects if applies(obj.scope, fields, obj.letter_page)]
+        from composition.overlay.renderer import object_applies
+        elements = [copy.deepcopy(obj.element) for obj in self.spec.objects if object_applies(obj, fields)]
         self.canvas.set_template(
             Template(width_mm=geom["width_pt"]/MM_TO_PT, height_mm=geom["height_pt"]/MM_TO_PT, elements=elements), chosen,
             context=(self.spec.source.path, self.spec.source.sha256,

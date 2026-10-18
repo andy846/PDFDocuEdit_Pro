@@ -50,6 +50,7 @@ class OverlayFiles:
         previous_review = self.spec.detection_review if preserve and self.spec else {}
         pending_detection = bool(previous_review.get("required") and not previous_review.get("accepted"))
         def ready(info):
+            profile = info.pop("detection_profile", None)
             if self.close_pending:
                 return
             requires_scan = detect or pending_detection
@@ -71,8 +72,13 @@ class OverlayFiles:
                     requires_scan = True
                 elif settings.groups:
                     spec.detection_review = self.spec.detection_review
+                if profile and (not same_source or not settings.groups):
+                    requires_scan = True
                 if requires_scan:
+                    spec.settings = replace(spec.settings, pages_per_envelope=1, groups=[], excluded_pages=[])
                     spec.detection_review = {"required": True, "accepted": False, "source_sha256": spec.source.sha256}
+                    if profile:
+                        spec.detection_review["profile"] = profile
                 spec.objects = self.spec.objects
                 spec.required_scope = self.spec.required_scope
                 if not self.commit(spec.to_dict(), "Reinspect PDF / change grouping"):
@@ -90,7 +96,8 @@ class OverlayFiles:
                 QTimer.singleShot(0, self.detect_mailpieces)
         inspection_settings = replace(settings, pages_per_envelope=1, groups=[], excluded_pages=[]) if settings.groups else settings
         self.worker({"task": "overlay_inspect", "source": str(path), "settings": asdict(inspection_settings),
-                     "uniform": detect or pending_detection or bool(settings.groups)}, ready, active=True)
+                     "uniform": detect or pending_detection or bool(settings.groups) or bool(self.spec and self.spec.template_ids),
+                     **({"detection_review": previous_review} if preserve and self.spec and self.spec.template_ids else {})}, ready, active=True)
 
     def detect_mailpieces(self, checked=False):
         if not self.spec or self.active_worker or self.font_token or self.draft_error:

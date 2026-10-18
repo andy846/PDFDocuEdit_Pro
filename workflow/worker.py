@@ -226,6 +226,7 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
         external={}
         source_path=request["source"]
         groups=request["groups"]
+        _selected = None
         if workflow.workflow_version>=3 and any(n.kind in EXTRA_KINDS for n in workflow.nodes):
             import shutil
             import uuid
@@ -261,6 +262,7 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
         spec=EnvelopeSpec(source,cfg,objects=project.objects if project else [],
                           required_scope=project.required_scope if project else "all_source",
                           name=project.name if project else workflow.name,external_fields=external_fields(workflow))
+        spec.customer_profile = dict(project.customer_profile) if project else {}
         media=workflow.node("media_assignment")
         from .media_settings import resolve_media_settings
         effective=resolve_media_settings(project.media if project else {},media.params if media else None)
@@ -269,10 +271,14 @@ def dispatch(request, progress, cancelled, emit_state=None, *, session=None):
             spec.settings.duplex=effective.media.get("duplex",False)
         if project and project.source.sha256==source.sha256:
             spec.source_link=project.source_link
-        report = None if external else workflow.node("group").params.get("detection_review")
-        if report and report.get("source_sha256") != source.sha256:
-            raise CompositionError("Detection source changed. Analyze and review again before opening Designer.")
-        spec.detection_review=detection_audit(spec, report)
+        report = workflow.node("group").params.get("detection_review")
+        if report and report.get("report_version") == 3:
+            spec.detection_review = detection_audit(spec, report, selected=_selected, directory=assets / "classified-designer")
+        else:
+            report = None if external else report
+            if report and report.get("source_sha256") != source.sha256:
+                raise CompositionError("Detection source changed. Analyze and review again before opening Designer.")
+            spec.detection_review=detection_audit(spec, report)
         spec.validate()
         if operation=="bind_overlay":
             return {"spec":spec.to_dict(),**external}

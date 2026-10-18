@@ -222,3 +222,18 @@ def test_workflow_mapping_uses_original_envelope_not_new_ordinal(tmp_path):
     assert loaded["edits"][-1]["selected"] == [2]
     with pytest.raises(CompositionError):
         m.remap_report(descriptor, mapped_source, [[1, 1]], [1], tmp_path / "bad")
+
+
+
+def test_large_boundary_edit_does_not_rescan_every_classification_per_row():
+    class CountedRows(list):
+        iterations = 0
+        def __iter__(self):
+            type(self).iterations += 1
+            return super().__iter__()
+    value = detect().detect_index(index(*(["Regular"] * 300)), profile())
+    value["classifications"] = CountedRows(value["classifications"])
+    CountedRows.iterations = 0
+    changed = api().edit_report(value, 1, merge_previous=True)
+    assert len(changed["groups"]) == 299 and changed["groups"][0] == [1, 2]
+    assert CountedRows.iterations <= 10, "Boundary editing repeatedly scanned all mailpieces"

@@ -159,3 +159,64 @@ def test_mixed_page_geometry_remains_explicitly_rejected(tmp_path):
         pdf.save(source)
     with pytest.raises(CompositionError, match="geometry"):
         api().scan_pdf(source, profile(), cache_path=tmp_path / "index.sqlite")
+
+
+
+def test_restart_without_matching_template_is_unknown_and_review_blocking():
+    value = profile("Regular")
+    value["rule_sets"][0]["config"]["rules"].append({"kind": "page_number", "pattern": "Page {CURRENT} of {TOTAL}"})
+    report = api().detect_index(index("Regular Page 1 of 2", "Page 2 of 2", "Unseen Page 1 of 2", "Page 2 of 2"), value)
+    assert report["groups"] == [[1, 2], [3, 4]]
+    assert report["classifications"][1]["classification_status"] == "unknown"
+    assert not api().can_accept(report)
+
+
+def test_all_configured_signals_missing_identity_requires_operator_resolution():
+    value = profile("Regular")
+    config = value["rule_sets"][0]["config"]
+    config["combine"] = "all"
+    config["rules"].append({"kind": "document_id", "fields": [{"label": "Account No"}]})
+    report = api().detect_index(index("Regular"), value)
+    assert not api().can_accept(report)
+    assert any(f["code"] == "required_signal_missing" and f["blocking"] for f in report["findings"])
+
+
+
+@pytest.mark.parametrize("phase", ["index", "rules"])
+def test_mid_scan_cancel_releases_index_and_never_returns_partial_groups(tmp_path, phase):
+    from composition.production.generator import JobCancelled
+    source = tmp_path / "source.pdf"
+    with fitz.open() as pdf:
+        for number in range(150):
+            pdf.new_page().insert_text((30, 40), "Regular" if number % 3 == 0 else "continued")
+        pdf.save(source)
+    cache = tmp_path / "index.sqlite"
+    if phase == "rules":
+        api().scan_pdf(source, profile(), cache_path=cache)
+    stopped = False
+    def progress(done, total, message):
+        nonlocal stopped
+        if message.startswith("Analyzing text positions" if phase == "index" else "Evaluating"):
+            stopped = True
+    with pytest.raises(JobCancelled):
+        api().scan_pdf(source, profile(), cache_path=cache, progress=progress, is_cancelled=lambda: stopped)
+    assert cache.exists() == (phase == "rules")
+    assert not list(tmp_path.glob("*.sqlite-*"))
+    result = api().scan_pdf(source, profile(), cache_path=cache)
+    assert len(result["detection"]["groups"]) == 50
+
+
+def test_source_hash_change_cannot_reuse_previous_profile_scan(tmp_path):
+    source = tmp_path / "source.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page().insert_text((30, 40), "Regular")
+        pdf.save(source)
+    cache = tmp_path / "index.sqlite"
+    original = api().scan_pdf(source, profile(), cache_path=cache)
+    with fitz.open(source) as pdf:
+        pdf[0].insert_text((30, 100), "Changed")
+        pdf.saveIncr()
+    with pytest.raises(CompositionError, match="changed"):
+        api().scan_pdf(source, profile(), cache_path=cache, expected_sha256=original["source"]["sha256"])
+    fresh = api().scan_pdf(source, profile(), cache_path=cache)
+    assert fresh["source"]["sha256"] != original["source"]["sha256"]

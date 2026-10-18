@@ -80,6 +80,12 @@ def detect_index(index, profile, *, progress=None, is_cancelled=None):
                 )
                 primary_hit = False
             if primary_hit:
+                if item["config"]["combine"] == "all":
+                    missing = (("first_text" in rules and not marker)
+                               or ("page_number" in rules and not (counter and counter[0] == 1 <= counter[1]))
+                               or ("document_id" in rules and (ident is None or issue is not None)))
+                    if missing:
+                        warn(number, "required_signal_missing", "A required corroborating signal is missing or ambiguous; inspect and explicitly resolve before acceptance.", blocking=True, rule_id=key)
                 eligible.append(item)
                 matched.extend(
                     [
@@ -102,7 +108,10 @@ def detect_index(index, profile, *, progress=None, is_cancelled=None):
                 )
             if ident is not None:
                 previous_ids[key] = ident
-        if number == 1 or eligible:
+        unknown_restart = not eligible and any(counter and counter[0] == 1 <= counter[1] for _marker, _ident, _issue, counter in values.values())
+        if unknown_restart:
+            matched.append("page_number")
+        if number == 1 or eligible or unknown_restart:
             if starts and previous_counter and previous_counter[0] != previous_counter[1]:
                 warn(
                     number - 1,
@@ -136,7 +145,7 @@ def detect_index(index, profile, *, progress=None, is_cancelled=None):
                 warn(
                     number,
                     "unmarked_start",
-                    "Source begins without a matching template. Classify before accepting.",
+                    "First page or printed restart has no matching template. Inspect and classify before accepting.",
                 )
             if len(set(matched)) == 1:
                 warn(

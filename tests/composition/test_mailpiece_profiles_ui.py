@@ -156,3 +156,120 @@ def test_split_clears_classification_and_blocks_acceptance(overlay, monkeypatch)
     dialog.acknowledge.setChecked(True)
     assert not dialog.apply_button.isEnabled()
     dialog.reject()
+
+
+
+def test_template_scope_canvas_and_customer_profile_actions(overlay, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog
+
+    from tests.composition.test_template_overlay_routing import sample
+    spec = sample(tmp_path)
+    overlay.apply_spec(spec.to_dict())
+    overlay.envelope.setValue(2)
+    overlay.refresh_canvas()
+    expected = spec.objects[1].element.id
+    assert expected in {e.id for e in overlay.canvas.template.elements}
+    assert spec.objects[0].element.id not in {e.id for e in overlay.canvas.template.elements}
+    overlay.canvas.select_ids([expected])
+    overlay.selection_changed()
+    assert overlay.template_scope.currentData() == ["REMINDER"]
+    overlay.template_scope.setCurrentIndex(overlay.template_scope.findData([]))
+    assert next(o for o in overlay.spec.objects if o.element.id == expected).template_ids == []
+    overlay.undo.undo()
+    assert next(o for o in overlay.spec.objects if o.element.id == expected).template_ids == ["REMINDER"]
+    target = tmp_path / "customer.pdpp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **kw: (str(target), ""))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("eMPF production", True))
+    overlay.save_customer_profile()
+    wait_until(lambda: target.exists() and not overlay.active_worker)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **kw: (str(target), ""))
+    overlay.open_customer_profile()
+    wait_until(lambda: not overlay.active_worker and overlay.spec.needs_detection_review)
+    assert not overlay.spec.settings.groups and not overlay.actions["generate"].isEnabled()
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    assert dialog.customer_profile["name"] == spec.detection_review["profile_name"]
+    assert dialog.report is None
+    dialog.reject()
+
+
+
+def test_layer_selection_navigates_to_applicable_template(overlay, tmp_path):
+    from tests.composition.test_template_overlay_routing import sample
+    spec = sample(tmp_path)
+    overlay.apply_spec(spec.to_dict())
+    overlay.envelope.setValue(2)
+    overlay.select_layer_objects([spec.objects[0].element.id])
+    assert overlay.envelope.value() == 1
+    assert overlay.canvas.selected_ids() == [spec.objects[0].element.id]
+
+
+
+def test_export_draft_index_preserves_unknown_and_does_not_accept(overlay, tmp_path, monkeypatch):
+    import csv
+
+    from PyQt6.QtWidgets import QFileDialog
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.set_collection_profile(profile())
+    dialog.scan()
+    wait_until(lambda: dialog.report is not None and not dialog.scan_worker)
+    path = tmp_path / "index.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **kw: (str(path), ""))
+    dialog.export_index()
+    wait_until(lambda: path.exists() and not overlay.active_worker)
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 2 and rows[0]["TemplateID"] == "" and rows[0]["ReviewStatus"] == "unknown"
+    assert dialog.report["accepted"] is False and not overlay.spec.detection_review
+    assert not dialog.apply_button.isEnabled()
+    dialog.reject()
+
+
+
+def test_profile_rule_required_signals_editable_without_reteaching(overlay, tmp_path):
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+    config = profile()["rule_sets"][0]["config"]
+    config["rules"].append({"kind": "page_number", "pattern": "Page {CURRENT} of {TOTAL}"})
+    manager = ProfileLibraryDialog(overlay, config, root=tmp_path / "library")
+    manager.show()
+    wait_until(lambda: not manager.busy)
+    manager.create_profile()
+    manager.add_taught_rule()
+    manager.combination.setCurrentIndex(manager.combination.findData("all"))
+    manager.primary.setCurrentIndex(manager.primary.findData("page_number"))
+    assert manager.value["rule_sets"][0]["config"]["combine"] == "all"
+    assert manager.value["rule_sets"][0]["primary"] == "page_number"
+    manager.save_revision()
+    wait_until(lambda: not manager.busy)
+    assert manager.use_button.isEnabled()
+    manager.reject()
+
+
+
+def test_review_history_budget_retains_latest_edit(overlay):
+    dialog = MailpieceDialog(overlay)
+    latest = ({"groups": [[1, 1]] * 1000, "findings": [], "edits": []}, 7)
+    history = [copy.deepcopy(latest) for _ in range(20)]
+    dialog.trim_review_history(history)
+    assert 1 <= len(history) <= 8 and history[-1] == latest
+    dialog.reject()
+
+
+
+def test_reinspect_new_source_keeps_rules_and_layouts_but_revokes_acceptance(overlay, tmp_path):
+    from tests.composition.test_template_overlay_routing import sample
+    spec = sample(tmp_path)
+    overlay.apply_spec(spec.to_dict())
+    other = tmp_path / "new-source.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page().insert_text((40, 60), "Regular new month")
+        pdf.new_page().insert_text((40, 60), "Reminder new month")
+        pdf.save(other)
+    overlay.inspect_source(other, EnvelopeSettings(pages_per_envelope=1, duplex=True), preserve=True)
+    wait_until(lambda: not overlay.active_worker)
+    assert overlay.spec.source.sha256 != spec.source.sha256
+    assert overlay.spec.needs_detection_review and not overlay.spec.settings.groups
+    assert overlay.spec.detection_review["profile"]["profile_id"] == spec.detection_review["profile_id"]
+    assert overlay.spec.objects[0].template_ids == ["REGULAR"]
+    assert not overlay.actions["generate"].isEnabled()

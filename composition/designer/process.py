@@ -132,7 +132,13 @@ class Worker(QObject):
     def _finished(self, code, status):
         self.poll.stop()
         self._read()
-        self._read_events()
+        # Periodic reads are bounded. Once the child exits, drain every remaining
+        # chunk before deleting the file, including a multi-MB review result.
+        while self.events_file.exists() and self.events_offset < self.events_file.stat().st_size:
+            before = self.events_offset
+            self._read_events()
+            if self.events_offset == before:
+                break
         self._stderr()
         if not self.delivered:
             self.delivered = True

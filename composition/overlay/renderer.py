@@ -23,13 +23,25 @@ class ScopedPlan(ElementPlan):
         self.obj = obj
 
     def resolve(self, record, *, design=False):
-        if not applies(self.obj.scope, record, self.obj.letter_page):
+        if not object_applies(self.obj, record):
             return Selection(False)
         return super().resolve(record, design=design)
 
 
+def object_applies(obj, fields):
+    return (not obj.template_ids or fields.get("TemplateID") in obj.template_ids) and applies(obj.scope, fields, obj.letter_page)
+
+
+def template_fields(spec, plan):
+    if spec.contextual_fields:
+        mapping = spec.detection_review.get("template_map", [])
+        return {"TemplateID": mapping[plan.envelope - 1] if mapping else ""}
+    return {}
+
+
 def page_values(spec, plan, job_id, external_values=None):
     fields = plan.fields(job_id)
+    fields.update(template_fields(spec, plan))
     system = dict(fields)
     if job_id == "preview":
         system["JobId"] = "00000000-000000-00000000"
@@ -40,14 +52,16 @@ def page_values(spec, plan, job_id, external_values=None):
             raise CompositionError("Workflow values do not match the declared extraction fields.")
         fields.update(values)
     from composition.engine.generic_layout import CONTEXT_KEY, BarcodeContext
-    fields[CONTEXT_KEY] = BarcodeContext(data=values, system=system)
+    # TemplateID is contextual data in fixed-length generic layouts; the global
+    # system namespace stays compatible with legacy extraction fields.
+    fields[CONTEXT_KEY] = BarcodeContext(data={**values, **template_fields(spec, plan)}, system=system)
     for obj in spec.objects:
         if obj.profile:
             try:
                 from composition.engine.rules import CompiledGroup
                 visible = (not obj.element.rules.visible_when or CompiledGroup(obj.element.rules.visible_when).matches(fields))
                 fields[barcode_field(obj)] = (obj.profile.payload(fields)
-                                              if applies(obj.scope, fields, obj.letter_page) and visible else "")
+                                              if object_applies(obj, fields) and visible else "")
             except (ValueError, KeyError) as exc:
                 raise CompositionError(f"Envelope {plan.envelope}, source page {plan.source_page}, "
                     f"output page {plan.output_page}, object {obj.element.id}: {exc}") from exc

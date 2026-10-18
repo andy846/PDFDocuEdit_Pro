@@ -537,13 +537,14 @@ def _overlay_check(spec, run, current, root, progress, cancelled):
     project = load_overlay(overlay.params["path"]) if overlay and overlay.params.get("path") else None
     if overlay and not project:
         raise CompositionError("Choose an overlay project, or remove the optional Overlay node.")
-    _, source_path, groups, _ = production_view(spec, run, root, progress=progress, is_cancelled=cancelled, prepared=current)
+    _, source_path, groups, selected = production_view(spec, run, root, progress=progress, is_cancelled=cancelled, prepared=current)
     settings = copy.deepcopy(project.settings) if project else EnvelopeSettings(pages_per_envelope=1)
     settings.groups, settings.excluded_pages = groups, []
     source = inspect_source(source_path, settings, uniform=True, progress=progress, is_cancelled=cancelled)
     composed = EnvelopeSpec(source, settings, objects=project.objects if project else [],
                             required_scope=project.required_scope if project else "all_source", external_fields=external_fields(spec),
                             media={})
+    composed.customer_profile = dict(project.customer_profile) if project else {}
     from .media_settings import resolve_media_settings
     media_node=spec.node("media_assignment")
     effective=resolve_media_settings(project.media if project else {},media_node.params if media_node else None)
@@ -553,8 +554,15 @@ def _overlay_check(spec, run, current, root, progress, cancelled):
     # Renderer geometry requires a self-consistent boundary audit. This belongs
     # only to the scratch render context: neither WorkflowRun nor BatchJob is
     # accepted/approved, and this operation has no production/publication path.
-    composed.detection_review=detection_audit(composed)
-    composed.detection_review["edits"].append({"method":"inspection_render_context_not_operator_approval"})
+    from .extraction import ExtractionStore
+    with ExtractionStore(run.database) as store:
+        prior = store.metadata().get("mailpiece_review")
+    reviewed = json.loads(prior) if prior else None
+    if reviewed and reviewed.get("report_version") == 3:
+        composed.detection_review = detection_audit(composed, reviewed, selected=selected, directory=root / "classified-inspection")
+    else:
+        composed.detection_review=detection_audit(composed)
+        composed.detection_review["edits"].append({"method":"inspection_render_context_not_operator_approval"})
     composed.validate()
     plan = overlay_plan(composed, is_cancelled=cancelled)
     folder = root / "overlay-fonts"

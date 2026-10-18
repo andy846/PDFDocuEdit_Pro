@@ -117,3 +117,26 @@ def test_rule_validation_cannot_retain_unknown_extracted_fields():
     raw["rule_sets"][0]["samples"] = ["actual account"]
     with pytest.raises(CompositionError):
         api().validate_profile(raw)
+
+
+
+def test_import_cannot_bypass_library_capacity(tmp_path, monkeypatch):
+    m = api()
+    monkeypatch.setattr(m, "MAX_PROFILES", 1)
+    lib = m.ProfileLibrary(tmp_path / "library")
+    lib.save(profile())
+    other = profile()
+    portable = m.export_profile(tmp_path / "other.pdmpx", other)
+    with pytest.raises(CompositionError, match="limit"):
+        lib.import_profile(portable)
+    assert len(lib.list()["entries"]) == 1
+
+
+
+def test_library_listing_does_not_transfer_all_rule_payloads(tmp_path):
+    lib = api().ProfileLibrary(tmp_path / "library")
+    saved = lib.save(profile())
+    entry = lib.list()["entries"][0]
+    assert entry["profile_id"] == saved["profile_id"]
+    assert entry["rule_count"] == 1 and "rule_sets" not in entry
+    assert lib.read(entry["profile_id"]) == saved

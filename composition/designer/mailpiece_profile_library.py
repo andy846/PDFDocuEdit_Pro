@@ -8,6 +8,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -71,6 +73,15 @@ class ProfileLibraryDialog(QDialog):
         self.rules.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.rules.horizontalHeader().setStretchLastSection(True)
         self.rules.setMinimumWidth(0)
+        self.primary = QComboBox()
+        self.combination = QComboBox()
+        self.combination.addItem("Primary + optional corroborating signals", "any")
+        self.combination.addItem("Require all configured signals at a start", "all")
+        for control in (self.primary, self.combination):
+            control.setMinimumWidth(0)
+            control.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.primary.currentIndexChanged.connect(self.signal_settings_changed)
+        self.combination.currentIndexChanged.connect(self.signal_settings_changed)
         self.rule_detail = QPlainTextEdit()
         self.rule_detail.setReadOnly(True)
         self.rule_detail.setMaximumHeight(120)
@@ -83,6 +94,8 @@ class ProfileLibraryDialog(QDialog):
             ("Description", self.description),
             ("Revision", self.revision),
             ("Detection rules (maximum 16)", self.rules),
+            ("Primary signal", self.primary),
+            ("Verification", self.combination),
             ("Recognition details", self.rule_detail),
         ):
             form.addRow(label, widget)
@@ -234,16 +247,37 @@ class ProfileLibraryDialog(QDialog):
             self.value["rule_sets"][item.row()][("name", "template_id")[item.column()]] = item.text()
             self.update_use()
 
-    def show_rule(self, *_):
+    def signal_settings_changed(self, *_):
         row = self.rules.currentRow()
         if self.value and 0 <= row < len(self.value["rule_sets"]):
             rule = self.value["rule_sets"][row]
+            if self.primary.currentData():
+                rule["primary"] = self.primary.currentData()
+                self.rules.item(row, 2).setText(rule["primary"])
+            rule["config"]["combine"] = self.combination.currentData()
+            self.update_use()
+
+    def show_rule(self, *_):
+        row = self.rules.currentRow()
+        self.primary.blockSignals(True)
+        self.combination.blockSignals(True)
+        self.primary.clear()
+        if self.value and 0 <= row < len(self.value["rule_sets"]):
+            rule = self.value["rule_sets"][row]
+            kinds = {signal["kind"] for signal in rule["config"]["rules"]}
+            for name in ("first_text", "page_number"):
+                if name in kinds:
+                    self.primary.addItem({"first_text": "Required first-page marker", "page_number": "Printed page restart"}[name], name)
+            self.primary.setCurrentIndex(self.primary.findData(rule["primary"]))
+            self.combination.setCurrentIndex(self.combination.findData(rule["config"]["combine"]))
             lines = [f"Rule: {rule['rule_id']}", f"Primary boundary signal: {rule['primary']}"]
             for signal in rule["config"]["rules"]:
                 lines.append(str(signal))
             self.rule_detail.setPlainText("\n".join(lines))
         else:
             self.rule_detail.clear()
+        self.primary.blockSignals(False)
+        self.combination.blockSignals(False)
 
     def add_taught_rule(self):
         if not self.value or not self.taught_config or len(self.value["rule_sets"]) >= 16:

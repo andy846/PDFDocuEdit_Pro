@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import re
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 
 from composition.production.model import now
@@ -64,6 +65,8 @@ DESCRIPTOR_KEYS = {
     "profile_revision",
     "profile_sha256",
     "classification_asset",
+    "template_ids",
+    "template_map",
 }
 
 
@@ -220,11 +223,13 @@ def edit_report(report, index, *, split_page=None, merge_previous=False):
     for finding in value["findings"]:
         finding.pop("resolution", None)
     old_rows = report["classifications"]
+    old_starts = [row["start_page"] for row in old_rows]
+    old_ends = [row["end_page"] for row in old_rows]
     value["classifications"] = []
     value["evidence"] = []
     prior_evidence = {e["page"]: e for e in report["evidence"]}
     for i, (start, end) in enumerate(value["groups"], 1):
-        originals = [r for r in old_rows if r["start_page"] <= end and r["end_page"] >= start]
+        originals = old_rows[bisect_left(old_ends, start):bisect_right(old_starts, end)]
         row = copy.deepcopy(originals[0])
         row.update(
             envelope_index=i,
@@ -277,6 +282,14 @@ def validate_descriptor(value, source, groups, exclusions):
         or not isinstance(value["profile_name"], str)
     ):
         raise CompositionError("Source, groups or accepted classification changed. Scan and review again.")
+    known = value["template_ids"]
+    mapping = value["template_map"]
+    if (not isinstance(known, list) or not 1 <= len(known) <= MAX_RULES
+            or len(set(known)) != len(known)
+            or any(not isinstance(t, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", t) for t in known)
+            or not isinstance(mapping, list) or len(mapping) != len(groups)
+            or any(not isinstance(t, str) or t not in known for t in mapping)):
+        raise CompositionError("Invalid classified TemplateID mapping.")
     asset = value["classification_asset"]
     if (
         not isinstance(asset, dict)
@@ -301,7 +314,7 @@ def accept_report(report, directory):
             "Classification audit exceeds 32 MB. Export the draft and split the source job."
         )
     digest = hashlib.sha256(payload).hexdigest()
-    target = contained_path(directory, digest + ".mailpieces.json")
+    target = contained_path(directory, digest[:20] + ".mailpieces.json")
     if not target.exists():
         with atomic_output(target, overwrite=False) as temporary:
             temporary.write_bytes(payload)
@@ -322,6 +335,8 @@ def accept_report(report, directory):
         "profile_revision": profile["revision"],
         "profile_sha256": value["profile_sha256"],
         "classification_asset": {"path": str(target), "sha256": digest},
+        "template_ids": sorted({r["template_id"] for r in profile["rule_sets"]}),
+        "template_map": [r["template_id"] for r in value["classifications"]],
     }
 
 
@@ -354,6 +369,8 @@ def load_report(descriptor):
             or descriptor["profile_id"] != profile["profile_id"]
             or descriptor["profile_name"] != profile["name"]
             or descriptor["profile_revision"] != profile["revision"]
+            or descriptor["template_ids"] != sorted({r["template_id"] for r in profile["rule_sets"]})
+            or descriptor["template_map"] != [r["template_id"] for r in report["classifications"]]
         ):
             raise CompositionError("Classification evidence belongs to another source / profile / review.")
         return report
@@ -380,7 +397,7 @@ def copy_asset(descriptor, directory):
     result = copy.deepcopy(descriptor)
     asset = result["classification_asset"]
     source = Path(asset["path"])
-    target = contained_path(directory, asset["sha256"] + ".mailpieces.json")
+    target = contained_path(directory, asset["sha256"][:20] + ".mailpieces.json")
     if not target.exists():
         with atomic_output(target, overwrite=False) as temporary:
             temporary.write_bytes(source.read_bytes())
@@ -437,3 +454,26 @@ def remap_report(descriptor, source, groups, selected, directory):
         }
     )
     return accept_report(value, directory)
+
+
+
+def export_index(report, path, *, is_cancelled=None):
+    """Export review evidence, including unresolved types, without accepting it."""
+    import csv
+
+    from composition.production.generator import _csv_value, check_cancel
+
+    validate_report(report)
+    target = Path(path).with_suffix(".csv")
+    profile = report["profile"]
+    with atomic_output(target) as temporary:
+        with temporary.open("w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["EnvelopeIndex", "StartPage", "EndPage", "PageCount", "TemplateID", "MatchedRuleID", "BoundaryEvidence", "ReviewStatus", "Accepted", "ProfileName", "ProfileRevision", "SourceSHA256"])
+            for row in report["classifications"]:
+                check_cancel(is_cancelled)
+                values = [row["envelope_index"], row["start_page"], row["end_page"], row["page_count"], row["template_id"],
+                          "; ".join(row["rule_ids"]), "; ".join(row["boundary_evidence"]), row["classification_status"],
+                          str(report["accepted"]), profile["name"], profile["revision"], report.get("source_sha256", "")]
+                writer.writerow([_csv_value(value) for value in values])
+    return target

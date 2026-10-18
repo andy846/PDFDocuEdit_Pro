@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -241,7 +242,13 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.classify_button.clicked.connect(self.confirm_classification)
         self.classify_button.setToolTip("Explicitly confirm the selected document type and resolve its conflicting signals after inspecting the source pages.")
         layout.addLayout(edits)
-        layout.addWidget(self.classify_button)
+        classification_actions = QHBoxLayout()
+        classification_actions.addWidget(self.classify_button)
+        self.export_index_button = QPushButton("Export envelope index…")
+        self.export_index_button.setAutoDefault(False)
+        self.export_index_button.clicked.connect(self.export_index)
+        classification_actions.addWidget(self.export_index_button)
+        layout.addLayout(classification_actions)
         self.review_splitter.setSizes([130, 365])
         splitter.addWidget(right)
         splitter.setSizes([300, 560])
@@ -287,6 +294,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         saved = window.spec.detection_review if window.spec else {}
         if saved.get("report_version") == 3 and window.spec.settings.groups:
             QTimer.singleShot(0, lambda: self.load_classified_review(saved))
+        elif saved.get("profile"):
+            self.set_collection_profile(saved["profile"])
+            self.show_source_page(1)
         elif saved and "config" in saved and window.spec.settings.groups:
             self.restore_config(saved["config"])
             self.source = window.spec.to_dict()["source"]
@@ -506,6 +516,8 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.next_warning.setEnabled(bool(self.report and self.model.warnings and not self.scan_worker))
         self.undo_boundary.setEnabled(bool(self.report and self.review_undo and not self.scan_worker))
         self.redo_boundary.setEnabled(bool(self.report and self.review_redo and not self.scan_worker))
+        self.export_index_button.setVisible(bool(self.report and self.report.get("report_version") == 3))
+        self.export_index_button.setEnabled(bool(self.report and not self.scan_worker and not self.window.active_worker))
         self.classify_button.setVisible(bool(self.report and self.report.get("report_version") == 3))
         self.classify_button.setEnabled(bool(selected and not self.scan_worker and not self.window.active_worker))
 
@@ -576,9 +588,21 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         return (copy.deepcopy(self.report["groups"]), copy.deepcopy(self.report["edits"]),
                 self.selected_row())
 
+    def trim_review_history(self, history):
+        def estimated_bytes(entry):
+            if len(entry) == 2:
+                value = entry[0]
+                return 2000 * len(value["groups"]) + 2400 * len(value["findings"]) + 1000 * len(value["edits"])
+            return 100 * len(entry[0]) + 1000 * len(entry[1])
+        # Bound accumulated review copies; retain one most recent reversible edit.
+        while len(history) > 1:
+            if len(history) <= 20 and sum(estimated_bytes(entry) for entry in history) <= 16 * 1024 * 1024:
+                break
+            history.pop(0)
+
     def record_boundary_edit(self, report, row):
         self.review_undo.append(self.boundary_snapshot())
-        self.review_undo = self.review_undo[-20:]
+        self.trim_review_history(self.review_undo)
         self.review_redo.clear()
         self.report = report
         self.show_report(row)
@@ -589,6 +613,7 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         if not self.report or not history or self.scan_worker:
             return
         destination.append(self.boundary_snapshot())
+        self.trim_review_history(destination)
         snapshot = history.pop()
         if len(snapshot) == 2:
             self.report, row = snapshot
@@ -603,6 +628,14 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             from composition.pdf_source.classification import edit_report
             return edit_report(self.report, index, **options)
         return edit_boundary(self.report, index, **options)
+
+    def export_index(self):
+        if not self.report or self.report.get("report_version") != 3 or self.scan_worker or self.window.active_worker:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export source-specific envelope index (not production approval)", "", "Envelope index (*.csv)")
+        if path:
+            self.window.worker({"task": "mailpiece_index_export", "report": copy.deepcopy(self.report), "path": path},
+                               lambda value: self.summary.setText("Envelope index exported: " + value["path"] + " · review acceptance is unchanged."), self.scan_failed, active=True)
 
     def confirm_classification(self):
         if not self.report or self.report.get("report_version") != 3 or self.scan_worker or self.window.active_worker:
