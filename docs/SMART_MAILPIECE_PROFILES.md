@@ -387,3 +387,51 @@ used as evidence of native text appearance. The owner's open customer document/a
 was not restarted or manipulated; save the project and restart through the D-drive
 entry point to load the fix. No packaging, version change or publication occurred.
 Local RED/GREEN, regression and visual evidence: `build/probes/mailpiece-dialog-save/`.
+
+
+## Region/rule profiles — UAT correction 2026-10-19
+
+The previous Save guard incorrectly limited standalone profiles to Auto/Teach v2.
+A successful `region_present` scan uses the existing DetectionConfig v1 and was
+therefore rejected by both the UI and the profile serializer. This was an incomplete
+Save integration, not evidence that the selected region failed to group the PDF.
+
+Save now validates and serializes the **currently selected method** using the same
+`config()` path as Scan: region presence, page restart, identity change, static text,
+separator and combined rules, as well as existing v2 spatial rules. A previous smart
+rule/customer collection or unfinished teaching lesson cannot override a selected
+manual method. Invalid rules are rejected before the file picker.
+
+Standalone `.pdmp` retains `profile_version: 1` and the existing bounded declarative
+config shape; config.version now accepts the already supported DetectionConfig 1
+and 2 validators. Saving manual rules does not extract PDF text. Region-presence profiles
+contain coordinates and rule options, not recipient text, PDF paths, accepted groups,
+manual corrections, acknowledgement or production authorization. User-entered text
+markers/patterns remain declarative settings: operators should use static labels.
+Opening a profile restores its matching method and controls and invalidates previous
+review; the new PDF must be scanned and independently accepted. Saving leaves the
+current source-specific boundary review intact. Smart-only suggestion/failure text
+is hidden for manually selected methods.
+
+Older builds that only accept v2 profiles will reject the newly supported v1 `.pdmp`
+configs; existing v2 profiles remain compatible. Multi-template `.pdmpx` collection
+imports still require v2 spatial rules; use **Open profile** for standalone v1 files.
+Malformed/overlong profile names are rejected before entering UI callbacks.
+No multi-rule resolver, detection engine, profile wrapper version, project format,
+production authorization or public application version changed.
+
+Verification evidence is retained locally under
+`build/probes/mailpiece-region-profile/`. The focused run covers actual synthetic
+PDF scan → Save → Open → rescan with exact boundaries, current-method routing,
+invalid-rule rejection, source-free saved data and the previous teaching regressions.
+No customer PDF was read or modified for this fix. The running owner application
+must be restarted after saving the project to load the corrected code.
+
+Results: full isolated-module regression completed 211 modules: 2,947 passed,
+4 skipped, zero failures/errors. The skips cover three native macOS cases
+(symlink permissions, Keychain, arm64 signing/install) and one host file-symlink
+permission case. The final source additionally passed all 62 tests across four
+profile modules, including the two malformed-name cases added after the full run
+started. No claim of native macOS validation is made. Ruff, source verification and
+whitespace checks passed; native Windows dark/light synthetic previews were visually
+inspected at 200% scaling. The owner application and customer file were untouched.

@@ -11,10 +11,14 @@ from core.io_atomic import atomic_output
 from .detection import DetectionConfig
 
 
-def save_profile(path, config):
+def _validate_profile_config(config):
     config.validate()
-    if config.version != 2:
-        raise CompositionError("Save a spatial detection profile after analysis or teaching.")
+    if not isinstance(config.profile_name, str) or len(config.profile_name) > 120:
+        raise CompositionError("Detection profile name must be text up to 120 characters.")
+
+
+def save_profile(path, config):
+    _validate_profile_config(config)
     target = Path(path).with_suffix(".pdmp")
     with atomic_output(target) as temporary:
         temporary.write_text(json.dumps({"profile_version": 1, "config": asdict(config)}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -30,9 +34,7 @@ def load_profile(path):
         if not isinstance(value, dict) or set(value) != {"profile_version", "config"} or type(value["profile_version"]) is not int or value["profile_version"] != 1:
             raise CompositionError("Unsupported detection profile.")
         config = DetectionConfig(**value["config"])
-        config.validate()
-        if config.version != 2:
-            raise CompositionError("Profile requires spatial detection version 2.")
+        _validate_profile_config(config)
         return asdict(config)
     except (TypeError, KeyError, json.JSONDecodeError) as exc:
         raise CompositionError("Invalid detection profile.") from exc

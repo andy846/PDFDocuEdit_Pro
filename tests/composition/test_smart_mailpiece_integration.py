@@ -424,12 +424,74 @@ def test_image_or_blank_feature_never_saves_an_empty_profile(overlay, monkeypatc
 
 
 
-def test_save_cannot_export_stale_smart_rule_after_method_change(overlay, monkeypatch):
+def test_save_current_method_never_exports_previous_smart_rule(overlay, tmp_path, monkeypatch):
     dialog = MailpieceDialog(overlay)
     dialog.show()
     dialog.smart_config = analyzed(overlay.spec.source.path, overlay.directory / "save-method.sqlite")["detection"]["config"]
     dialog.method.setCurrentIndex(dialog.method.findData("page_number"))
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: pytest.fail("Wrong method exported a previous smart rule"))
+    target = tmp_path / "current-method.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
     dialog.save_profile()
-    assert "Auto analysis" in dialog.summary.text()
+    wait_until(lambda: not overlay.workers)
+    assert target.exists(), dialog.summary.text()
+    saved = load_profile(target)
+    assert saved["version"] == 1
+    assert saved["rules"] == [{"kind": "page_number", "pattern": dialog.number_pattern.text()}]
+    dialog.reject()
+
+
+def test_region_profile_save_reopen_rescan_preserves_rules_not_review(overlay, tmp_path, monkeypatch):
+    original = overlay.spec.to_dict()
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.method.setCurrentIndex(dialog.method.findData("region_present"))
+    dialog.whole.setChecked(False)
+    for control, value in zip(dialog.region, [8, 19, 70, 8], strict=True):
+        control.setValue(value)
+    dialog.scan()
+    wait_until(lambda: dialog.report is not None and not overlay.workers)
+    assert dialog.report["groups"] == [[1, 2], [3, 5], [6, 6]]
+    dialog.report["groups"] = [[1, 5], [6, 6]]  # Operator corrections belong to this PDF only.
+    dialog.acknowledge.setChecked(True)
+    report_before = copy.deepcopy(dialog.report)
+    target = tmp_path / "region.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    dialog.save_profile_button.click()
+    wait_until(lambda: not overlay.workers)
+    assert target.exists(), dialog.summary.text()
+    saved = load_profile(target)
+    assert saved["rules"] == [{"kind": "region_present"}]
+    assert saved["region_mm"] == [8, 19, 70, 8]
+    assert dialog.report == report_before and dialog.acknowledge.isChecked()
+    raw = json.loads(target.read_text(encoding="utf-8"))
+    assert set(raw) == {"profile_version", "config"}
+    assert "source_sha256" not in raw["config"] and "groups" not in raw["config"]
+    assert str(overlay.spec.source.path) not in target.read_text(encoding="utf-8")
+    dialog.reject()
+    reopened = MailpieceDialog(overlay)
+    reopened.show()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(target), ""))
+    reopened.open_profile_button.click()
+    wait_until(lambda: not overlay.workers)
+    assert reopened.method.currentData() == "region_present", reopened.summary.text()
+    assert reopened.report is None and not reopened.acknowledge.isChecked()
+    assert not reopened.apply_button.isEnabled()
+    assert not reopened.suggestion_reason.isVisible()
+    reopened.scan()
+    wait_until(lambda: reopened.report is not None and not overlay.workers)
+    assert reopened.report["groups"] == [[1, 2], [3, 5], [6, 6]]
+    assert overlay.spec.to_dict() == original and overlay.undo.count() == 0
+    reopened.reject()
+
+
+def test_invalid_region_profile_does_not_open_save_picker(overlay, monkeypatch):
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.method.setCurrentIndex(dialog.method.findData("region_present"))
+    dialog.whole.setChecked(True)
+    wait_until(lambda: not overlay.workers)  # Initial page previews are separate from profile saving.
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: pytest.fail("Invalid rule opened Save"))
+    dialog.save_profile()
+    assert "selected search region" in dialog.summary.text()
+    assert not overlay.workers
     dialog.reject()

@@ -144,6 +144,8 @@ class SmartDetectionControls:
 
     def update_smart_controls(self):
         smart = self.method.currentData() == "smart"
+        for control in (self.suggestions, self.suggestion_reason, self.suggestion_examples):
+            self.form.setRowVisible(control, smart)
         for control in self.lesson_controls:
             self.form.setRowVisible(control, smart and self.teaching)
         self.whole.setEnabled(not smart or self.teaching)
@@ -332,24 +334,26 @@ class SmartDetectionControls:
                                 lambda value: self.set_collection_profile(value["profile"]))
             return
         def ready(value):
-            self.method.setCurrentIndex(self.method.findData("smart"))
+            self.clear_collection_profile()
             self.teaching = False
+            self.lesson_dirty = False
+            self.pending_profile_save = False
+            self.smart_config = None
+            self.restore_config(value["config"])
             self.update_method()
-            self.set_suggestions([{"title": value["config"].get("profile_name") or "Loaded profile", "config": value["config"],
-                                   "examples": [1], "reason": "Profile loaded. Scan this PDF and review its new boundaries before applying."}])
+            self.profile_label.setText(value["config"].get("profile_name") or "Loaded profile")
+            self.summary.setText("Profile loaded. Scan this PDF and review its new boundaries before applying.")
         self.run_smart_task({"task": "mailpiece_profile_load", "path": path}, ready)
 
     def save_profile(self):
-        if self.method.currentData() != "smart":
-            self.summary.setText("Choose Auto analysis / detection profile, then analyze or teach a spatial rule before saving.")
-            return
+        smart = self.method.currentData() == "smart"
         if self.scan_worker or self.window.active_worker:
             self.summary.setText("Wait for the current check, or cancel it before saving a profile.")
             return
-        if self.lesson_dirty and (self.teaching or self.taught_marker is not None):
+        if smart and self.lesson_dirty and (self.teaching or self.taught_marker is not None):
             self.teach_scan(save_after=True)
             return
-        if self.customer_profile:
+        if smart and self.customer_profile:
             from core.resources import data_dir
             path, _ = QFileDialog.getSaveFileName(self, "Export detection profile", "", "Customer detection profile (*.pdmpx)")
             if path:
@@ -359,13 +363,18 @@ class SmartDetectionControls:
                                    lambda value: self.summary.setText("Profile exported: " + value["path"]),
                                    self.scan_failed)
             return
-        if not self.smart_config:
+        if smart and not self.smart_config:
             self.summary.setText("Choose Analyze PDF or Teach a feature first. For teaching, draw a static text heading; Save profile tests it before saving. QR/image matching is not supported.")
+            return
+        try:
+            # Resolve the current method, never a previous smart rule or scan result.
+            config = asdict(self.config())
+        except ValueError as exc:
+            self.summary.setText(str(exc))
             return
         path, _ = QFileDialog.getSaveFileName(self, "Save mailpiece profile", "", "Mailpiece profiles (*.pdmp)")
         if path:
             # Saving configuration must not discard the current boundary review.
-            config = copy.deepcopy(self.smart_config)
             config["profile_name"] = Path(path).stem[:120]
             self.window.worker({"task": "mailpiece_profile_save", "path": path, "config": config},
                                lambda value: self.summary.setText("Profile saved: " + value["path"]),
