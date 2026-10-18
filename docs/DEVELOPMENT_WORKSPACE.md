@@ -8,6 +8,7 @@
 - Python：`.venv-dev\Scripts\python.exe`（3.12.14）。
 - Python 基底：D 槽既有 `.venv-tools\python\cpython-3.12-windows-x86_64-none`；需要保留。
 - Codex 的 `PDFdocEdit Pro` 專案入口已核對為此 D 槽目錄。
+- `dist`／`release` 保留原有歷史產物；本次最新版開發實測入口是下方的 `scripts\launch_dev.cmd`。
 - C 槽 `print-composition-v3` worktree 暫時保留在 detached HEAD，僅作回退及保留歷史驗收證據。
   不再從該目錄日常開發／啟動，不將它當成最新版本來源。
 
@@ -86,3 +87,69 @@ C 槽保留原有啟動環境與產物，必要時可作診斷。
 
 遷移後的完整回歸、原生 Windows UI、原生工具及啟動入口驗證結果列於本文後續驗收段落。
 合成文件測試不代表實際打印機／插封機或客戶文件驗收。
+
+
+### 2026-10-19 最終驗收結果
+
+| 檢查 | 結果 |
+|---|---|
+| D 槽全新環境完整回歸 | 210 模組；2,930 通過、4 跳過、零失敗；程序退出碼 0 |
+| 原生 Windows Qt 視窗測試 | 18 通過；包含開檔、操作、視窗及正常關閉 |
+| 固定啟動入口測試 | 4 通過；亦已包含在全套回歸，不能重複加總 |
+| 來源契約預檢 | 9 通過；亦包含在全套回歸 |
+| Ruff／來源資源檢查／compileall／差異空白檢查 | 通過 |
+| 文件連結與整理歷史 | 已核對；D/C 兩個原提交均保留在 merge 歷史 |
+| 實際啟動 | 固定入口啟動 D 槽 main.py；D 槽 venv／Python 基底；可見主視窗有回應 |
+| 產品來源與依賴 | 17 組 Git blob/tree 與遷移前 fa13208 完全一致 |
+| main／其他 worktree | 原分支提交保持原狀；C 槽保留 detached 回退 |
+
+四項跳過：macOS bundle 連結／權限、Keychain、arm64 簽署安裝／回退，以及本機
+缺少 file-symlink 權限的一項發布安全測試。沒有刪除或放寬任何測試。
+完整回歸各模組累計約 1,253 秒，包含獨立程序啟動；不是單一功能耗時。
+
+原生工具：qpdf **12.4.2**（完整性 manifest 驗證通過）、Ghostscript **10.05.1**、
+Tesseract **5.5.3.20260724**、VeraPDF **1.30.2** 均已實際啟動驗證，保留 D 槽原檔。
+VeraPDF 使用程式原有的隨附 Java 啟動路徑；直接執行原始 bat 缺少系統 Java PATH
+不代表程式內驗證器失效，亦沒有因此修改系統 PATH 或覆蓋工具。
+
+2,000／8,000 頁合成文件背景掃描、重用索引與 UI heartbeat 測試通過：
+
+| 頁數 | 初次掃描 | 重用索引 | 最大 heartbeat 間隔 |
+|---|---:|---:|---:|
+| 2,000 | 1.6712 秒 | 1.5850 秒 | 0.0822 秒 |
+| 8,000 | 4.4899 秒 | 2.4254 秒 | 0.0973 秒 |
+
+這是合成文件量度，不代表所有客戶文件速度。合成 PDF／PS 產出、Barcode/QC、
+Production Review 授權、Editor、列印及 Visual Workflow 均包含在全套回歸。
+macOS 實機、實際客戶文件及生產打印機／插封機本輪未驗收；沒有進行打包測試或發布。
+
+### 可重現指令
+
+在 D 槽專案內執行：
+
+```powershell
+& .\.venv-dev\Scripts\python.exe -m scripts.regression_suite --group all --output build/probes/d-drive-migration/20261019-030340/full-regression
+& .\.venv-dev\Scripts\python.exe -m ruff check .
+& .\.venv-dev\Scripts\python.exe scripts/verify_source.py
+& .\.venv-dev\Scripts\python.exe -m compileall -q main.py core ui composition workflow scripts/launch_dev.py
+git diff --check
+```
+
+原生 Windows 視窗驗收使用獨立程序，環境 `QT_QPA_PLATFORM=windows`：
+
+```powershell
+$env:QT_QPA_PLATFORM = "windows"
+& .\.venv-dev\Scripts\python.exe -m pytest -q tests/test_ui_smoke.py --junitxml=build/probes/d-drive-migration/20261019-030340/native-windows-ui.xml
+```
+
+一次性獨立覆核沒有 Critical／Important／Minor 問題。啟動入口最初因模組尚未實作
+而出現預期的 RED；第一次 GREEN 有一項測試誤用未解析的 JSON 路徑比較，修正測試
+解析後 4 項全通過。離線安裝曾缺少快取，改由官方 PyPI 安裝既有鎖定版本後，67 個
+套件相容性檢查通過；沒有改變依賴 pin。
+
+本機證據包括 `qa-summary.json`、各模組 JUnit／log、`native-tools.json`、
+`actual-startup.json`、`product-source-proof.json`、`final-review.md` 及遷移 ledger。
+最終提交與乾淨狀態另記錄於本機 `delivery-manifest.json`；Git bundle SHA256 在備份 manifest。
+
+本次新增本機提交：`39e6f1c`（保留整理歷史的 merge）、`de7a9ab`（固定啟動及環境說明），
+另附本驗收報告提交。正式版本維持 **3.0.9**，未推送、未打包、未發布。
