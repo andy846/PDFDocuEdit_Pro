@@ -247,3 +247,97 @@ was not counted as success. Fresh isolated and combined scale reruns passed.
   (out of scope; no dependencies added).
 - Deferred: OCR/image markers, mixed geometry normalization, broad Designer redesign,
   media routing by type, physical machine certification and product release.
+
+## Final QA and delivery status — 2026-10-19
+
+| Gate | Passed | Failed | Skipped | Evidence |
+|---|---:|---:|---:|---|
+| Full regression, 209 fresh-process modules | 2,920 | 0 | 4 | `full-regression/result.json` |
+| Final review repairs, latest results across 15 affected modules | 228 | 0 | 0 | `final-review-regression/` with 7 modules superseded by `final-proof-corrected/` |
+| Consolidated latest result for each of the 209 modules | 2,926 | 0 | 4 | `latest-verified-results.json` |
+| 200% Qt UI run | 14 | 0 | 0 | `final-high-dpi.xml` |
+| Dedicated 2k/8k Qt worker/heartbeat run | 2 | 0 | 0 | `m5-scale-ui-final.xml` |
+
+These rows overlap and **must not be added together**. The full regression started
+before final review repairs; affected modules were rerun afterward. The consolidated
+figure substitutes each affected module's latest result, preserving all original logs.
+All evidence paths are relative to local `build/probes/smart-profile-upgrade/`.
+
+Four environmental skips: macOS bundle symlink/permissions, Keychain, arm64 signed
+install/rollback; one file-symlink publication check lacks host symlink permission.
+No failing tests were removed or weakened. Test-first missing-feature assertions and
+review bug reproductions initially failed as expected before repair. Two targeted
+runner invocations used incorrect Workflow test paths; they ran no tests for those
+paths, were retained as unsuccessful invocations, then corrected with all selected
+modules passing. One earlier unfinished scale process is documented above.
+
+Ruff over the repository, compileall for composition/workflow and `git diff --check`
+passed. Existing commands/Viewer, Production Review authorization, legacy detection,
+media/duplex, barcode/QC, bounded output and Visual Workflow regressions are included
+in the full suite. No authorization module rules were changed. New end-to-end tests
+generated actual synthetic PDF output and decoded QR/I25, including type routing,
+sequence/sheet/EOG semantics, split publication and classification reports.
+
+### Reproduction commands
+
+Use the approved worktree and its existing verified Python environment (Python path:
+`C:/Users/andy8/.codex/worktrees/supabase-private-login/PDFdocuEdit_Pro/.venv/Scripts/python.exe`).
+The following commands assume that executable is called `python`:
+
+```text
+python -m scripts.regression_suite --group all --output build/probes/smart-profile-upgrade/full-regression
+python -m ruff check .
+python -m compileall -q composition workflow
+git diff --check
+```
+
+The final affected regression used `scripts.regression_suite.run` with timeout 240,
+separate subprocesses and the module list below. The first 15-module run was followed
+by a seven-module proof-path rerun after adding the last same-snapshot regression:
+
+```python
+from pathlib import Path
+from scripts.regression_suite import run
+modules = ['tests/composition/test_detection_profile_library.py', 'tests/composition/test_multi_rule_detection.py', 'tests/composition/test_mailpiece_classification.py', 'tests/composition/test_mailpiece_profiles_ui.py', 'tests/composition/test_template_overlay_routing.py', 'tests/composition/test_smart_mailpiece_integration.py', 'tests/composition/test_pdf_overlay_models.py', 'tests/composition/test_pdf_overlay_engine.py', 'tests/test_workflow_core.py', 'tests/test_workflow_data_steps.py', 'tests/test_workflow_inspection.py', 'tests/test_workflow_inspection_ui.py', 'tests/test_workflow_media_settings.py', 'tests/test_workflow_production_review.py', 'tests/test_production_authorization.py']
+raise SystemExit(run(modules, Path("build/probes/smart-profile-upgrade/owner-recheck"), timeout=240))
+```
+
+The additional high-DPI command was equivalent to PowerShell:
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"
+$env:QT_SCALE_FACTOR = "2"
+python -m pytest -q tests/composition/test_mailpiece_profiles_ui.py --junitxml=build/probes/smart-profile-upgrade/final-high-dpi.xml
+```
+
+Scale and isolated benchmark reproduction:
+
+```text
+python -m pytest -q tests/composition/test_multi_profile_scale_ui.py --junitxml=build/probes/smart-profile-upgrade/m5-scale-ui-final.xml
+python build/probes/smart-profile-upgrade/benchmark.py
+```
+
+The benchmark script/fixtures are local one-off probes, not maintained scripts or
+committed customer material. The automated test module is maintained in the repository.
+
+### Local checkpoints
+
+| Commit | Purpose |
+|---|---|
+| `b9975ea` | Separate verified checkpoint of previous updates (91 files); not mixed into this feature |
+| `aeb2377` | Detection profile library |
+| `c3a91be` | Shared-index multi-rule resolution |
+| `f195f70` | Source-bound classification and portable audit assets |
+| `f71ad39` | Shared Designer / Workflow detection UI |
+| `92aab99` | Customer production profiles and type-specific existing Overlay/QC |
+| `47e35bb` | Final review provenance, valid-ID and field-declaration repairs |
+
+A final documentation-only verification checkpoint records this report. All commits
+remain on `codex/deep-search-restore-layout`; no main modification, branch creation,
+remote push, merge, release, installer or public version change was performed.
+Implementation working tree was clean at `47e35bb`; final report/HEAD and clean
+working-tree status are recorded in the local delivery manifest after committing.
+
+**Milestones M0, M1, M2, M3, M4 and M5: Implemented and automated-tested.**
+**Ready for owner review and real eMPF UAT: Yes.**
+This is readiness for owner acceptance, not customer-file or physical machine certification.
