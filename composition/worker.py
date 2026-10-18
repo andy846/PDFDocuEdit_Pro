@@ -338,11 +338,14 @@ def main(argv=None):
         if request.get("events_file"):
             EVENTS_FILE = Path(request["events_file"])
         session = None
+        private = {}
         if request.get("stdin_secrets"):
             from composition.review.authorization import ReviewSession
             private = json.loads(sys.stdin.readline(16384))
             session = ReviewSession.from_private(private["production_session"])
-        result = dispatch(request, session=session)
+        from core.postscript_cache import cache_from_config, production_previews
+        with production_previews(cache_from_config(private.get("ps_preview_cache"))):
+            result = dispatch(request, session=session)
         emit("result", result=result)
         return 0
     except Exception as exc:

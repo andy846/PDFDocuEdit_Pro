@@ -149,6 +149,10 @@ def test_source_preview_bulk_typography_save_and_production(app, tmp_path):
         result = window.last_result
         assert result["status"] == "completed", result["error"]
         assert result["successful_envelopes"] == 20 and result["decoded_barcodes"] == 60
+        dashboard = window.production_review.pane.dashboard.model
+        assert dashboard.status == "generated"
+        assert dashboard.final_barcode.state == "Passed" and dashboard.final_barcode.verified == 60
+        assert window.production_review.pane.dashboard.values["actual_pages"].text() == "60"
         with fitz.open(result["output_pdf"]) as doc:
             assert "Original Source Page 60" in doc[59].get_text()
             assert "000020" in doc[59].get_text()

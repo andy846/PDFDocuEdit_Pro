@@ -329,3 +329,73 @@ def test_spot_image_redaction_cancel_preserves_image_and_mark(viewer, monkeypatc
     assert list(window.engine.document[0].annots(types=[fitz.PDF_ANNOT_REDACT]))
     assert not window._undo_stack.can_undo
     assert not window.engine._requires_sanitized_save
+
+
+@pytest.mark.parametrize("rotation", [90, 270])
+@pytest.mark.parametrize("zoom", [0.5, 2.0])
+def test_rotated_eraser_mouse_drag_apply_undo_redo_and_save(viewer, monkeypatch, tmp_path, rotation, zoom):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    from ui.page_overlay import pdf_rect_to_widget
+
+    window = viewer
+    app = QCoreApplication.instance()
+    source_path = window.engine.original_path
+    source_bytes = source_path.read_bytes()
+    window.show()
+    app.processEvents()
+    window.workspace.canvas.wait_for_renders()
+    with window.engine.mutation_transaction("Fixture text"):
+        window.engine.document[0].insert_text((60, 740), "ERASE_TARGET")
+        window.engine.mark_modified()
+    window._rotate_current(rotation)
+    assert window.engine.document[0].rotation == rotation
+    canvas = window._session.canvas
+    canvas.set_zoom(zoom)
+    app.processEvents()
+    canvas.wait_for_renders()
+    app.processEvents()
+    window._activate_annotation_tool("redact")
+    page = window.engine.document[0]
+    source = fitz.Rect(50, 700, 200, 780)
+    selection = pdf_rect_to_widget(source, page.rect, 1 / zoom, page.rotation_matrix)
+    overlay = canvas._page_views[0].overlay
+    assert overlay._interaction_state.value == "select"
+    before = state(window)
+    undo_count = window._undo_stack.undo_count
+    # Exercise real mouse events -> overlay -> canvas -> viewer transaction.
+    QTest.mousePress(overlay, Qt.MouseButton.LeftButton, pos=selection.topLeft().toPoint())
+    QTest.mouseMove(overlay, selection.bottomRight().toPoint())
+    QTest.mouseRelease(overlay, Qt.MouseButton.LeftButton, pos=selection.bottomRight().toPoint())
+    page = window.engine.document[0]
+    redactions = list(page.annots(types=[fitz.PDF_ANNOT_REDACT]))
+    assert len(redactions) == 1
+    expected = fitz.Rect(
+        overlay.widget_to_pdf(selection.topLeft().toPoint()),
+        overlay.widget_to_pdf(selection.bottomRight().toPoint()),
+    ).normalize()
+    assert tuple(redactions[0].rect) == pytest.approx(tuple(expected), abs=0.01)
+    # Mouse positions are integer logical pixels; allow their rounding only.
+    assert tuple(redactions[0].rect) == pytest.approx(tuple(source), abs=0.5 / zoom + 0.01)
+    marked = state(window)
+    assert window._undo_stack.undo_count == undo_count + 1
+    assert window._undo()
+    assert state(window) == before
+    assert window._redo()
+    assert state(window) == marked
+
+    monkeypatch.setattr(viewer_module.QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    window._apply_redactions()
+    assert "ERASE_TARGET" not in window.engine.document[0].get_text()
+    assert "Sensitive secret text" in window.engine.document[0].get_text()
+    assert window._undo()
+    assert state(window) == marked
+    assert window._redo()
+    output = window.engine.save(tmp_path / "rotated-redacted.pdf")
+    with fitz.open(output) as saved:
+        assert saved[0].rotation == rotation
+        assert tuple(saved[0].mediabox) == (0, 0, 595, 842)
+        assert "ERASE_TARGET" not in saved[0].get_text()
+        assert "Sensitive secret text" in saved[0].get_text()
+    assert source_bytes == source_path.read_bytes()

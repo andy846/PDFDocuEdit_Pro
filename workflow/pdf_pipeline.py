@@ -5,10 +5,8 @@ import copy
 import csv
 import hashlib
 import json
-import shutil
 import sqlite3
-import tempfile
-from contextlib import closing, nullcontext
+from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 
@@ -29,7 +27,7 @@ from core.pdf_io import validate_pdf_file
 from .extraction import ExtractionSpec, ExtractionStore, Region
 from .pipeline import split_names, summary
 from .registry import EXTRA_KINDS
-from .splitter import qpdf_select, split_composed
+from .splitter import qpdf_select
 from .transforms import DataSet, assert_valid, export_audit, snapshot, transform
 
 
@@ -332,20 +330,7 @@ def _produce(spec,run,root,*,progress=None,is_cancelled=None,_review_only=False,
         from composition.review.authorization import require_authorization
         authorization = require_authorization(authorization)
         authorization.require_workflow(spec)
-        reviewed = authorization.contexts[0]
         authorization.require_execution_database(run.database)
-        partitions = reviewed.get("outputs", [])
-        if partitions:
-            from composition.production.journal import final_claim
-            with final_claim(authorization, reviewed["job"]["job_id"], reviewed["job"]["output_dir"], partitions) as journal:
-                if journal.existing is not None:
-                    run.output = copy.deepcopy(journal.existing)
-                    run.statuses[spec.node("output").id] = "Completed"
-                    return run
-                result = _produce_claimed(spec,run,root,progress=progress,is_cancelled=is_cancelled,
-                                          review_context=review_context,authorization=authorization)
-                journal.finish(result.output)
-                return result
     return _produce_claimed(spec,run,root,progress=progress,is_cancelled=is_cancelled,_review_only=_review_only,
                             review_context=review_context,authorization=authorization)
 
@@ -433,7 +418,6 @@ def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_onl
                 end=plan.output_starts[i+1]-1 if i+1<len(plan.output_starts) else plan.output_pages
                 db.execute("INSERT INTO page_spans VALUES(?,?,?)",(i+1,start,end))
             db.commit()
-            partitions=run.data_summary.get("outputs",[])
             def reports(report,result):
                 export_audit(data,report)
                 store.export(report/"extracted-data.csv")
@@ -448,20 +432,9 @@ def _produce_claimed(spec,run,root,*,progress=None,is_cancelled=None,_review_onl
                 (report/"original-boundaries.json").write_text(json.dumps({"groups":run.groups,"selected":selected,
                     "input_envelopes":len(run.groups),"kept":data.count,"excluded":len(run.groups)-data.count},indent=2),encoding="utf-8")
             with ProductionValues(data.path,database,composed) as values:
-                # Keep nested renderer/font caches beneath a short owned Windows path.
-                context=tempfile.TemporaryDirectory(prefix="wf-overlay-") if partitions else nullcontext(folder)
-                with context as generation_root:
-                    job=OverlayJob(**review_context["job"]) if review_context else OverlayJob(composed.to_dict(),str(generation_root))
-                    child = authorization.for_staging("overlay", job, generation_root) if partitions else authorization
-                    job.output_dir=str(generation_root)
-                    result=asdict(generate(job,progress=progress,is_cancelled=is_cancelled,authorization=child,
-                                           external_values=values,additional_reports=reports,_defer_media_ticket=bool(partitions)))
-                    if result["status"]=="completed" and partitions:
-                        result=split_composed(result,data,partitions,folder,0,is_cancelled=is_cancelled,progress=progress,authorization=authorization)
-                    elif partitions and result.get("report_dir"):
-                        report=Path(folder)/(result["job_id"]+"-failed")
-                        shutil.copytree(result["report_dir"],report)
-                        result["report_dir"]=str(report)
+                job=OverlayJob(**review_context["job"])
+                result=asdict(generate(job,progress=progress,is_cancelled=is_cancelled,authorization=authorization,
+                                      external_values=values,additional_reports=reports))
         result.update(original_envelopes=len(run.groups),retained_envelopes=data.count,
             excluded_envelopes=len(run.groups)-data.count,original_source_pages=int(store.metadata()["pages"]))
         run.output=result

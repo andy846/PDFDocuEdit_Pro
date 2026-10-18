@@ -279,6 +279,9 @@ class OverlayWindow(OverlayActions, QMainWindow):
         review_button = QPushButton("Review Production…")
         review_button.clicked.connect(self.generate_pdf)
         prod_layout.addWidget(review_button)
+        from .output_limits import OutputLimitsControl
+        self.output_limits=OutputLimitsControl(self)
+        prod_layout.addWidget(self.output_limits)
         self.production_text = QPlainTextEdit()
         self.production_text.setReadOnly(True)
         prod_layout.addWidget(self.production_text)
@@ -443,6 +446,7 @@ class OverlayWindow(OverlayActions, QMainWindow):
         self.production_activity.set_running(bool(self.active_worker and
             getattr(self.active_worker, "task", "") == "overlay_generate"))
         self.auto_repair.setEnabled(not locked)
+        self.output_limits.setEnabled(not locked)
         control_required = bool(self.spec and self.spec.requires_control_barcode)
         self.required_scope.setEnabled(valid and not locked and control_required)
         self.required_scope.setToolTip(

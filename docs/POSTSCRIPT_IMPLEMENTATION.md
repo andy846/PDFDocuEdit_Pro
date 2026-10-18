@@ -64,3 +64,13 @@ Targeted tests cover fragmented page notifications, silence, callback cleanup, a
 GS conversion / interpretation, timings, media commands, cancellation, split packages,
 light/dark narrow layouts, fixed status while scrolling and 200% scaling. Native printer
 acceptance, full regression, packaging and release retain their existing deferred gates.
+
+
+## Lossless performance repair — 2026-10-17
+
+PS conversion now uses a private, losslessly deduplicated PDF; the production PDF
+is retained unchanged. Cancellation-file polling in DSC data is bounded rather
+than performed for every ASCII line, with entry/page/exit checks retained. DPI,
+font embedding, media selection, full PS interpretation and publication checks
+are unchanged. See [investigation and evidence](POSTSCRIPT_OUTPUT_PERFORMANCE.md)
+for measurements, cancellation limits and pending native-printer/macOS acceptance.

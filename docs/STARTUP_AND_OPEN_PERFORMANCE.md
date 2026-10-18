@@ -235,3 +235,12 @@ still uses the existing atomic, undoable document-mutation transaction; full
 plan assembly, history snapshots and some explicit tool dialogs can remain
 expensive. It does not claim constant-time application of an 18,000-page edit,
 or measured performance on the customer's production PDF.
+
+
+## PostScript opening (2026-10-18)
+
+PS/EPS has a separate interpretation stage before PDF preparation. Persistent,
+content-bound previews now avoid repeated conversion and can reuse the actual
+PS validation PDF after successful production publication. See
+[Verified PostScript opening previews](POSTSCRIPT_OPENING.md) for cache limits,
+source/converter identity, cancellation, timings and platform limitations.

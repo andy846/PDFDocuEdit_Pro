@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 import fitz
+
+from core.cancellation import TaskCancelled
 
 PDF_METADATA_KEYS = frozenset(
     {
@@ -102,6 +105,8 @@ def validate_pdf_file(
     *,
     password: str | None = None,
     expected_page_count: int | None = None,
+    is_cancelled=None,
+    progress=None,
 ) -> None:
     """Reopen a completed PDF and verify its page tree before publication."""
 
@@ -125,11 +130,17 @@ def validate_pdf_file(
                 )
             if document.page_count < 1:
                 raise PdfValidationError("The generated PDF has no pages.")
+            reported = 0.0
             for page_number in range(document.page_count):
+                if is_cancelled and is_cancelled():
+                    raise TaskCancelled
+                if progress and monotonic() - reported >= 1:
+                    progress(page_number, document.page_count, "Validating converted PDF")
+                    reported = monotonic()
                 page = document.load_page(page_number)
                 _ = page.rect
                 page.get_contents()
-    except PdfValidationError:
+    except (PdfValidationError, TaskCancelled):
         raise
     except Exception as exc:
         raise PdfValidationError(

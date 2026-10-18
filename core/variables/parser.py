@@ -6,7 +6,7 @@ from functools import lru_cache
 
 from .model import CompiledTemplate, Token, Transform, VariableError
 
-NAMESPACES = frozenset(("system", "input", "job", "batch", "workflow", "record", "envelope", "sheet", "production"))
+NAMESPACES = frozenset(("system", "input", "job", "batch", "workflow", "record", "envelope", "sheet", "production", "part", "group"))
 LEGACY_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 SCOPED_NAME = re.compile(r"([a-z]+)\.((?:[^\W\d]|_)\w*)\Z")
 ARITIES = {"upper": 0, "lower": 0, "trim": 0, "title": 0, "capitalize": 0,

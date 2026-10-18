@@ -7,7 +7,7 @@ import subprocess
 import sys
 from importlib import metadata
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThreadPool, pyqtSlot
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -35,6 +35,8 @@ from core.platform_service import PlatformService
 from core.resources import config_dir, log_dir
 from dialogs.base import SortableTableWidget, ToolDialog
 from ui.responsive import ResponsiveDialog
+
+_PS_CACHE_CLEAR_TASKS = set()
 
 
 class DiagnosticsDialog(ToolDialog):
@@ -170,6 +172,21 @@ class PreferencesDialog(ResponsiveDialog):
             str(settings.get("libreoffice_path") or ""),
             "Select LibreOffice executable",
         )
+        self._ps_cache_task = None
+        self.ps_cache_enabled = QCheckBox("Keep verified PostScript previews on this computer")
+        self.ps_cache_enabled.setChecked(bool(settings.get("ps_preview_cache_enabled", True)))
+        self.ps_cache_enabled.setToolTip("Reuses complete verified conversions. Up to 2 GiB, 512 MiB per preview, retained for 7 days after last use.")
+        form.addRow("PS preview cache", self.ps_cache_enabled)
+        cache_row = QWidget()
+        cache_layout = QHBoxLayout(cache_row)
+        cache_layout.setContentsMargins(0, 0, 0, 0)
+        self.ps_cache_clear = QPushButton("Clear PS previews")
+        self.ps_cache_clear.clicked.connect(self._clear_ps_cache)
+        self.ps_cache_status = QLabel("Contains document content; stored locally.")
+        self.ps_cache_status.setWordWrap(True)
+        cache_layout.addWidget(self.ps_cache_clear)
+        cache_layout.addWidget(self.ps_cache_status, 1)
+        form.addRow("", cache_row)
         layout.addLayout(form)
 
         offsets_group = QGroupBox("Print offsets (mm)")
@@ -418,6 +435,42 @@ class PreferencesDialog(ResponsiveDialog):
         control.setValue(value)
         return control
 
+    def _clear_ps_cache(self):
+        if self._ps_cache_task is not None:
+            return
+        from core.postscript_cache import PreviewCache, application_cache_config
+        from core.tasks import FunctionTask
+        config = application_cache_config(self.settings)
+        if not config.get("root"):
+            self.ps_cache_status.setText("Preview cache location is unavailable.")
+            return
+        cache = PreviewCache(config["root"])
+        task = FunctionTask(cache.clear)
+        self._ps_cache_task = task
+        _PS_CACHE_CLEAR_TASKS.add(task)
+        task.signals.result.connect(self._ps_cache_cleared)
+        task.signals.error.connect(self._ps_cache_failed)
+        task.signals.finished.connect(self._ps_cache_finished)
+        task.signals.finished.connect(lambda: _PS_CACHE_CLEAR_TASKS.discard(task))
+        self.ps_cache_clear.setEnabled(False)
+        self.ps_cache_status.setText("Clearing verified previews…")
+        QThreadPool.globalInstance().start(task)
+
+    @pyqtSlot(object)
+    def _ps_cache_cleared(self, result):
+        self.ps_cache_status.setText("Preview cache is in use. Try clearing again." if result["busy"]
+                                     else f"Cleared {result['removed']} cached previews." +
+                                     (" Active previews will be discarded when finished." if result.get("deferred") else ""))
+
+    @pyqtSlot(str)
+    def _ps_cache_failed(self, message):
+        self.ps_cache_status.setText("Unable to clear previews. Try again.")
+
+    @pyqtSlot()
+    def _ps_cache_finished(self):
+        self._ps_cache_task = None
+        self.ps_cache_clear.setEnabled(True)
+
     def _path_row(
         self, form: QFormLayout, label: str, value: str, title: str
     ) -> QLineEdit:
@@ -453,9 +506,14 @@ class PreferencesDialog(ResponsiveDialog):
                 "theme": str(self.theme.currentData()),
                 "animations_enabled": self.animations.isChecked(),
                 "ghostscript_path": self.ghostscript.text().strip() or None,
+                "ps_preview_cache_enabled": self.ps_cache_enabled.isChecked(),
                 "libreoffice_path": self.libreoffice.text().strip() or None,
             }
         )
+        from core.postscript_cache import PreviewCache, application_cache_config
+        cache_config = application_cache_config(self.settings)
+        if cache_config.get("root"):
+            PreviewCache(cache_config["root"]).set_enabled(self.ps_cache_enabled.isChecked())
         self.settings.set_print_offsets(
             self.offset_left.value(),
             self.offset_right.value(),

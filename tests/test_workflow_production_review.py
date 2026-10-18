@@ -6,7 +6,9 @@ import fitz
 import pytest
 
 from composition.review.authorization import ReviewSession, approve_snapshot
+from composition.review.presentation import ReviewDashboardModel
 from composition.review.service import create_review, review_rows
+from composition.review.ui import ReviewController
 from composition.template.model import CompositionError
 from tests.test_mail_merge_workflow import pair, recipe
 from tests.test_workflow_branch_engine import fixture
@@ -58,6 +60,12 @@ def test_batch_review_uses_prepared_identity_and_checks_all_selected_jobs(tmp_pa
     for job, receipt in zip(result["batch"]["jobs"], reviews, strict=True):
         assert job["result"]["job_id"] == receipt["context"]["job"]["job_id"]
         assert Path(job["result"]["output_pdf"]).is_file()
+        from composition.review.service import load_snapshot
+        _, snapshot = load_snapshot(request["directory"], receipt["snapshot_id"])
+        dashboard = dashboard_for(snapshot, result)
+        assert dashboard.status == "generated"
+        assert dashboard.job_id == job["result"]["job_id"]
+        assert dict((m.key, m.value) for m in dashboard.metrics)["actual_pages"] == str(job["result"]["generated_pages"])
 
 
 def test_branch_review_does_not_approve_and_handles_all_template_routes(tmp_path):
@@ -75,6 +83,10 @@ def test_branch_review_does_not_approve_and_handles_all_template_routes(tmp_path
     result = dispatch({**request, "production_reviews": reviews}, lambda *_: None, lambda: False)
     assert result["run"]["status"] == "Completed", result
     assert result["run"]["published_records"] == 12
+    from composition.review.service import load_snapshot
+    for receipt in reviews:
+        _, snapshot = load_snapshot(request["directory"], receipt["snapshot_id"])
+        assert dashboard_for(snapshot, result).status == "generated"
 
 
 def test_pdf_filter_review_reuses_checked_data_and_frozen_job_context(tmp_path):
@@ -101,5 +113,17 @@ def test_pdf_filter_review_reuses_checked_data_and_frozen_job_context(tmp_path):
     output = result["output"]
     assert output["job_id"] == contexts[0]["job"]["job_id"]
     assert output["excluded_envelopes"] == 1
+    from composition.review.service import load_snapshot
+    _, snapshot = load_snapshot(request["directory"], reviews[0]["snapshot_id"])
+    assert dashboard_for(snapshot, result).status == "generated"
     with fitz.open(output["output_pdf"]) as doc:
         assert len(doc) == 3 and "00002" in doc[0].get_text()
+
+
+def dashboard_for(snapshot, worker_result):
+    matches = [r for r in ReviewController._generation_results(worker_result)
+               if r.get("job_id") == snapshot["summary"]["job_id"]]
+    assert len(matches) == 1
+    binding = {"snapshot_id": snapshot["snapshot_id"], "fingerprint": snapshot["fingerprint"],
+               "job_id": snapshot["summary"]["job_id"], "phase": "finished", "result": matches[0]}
+    return ReviewDashboardModel.from_review(snapshot, confirmed=True, generation=binding)

@@ -119,33 +119,38 @@ def test_batch_report_rejects_link_before_external_write(tmp_path, directory):
 
 
 def test_split_batch_replay_skips_composition_after_verified_commit(tmp_path, monkeypatch):
-    import workflow.batch as module
+    import composition.production.generator as module
     spec, run, authorization = batch_review(tmp_path, split=True)
     original = copy.deepcopy(run)
     first = execute_batch(spec, run, tmp_path / "out", authorization=authorization)
     assert first.status == "Completed", first.jobs[0].error
     published = first.jobs[0].result
-    content = {p: p.read_bytes() for p in Path(published["report_dir"]).iterdir() if p.is_file()}
+    content = {p: p.read_bytes() for p in Path(published["report_dir"]).rglob("*") if p.is_file()}
     def unexpected(*args, **kwargs):
         raise RuntimeError("Already committed split job was recomposed")
-    monkeypatch.setattr(module, "generate", unexpected)
+    # Observe the render body without replacing the service's claim/recovery guard.
+    monkeypatch.setattr(module, "Renderer", unexpected)
     replay = execute_batch(spec, original, tmp_path / "out", authorization=authorization)
     assert replay.status == "Completed", replay.jobs[0].error
     assert replay.jobs[0].result["output_pdf"] == published["output_pdf"]
+    assert replay.jobs[0].result["output_files"] == published["output_files"]
     assert all(p.read_bytes() == value for p, value in content.items())
 
 
 def test_split_pdf_replay_skips_composition_after_verified_commit(tmp_path, monkeypatch):
-    import workflow.pdf_pipeline as module
+    import composition.overlay.generator as module
     request = pdf_review(tmp_path, split=True)
     first = dispatch(copy.deepcopy(request), lambda *_: None, lambda: False, session=SESSION)
     assert not first.get("error"), first
+    content = {p: p.read_bytes() for p in Path(first["output"]["report_dir"]).rglob("*") if p.is_file()}
     def unexpected(*args, **kwargs):
         raise RuntimeError("Already committed split PDF workflow was recomposed")
-    monkeypatch.setattr(module, "generate", unexpected)
+    monkeypatch.setattr(module, "OverlayRenderer", unexpected)
     replay = dispatch(copy.deepcopy(request), lambda *_: None, lambda: False, session=SESSION)
     assert not replay.get("error"), replay
     assert replay["output"]["output_pdf"] == first["output"]["output_pdf"]
+    assert replay["output"]["output_files"] == first["output"]["output_files"]
+    assert all(p.read_bytes() == value for p, value in content.items())
 
 
 def test_recovery_cannot_relabel_old_output_as_changed_template(tmp_path):
@@ -172,7 +177,7 @@ def test_recovery_cannot_relabel_old_output_as_changed_template(tmp_path):
 def test_split_batch_claim_blocks_another_execution_before_composition(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
-    import workflow.batch as module
+    import composition.production.generator as module
     from composition.production.journal import JobJournal, _binding
 
     spec, run, authorization = batch_review(tmp_path, split=True)
@@ -182,7 +187,7 @@ def test_split_batch_claim_blocks_another_execution_before_composition(tmp_path,
     def unexpected(*args, **kwargs):
         calls.append(True)
         raise RuntimeError("Composition started before its final claim")
-    monkeypatch.setattr(module, "generate", unexpected)
+    monkeypatch.setattr(module, "Renderer", unexpected)
     journal = JobJournal(root, identity, _binding(authorization, identity))
     with journal.claim(), ThreadPoolExecutor(max_workers=1) as pool:
         result = pool.submit(execute_batch, spec, run, tmp_path / "out", authorization=authorization).result(timeout=20)

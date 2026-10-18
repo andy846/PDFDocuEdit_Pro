@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import tempfile
 import time
-from bisect import bisect_right
 from pathlib import Path
 
 from PyQt6 import sip
@@ -495,16 +494,18 @@ class WorkspaceHandoffService(QObject):
         self.refresh()
 
     def open_production_output(self, project, result):
-        path = result["output_pdf"]
+        from composition.designer.output_results import choose_output
+        path = choose_output(project,result)
+        part = next((item for item in result.get("output_files",[]) if item["output_pdf"]==path),None)
         if not path:
             return
         self.window.queue_open_files([path])
         spec = copy.deepcopy(getattr(project, "_output_spec", None))
         template = copy.deepcopy(getattr(project, "_output_template", None))
         def opened(session):
-            plan = EnvelopePlan(spec["source"]["pages"], EnvelopeSettings(**spec["settings"])) if spec else None
+            plan = EnvelopePlan(spec["source"]["pages"], EnvelopeSettings(**spec["settings"])) if spec and not (part and "source_page_runs" in part) else None
             self.outputs[session] = {"project": project, "revision": session.engine.revision, "spec": spec,
-                                     "template": template, "plan": plan}
+                                     "template": template, "plan": plan, "part":part}
             self.refresh()
         self._when_open(path, opened)
 
@@ -540,7 +541,15 @@ class WorkspaceHandoffService(QObject):
             if session.engine.is_modified or session.engine.revision != data["revision"]:
                 self.message("Output was edited; its original page mapping cannot be assumed.")
                 return
-            page = template["pages"][session.page % len(template["pages"])]
+            if data.get("part") and "source_page_runs" in data["part"]:
+                from composition.designer.output_results import part_source_page
+                source=part_source_page(data["part"],session.page+1)
+                if source is None:
+                    self.message("Inserted blank back — no original source page.")
+                    return
+                page=template["pages"][(source-1)%len(template["pages"])]
+            else:
+                page=template["pages"][session.page%len(template["pages"])]
             if link.get("version") == 2:
                 original = link["template_page_map"].get(page["id"])
                 if original is None:
@@ -567,16 +576,22 @@ class WorkspaceHandoffService(QObject):
 
     def _open_overlay_source(self, session, data):
         plan, spec = data["plan"], data["spec"]
-        output_page = session.page + 1
-        if not 1 <= output_page <= plan.output_pages:
-            self.message("This edited output page has no verified source mapping.")
-            return
         if session.engine.is_modified or session.engine.revision != data["revision"]:
             self.message("Output was edited; its original page mapping cannot be assumed. Open the original output to trace pages.")
             return
-        envelope = bisect_right(plan.output_starts, output_page) if plan.groups else (output_page-1)//plan.settings.output_pages_per_envelope+1
-        start = plan.output_starts[envelope-1] if plan.groups else (envelope-1)*plan.settings.output_pages_per_envelope+1
-        source_page = plan.page(envelope, output_page-start+1).source_page
+        if data.get("part") and "source_page_runs" in data["part"]:
+            from composition.designer.output_results import part_source_page
+            try:
+                source_page=part_source_page(data["part"],session.page+1)
+            except ValueError as exc:
+                self.message(str(exc))
+                return
+        else:
+            output_page=session.page+1
+            if not 1<=output_page<=plan.output_pages:
+                self.message("This edited output page has no verified source mapping.")
+                return
+            source_page=plan.output_page(output_page).source_page
         if source_page is None:
             self.message("Inserted blank back — no original source page.")
             return

@@ -569,6 +569,24 @@ def global_style() -> str:
             font-weight: {F.SEMIBOLD};
             padding: {S.MD}px {S.SM}px {S.XS}px {S.SM}px;
         }}
+        QFrame#productionPanel {{
+            background: {c['bg_surface']};
+            border: 1px solid {c['border']};
+            border-radius: {R.SM}px;
+        }}
+        QWidget#productionConsole QPushButton,
+        QWidget#productionConsole QToolButton {{
+            padding: {S.XS}px {S.SM}px;
+            min-height: 0px;
+            min-width: 0px;
+        }}
+        QFrame#reviewMetricCard {{
+            background: {c['bg_elevated']};
+            border: 1px solid {c['border']};
+            border-radius: {R.SM}px;
+        }}
+        QLabel#reviewMetricValue {{ font-size: {F.XL}px; font-weight: {F.SEMIBOLD}; }}
+        QLabel#reviewDashboardStatus {{ font-size: {F.LG}px; font-weight: {F.SEMIBOLD}; }}
         QLabel#secondary, QLabel#fileInfo, QLabel#pageInfo {{ color: {c['text_secondary']}; }}
         QLabel#deepSearchCurrentFile {{ color: {c['primary']}; font-style: italic; }}
         QLabel#deepSearchTip {{ color: {c['text_disabled']}; font-style: italic; font-size: {F.XS}px; }}

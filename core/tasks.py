@@ -8,6 +8,7 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
+from core.cancellation import TaskCancelled
 from core.diagnostics import connect_interrupts, log_failure, log_lifecycle
 
 
@@ -20,10 +21,6 @@ class TaskSignals(QObject):
     cancelled = pyqtSignal()
     error = pyqtSignal(str)
     finished = pyqtSignal()
-
-
-class TaskCancelled(RuntimeError):
-    pass
 
 
 class FunctionTask(QRunnable):

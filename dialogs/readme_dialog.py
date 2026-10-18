@@ -24,6 +24,25 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## Development update: Safe commands and Production Review dashboard
+
+* Command Palette rechecks the exact command against the current workspace and
+  its current availability before execution. Disabled or stale selections cannot
+  run; failed availability checks provide feedback and diagnostics.
+* Production Review → Summary shows compact planned counts, sheets, blank backs,
+  printing/media settings, destination and Issues links. Full plan details remain
+  expandable; confirmation controls stay outside the scrollable summary.
+* Checked, confirmed, generating, published PDF and published reports-only states
+  are distinct. Changes still require a fresh check and explicit confirmation.
+* Planned barcode checks and final PDF decoding are shown separately. Final
+  counters belong to the same job and checked snapshot; partial or unknown
+  coverage is never labeled as fully verified. Direct Content QR coverage may
+  remain Incomplete even when supported audit targets were decoded.
+* Font substitutions use existing scan counts and report links. Missing metrics
+  remain Not Available; record/template references are not physical output pages.
+* This development update awaits owner review; it does not change version,
+  production authorization, barcode algorithms or file formats.
+
 ## New in v3.0.9: Print paper safety and visible shutdown
 
 * Windows Managed update only; no new Installer, Portable or Mac artifact.
@@ -372,6 +391,24 @@ production workflows.
 * Tray mappings and DFE queue overrides require an actual printer proof. A
   generic profile is not a verified device preset. PS needs a compatible
   PostScript controller; transparency may be flattened at the chosen resolution.
+
+## Output Limits and Print-Order Filenames
+
+* **Output limits & file naming…** is shared by Template Designer Production,
+  PDF Overlay results and the Visual Workflow toolbar. Defaults: 250 MB PDF,
+  500 MB PS, up to 1,000 complete envelopes per part. MB is decimal.
+* The system always caps each file at 2,000 MB, each part at 20,000 pages,
+  and each job at 10,000 parts. Automatic count does not disable byte limits.
+* Parts retain complete envelopes, duplex blank backs and whole-job numbering.
+  An oversize single envelope stops production; resolution is not reduced.
+* Print summary names include a six-digit part number, physical sheets (SHT),
+  envelopes (ENV) and D/S. PDF and PS have the same basename. Custom structures
+  use the existing variable engine; previews show example counts until final
+  byte validation. Changing policy requires a fresh production review.
+* Open production PDF lets you choose a part. Print parts in numeric order;
+  use outputs.csv and each part's matching media package. All parts are checked
+  before the complete set is published. In-progress cross-restart resume is
+  not offered; cancelled attempts do not publish partial production files.
 
 ## Production Summary and Limits
 

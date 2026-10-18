@@ -327,22 +327,22 @@ def pdf_arguments(argv: list[str]) -> list[Path]:
     return [
         Path(os.path.abspath(os.path.expanduser(argument)))
         for argument in argv
-        if Path(argument).suffix.casefold() in ({".pdf", ".ps", ".eps", ".pdcx", ".pdflow"}
-                                              if sys.platform == "darwin" else {".pdf", ".ps", ".eps"})
+        if Path(argument).suffix.casefold() in {".pdf", ".ps", ".eps", ".pdcx", ".pdflow"}
     ]
 
 
 def route_open_files(viewer, paths):
-    """Finder projects use the existing host; PDF requests retain their queue."""
+    """Shell projects use the existing Designer host; PDFs retain their queue."""
     manager = getattr(viewer, "document_windows", None)
     pdf_viewer = manager.active_window() if manager else viewer
-    if sys.platform != "darwin":
+    if sys.platform != "darwin" and not any(
+            Path(path).suffix.casefold() in {".pdcx", ".pdflow"} for path in paths):
         pdf_viewer.queue_open_files(paths)
         return
     for path in paths:
         if Path(path).suffix.casefold() in {".pdcx", ".pdflow"}:
             controller = getattr(viewer, "_mode_controller", None)
-            if controller:
+            if controller and not controller.exit_approved:
                 if manager:
                     manager.focus(viewer)
                 host = controller.ensure_host(create_default=False)

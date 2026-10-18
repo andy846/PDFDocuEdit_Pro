@@ -101,3 +101,14 @@ def test_real_production_reports_each_ps_stage(tmp_path):
     assert any("PostScript validation" in message for _, _, message in events)
     assert result.media_summary["postscript_conversion_seconds"] >= 0
     assert result.media_summary["postscript_validation_seconds"] >= 0
+
+
+def test_oversize_converter_output_terminates_and_reaps_child(tmp_path,monkeypatch):
+    from composition.production.output_policy import OutputPartTooLarge, OutputPolicy
+    created=converter(monkeypatch,[b"Page 1\n"])
+    target=tmp_path/"converted.ps"
+    target.write_bytes(b"x"*101)
+    policy=OutputPolicy(pdf_bytes=1000,ps_bytes=100)
+    with pytest.raises(OutputPartTooLarge):
+        postscript._run("gs",[],tmp_path,None,output_policy=policy,monitored=target)
+    assert created[0].terminated and created[0].poll() is not None

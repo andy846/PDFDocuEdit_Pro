@@ -30,6 +30,7 @@ class SettingsManager:
         "recent_files": [],
         "bookmarks": {},
         "ghostscript_path": None,
+        "ps_preview_cache_enabled": True,
         "libreoffice_path": None,
         "print_offset_left_mm": 0.0,
         "print_offset_right_mm": 0.0,

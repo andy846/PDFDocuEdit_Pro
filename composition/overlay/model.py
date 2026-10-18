@@ -224,6 +224,13 @@ class OverlayJob:
     auto_repair: bool = True
     output_name: str = "production.pdf"
     variable_context: dict = field(default_factory=dict)
+    output_policy: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not self.variable_context:
+            from core.variables import VariableContext
+            self.variable_context=VariableContext.for_job(input_path=self.project.get("source",{}).get("path",""),
+                job_id=self.job_id,job_name=self.project.get("name","")).to_dict()
 
 
 @dataclass
@@ -252,6 +259,8 @@ class OverlayResult:
     generated_files: int = 0
     output_pdf: str = ""
     output_ps: str = ""
+    output_files: list[dict] = field(default_factory=list)
+    output_policy: dict = field(default_factory=dict)
     report_dir: str = ""
     error: str = ""
     error_envelope: int | None = None

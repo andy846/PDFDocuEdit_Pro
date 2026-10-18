@@ -9,7 +9,7 @@ def template_state(window):
     return {"template": window.template.to_dict(), "store": info.get("store", "") if info else "",
             "records": window.record_count, "auto_repair": window.auto_repair.isChecked(),
             "output_name": window.output_name_edit.text(), "invalid": window.content_invalid,
-            "fonts_pending": sorted(window.font_requests)}
+            "fonts_pending": sorted(window.font_requests), "output_policy": window.output_limits.policy()}
 
 
 def template_pane(window):
@@ -36,6 +36,7 @@ def template_pane(window):
     controller = ReviewController(window, pane, lambda: template_state(window), edit)
     window.undo.indexChanged.connect(controller.invalidate)
     window.auto_repair.toggled.connect(controller.invalidate)
+    window.output_limits.changed.connect(controller.invalidate)
     window.output_name_edit.edit.textChanged.connect(controller.invalidate)
     window.production_review = controller
     return controller
@@ -52,7 +53,7 @@ def open_template_review(window, output):
     if not info:
         return
     job = ProductionJob(window.template.to_dict(), info["store"], str(output),
-                        auto_repair=window.auto_repair.isChecked(), output_name=window.output_name_edit.text())
+                        auto_repair=window.auto_repair.isChecked(), output_name=window.output_name_edit.text(),output_policy=window.output_limits.policy())
     context = {"kind": "template", "job": asdict(job), "label": window.template.name}
     controller.rebuild = lambda: window.start_production(output)
     window.tabs.setCurrentIndex(4)
@@ -65,7 +66,7 @@ def open_template_review(window, output):
 def overlay_state(window):
     return {"project": window.spec.to_dict() if window.spec else {},
             "auto_repair": window.auto_repair.isChecked(), "invalid": window.draft_error,
-            "fonts_pending": bool(window.font_token)}
+            "fonts_pending": bool(window.font_token), "output_policy": window.output_limits.policy()}
 
 
 def overlay_pane(window):
@@ -87,6 +88,7 @@ def overlay_pane(window):
     controller = ReviewController(window, pane, lambda: overlay_state(window), edit)
     window.undo.indexChanged.connect(controller.invalidate)
     window.auto_repair.toggled.connect(controller.invalidate)
+    window.output_limits.changed.connect(controller.invalidate)
     window.production_review = controller
     return controller
 
@@ -95,7 +97,7 @@ def open_overlay_review(window, output):
     from composition.overlay.model import OverlayJob
     from core.variables import VariableContext
     controller = overlay_pane(window)
-    job = OverlayJob(window.spec.to_dict(), str(output), auto_repair=window.auto_repair.isChecked())
+    job = OverlayJob(window.spec.to_dict(), str(output), auto_repair=window.auto_repair.isChecked(),output_policy=window.output_limits.policy())
     job.variable_context = VariableContext.for_job(input_path=window.spec.source.path,
         job_id=job.job_id, job_name=window.spec.name, sequence=1).to_dict()
     controller.rebuild = lambda: window.generate_pdf(output_dir=output)

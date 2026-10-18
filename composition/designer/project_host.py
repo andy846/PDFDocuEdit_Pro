@@ -58,7 +58,10 @@ class DesignerProjectHost(QWidget):
     def open_production_output(self, project, result):
         if self.handoff:
             return self.handoff.open_production_output(project, result)
-        return self.open_pdf(result["output_pdf"])
+        from .output_results import choose_output
+        path=choose_output(project,result)
+        if path:
+            return self.open_pdf(path)
 
     def open_source_pdf(self, path, page=0):
         """Navigate to a checked source page through the existing PDF open service."""

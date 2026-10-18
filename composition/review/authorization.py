@@ -193,6 +193,59 @@ class ProductionAuthorization:
         self.started = True
         return matches[0]
 
+    def require_partition_refinement(self, job_id, directory, policy, parts, envelopes):
+        """Runtime byte splits may refine, never replace, a reviewed logical plan."""
+        from collections import Counter
+
+        from composition.production.output_policy import MAX_PARTS, OutputPolicy
+        matches=[c for c in self.contexts if c["job"]["job_id"]==job_id]
+        if len(matches)!=1 or OutputPolicy.from_dict(matches[0]["job"].get("output_policy",{})).to_dict()!=policy.to_dict():
+            raise CompositionError("Output policy differs from its production approval.")
+        if not 1<=len(parts)<=MAX_PARTS:
+            raise CompositionError("Invalid number of production parts.")
+        outputs=matches[0].get("outputs",[])
+        order={str(item["key"]):index for index,item in enumerate(outputs)} if outputs else {"":0}
+        last_group=-1
+        last_envelope=0
+        seen=set()
+        counts=Counter()
+        for index,part in enumerate(parts,1):
+            group=order.get(part.get("key",""),-1)
+            if type(part.get("part")) is not int or part["part"]!=index or group<last_group or group<0:
+                raise CompositionError("Production part numbering or group order changed.")
+            if group>last_group:
+                last_envelope=0
+            membership=part.get("membership",[])
+            if membership and membership[0]<=last_envelope:
+                raise CompositionError("Production envelope order changed across parts.")
+            if membership:
+                last_envelope=membership[-1]
+            last_group=group
+            membership=part.get("membership",[])
+            if not membership or len(membership)!=part.get("records") or membership!=sorted(membership):
+                raise CompositionError("Invalid output envelope membership.")
+            for ordinal in membership:
+                if type(ordinal) is not int or not 1<=ordinal<=envelopes or ordinal in seen:
+                    raise CompositionError("Output must contain each reviewed envelope exactly once.")
+                seen.add(ordinal)
+            counts[part.get("key","")]+=len(membership)
+        if len(seen)!=envelopes:
+            raise CompositionError("An output envelope is missing.")
+        outputs=matches[0].get("outputs",[])
+        if outputs and dict(counts)!={str(item["key"]):item["records"] for item in outputs}:
+            raise CompositionError("Logical output groups differ from production review.")
+        if outputs:
+            import sqlite3
+            from contextlib import closing
+            from pathlib import Path
+            database=matches[0]["job"].get("record_store") or matches[0].get("external_data")
+            with closing(sqlite3.connect(Path(database).resolve().as_uri()+"?mode=ro",uri=True)) as db:
+                db.execute("CREATE TEMP TABLE actual(ordinal INTEGER PRIMARY KEY,key TEXT)")
+                db.executemany("INSERT INTO actual VALUES(?,?)",((ordinal,part["key"]) for part in parts for ordinal in part["membership"]))
+                if db.execute("SELECT 1 FROM actual LEFT JOIN partitions USING(ordinal) WHERE partition_key IS NULL OR CAST(partition_key AS TEXT)!=actual.key LIMIT 1").fetchone():
+                    raise CompositionError("Output crosses a reviewed logical group boundary.")
+        self.require_output_plan(job_id,directory,outputs)
+
     def for_jobs(self, identities):
         chosen = [r for r in self.receipts if r["context"].get("identity") in set(identities)]
         if {r["context"].get("identity") for r in chosen} != set(identities):

@@ -4,7 +4,7 @@ from __future__ import annotations
 from time import monotonic
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QGridLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 
 def duration(seconds):
@@ -27,17 +27,19 @@ class ProductionActivity(QWidget):
         self.label.setTextFormat(Qt.TextFormat.PlainText)
         self.label.setWordWrap(True)
         self.label.setMinimumWidth(0)
-        layout.addWidget(self.label)
-        row = QHBoxLayout()
+        self.header = QGridLayout()
+        self.header.setContentsMargins(0, 0, 0, 0)
+        self.header.setHorizontalSpacing(12)
+        layout.addLayout(self.header)
         self.detail = QLabel()
         self.detail.setTextFormat(Qt.TextFormat.PlainText)
         self.detail.setWordWrap(True)
         self.detail.setMinimumWidth(0)
-        row.addWidget(self.detail, 1)
+        self.detail.setObjectName("secondary")
         self.cancel_button = QPushButton("Cancel job")
         self.cancel_button.clicked.connect(self.request_cancel)
-        row.addWidget(self.cancel_button)
-        layout.addLayout(row)
+        self._compact = None
+        self._arrange_header()
         self.bar = QProgressBar()
         self.bar.setMaximumHeight(16)
         self.bar.setTextVisible(False)
@@ -93,3 +95,24 @@ class ProductionActivity(QWidget):
     def request_cancel(self):
         self.cancel_pending()
         self.cancel()
+
+    def _arrange_header(self):
+        compact = self.width() < 800
+        if compact == self._compact:
+            return
+        self._compact = compact
+        for widget in (self.label, self.detail, self.cancel_button):
+            self.header.removeWidget(widget)
+        self.header.setColumnStretch(0, 1)
+        if compact:
+            self.header.addWidget(self.label, 0, 0, 1, 3)
+            self.header.addWidget(self.detail, 1, 0, 1, 2)
+            self.header.addWidget(self.cancel_button, 1, 2)
+        else:
+            self.header.addWidget(self.label, 0, 0)
+            self.header.addWidget(self.detail, 0, 1)
+            self.header.addWidget(self.cancel_button, 0, 2)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_header()

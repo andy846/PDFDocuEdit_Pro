@@ -25,7 +25,6 @@ from composition.engine.rules import RecordRuleError
 from composition.production.journal import production_claim, publish_package
 from composition.template.model import CompositionError, Template, required_fields
 from composition.template.serializer import file_hash
-from core.pdf_io import validate_pdf_file
 
 from .model import JobResult, ProductionJob, now, validate_output_name, validate_output_template
 from .resources import peak_memory
@@ -61,10 +60,11 @@ def reconcile(result: JobResult) -> None:
         )
 
 
-def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled) -> int:
+def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled, *, selections=None, size_limit=None) -> int:
     arguments = output.parent / "assembly.args"
     # qpdf argument files accept one complete argument per line, including spaces.
-    lines = ["--empty", "--pages", *(str(path) for path in chunks), "--", str(output)]
+    selected = [str(value) for pair in selections for value in pair] if selections is not None else [str(path) for path in chunks]
+    lines = ["--empty", "--pages", *selected, "--", str(output)]
     if any("\n" in value or "\r" in value for value in lines):
         raise CompositionError("Output paths may not contain line breaks.")
     arguments.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -76,6 +76,9 @@ def _assemble(chunks: list[Path], output: Path, executable: Path, is_cancelled) 
     try:
         while True:
             check_cancel(is_cancelled)
+            if size_limit is not None and output.exists() and output.stat().st_size > size_limit:
+                from .output_policy import OutputPartTooLarge
+                raise OutputPartTooLarge("PDF", output.stat().st_size, size_limit)
             try:
                 stdout, stderr = process.communicate(timeout=0.2)
                 break
@@ -198,7 +201,7 @@ def generate(
     template._barcode_job_id = job.job_id
     from composition.review.authorization import require_authorization
     authorization = require_authorization(authorization)
-    authorization.require_job("template", job, is_cancelled=is_cancelled)
+    reviewed_context = authorization.require_job("template", job, is_cancelled=is_cancelled)
     from core.output_safety import contained_path, validate_identifier
     validate_identifier(job.job_id)
     output_root = Path(job.output_dir).expanduser().resolve()
@@ -208,6 +211,9 @@ def generate(
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging = Path(tempfile.mkdtemp(prefix=f".{job.job_id}-", dir=output_root))
     result = JobResult(job.job_id, pages_per_record=len(template.pages), auto_repair=job.auto_repair)
+    from .output_policy import OutputPolicy
+    policy = OutputPolicy.from_dict(job.output_policy)
+    result.output_policy = policy.to_dict()
     store = None
     media_plan = None
     marks_stream = None
@@ -258,7 +264,7 @@ def generate(
             result.media_summary=asdict(media_plan.preflight())
             result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
             from composition.media.ticket import export_print_package
-            result.media_summary.update(export_print_package(staging,media_plan,job.output_name,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket))
+            result.media_summary.update(export_print_package(staging,media_plan,job.output_name,is_cancelled=is_cancelled,write_ticket=False))
         missing = required_fields(template) - set(store.fields)
         if missing:
             raise CompositionError(f"Missing mapped fields: {', '.join(sorted(missing))}")
@@ -323,30 +329,34 @@ def generate(
                 raise CompositionError("A template asset changed during production. Run the job again.")
         if progress:
             progress(store.count, store.count, "Assembling and validating production PDF")
-        pdf = staging / job.output_name
-        result.assembler_peak_memory_bytes = _assemble(chunks, pdf, executable, is_cancelled)
-        for path in chunks:
-            path.unlink()
-        check_cancel(is_cancelled)
-        validate_pdf_file(pdf, expected_page_count=result.expected_pages)
         if marks_stream is not None:
             marks_stream.close()
             marks_stream = None
-            from composition.engine.inserter_production import audit_pdf
-            result.decoded_barcodes = audit_pdf(pdf, staging/"inserter-marks.jsonl", staging/"barcodes.csv",
-                is_cancelled=is_cancelled, progress=progress, expected=result.expected_barcodes)
-            if result.rendered_barcodes != result.expected_barcodes:
-                raise CompositionError("RECONCILIATION FAILED: rendered production barcode count differs.")
-        with fitz.open(pdf) as checked:
-            result.generated_pages = checked.page_count
-        result.generated_files = 1
-        reconcile(result)
-        if media_plan and not _defer_media_ticket:
-            from composition.media.postscript import export_postscript
-            ps=export_postscript(staging,template.media,pdf.name,is_cancelled=is_cancelled,progress=progress)
-            result.media_summary.update(ps)
-            if ps:
-                result.output_ps=str(final/ps["postscript"])
+        from .packages import build_packages
+        from .partitioning import reviewed_groups
+        group_for, group_names, close_groups = reviewed_groups(reviewed_context, job.record_store)
+        try:
+            files, result.decoded_barcodes, result.assembler_peak_memory_bytes = build_packages(
+                staging, final, chunks, profile_plan, policy, job.output_name, job.variable_context,
+                executable=executable, marks_path=staging/"inserter-marks.jsonl", media=template.media,
+                progress=progress, is_cancelled=is_cancelled, group_for=group_for, group_names=group_names)
+        finally:
+            close_groups()
+        result.generated_files = len(files)
+        # The existing single-unit record reconciliation remains an independent
+        # gate after the package set has reconciled membership and page totals.
+        checked_result = copy.copy(result)
+        checked_result.generated_files = 1
+        reconcile(checked_result)
+        authorization.require_partition_refinement(job.job_id,job.output_dir,policy,files,profile_plan.envelopes)
+        result.output_files = files
+        result.output_pdf = files[0]["output_pdf"]
+        result.output_ps = files[0]["output_ps"]
+        result.output_size = sum(item["output_size"] for item in files)
+        if result.media_summary:
+            result.media_summary["parts"]=len(files)
+        if len(files)==1:
+            result.media_summary.update(files[0]["media_summary"])
         if repair_summary["occurrences"]:
             repair_audit.rename(staging / "glyph-repairs.csv")
             result.repaired_glyphs = repair_summary["occurrences"]
@@ -361,8 +371,6 @@ def generate(
         if result.font_scan.get("private_use_occurrences", 0):
             result.warnings.append("Private-use glyphs were substituted; verify their visual appearance against the source. "
                                    "They are marked in glyph-repairs.csv.")
-        result.output_size = pdf.stat().st_size
-        result.output_pdf = str(final / pdf.name)
         result.report_dir = str(final)
         result.composer_peak_memory_bytes = peak_memory()
         result.status = "completed"
@@ -410,6 +418,9 @@ def generate(
         result.generated_files = 0
         if result.error_record is None and current_record is not None and result.failed_records:
             result.error_record = current_record
+        result.output_files = []
+        from .packages import discard_packages
+        discard_packages(staging)
         # Keep only diagnostics; incomplete PDFs are never published.
         for path in staging.glob("*.pdf"):
             path.unlink(missing_ok=True)

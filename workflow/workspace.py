@@ -180,6 +180,9 @@ class WorkflowWindow(QMainWindow):
             menu.addAction(LABELS[kind],lambda checked=False,k=kind:self.add_optional(k))
         self.add_step.setMenu(menu)
         toolbar.addWidget(self.add_step)
+        from composition.designer.output_limits import OutputLimitsControl
+        self.output_limits=OutputLimitsControl(self)
+        toolbar.addWidget(self.output_limits)
         central=QWidget()
         root=QVBoxLayout(central)
         root.setContentsMargins(4,4,4,4)
@@ -1045,6 +1048,8 @@ class WorkflowWindow(QMainWindow):
             act.setEnabled(enabled)
         if hasattr(self,"add_step"):
             self.add_step.setEnabled(not busy)
+        if hasattr(self,"output_limits"):
+            self.output_limits.setEnabled(not busy)
         if not hasattr(self,"toolbox"):
             return
         self.toolbox.setEnabled(not busy)

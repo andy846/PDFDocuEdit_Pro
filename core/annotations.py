@@ -226,10 +226,14 @@ def validate_annotation_op(doc: fitz.Document, op: AnnotationOp) -> AnnotationOp
             parse_annotation_color(style.fill)
 
         page = doc.load_page(op.page)
-        page_rect = (page.rect * page.derotation_matrix) if kind in {"image", "signature_image"} else page.rect
+        # Canvas requests and MuPDF annotation APIs use unrotated coordinates,
+        # including on cropped pages. page.rect itself reflects /Rotate.
+        page_rect = page.rect * page.derotation_matrix
         rects: list[fitz.Rect] = []
         for source in op.rects:
-            rect = (fitz.Rect(source).normalize() & page_rect).normalize()
+            # Normalize the drag before intersecting; an empty intersection must
+            # stay empty rather than becoming a new rectangle outside the page.
+            rect = fitz.Rect(source).normalize() & page_rect
             if (
                 not all(isfinite(value) for value in (rect.x0, rect.y0, rect.x1, rect.y1))
                 or rect.is_empty
@@ -1106,7 +1110,7 @@ def update_annotation_geometry(
             return new_xref
         if rect is None:
             return None
-        clipped = (fitz.Rect(rect).normalize() & page.rect).normalize()
+        clipped = fitz.Rect(rect).normalize() & (page.rect * page.derotation_matrix)
         if clipped.is_empty or clipped.width < 1 or clipped.height < 1:
             return None
         old_rect = fitz.Rect(target.rect).normalize()

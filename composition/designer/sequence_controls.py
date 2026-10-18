@@ -30,11 +30,21 @@ class SequenceOperations:
         self.template._barcode_record_count = count
         names = [seq.name for seq in self.template.sequences]
         samples = [{} for _ in range(min(5, count))] if generated else raw["sample"]
+        sample_error = ""
+        try:
+            resolved_samples = [sequence_record(self.template, row, i+1) for i, row in enumerate(samples)]
+        except CompositionError as exc:
+            # Page/media edits may temporarily make the production plan invalid.
+            # Keep source metadata usable; never invent or reuse sequence values.
+            resolved_samples = []
+            sample_error = str(exc)
+            self.message.setText("Sequence preview unavailable: " + sample_error)
         info = {
             "store": "" if generated else raw["store"],
             "metadata": {"record_count": count, "fields": base + names,
                          "original_fields": ([] if generated else raw["metadata"]["original_fields"]) + names},
-            "sample": [sequence_record(self.template, row, i+1) for i, row in enumerate(samples)],
+            "sample": resolved_samples,
+            "sample_error": sample_error,
         }
         self._sequence_cache_key, self._sequence_cache = key, info
         return info

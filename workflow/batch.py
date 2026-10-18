@@ -7,7 +7,6 @@ import hashlib
 import json
 import re
 import shutil
-import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -108,6 +107,7 @@ class BatchJob:
     history: list = field(default_factory=list)
     data_summary: dict = field(default_factory=dict)
     variable_context: dict = field(default_factory=dict)
+    output_policy: dict = field(default_factory=dict)
 
     def resolved_output_name(self):
         return resolve_output_name(self.output_name, self.variable_context)
@@ -124,6 +124,8 @@ class BatchJob:
             raise CompositionError("Use a job name of 1–200 characters.")
         if any(not isinstance(v,str) or len(v)>4096 for v in (self.template_path,self.data_path,self.mapping_profile)):
             raise CompositionError("Invalid batch input path/profile.")
+        from composition.production.output_policy import OutputPolicy
+        OutputPolicy.from_dict(self.output_policy)
         validate_output_template(self.output_name)
         if not isinstance(self.variable_context, dict):
             raise CompositionError("Invalid prepared variable context.")
@@ -231,7 +233,7 @@ def _signature(spec, job):
     sources=[job.template_path,*assets]+([job.data_path] if config else [])
     hashes={str(Path(p).resolve()):file_hash(Path(p)) for p in sources}
     signature=hashlib.sha256(json.dumps({"files":hashes,"config":asdict(config) if config else None,
-        "starts":job.sequence_starts,"output":job.output_name,"variables":job.variable_context,
+        "starts":job.sequence_starts,"output":job.output_name,"variables":job.variable_context,"output_policy":job.output_policy,
         "pipeline":[{"kind":n.kind,"id":n.id,"params":n.params} if n.kind in EXTRA_KINDS else n.kind for n in spec.chain()],
         "auto_repair":spec.node("compose").params.get("auto_repair",True)},sort_keys=True).encode()).hexdigest()
     return signature,template,config,hashes
@@ -581,24 +583,13 @@ def execute_batch(spec, run, output_dir, *, progress=None, is_cancelled=None, on
 
 
 def _compose_item(spec,job,root,partitions,progress,is_cancelled,authorization):
-    if not partitions:
-        return _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
-    from composition.production.journal import final_claim
-    identity = job.variable_context["namespaces"]["job"]["id"]
-    with final_claim(authorization, identity, root, partitions) as journal:
-        if journal.existing is not None:
-            return copy.deepcopy(journal.existing)
-        result = _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
-        journal.finish(result)
-        return result
+    return _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization)
 
 
 def _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authorization):
     identity = job.variable_context.get("namespaces", {}).get("job", {}).get("id") or new_job_id()
     from contextlib import nullcontext
-    # Short owned scratch paths avoid Windows MAX_PATH failures in nested font caches.
-    context=tempfile.TemporaryDirectory(prefix="wf-prod-") if partitions else nullcontext(str(root))
-    with context as directory:
+    with nullcontext():
         def reports(report,result):
             if job.data_summary.get("steps"):
                 from .transforms import DataSet, export_audit
@@ -609,18 +600,9 @@ def _compose_item_claimed(spec,job,root,partitions,progress,is_cancelled,authori
                     "warnings":job.data_summary["warnings"]},indent=2),encoding="utf-8")
         production_job=ProductionJob(job.prepared_template,job.record_store,str(root),job_id=identity,
             auto_repair=bool(spec.node("compose").params.get("auto_repair",True)),output_name=job.output_name,
-            variable_context=copy.deepcopy(job.variable_context))
-        child = authorization.for_staging("template", production_job, directory) if partitions else authorization
-        production_job.output_dir = str(directory)
-        result=generate(production_job, authorization=child,
-            progress=progress,is_cancelled=is_cancelled,additional_reports=reports,_defer_media_ticket=bool(partitions)).to_dict()
-        if result["status"]=="completed" and partitions:
-            from .splitter import split_composed
-            from .transforms import DataSet
-            result=split_composed(result,DataSet(job.record_store),partitions,root,job.pages_per_record,
-                                  is_cancelled=is_cancelled,progress=progress,authorization=authorization)
-        elif partitions and result.get("report_dir"):
-            report=root/(result["job_id"]+"-failed")
-            shutil.copytree(result["report_dir"],report)
-            result["report_dir"]=str(report)
+            variable_context=copy.deepcopy(job.variable_context),output_policy=copy.deepcopy(job.output_policy))
+        reviewed=next(context for context in authorization.contexts if context["job"]["job_id"]==identity)
+        production_job.output_policy=copy.deepcopy(reviewed["job"].get("output_policy",{}))
+        result=generate(production_job, authorization=authorization,
+            progress=progress,is_cancelled=is_cancelled,additional_reports=reports).to_dict()
         return result

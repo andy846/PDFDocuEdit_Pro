@@ -186,8 +186,26 @@ def _summary(context, plan, media, output_name, source):
     output = Path(context.job["output_dir"]).resolve() / context.job["job_id"] / output_name
     if output.parent.exists() or output.parent.with_name(output.parent.name + "-failed").exists():
         raise CompositionError("This production job already has output. Choose a new output folder / job.")
+    from composition.production.output_policy import OutputPolicy
+    policy=OutputPolicy.from_dict(context.job.get("output_policy",{}))
+    from composition.production.output_policy import MAX_PART_PAGES, MAX_PARTS
+    count_minimum=sum((item["records"]+policy.envelopes-1)//policy.envelopes for item in context.outputs) if policy.envelopes and context.outputs else ((plan.envelopes+policy.envelopes-1)//policy.envelopes if policy.envelopes else 1)
+    minimum_parts=max(count_minimum,len(context.outputs),(plan.output_pages+MAX_PART_PAGES-1)//MAX_PART_PAGES)
+    if minimum_parts>MAX_PARTS:
+        raise CompositionError(f"At least {minimum_parts:,} output parts are required, exceeding the system limit of {MAX_PARTS:,}. Increase envelopes per part or divide the job before review.")
+    from composition.production.output_naming import NamingSpec, part_filename
+    from composition.production.output_policy import check_scratch_space
+    from core.variables import VariableContext
+    naming=NamingSpec.from_dict(policy.naming)
+    variables=VariableContext(**context.job["variable_context"]) if context.job.get("variable_context") else VariableContext.for_job(input_path=source,job_id=context.job["job_id"],job_name=context.label)
+    preview=output_name if naming.mode=="original" else part_filename(naming,variables,output_name,index=1,total=2,sheets=1,envelopes=1,pages=1,duplex=plan.settings.duplex,first=1,last=1,group=str(context.outputs[0]["key"]) if context.outputs else None)
+    space=check_scratch_space(context.job["output_dir"])
     data = context.binding.get("data_summary", {})
-    return {"job_id": context.job["job_id"], "label": context.label,
+    return {**space,"minimum_parts":minimum_parts,"output_partition_estimate":f"At least {minimum_parts:,} part(s) from envelope/page limits; actual PDF / PS bytes may require more", "output_naming_preview":preview+" (illustrative part counts; final names follow byte validation)","output_policy": policy.to_dict(),
+        "output_limits": f"PDF <= {policy.pdf_bytes//1_000_000:,} MB; PS <= {policy.ps_bytes//1_000_000:,} MB; envelopes per part: {policy.envelopes or 'automatic'}; whole envelopes only",
+        "output_naming": policy.naming.get("mode","original")+"; final names / counts follow actual size validation",
+        "output_pattern": policy.naming.get("pattern","") or ("{{job.name}}_DATE_partNNNNNN_SHEETS_SHT_ENVELOPES_ENV_D/S" if policy.naming.get("mode")=="summary" else output_name),
+        "job_id": context.job["job_id"], "label": context.label,
         "input_records": data.get("input", plan.envelopes), "excluded_records": data.get("excluded", 0),
         "records": plan.envelopes, "pages": plan.output_pages, "sheets": plan.sheets,
         "inserted_blanks": plan.inserted_blanks,

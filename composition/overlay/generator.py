@@ -17,13 +17,12 @@ import fitz
 from composition.engine.assets import qpdf_executable
 from composition.media.planner import PrintPlan, overlay_plan
 from composition.pdf_source.source import inspect_source, snapshot_source
-from composition.production.generator import JobCancelled, _assemble, check_cancel
+from composition.production.generator import JobCancelled, check_cancel
 from composition.production.journal import production_claim, publish_package
 from composition.production.model import now
 from composition.production.resources import peak_memory
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
-from core.pdf_io import validate_pdf_file
 from core.variables import VariableContext, resolve_filename
 
 from .model import EnvelopeSpec, OverlayResult
@@ -89,6 +88,9 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         raise CompositionError("That production job already exists. Use a new job ID.")
     staging=Path(tempfile.mkdtemp(prefix="."+job.job_id+"-",dir=output_root))
     result=OverlayResult(job.job_id)
+    from composition.production.output_policy import OutputPolicy
+    policy=OutputPolicy.from_dict(job.output_policy)
+    result.output_policy=policy.to_dict()
     result.warnings.extend(naming.issues)
     result.copied_source_pages=0
     result.rendered_inserted_blanks=0
@@ -116,7 +118,7 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         if isinstance(plan,PrintPlan):
             from composition.media.ticket import export_print_package
             result.media_summary=asdict(plan.preflight())
-            result.media_summary.update(export_print_package(staging,plan,naming.value,is_cancelled=is_cancelled,write_ticket=not _defer_media_ticket))
+            result.media_summary.update(export_print_package(staging,plan,naming.value,is_cancelled=is_cancelled,write_ticket=False))
             result.media_summary["inserted_blanks"]=plan.inserted_blanks
             result.warnings.append("Printer media profile: device validation pending. Inspect selection settings and proof print before production.")
         if progress:
@@ -214,54 +216,37 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
         check_cancel(is_cancelled)
         if progress:
             progress(plan.output_pages,plan.output_pages,"Assembling and validating overlay PDF")
-        pdf=staging/naming.value
-        result.assembler_peak_memory_bytes=_assemble(chunks,pdf,executable,is_cancelled)
-        validate_pdf_file(pdf,expected_page_count=plan.output_pages)
-        for path in chunks:
-            path.unlink()
-        with fitz.open(pdf) as document, (staging/"marks.jsonl").open(encoding="utf-8") as marks:
-            result.generated_pages=document.page_count
-            with (staging/"barcodes.csv").open("w",encoding="utf-8-sig",newline="") as stream, (staging/"barcodes.jsonl").open("w",encoding="utf-8") as audit:
-                qc_envelope=None
-                writer=csv.writer(stream)
-                row(writer,["Output page","Source page","Envelope","Object","Symbology","Profile","Payload","QC",
-                            "Sheet", "Group sequence", "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "Sheet sequence", "Job sheet"])
-                for raw in marks:
-                    check_cancel(is_cancelled)
-                    mark=json.loads(raw)
-                    current=plan.output_page(mark["output_page"])
-                    if qc_envelope is not None and qc_envelope != mark["envelope"]:
-                        result.successful_envelopes+=1
-                    qc_envelope=mark["envelope"]
-                    check_mark(document[mark["output_page"]-1],mark)
-                    result.decoded_barcodes+=1
-                    audit.write(json.dumps({**mark,"qc":"decoded_exact"},ensure_ascii=False)+"\n")
-                    parts = mark.get("parts", {})
-                    row(writer,[mark["output_page"],mark["source_page"] or "",mark["envelope"],mark["object"],
-                                mark["symbology"],mark["profile"],mark["payload"],"Decoded: exact match", mark.get("sheet", ""),
-                                parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", ""), parts.get("sheet", ""), mark.get("job_sheet", "")])
-                    if progress and result.decoded_barcodes%100==0:
-                        progress(result.decoded_barcodes,result.expected_barcodes,f"Barcode QC {result.decoded_barcodes:,}/{result.expected_barcodes:,}")
-                # The assembled PDF has passed output validation and all existing marks
-                # have decoded. Envelopes without marks are valid too; barcode presence
-                # is required only for projects declaring a machine control object.
-                result.successful_envelopes=plan.envelopes
+        from composition.production.packages import build_packages
+        from composition.production.partitioning import reviewed_groups
+        group_for,group_names,close_groups=reviewed_groups(reviewed_context,reviewed_context.get("external_data",""))
+        try:
+            files,result.decoded_barcodes,result.assembler_peak_memory_bytes=build_packages(
+                staging,final,chunks,plan,policy,naming.value,values,executable=executable,
+                marks_path=staging/"marks.jsonl",media=spec.media,progress=progress,is_cancelled=is_cancelled,
+                group_for=group_for,group_names=group_names,checker=check_mark)
+        finally:
+            close_groups()
+        result.successful_envelopes=plan.envelopes
         current=None
         if any(file_hash(Path(path))!=digest for path,digest in asset_hashes.items()):
             raise CompositionError("An overlay image or font changed during production. Review and run again.")
         result.unverified_envelopes=plan.envelopes-result.successful_envelopes
-        result.generated_files=1
+        result.generated_files=len(files)
         if provider_audit is not None and provider_audit.digest.hexdigest() != expected_provider:
             raise CompositionError("External values changed after review; production was not published.")
-        reconcile(result)
-        if isinstance(plan,PrintPlan) and not _defer_media_ticket:
-            from composition.media.postscript import export_postscript
-            ps=export_postscript(staging,spec.media,pdf.name,is_cancelled=is_cancelled,progress=progress)
-            result.media_summary.update(ps)
-            if ps:
-                result.output_ps=str(final/ps["postscript"])
-        result.output_size=pdf.stat().st_size
-        result.output_pdf=str(final/pdf.name)
+        import copy
+        checked_result=copy.copy(result)
+        checked_result.generated_files=1
+        reconcile(checked_result)
+        authorization.require_partition_refinement(job.job_id,job.output_dir,policy,files,plan.envelopes)
+        result.output_files=files
+        result.output_size=sum(item["output_size"] for item in files)
+        result.output_pdf=files[0]["output_pdf"]
+        result.output_ps=files[0]["output_ps"]
+        if result.media_summary:
+            result.media_summary["parts"]=len(files)
+        if len(files)==1:
+            result.media_summary.update(files[0]["media_summary"])
         result.report_dir=str(final)
         result.composer_peak_memory_bytes=peak_memory()
         # Replace the composed/pending envelope table only after complete final QC.
@@ -298,12 +283,15 @@ def generate(job, *, progress=None, is_cancelled=None, external_values=None, add
             result.processed_envelopes=max(result.processed_envelopes,current.envelope)
             result.successful_envelopes=min(result.successful_envelopes,result.processed_envelopes-1)
         elif plan is not None and getattr(exc,"record_ordinal",None):
-            index=exc.record_ordinal
+            index=getattr(exc,"global_output_page",None) or plan.envelope_row(exc.record_ordinal,"")[4]
             page=plan.output_page(index)
             _error_page(result,page)
             if result.status == "failed":
                 result.failed_envelopes = 1
         result.unverified_envelopes=max(0,result.input_envelopes-result.successful_envelopes-result.failed_envelopes)
+        result.output_files=[]
+        from composition.production.packages import discard_packages
+        discard_packages(staging)
         result.output_pdf=""
         result.output_ps=""
         result.generated_files=0

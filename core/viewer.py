@@ -184,20 +184,28 @@ from ui.workspace import DocumentWorkspace
 def _prepare_pdf_engine(
     path: str,
     password: str | None = None,
+    *, progress=None, is_cancelled=None, cache_config=None,
 ) -> tuple[str, PdfEngine | str | None]:
     """Prepare an independent engine without blocking the GUI thread."""
     engine = PdfEngine()
     try:
         suffix = Path(path).suffix.casefold()
         if suffix in {".ps", ".eps"}:
-            with tempfile.TemporaryDirectory(prefix="pdfdocuedit-convert-") as directory:
-                converted = Path(directory) / "converted.pdf"
-                convert_postscript(path, converted)
-                engine.open(converted, password)
+            from core.capabilities import _postscript_capability
+            from core.postscript_cache import cache_from_config
+            from core.postscript_open import open_postscript_engine
+            capability = _postscript_capability()
+            if not capability.available:
+                raise ValueError(capability.reason + " " + capability.guidance)
+            engine = open_postscript_engine(path, capability.path, cache=cache_from_config(cache_config),
+                                            progress=progress, is_cancelled=is_cancelled)
         elif suffix == ".pdf":
             engine.open(path, password)
         else:
             raise ValueError("Choose a PDF, PostScript, or EPS file.")
+    except TaskCancelled:
+        engine.close()
+        raise
     except PdfPasswordRequired:
         engine.close()
         return ("password_required", None)
@@ -1465,7 +1473,12 @@ class PDFViewer(QMainWindow):
     ) -> None:
         display_path = Path(path)
         session._open_requested_at = perf_counter() if requested_at is None else requested_at
-        self._run_task(
+        options = {}
+        if display_path.suffix.casefold() in {".ps", ".eps"}:
+            from core.postscript_cache import application_cache_config
+            options.update(progress_argument="progress", cancel_argument="is_cancelled",
+                           cache_config=application_cache_config(self.settings))
+        task = self._run_task(
             "Opening document",
             _prepare_pdf_engine,
             path,
@@ -1477,7 +1490,13 @@ class PDFViewer(QMainWindow):
             ),
             on_finished=self._queued_open_finished,
             on_discard=_dispose_prepared_pdf,
+            **options,
         )
+        if task is not None:
+            task.signals.cancelled.connect(self._queued_pdf_cancelled)
+
+    def _queued_pdf_cancelled(self):
+        self._queued_open_status = "Cancelled"
 
     def _queued_pdf_prepared(
         self,
@@ -5583,10 +5602,25 @@ class PDFViewer(QMainWindow):
         palette.focus_input()
 
     def _run_command(self, command_id: str) -> None:
-        for command in self._commands_for_mode():
-            if command.id == command_id:
-                command.handler()
-                return
+        # Palette rows are only a presentation snapshot. Resolve the exact ID
+        # against the live workspace and check admission again at execution.
+        try:
+            command = next((item for item in self._commands_for_mode()
+                            if item.id == command_id), None)
+            enabled = command is not None and command.is_enabled()
+        except Exception:
+            # This boundary fails closed, while retaining diagnostic frames.
+            # Handler exceptions below retain their existing error behavior.
+            log_failure("Command availability check failed")
+            self.info_bar.show_message("Cannot check this command. Reopen Command Palette or see diagnostics.", "error")
+            return
+        if command is None:
+            self.info_bar.show_message("This command is no longer available in the current workspace. Reopen Command Palette.", "info")
+            return
+        if not enabled:
+            self.info_bar.show_message("This command is currently unavailable. Check the active document or project.", "info")
+            return
+        command.handler()
 
     def _show_shortcuts(self) -> None:
         ShortcutsDialog(self._commands_for_mode(), self).exec()

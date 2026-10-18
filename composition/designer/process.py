@@ -57,6 +57,9 @@ class Worker(QObject):
         if worker_module == "composition.worker":
             secrets = dict(secrets or {})
             secrets["production_session"] = approval_session().private_payload()
+            if request.get("task") in {"generate", "overlay_generate", "workflow"}:
+                from core.postscript_cache import application_cache_config
+                secrets["ps_preview_cache"] = application_cache_config()
         directory.mkdir(parents=True, exist_ok=True)
         self.request_file.write_text(json.dumps({**request, "cancel_file": str(self.cancel_file), "events_file": str(self.events_file),
                                                 **({"stdin_secrets": True} if secrets is not None else {})},

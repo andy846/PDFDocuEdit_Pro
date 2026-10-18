@@ -56,7 +56,7 @@ def test_live_phase_is_visible_and_unknown_progress_is_indeterminate(qt_applicat
         assert "13" in panel.label.text()
         assert "Job elapsed" in panel.detail.text()
         if not overlay:
-            scroll = window.stack.widget(2).layout().itemAt(1).widget()
+            scroll = window.production_console.scroll
             top = panel.mapTo(window, panel.rect().topLeft())
             scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
             qt_application.processEvents()

@@ -76,7 +76,7 @@ def preflight(template, records, plan, is_cancelled=None, progress=None):
     return total
 
 
-def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, expected=None):
+def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, expected=None, checker=None):
     count = 0
     columns = ["Envelope", "Sheet", "Output page", "Object", "Profile", "Payload", "Group sequence",
                "Inserts 1-3", "Inserts 4-6", "EOG", "Check digit", "QC", "Sheet sequence", "Symbology", "Source page", "Job sheet"]
@@ -87,9 +87,11 @@ def audit_pdf(pdf, marks_path, csv_path, *, is_cancelled=None, progress=None, ex
             check_cancel(is_cancelled)
             mark = json.loads(line)
             try:
-                check_mark(document[mark["output_page"]-1], mark)
+                (checker or check_mark)(document[mark["output_page"]-1], mark)
             except ValueError as exc:
-                raise BarcodeRecordError(mark["envelope"], f"Output page {mark['output_page']}, object {mark['object']}: {exc}") from exc
+                error=BarcodeRecordError(mark["envelope"], f"Output page {mark.get('global_output_page',mark['output_page'])}, object {mark['object']}: {exc}")
+                error.global_output_page=mark.get("global_output_page",mark["output_page"])
+                raise error from exc
             parts = mark.get("parts", {})
             writer.writerow([mark["envelope"], mark["sheet"], mark["output_page"], _csv_value(mark["object"]), _csv_value(mark["profile"]),
                              mark["payload"], parts.get("group", ""), parts.get("inserts_1_3", ""), parts.get("inserts_4_6", ""), parts.get("eog", ""), parts.get("check_digit", ""), "Decoded: exact match", parts.get("sheet", ""), mark["symbology"], mark.get("source_page", ""), mark.get("job_sheet", "")])

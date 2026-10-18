@@ -53,6 +53,7 @@ def test_finder_routes_projects_to_existing_host(monkeypatch, managed):
     import main
     monkeypatch.setattr(main.sys, "platform", "darwin")
     viewer = Mock()
+    viewer._mode_controller.exit_approved = False
     # Unconstrained Mock synthesizes a fictitious manager on getattr().
     viewer.document_windows = Mock() if managed else None
     target = viewer.document_windows.active_window.return_value if managed else viewer
@@ -79,7 +80,7 @@ def test_windows_file_routing_unchanged(monkeypatch, managed):
     if managed:
         viewer.queue_open_files.assert_not_called()
     viewer._mode_controller.ensure_host.assert_not_called()
-    assert len(main.pdf_arguments(["letter.pdcx", "sample.pdf"])) == 1
+    assert len(main.pdf_arguments(["letter.pdcx", "sample.pdf"])) == 2
 
 
 def test_mac_ipc_endpoint_is_short_user_scoped_and_windows_is_unchanged(monkeypatch):

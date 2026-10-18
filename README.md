@@ -5,6 +5,18 @@
 v3.0.9 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
 本輪原生打包及實機結果見 [v3.0.9 驗收紀錄](docs/RELEASE_VALIDATION_3.0.9.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
+## 開發更新：Command Dispatch Safety 與 Production Review Dashboard
+
+此更新等待 owner review，未提升公開版本或發布。
+
+- Command Palette 執行前重新核對目前模式、精確指令 ID 及可用狀態；舊選項、停用指令或檢查失敗不執行。
+- Production Review 的 Summary 加入唯讀 dashboard：預計封數／頁數、實體紙張、補白背面、單雙面、紙種、Printer Profile、輸出位置及問題入口。
+- 覆核、正式確認、生成中、PDF 發布及 reports-only 發布分開顯示；來源或設定變更仍須重新覆核。
+- Planned barcode validation 與 Final output decode 分開；只展示同一工作／快照的解碼計數。Direct Content QR 等未能證明全面覆蓋的情況標示 Incomplete，不聲稱全部驗證成功。
+- 字體替換保留現有掃描數字及報告入口；缺失資料顯示 Not Available，不推算實體輸出頁面。
+- 窄窗使用既有 Mailpieces／Details 切換；完整計劃可展開，警告確認及批准安全關口保持不變。
+- 驗收與限制見 [M0 + M4 consolidated review](docs/M0_M4_REVIEW.md)。
+
 ## v3.0.9：列印與關閉狀態修補
 
 - Single / Batch Print 共用紙張能力驗證；不支援或回報不一致時先確認輸出紙張，保留取消及批次略過。
@@ -51,12 +63,18 @@ v3.0.9 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及�
 - Issues 返回實際的設定來源；從 Workflow 開啟模板可 **Return to Workflow**。生產輸出資料夾獨立記住，不沿用 profile／圖片瀏覽位置。
 - 詳細責任、相容性和驗收見 [Workflow 設定與覆核說明](docs/WORKFLOW_SETTINGS_REVIEW.md)。此更新包含於 v3.0.8 Windows 更新包。
 
+## 開發修補：Windows 開啟 Designer 專案
+
+- Windows 外部開啟 `.pdcx／.pdflow` 會使用既有 Designer 分頁，成功後自動切換版面；Template、Overlay 及 Workflow 依專案類型開啟。重開同一檔案會聚焦現有分頁。安裝程式補上可選檔案關聯，不覆蓋原有 Windows 預設。[行為與部署限制](docs/PROJECT_FILE_OPENING.md)。
+
 ## 開發更新：PostScript 生產進度
 
 - Production 頁頂部固定顯示目前階段、已用時間、頁數進度及 Cancel job；Template Designer 與 PDF Overlay 共用，不受選單提示或結果區捲動遮蓋。
 - PDF → PS 轉換、選紙指令、PS 回讀驗證分開顯示。Ghostscript 有回報頁碼才顯示數值進度；未有頁碼時顯示活動指示及定時心跳，不把未知進度顯示成 0%。
 - 長時間沒有新頁碼會提示「等待頁數回報」，只表示程序尚未退出，不保證實際有前進或提供完成時間估算。取消仍等待安全清理。
 - 生產報告記錄 PS 轉換與驗證耗時；沒有降低解析度、跳過驗證、改動選紙指令或繞過原子發布。此修正包含於 v3.0.8 Windows 更新包，升級重開後生效。
+
+- 開發修補：PS 轉換前使用臨時副本無損去重，並限制選紙階段的取消檔讀取頻率；保留解析度及完整驗證。[原因、速度與畫質驗證](docs/POSTSCRIPT_OUTPUT_PERFORMANCE.md)。新工作重開程式後生效。
 
 ## v3.0.6：文件完整性與生產安全
 
@@ -559,3 +577,7 @@ Completed production packages include checksum/completion evidence. **Visual Wor
 Native macOS/Linux preparation and packaging use the same pinned qpdf source and strict runtime integrity checks. See [qpdf preparation and acceptance](docs/QPDF_RUNTIME_PARITY.md).
 
 Symantec WS.Reputation.1 quarantine review: [verified qpdf identity and support procedure](docs/QPDF_SYMANTEC_REVIEW.md). Antivirus vendor clearance remains unconfirmed.
+
+### Bounded production output
+
+Production settings now share **Output limits & file naming…** for PDF / PS limits, whole-envelope parts and print-summary filenames with physical sheets, envelopes and D/S. See [operator and maintenance notes](docs/BOUNDED_PRODUCTION_OUTPUT.md).

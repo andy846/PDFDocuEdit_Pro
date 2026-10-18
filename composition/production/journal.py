@@ -316,6 +316,8 @@ def publish_package(staging, final, result, authorization):
         warning = "Output published and verified; state/report write failed: " + str(exc)
         result.setdefault("warnings", []).append(warning)
         _LOG.warning(warning)
+    from core.postscript_cache import commit_production_previews
+    commit_production_previews(result)
     return result
 
 

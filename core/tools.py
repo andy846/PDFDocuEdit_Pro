@@ -584,37 +584,15 @@ def decrypt_pdf_file(
 
 
 def convert_postscript(
-    source_path: str | os.PathLike[str], output_path: str | os.PathLike[str]
+    source_path: str | os.PathLike[str], output_path: str | os.PathLike[str],
+    *, progress=None, is_cancelled=None, timeout=300, profile=None, trace=None,
 ) -> Path:
+    from core.postscript_open import convert_ps
     capability = detect_capabilities()[CapabilityId.POSTSCRIPT]
     if not capability.available:
         raise ToolError(capability.reason)
-    source = Path(source_path).expanduser().resolve()
-    target = Path(output_path).expanduser().resolve()
-    temporary = _temporary_pdf_path(target)
-    try:
-        result = PlatformService.run(
-            [
-                capability.path,
-                "-dNOPAUSE",
-                "-dBATCH",
-                "-dSAFER",
-                "-sDEVICE=pdfwrite",
-                "-dCompatibilityLevel=1.7",
-                f"-sOutputFile={temporary}",
-                str(source),
-            ],
-            timeout=300,
-        )
-        if result.returncode != 0 or not temporary.exists():
-            raise ToolError(
-                result.stderr.strip() or "Ghostscript did not create an output file."
-            )
-        validate_pdf_file(temporary)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return target
+    return convert_ps(source_path, output_path, capability.path, timeout=timeout,
+                      progress=progress, is_cancelled=is_cancelled, profile=profile, trace=trace)
 
 
 def convert_postscript_files(
@@ -638,7 +616,8 @@ def convert_postscript_files(
         if is_cancelled and is_cancelled():
             break
         _progress(progress, index - 1, len(sources), source.name)
-        outputs.append(convert_postscript(source, target))
+        outputs.append(convert_postscript(source, target, is_cancelled=is_cancelled,
+                                          progress=(lambda done, total, message, index=index: _progress(progress, index-1, len(sources), message)) if progress else None))
         _progress(progress, index, len(sources), source.name)
     return outputs
 

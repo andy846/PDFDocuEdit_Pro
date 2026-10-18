@@ -648,3 +648,64 @@ def test_deep_search_hit_returns_to_pdf_and_opens_hit_page(window, tmp_path, met
     wait_until(lambda: window._session.engine.is_loaded()
                and window._session.canvas.current_page == 1)
     assert len(project.template.elements) == 1
+
+
+def test_palette_dispatch_uses_live_document_and_rejects_old_mode(window, tmp_path):
+    from dataclasses import replace
+
+    calls = []
+    for name in ("dispatch-a.pdf", "dispatch-b.pdf"):
+        with fitz.open() as document:
+            document.new_page()
+            document.save(tmp_path / name)
+    window._commands = [replace(command, handler=lambda: calls.append(window._session.document_name))
+                        if command.id == "save" else command for command in window._commands]
+    window._load_file_sync(str(tmp_path / "dispatch-a.pdf"))
+    window._run_command("save")
+    window._load_file_sync(str(tmp_path / "dispatch-b.pdf"))
+    window._run_command("save")
+    assert calls == ["dispatch-a.pdf", "dispatch-b.pdf"]
+    while window._sessions:
+        window.close_document()
+    window._run_command("save")
+    assert len(calls) == 2
+    window._mode_controller.request_mode("designer")
+    window._run_command("save")
+    assert len(calls) == 2
+    assert "no longer available" in window.info_bar._message.text() or window.info_bar._queue
+
+
+@pytest.mark.parametrize("kind", ["template", "overlay", "workflow"])
+def test_shell_project_open_switches_mode_and_reuses_existing_tab(window, tmp_path, monkeypatch, kind):
+    from main import route_open_files
+
+    controller = window._mode_controller
+    controller.set_animations_enabled(False)
+    path = tmp_path / ("shell project.pdflow" if kind == "workflow" else "shell project.pdcx")
+    if kind == "template":
+        save_project(Template(elements=[Element(value="Shell template")]), path)
+    elif kind == "overlay":
+        save_overlay(sample_spec(tmp_path), path)
+    else:
+        from workflow.model import WorkflowSpec
+        from workflow.serializer import save_workflow
+        save_workflow(WorkflowSpec.default(), path)
+    queued = []
+    monkeypatch.setattr(window, "queue_open_files", lambda paths: queued.extend(paths))
+    route_open_files(window, [str(path)])
+    QApplication.processEvents()
+    assert controller.modes.mode == WorkspaceMode.DESIGNER
+    assert queued == []
+    project = controller.host.current_project
+    assert project.project_path.resolve() == path.resolve()
+    assert len(controller.host.projects) == 1
+    if kind == "workflow":
+        assert project.is_workflow
+    else:
+        assert isinstance(project, CompositionWindow if kind == "template" else OverlayWindow)
+    controller.request_mode("pdf")
+    route_open_files(window, [str(path)])
+    QApplication.processEvents()
+    assert controller.modes.mode == WorkspaceMode.DESIGNER
+    assert controller.host.current_project is project
+    assert len(controller.host.projects) == 1

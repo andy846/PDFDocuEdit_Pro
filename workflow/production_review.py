@@ -22,7 +22,7 @@ def batch_context(spec, job, root, *, owner_spec=None, output_root=None):
         raise CompositionError("This job already has output. Choose a different output folder before review.")
     prepared = ProductionJob(job.prepared_template, job.record_store, str(root), job_id=identity,
         auto_repair=bool(spec.node("compose").params.get("auto_repair", True)), output_name=job.output_name,
-        variable_context=copy.deepcopy(job.variable_context))
+        variable_context=copy.deepcopy(job.variable_context),output_policy=copy.deepcopy(job.output_policy))
     return {"kind": "template", "job": asdict(prepared), "label": job.name, "identity": job.id,
         "outputs": job.data_summary.get("outputs", []),
         "binding": {"owner_spec": (owner_spec or spec).to_dict(), "execution_spec": spec.to_dict(), "job_signature": signature,
@@ -50,8 +50,9 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
         batch = BatchRun.from_dict(request["batch"])
         from core.output_safety import contained_path
         root = contained_path(output, "batch-" + batch.batch_id)
-        return {"contexts": [batch_context(spec, job, root, output_root=output) for job in batch.jobs
-                             if job.approved and job.status == "Ready"]}
+        contexts=[batch_context(spec, job, root, output_root=output) for job in batch.jobs
+                  if job.approved and job.status == "Ready"]
+        return {"contexts": apply_output_policy(contexts,request)}
     if kind == "branch":
         from .branch_engine import _check_current, _location, production_root
         run = request["run"]
@@ -65,7 +66,7 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
                 context = batch_context(child, batch.jobs[0], production_root(output, run, entry), owner_spec=spec, output_root=output)
                 context["binding"]["branch_approval"] = branch_approval_binding(run)
                 contexts.append(context)
-        return {"contexts": contexts}
+        return {"contexts": apply_output_policy(contexts,request)}
     if kind == "pdf":
         from .engine import context_fingerprint
         from .pdf_pipeline import _produce
@@ -78,8 +79,18 @@ def prepare_contexts(request, *, progress=None, is_cancelled=None):
             raise CompositionError("Apply the selected output folder before production review.")
         context = _produce(spec, run, Path(request["directory"]), progress=progress,
                            is_cancelled=is_cancelled, _review_only=True)
-        return {"contexts": [context]}
+        return {"contexts": apply_output_policy([context],request)}
     raise CompositionError("Unknown workflow production review kind.")
+
+
+def apply_output_policy(contexts,request):
+    if "output_policy" in request:
+        from composition.production.output_policy import OutputPolicy
+        policy=OutputPolicy.from_dict(request["output_policy"]).to_dict()
+        for context in contexts:
+            if context["kind"]!="report":
+                context["job"]["output_policy"]=copy.deepcopy(policy)
+    return contexts
 
 
 def validate_receipts(request, *, is_cancelled=None, session=None):
@@ -119,6 +130,10 @@ def validate_receipts(request, *, is_cancelled=None, session=None):
         raise CompositionError("Review the current PDF production job before generating.")
     for receipt in receipts:
         context = receipt["context"]
+        if "output_policy" in request and context["kind"]!="report":
+            from composition.production.output_policy import OutputPolicy
+            if context["job"].get("output_policy",{}) != OutputPolicy.from_dict(request["output_policy"]).to_dict():
+                raise CompositionError("Output limits or naming changed. Review production again.")
         if context["binding"].get("owner_spec") != request["spec"]:
             raise CompositionError("Workflow settings changed. Review production again.")
         if expected:
@@ -134,7 +149,8 @@ def validate_receipts(request, *, is_cancelled=None, session=None):
 
 
 def workflow_state(window):
-    state = {"spec": window.spec.to_dict(), "draft": window.draft_error}
+    state = {"spec": window.spec.to_dict(), "draft": window.draft_error,
+             "output_policy": window.output_limits.policy() if hasattr(window,"output_limits") else {}}
     if hasattr(window, "batch"):
         state["batch"] = window.batch.to_dict()
     elif isinstance(window.run, dict):
@@ -159,6 +175,8 @@ def pane_for(window):
         edit_review_issue(window,context,issue)
     controller = ReviewController(window, pane, lambda: workflow_state(window), edit)
     window.undo.indexChanged.connect(controller.invalidate)
+    if hasattr(window,"output_limits"):
+        window.output_limits.changed.connect(controller.invalidate)
     window.production_review = controller
     return controller
 
@@ -170,6 +188,8 @@ def open_workflow_review(window, request, continuation):
     controller.pane.status.setText("Preparing checked workflow production inputs…")
     request = copy.deepcopy(request)
     request["spec"] = window.spec.to_dict()
+    if hasattr(window,"output_limits"):
+        request["output_policy"] = window.output_limits.policy()
     if request["review_kind"] == "batch":
         request["batch"] = window.batch.to_dict()
     elif request["review_kind"] == "branch":

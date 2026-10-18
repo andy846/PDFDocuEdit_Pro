@@ -225,7 +225,10 @@ class OverlayFiles:
             if key == "output_pdf" and self.project_host:
                 self.project_host.open_production_output(self, self.last_result)
                 return
-            QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_result[key]))
+            from .output_results import choose_output
+            path=choose_output(self,self.last_result) if key=="output_pdf" else self.last_result[key]
+            if path:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def cancel_job(self):
         if self.active_worker:

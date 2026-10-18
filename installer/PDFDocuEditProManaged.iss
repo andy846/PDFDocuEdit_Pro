@@ -106,6 +106,8 @@ Root: HKCU; Subkey: "Software\Classes\{#MyAppProgId}\shell\open\command"; ValueT
 Root: HKCU; Subkey: "Software\Classes\.pdf\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.ps\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.eps\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.pdcx\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.pdflow\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppProgId}"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 ; Register the managed handler in Default Apps without claiming the generic Launcher.exe name.
 Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
@@ -113,6 +115,8 @@ Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities"; ValueType: stri
 Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "{#MyAppProgId}"
 Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ps"; ValueData: "{#MyAppProgId}"
 Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".eps"; ValueData: "{#MyAppProgId}"
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdcx"; ValueData: "{#MyAppProgId}"
+Root: HKCU; Subkey: "Software\{#MyRegisteredName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdflow"; ValueData: "{#MyAppProgId}"
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#MyRegisteredName}"; ValueData: "Software\{#MyRegisteredName}\Capabilities"; Flags: uninsdeletevalue
 #endif
 

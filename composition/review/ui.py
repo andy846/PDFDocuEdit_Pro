@@ -31,6 +31,9 @@ from PyQt6.QtWidgets import (
 from composition.designer.process import Worker
 from ui.combo_popup import WideComboBox
 
+from .dashboard import ReviewDashboard
+from .presentation import ReviewDashboardModel, dashboard_inputs
+
 
 def table(headers):
     view = QTableWidget(0, len(headers))
@@ -142,7 +145,16 @@ class ProductionReviewPane(QWidget):
         overview_scroll.setWidgetResizable(True)
         overview_page = QWidget()
         overview_layout = QVBoxLayout(overview_page)
+        self.dashboard = ReviewDashboard()
+        overview_layout.addWidget(self.dashboard)
+        self.plan_details = QPushButton("Show full checked plan details")
+        self.plan_details.setCheckable(True)
+        self.plan_details.toggled.connect(self.overview.setVisible)
+        overview_layout.addWidget(self.plan_details)
+        self.overview.hide()
         overview_layout.addWidget(self.overview)
+        self.dashboard.issuesRequested.connect(self.show_issues)
+        self.dashboard.barcodeRequested.connect(self.show_barcode_details)
         self.font_report = QPushButton("Open font substitution report")
         self.font_report.hide()
         overview_layout.addWidget(self.font_report)
@@ -223,6 +235,28 @@ class ProductionReviewPane(QWidget):
         self._narrow = False
         self._wide_sizes = [300, 760]
 
+    def show_issues(self, severity=""):
+        self.details.setCurrentWidget(self.issue_page)
+        if self._narrow:
+            self.compact.setCurrentWidget(self.details)
+        for row in range(self.issues.rowCount()):
+            item = self.issues.item(row, 0)
+            if item and (not severity or item.text() == severity):
+                self.issues.selectRow(row)
+                break
+
+    def show_barcode_details(self):
+        for row in range(self.issues.rowCount()):
+            item = self.issues.item(row, 0)
+            issue = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if issue and issue.get("action") == "barcode":
+                self.show_issues()
+                self.issues.selectRow(row)
+                return
+        self.details.setCurrentIndex(2)
+        if self._narrow:
+            self.compact.setCurrentWidget(self.details)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         narrow = self.width() < 1080
@@ -273,6 +307,10 @@ class ReviewController:
         self.rows_serial = 0
         self.view_workers = {}
         self.consumed = False
+        self.dashboard_stale = self.dashboard_cancelled = self.dashboard_failed = False
+        self.generations = {}
+        self.dashboard_origin = None
+        self.generation_serial = 0
         pane.jobs.currentIndexChanged.connect(self.select_job)
         pane.search.returnPressed.connect(lambda: self.rows(reset=True))
         pane.previous.clicked.connect(lambda: self.rows(delta=-50))
@@ -289,11 +327,19 @@ class ReviewController:
         pane.editRequested.connect(edit)
         pane.source.clicked.connect(self.open_source)
         pane.font_report.clicked.connect(self.open_font_report)
+        pane.dashboard.fontRequested.connect(self.open_dashboard_font_report)
 
     def state(self):
         try:
             return hashlib.sha256(json.dumps(self.current(), sort_keys=True, ensure_ascii=True).encode()).hexdigest()
         except (ValueError, OSError, AttributeError, RuntimeError):
+            return None
+
+    def dashboard_state(self):
+        # Read-only status projection; original state/fingerprint still controls approval.
+        try:
+            return json.dumps(dashboard_inputs(self.current()), sort_keys=True, ensure_ascii=True)
+        except (ValueError, OSError, AttributeError, RuntimeError, TypeError):
             return None
 
     def alive(self):
@@ -307,12 +353,17 @@ class ReviewController:
             return
         if self.original_state != self.state():
             self.session_valid = False
+            self.dashboard_stale = (self.dashboard_stale or not self.consumed or self.dashboard_origin is None
+                                    or self.dashboard_origin != self.dashboard_state())
             self.epoch += 1
             self.view_epoch += 1
             if self.check_worker:
                 self.check_worker.cancel()
-            self.pane.status.setText("Settings changed. This review is stale; check again.")
+            self.pane.status.setText("Settings changed. This review is stale; check again."
+                                    if self.dashboard_stale else
+                                    "Showing the confirmed plan. See dashboard for output status.")
             self.pane.confirm.setEnabled(False)
+            self.refresh_dashboard()
 
     def _request(self, task, callback, *, checking=False, **values):
         epoch = self.epoch
@@ -364,8 +415,10 @@ class ReviewController:
                 callback(delivered[-1][1])
             else:
                 self.session_valid = False
+                self.dashboard_failed = True
                 self.pane.status.setText(str(delivered[-1][1] if delivered else "Review worker returned no result."))
                 self.pane.confirm.setEnabled(False)
+                self.refresh_dashboard()
         worker.ended.connect(ended)
         return worker
 
@@ -384,6 +437,10 @@ class ReviewController:
         self.original_state = self.state()
         self.session_valid = self.original_state is not None
         self.consumed = False
+        self.dashboard_stale = self.dashboard_cancelled = self.dashboard_failed = False
+        self.generations.clear()
+        self.dashboard_origin = self.dashboard_state()
+        self.generation_serial += 1
         for view in (self.pane.envelopes, self.pane.pages, self.pane.issues):
             view.setRowCount(0)
         self.pane.front.clear("Select a checked sheet")
@@ -432,10 +489,12 @@ class ReviewController:
     def cancel(self):
         if self.check_worker:
             self.session_valid = False
+            self.dashboard_cancelled = True
             self.check_worker.cancel()
             self.epoch += 1
             self.pane.status.setText("Cancellation requested. Completed results remain available; approval is disabled.")
         self.pane.confirm.setEnabled(False)
+        self.refresh_dashboard()
 
     def selected(self):
         index = max(0, self.pane.jobs.currentIndex())
@@ -446,6 +505,7 @@ class ReviewController:
         self.offset = self.page_offset = self.envelope = 0
         result = self.selected()
         if not result:
+            self.refresh_dashboard()
             return
         summary = result["summary"]
         titles = {"job_id": "Job ID", "label": "Job", "records": "Mailpieces / records", "pages": "Output pages",
@@ -464,6 +524,9 @@ class ReviewController:
         backend = summary.get("backend", "pdf")
         lines.append("Output: " + {"pdf": "PDF", "postscript": "PDF + PostScript", "canon_prismasync": "PDF + JDF"}.get(backend, backend))
         lines += [f"Stock {stock}: {count:,} physical sheets" for stock, count in summary.get("stock_sheets", {}).items()]
+        for key in ("output_limits","output_partition_estimate","output_naming","output_pattern","output_naming_preview"):
+            if summary.get(key):
+                lines.append(summary[key])
         if summary.get("outputs"):
             lines.append("Split outputs: " + " · ".join(f"{p['name']} ({p['records']:,} records)" for p in summary["outputs"]))
         self.pane.overview.setText("\n".join(lines) + "\n\nPreview and planned payloads only; final PDF decoding runs after generation.")
@@ -494,6 +557,9 @@ class ReviewController:
         else:
             self.pane.blocker_reason.clear()
             self.pane.blocker_reason.setToolTip("")
+            self.pane.details.setCurrentIndex(0)
+            if self.pane._narrow:
+                self.pane.compact.setCurrentWidget(self.pane.details)
         self.pane.front.clear("Select a sheet to preview its front")
         self.pane.back.clear("Select a sheet to preview its back")
         self.pane.pages.setRowCount(0)
@@ -513,7 +579,7 @@ class ReviewController:
     def rows(self, *, reset=False, delta=0):
         self.invalidate()
         result = self.selected()
-        if not result or self.original_state != self.state():
+        if not result or (self.original_state != self.state() and not (self.consumed and not self.dashboard_stale)):
             return
         if reset:
             self.offset = 0
@@ -596,7 +662,7 @@ class ReviewController:
         if not result or index < 0:
             return
         self.invalidate()
-        if self.original_state != self.state():
+        if self.original_state != self.state() and not (self.consumed and not self.dashboard_stale):
             return
         self.view_epoch += 1
         epoch = self.view_epoch
@@ -649,6 +715,88 @@ class ReviewController:
                                      and (not warnings or self.pane.acknowledge.isChecked()))
         self.pane.cancel.setEnabled(bool(self.check_worker))
         self.pane.recheck.setEnabled(not self.check_worker)
+        self.refresh_dashboard()
+
+    def refresh_dashboard(self):
+        if not self.alive() or getattr(self.owner, "close_pending", False):
+            return
+        result = self.selected()
+        task = getattr(self.check_worker, "task", "")
+        model = ReviewDashboardModel.from_review(result,
+            current=not self.dashboard_stale,
+            checking=bool(self.check_worker) and not task.endswith("_approve"),
+            confirming=bool(self.check_worker) and task.endswith("_approve"),
+            confirmed=self.consumed,
+            confirmation_available=self.pane.confirm.isEnabled(),
+            acknowledged=self.pane.acknowledge.isChecked(),
+            cancelled=self.dashboard_cancelled,
+            check_failed=self.dashboard_failed,
+            generation=self.generations.get(result.get("snapshot_id")) if result else None)
+        self.pane.dashboard.display(model)
+
+    def open_dashboard_font_report(self):
+        if self.alive() and self.pane.dashboard.model.fonts.report:
+            from core.platform_service import PlatformService
+            PlatformService.open_path(self.pane.dashboard.model.fonts.report)
+
+    def watch_generation(self, worker, receipts):
+        """Observe this pane's approved continuation only; never start or approve work."""
+        if worker is None or not self.consumed or not self.alive():
+            return
+        serial = self.generation_serial
+        bindings = {}
+        for result in self.results:
+            for receipt in receipts:
+                if (receipt.get("snapshot_id") == result["snapshot_id"]
+                        and receipt.get("context") == result.get("context")):
+                    bindings[result["summary"]["job_id"]] = {
+                        "snapshot_id": result["snapshot_id"], "fingerprint": result["fingerprint"],
+                        "job_id": result["summary"]["job_id"], "phase": "running"}
+        if not bindings:
+            return
+        self.generations.update({b["snapshot_id"]: b for b in bindings.values()})
+        delivered, failed = [], []
+        worker.resultReady.connect(delivered.append)
+        worker.failed.connect(failed.append)
+        def ended():
+            if not self.alive() or serial != self.generation_serial or getattr(self.owner, "close_pending", False):
+                return
+            values = self._generation_results(delivered[-1]) if delivered else []
+            keys = {"job_id", "status", "expected_pages", "generated_pages", "generated_files", "published_files",
+                    "output_pdf", "report_dir", "expected_barcodes", "rendered_barcodes", "decoded_barcodes",
+                    "repaired_glyphs", "repaired_records", "glyph_repair_report", "font_scan"}
+            for job_id, binding in bindings.items():
+                matches = [r for r in values if r.get("job_id") == job_id]
+                binding = {**binding, "phase": "failed" if failed else "finished"}
+                if len(matches) == 1:
+                    binding["result"] = {key: value for key, value in matches[0].items() if key in keys}
+                self.generations[binding["snapshot_id"]] = binding
+            self.refresh_dashboard()
+        worker.ended.connect(ended)
+        self.refresh_dashboard()
+
+    @staticmethod
+    def _generation_results(value):
+        # Whitelisted result envelopes, never recursively traverse record data.
+        results = []
+        if not isinstance(value, dict):
+            return results
+        if value.get("job_id") and "status" in value:
+            results.append(value)
+        if isinstance(value.get("output"), dict):
+            results.append(value["output"])
+        batch = value.get("batch", {})
+        if isinstance(batch, dict):
+            results.extend(job["result"] for job in batch.get("jobs", []) if isinstance(job.get("result"), dict))
+        run = value.get("run", {})
+        if isinstance(run, dict):
+            for entry in run.get("jobs", []):
+                if isinstance(entry.get("result"), dict):
+                    results.append(entry["result"])
+                child = entry.get("batch", {})
+                if isinstance(child, dict):
+                    results.extend(job["result"] for job in child.get("jobs", []) if isinstance(job.get("result"), dict))
+        return results
 
     def confirm(self):
         self.invalidate()
@@ -663,7 +811,12 @@ class ReviewController:
                 if self.session_valid and self.original_state == self.state():
                     self.session_valid = False
                     self.consumed = True
+                    self.refresh_dashboard()
+                    before = set(getattr(self.owner, "workers", []))
                     self.continuation(receipts)
+                    worker = getattr(self.owner, "production_worker", None) or getattr(self.owner, "active_worker", None)
+                    if worker is not None and worker not in before:
+                        self.watch_generation(worker, receipts)
                 return
             context = self.contexts[index]
             result = self.results[index]

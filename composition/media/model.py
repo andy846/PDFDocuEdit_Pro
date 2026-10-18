@@ -145,6 +145,9 @@ def default_media():
 def media_output_description(summary, *, published):
     """Describe planned versus published media artifacts without guessing JDF."""
     backend = summary.get("backend")
+    if published and summary.get("parts",1)>1:
+        kind="PDF + PostScript" if backend=="postscript" else "PDF + JDF"
+        return f"{summary['parts']:,} checked {kind} parts; use matching files in numeric order · device validation pending"
     if backend == "postscript":
         if published and summary.get("postscript"):
             return "PostScript selection embedded · device validation pending"

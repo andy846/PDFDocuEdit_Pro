@@ -280,7 +280,8 @@ def test_queued_encrypted_pdf_resumes_after_modal_password_prompt(
     viewer.close()
 
 
-def test_single_instance_router_forwards_pdf_paths(tmp_path) -> None:
+@pytest.mark.parametrize("suffix", [".pdf", ".pdcx", ".pdflow"])
+def test_single_instance_router_forwards_pdf_paths(tmp_path, suffix) -> None:
     from PyQt6.QtNetwork import QLocalServer
     from PyQt6.QtWidgets import QApplication
 
@@ -294,7 +295,7 @@ def test_single_instance_router_forwards_pdf_paths(tmp_path) -> None:
     assert router.listen()
     received: list[list[str]] = []
     router.pathsReceived.connect(received.append)
-    source = tmp_path / "forwarded.pdf"
+    source = tmp_path / ("forwarded project" + suffix)
     source.write_bytes(b"%PDF-1.4 test")
 
     assert SingleInstanceRouter.forward_to_primary(

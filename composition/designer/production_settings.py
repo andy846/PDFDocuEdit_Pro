@@ -59,8 +59,31 @@ class ProductionScroll(QScrollArea):
             self.actions.setDirection(direction)
 
 
-def plan_summary(template, count):
-    plan = build_print_plan(template, max(1, count))
+def stock_summary_rows(template, plan, count):
+    """Display existing planned stock assignments without scanning records."""
+    media = template.media
+    if not media.get("enabled"):
+        return []
+    profile = media.get("printer_profile", {})
+    stocks = {stock["id"]: stock for stock in media.get("stocks", [])}
+    rows = []
+    for stock, sheets in plan.stock_sheets.items():
+        mapping = profile.get("mappings", {}).get(stock, {})
+        if profile.get("backend") == "postscript":
+            from composition.media.model import PrinterProfile
+            from composition.media.postscript import selection_request
+            effective = selection_request(PrinterProfile.from_dict(profile), stocks[stock])
+            request = " · ".join(f"{key} {value}" for key, value in effective.items()
+                                 if key != "PageSize" and value is not None)
+        else:
+            request = mapping.get("catalog_id") or mapping.get("name") or ""
+        rows.append((stocks[stock]["name"], sheets if count else 0, request))
+    return rows
+
+
+def plan_summary(template, count, *, plan=None):
+    if plan is None:
+        plan = build_print_plan(template, max(1, count))
     text = (f"Printing: {'Duplex' if plan.settings.duplex else 'Simplex'}\n"
             f"Records: {count:,} · Template pages per record: {len(template.pages)}\n"
             f"Output pages: {plan.output_pages if count else 0:,} · "
@@ -72,18 +95,8 @@ def plan_summary(template, count):
     text += "\nOutput: " + {"pdf": "PDF", "postscript": "PDF + PostScript", "canon_prismasync": "PDF + JDF"}.get(backend, backend)
     if media.get("enabled"):
         text += "\nPrinter profile: " + (profile.get("profile_name") or "Unnamed profile")
-        stocks = {stock["id"]: stock for stock in media.get("stocks", [])}
-        for stock, sheets in plan.stock_sheets.items():
-            mapping = profile.get("mappings", {}).get(stock, {})
-            if backend == "postscript":
-                from composition.media.model import PrinterProfile
-                from composition.media.postscript import selection_request
-                effective = selection_request(PrinterProfile.from_dict(profile), stocks[stock])
-                request = " · ".join(f"{key} {value}" for key, value in effective.items()
-                                     if key != "PageSize" and value is not None)
-            else:
-                request = mapping.get("catalog_id") or mapping.get("name") or ""
-            text += f"\nStock {stocks[stock]['name']}: {sheets if count else 0:,} sheets" + (" · " + request if request else "")
+        for name, sheets, request in stock_summary_rows(template, plan, count):
+            text += f"\nStock {name}: {sheets:,} sheets" + (" · " + request if request else "")
     barcodes = [element for element in template.all_elements() if element.type in {"qr", "code128", "i25"}]
     text += f"\nTemplate Barcode / QR objects: {len(barcodes)}"
     if has_inserter(template):
@@ -244,14 +257,18 @@ class ProductionSettings:
             for e in self.template.all_elements() if e.barcode_profile))
         self.design_update_i25.setEnabled(editable)
         try:
-            text = plan_summary(self.template, self.record_count)
+            plan = build_print_plan(self.template, max(1, self.record_count))
+            text = plan_summary(self.template, self.record_count, plan=plan)
             if self.template.media.get("enabled"):
                 text += "\nPrinting follows Print Media / Stocks."
             if self.design_update_i25.isVisible():
                 text += "\nLegacy I25 requires an explicit sequence update before generation."
             self.production_plan.setText(text)
+            self.production_console.display_plan(self.template, self.record_count, plan,
+                stock_summary_rows(self.template, plan, self.record_count))
         except ValueError as exc:
             self.production_plan.setText(str(exc))
+            self.production_console.unavailable_plan(exc)
 
     def change_design_printing(self):
         duplex = bool(self.design_printing.currentData())

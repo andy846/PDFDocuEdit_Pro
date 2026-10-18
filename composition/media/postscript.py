@@ -39,7 +39,7 @@ def validate_output_backend(media):
 
 
 def _run(executable, arguments, directory, is_cancelled, *, progress=None, total=0,
-         stage="PostScript processing"):
+         stage="PostScript processing", output_policy=None, monitored=None, monitored_kind="PS"):
     """Keep diagnostics on disk and report bounded page updates / live heartbeats."""
     log = Path(directory)/"ghostscript.log"
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
@@ -78,6 +78,8 @@ def _run(executable, arguments, directory, is_cancelled, *, progress=None, total
             report()
             while True:
                 check_cancel(is_cancelled)
+                if output_policy is not None and monitored is not None and Path(monitored).exists():
+                    output_policy.check_size(monitored, monitored_kind)
                 try:
                     process.wait(timeout=.2)
                     break
@@ -132,8 +134,13 @@ def request_code(request):
             + " >> setpagedevice\n").encode("ascii")
 
 
-def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancelled=None, progress=None):
+def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancelled=None, progress=None, output_policy=None):
     """Accept only converter-produced sequential DSC pages; keep reads bounded."""
+    # The worker callback reads a cancellation file. Calling it for every
+    # ASCII PS line turns a streaming copy into millions of filesystem stats.
+    # Keep immediate boundary checks and poll at most once per 50 ms in data.
+    check_cancel(is_cancelled)
+    next_cancel_check = monotonic() + .05
     spec = MediaSpec.from_dict(media)
     profile = PrinterProfile.from_dict(spec.printer_profile)
     stocks = {s["id"]: s for s in spec.stocks}
@@ -150,13 +157,19 @@ def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancel
         # ps2write emits ASCII-encoded streams. A capped readline bounds even a long data line.
         start_of_line = True
         while line := input_stream.readline(1024*1024):
-            check_cancel(is_cancelled)
+            if (is_cancelled or output_policy is not None) and monotonic() >= next_cancel_check:
+                check_cancel(is_cancelled)
+                if output_policy is not None:
+                    output.flush()
+                    output_policy.check_size(Path(target),"PS")
+                next_cancel_check = monotonic() + .05
             if start_of_line and line.startswith(b"%%LanguageLevel:"):
                 line = b"%%LanguageLevel: 3\n"
             if start_of_line and line == b"/SetPageSize true def\n" and page == 0:
                 # The application owns physical sheet dimensions, not OPDFRead defaults.
                 line = b"/SetPageSize false def\n"
             if start_of_line and line.startswith(b"%%Page:"):
+                check_cancel(is_cancelled)
                 match = re.fullmatch(rb"%%Page: \S+ (\d+)\s*", line)
                 if not match or int(match[1]) != page+1 or pending is not None:
                     raise CompositionError("PostScript DSC page order / setup mismatch.")
@@ -186,11 +199,38 @@ def program_dsc(source, target, rows, media, expected_pages, audit, *, is_cancel
                 if progress and (setups % 100 == 0 or setups == expected_pages):
                     progress(setups, expected_pages, "PostScript media · programming sheet selections")
             start_of_line = line.endswith(b"\n")
+    check_cancel(is_cancelled)
     if page != expected_pages or setups != page or next(rows, None) is not None:
         raise CompositionError(f"PostScript reconciliation failed: {page} pages / {setups} setups; expected {expected_pages}.")
 
 
-def export_postscript(directory, media, pdf_name, *, is_cancelled=None, progress=None):
+def _prepare_converter_input(source_path, target, *, is_cancelled=None, progress=None):
+    """Deduplicate objects/streams losslessly in a private converter input only.
+
+    PDF assembly can repeat identical forms and font resources between chunks.
+    Sharing these resources avoids repeatedly processing them in ps2write.
+    No image resampling, font replacement or rasterisation is requested.
+    MuPDF's save is synchronous; cancellation is checked before and after it.
+    """
+    check_cancel(is_cancelled)
+    if progress:
+        progress(0, 0, "PostScript preparation · lossless resource deduplication")
+    check_cancel(is_cancelled)
+    with fitz.open(source_path) as source:
+        source.save(target, garbage=4, deflate=True)
+        check_cancel(is_cancelled)
+        with fitz.open(target) as prepared:
+            if prepared.page_count != source.page_count:
+                raise CompositionError("PostScript preparation changed the output page count.")
+            for original, page in zip(source, prepared, strict=True):
+                check_cancel(is_cancelled)
+                if (original.mediabox, original.cropbox, original.rotation) != (
+                        page.mediabox, page.cropbox, page.rotation):
+                    raise CompositionError("PostScript preparation changed an output page geometry.")
+    check_cancel(is_cancelled)
+
+
+def export_postscript(directory, media, pdf_name, *, is_cancelled=None, progress=None, output_policy=None):
     """Called within a job's unpublished staging directory, including split packages."""
     spec = MediaSpec.from_dict(media)
     profile = PrinterProfile.from_dict(spec.printer_profile)
@@ -212,21 +252,29 @@ def export_postscript(directory, media, pdf_name, *, is_cancelled=None, progress
         folder = Path(temporary)
         raw, candidate, checked = folder/"converted.ps", folder/"production.ps", folder/"checked.pdf"
         audit = folder/"postscript-pages.csv"
+        converter_input = folder/"converter-input.pdf"
+        preparation_started = monotonic()
+        _prepare_converter_input(pdf, converter_input, is_cancelled=is_cancelled, progress=progress)
+        preparation_seconds = monotonic()-preparation_started
         conversion_started = monotonic()
         _run(executable, ["-sDEVICE=ps2write", "-dProduceDSC=true", f"-r{profile.resolution_dpi}",
                           "-dAutoRotatePages=/None", "-dEmbedAllFonts=true", "-dSubsetFonts=true",
-                          f"-sOutputFile={raw.name}", "-f", str(pdf.resolve())], folder, is_cancelled,
-             progress=progress, total=count, stage="PostScript conversion")
+                          f"-sOutputFile={raw.name}", "-f", str(converter_input.resolve())], folder, is_cancelled,
+             progress=progress, total=count, stage="PostScript conversion", output_policy=output_policy, monitored=raw)
         conversion_seconds = monotonic()-conversion_started
         with closing(sqlite3.connect(directory/"media-plan.sqlite")) as db:
             rows = db.execute("SELECT * FROM pages ORDER BY file_page")
-            program_dsc(raw, candidate, rows, media, count, audit, is_cancelled=is_cancelled, progress=progress)
+            program_dsc(raw, candidate, rows, media, count, audit, is_cancelled=is_cancelled, progress=progress, output_policy=output_policy)
+        if output_policy is not None:
+            output_policy.check_size(candidate,"PS")
         if progress:
             progress(0, 0, "PostScript validation · interpreting generated PostScript")
         validation_started = monotonic()
+        from composition.production.output_policy import OutputPolicy
+        validation_policy=OutputPolicy.from_dict() if output_policy is not None else None
         _run(executable, ["-sDEVICE=pdfwrite", "-dAutoRotatePages=/None", f"-r{profile.resolution_dpi}",
                           f"-sOutputFile={checked.name}", "-f", candidate.name], folder, is_cancelled,
-             progress=progress, total=count, stage="PostScript validation")
+             progress=progress, total=count, stage="PostScript validation", output_policy=validation_policy, monitored=checked, monitored_kind="PDF")
         with fitz.open(pdf) as source, fitz.open(checked) as verified:
             if verified.page_count != count:
                 raise CompositionError("PostScript interpretation changed the output page count.")
@@ -240,8 +288,14 @@ def export_postscript(directory, media, pdf_name, *, is_cancelled=None, progress
         summary = {"postscript": target.name, "postscript_pages": count, "postscript_sha256": file_hash(candidate),
                    "postscript_size": candidate.stat().st_size, "postscript_validation": "interpreted_page_count_and_size",
                    "selection_method": profile.selection_mode, "resolution_dpi": profile.resolution_dpi,
-                   "device_validation": "pending", "postscript_conversion_seconds": round(conversion_seconds, 3),
+                   "device_validation": "pending",
+                   "postscript_preparation_seconds": round(preparation_seconds, 3),
+                   "postscript_input_bytes": pdf.stat().st_size,
+                   "postscript_prepared_input_bytes": converter_input.stat().st_size,
+                   "postscript_conversion_seconds": round(conversion_seconds, 3),
                    "postscript_validation_seconds": round(monotonic()-validation_started, 3)}
+        from core.postscript_cache import capture_production_preview
+        capture_production_preview(checked, summary["postscript_sha256"], executable, profile.resolution_dpi)
         candidate.rename(target)
         audit.rename(directory/"postscript-pages.csv")
         (directory/"postscript-report.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
