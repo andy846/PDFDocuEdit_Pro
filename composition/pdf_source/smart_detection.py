@@ -306,6 +306,14 @@ def _box_region(boxes):
     return [max(0, box.x0/MM_TO_PT), max(0, box.y0/MM_TO_PT), box.width/MM_TO_PT, box.height/MM_TO_PT]
 
 
+def signal_values(lines, rules):
+    """Shared spatial interpretation; raw identity values stay task-local."""
+    marker = marker_hit(lines, rules["first_text"]) if "first_text" in rules else False
+    ident, issue = identity(lines, rules["document_id"]) if "document_id" in rules else (None, "")
+    counter = page_number(lines, rules["page_number"]) if "page_number" in rules else None
+    return marker, ident, issue, counter
+
+
 def detect_index(index, config, *, is_cancelled=None, progress=None):
     config.validate()
     rules = {r["kind"]: r for r in config.rules}
@@ -317,9 +325,7 @@ def detect_index(index, config, *, is_cancelled=None, progress=None):
         findings.append({"page": page, "code": code, "message": message})
     for number, lines in index.pages():
         check_cancel(is_cancelled)
-        marker = marker_hit(lines, rules["first_text"]) if "first_text" in rules else False
-        ident, issue = identity(lines, rules["document_id"]) if "document_id" in rules else (None, "")
-        counter = page_number(lines, rules["page_number"]) if "page_number" in rules else None
+        marker, ident, issue, counter = signal_values(lines, rules)
         changed = ident is not None and (previous_id is None or ident != previous_id)
         hits = []
         if marker:
