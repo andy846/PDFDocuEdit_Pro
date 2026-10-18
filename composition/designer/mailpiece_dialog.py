@@ -54,7 +54,8 @@ class BoundaryTable(QAbstractTableModel):
         self.groups = report["groups"]
         self.report = report
         self.evidence = {e["page"]: e for e in report.get("evidence", [])}
-        self.warnings = sorted({f["page"] for f in report["findings"]})
+        unknown_pages = {r["start_page"] for r in report.get("classifications", []) if r["classification_status"] in ("unknown", "ambiguous")}
+        self.warnings = sorted({f["page"] for f in report["findings"] if not f.get("resolution")} | unknown_pages)
         self.rows = []
         for i, (start, end) in enumerate(self.groups):
             warning = bisect_left(self.warnings, start)
@@ -66,11 +67,11 @@ class BoundaryTable(QAbstractTableModel):
         return 0 if parent is not None and parent.isValid() else len(self.rows)
 
     def columnCount(self, parent=None):
-        return 5
+        return 6 if self.report.get("report_version") == 3 else 5
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return ("Envelope", "Source pages", "Count", "Review", "Evidence / end")[section]
+            return ("Envelope", "Source pages", "Count", "Review", "Evidence / end", "TemplateID")[section]
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -84,8 +85,10 @@ class BoundaryTable(QAbstractTableModel):
         reason = " + ".join(SIGNAL_LABELS.get(m, m) for m in evidence.get("matched", [])) or "Operator boundary"
         if evidence.get("end_basis") in ("next_start_inferred", "pdf_end_inferred"):
             reason += "; end inferred"
+        classification = self.report.get("classifications", [])
+        template = (classification[number]["template_id"] or classification[number]["classification_status"].title()) if classification else ""
         return (f"{number+1:06}", f"{start}–{end}", end-start+1,
-                "Needs review" if needs_review else "Evidence consistent" if self.report.get("established") else "Check boundaries", reason)[index.column()]
+                "Needs review" if needs_review else "Evidence consistent" if self.report.get("established") else "Check boundaries", reason, template)[index.column()]
 
 
 class MailpieceDialog(SmartDetectionControls, QDialog):
@@ -233,7 +236,12 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             button.setAutoDefault(False)
             button.setToolTip("Undo/redo boundary edits in this review; the main project is unchanged until Accept & apply.")
             edits.addWidget(button)
+        self.classify_button = QPushButton("Confirm type / boundaries…")
+        self.classify_button.setAutoDefault(False)
+        self.classify_button.clicked.connect(self.confirm_classification)
+        self.classify_button.setToolTip("Explicitly confirm the selected document type and resolve its conflicting signals after inspecting the source pages.")
         layout.addLayout(edits)
+        layout.addWidget(self.classify_button)
         self.review_splitter.setSizes([130, 365])
         splitter.addWidget(right)
         splitter.setSizes([300, 560])
@@ -277,7 +285,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         for control in self.region:
             control.valueChanged.connect(self.invalidate)
         saved = window.spec.detection_review if window.spec else {}
-        if saved and "config" in saved and window.spec.settings.groups:
+        if saved.get("report_version") == 3 and window.spec.settings.groups:
+            QTimer.singleShot(0, lambda: self.load_classified_review(saved))
+        elif saved and "config" in saved and window.spec.settings.groups:
             self.restore_config(saved["config"])
             self.source = window.spec.to_dict()["source"]
             self.report = copy.deepcopy(saved)
@@ -432,17 +442,23 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             return
         self.source, self.report = value["source"], value["detection"]
         # Edits made during scanning cannot reuse results from different rules.
-        try:
-            current = asdict(self.config())
-        except ValueError:
-            current = None
-        if self.report["config"] != current:
+        if self.report.get("report_version") == 3:
+            from composition.pdf_source.multi_detection import profile_digest
+            current = profile_digest(self.customer_profile) if self.customer_profile else None
+            matches = self.report["profile_sha256"] == current
+        else:
+            try:
+                current = asdict(self.config())
+            except ValueError:
+                current = None
+            matches = self.report["config"] == current
+        if not matches or self.source["sha256"] != self.context_sha256:
             self.invalidate()
-            self.summary.setText("Options changed during scanning. Scan again.")
+            self.summary.setText("Options or source changed during scanning. Scan again.")
             return
-        if self.report.get("version", self.report["config"].get("version")) == 2:
+        if self.report.get("report_version") == 3 or self.report.get("version", self.report.get("config", {}).get("version")) == 2:
             self.exceptions_only.blockSignals(True)
-            self.exceptions_only.setChecked(bool(self.report["findings"]))
+            self.exceptions_only.setChecked(bool(self.report["findings"]) or bool(self.report.get("unresolved")))
             self.exceptions_only.blockSignals(False)
         self.show_report()
 
@@ -459,6 +475,13 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         counts.append(len(groups)-sum(counts))
         self.summary.setText((self.report.get("message", "") + "\n" if not groups else "") + f"{self.report['pages']:,} source pages · {len(groups):,} mailpieces · {len(self.report['excluded_pages']):,} excluded separators\n"
                              f"1 page: {counts[0]:,} · 2: {counts[1]:,} · 3: {counts[2]:,} · 4+: {counts[3]:,} · {len(self.report['findings']):,} warnings")
+        if self.report.get("report_version") == 3:
+            from collections import Counter
+
+            from composition.pdf_source.multi_detection import unresolved
+            types = Counter(r["template_id"] or r["classification_status"].title() for r in self.report["classifications"])
+            self.summary.setText(self.summary.text() + "\n" + " · ".join(f"{key}: {count:,}" for key, count in sorted(types.items()))
+                                 + f" · {unresolved(self.report):,} unresolved exceptions (must be corrected)")
         self.acknowledge.setChecked(False)
         self.update_apply()
         if groups:
@@ -470,8 +493,10 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         return self.model.rows[row] if 0 <= row < len(self.model.rows) else -1
 
     def update_apply(self):
+        from composition.pdf_source.multi_detection import can_accept
+        eligible = not self.report or self.report.get("report_version") != 3 or can_accept(self.report)
         self.apply_button.setEnabled(bool(self.report and self.report["groups"] and not self.scan_worker
-                                          and not self.window.active_worker and self.acknowledge.isChecked()))
+                                          and not self.window.active_worker and self.acknowledge.isChecked() and eligible))
         index = self.selected_row()
         selected = self.report and 0 <= index < len(self.report["groups"])
         self.split_button.setEnabled(bool(selected and not self.scan_worker and
@@ -481,6 +506,8 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         self.next_warning.setEnabled(bool(self.report and self.model.warnings and not self.scan_worker))
         self.undo_boundary.setEnabled(bool(self.report and self.review_undo and not self.scan_worker))
         self.redo_boundary.setEnabled(bool(self.report and self.review_redo and not self.scan_worker))
+        self.classify_button.setVisible(bool(self.report and self.report.get("report_version") == 3))
+        self.classify_button.setEnabled(bool(selected and not self.scan_worker and not self.window.active_worker))
 
     def selected(self, current, previous):
         if not self.report or not current.isValid():
@@ -494,6 +521,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
                       "pdf_end_inferred": "Last letter extends to the PDF end; document completeness is not independently proven.",
                       "printed_sequence": "Printed page sequence checked; review any sequence warnings."}.get(evidence.get("end_basis"), "Operator-edited boundary.")
         self.detail.setPlainText(f"Source pages {start}–{end}; boundary evidence: {', '.join(matches) or 'operator/manual start'}\n" + end_reason + "\n" + "\n".join(reasons))
+        if self.report.get("report_version") == 3:
+            row = self.report["classifications"][self.model.rows[current.row()]]
+            self.detail.appendPlainText(f"Template: {row['template_id'] or row['classification_status']} · Rules: {', '.join(row['rule_ids']) or 'operator / unknown'} · Candidates: {', '.join(row['candidates']) or 'none'}")
         self.preview_page.blockSignals(True)
         self.preview_page.setRange(start, end)
         self.preview_page.setValue(start)
@@ -540,6 +570,9 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
 
     def boundary_snapshot(self):
         # History retains mutable boundaries only, not every page's scan evidence.
+        if self.report.get("report_version") == 3:
+            # No PDF text/index images are kept in history; only bounded review data.
+            return (copy.deepcopy(self.report), self.selected_row())
         return (copy.deepcopy(self.report["groups"]), copy.deepcopy(self.report["edits"]),
                 self.selected_row())
 
@@ -556,14 +589,50 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         if not self.report or not history or self.scan_worker:
             return
         destination.append(self.boundary_snapshot())
-        groups, edits, row = history.pop()
-        self.report["groups"], self.report["edits"] = groups, edits
+        snapshot = history.pop()
+        if len(snapshot) == 2:
+            self.report, row = snapshot
+        else:
+            groups, edits, row = snapshot
+            self.report["groups"], self.report["edits"] = groups, edits
         self.report["accepted"] = False
         self.show_report(row)
 
+    def edit_detection(self, index, **options):
+        if self.report.get("report_version") == 3:
+            from composition.pdf_source.classification import edit_report
+            return edit_report(self.report, index, **options)
+        return edit_boundary(self.report, index, **options)
+
+    def confirm_classification(self):
+        if not self.report or self.report.get("report_version") != 3 or self.scan_worker or self.window.active_worker:
+            return
+        index = self.selected_row()
+        if index < 0:
+            return
+        templates = sorted({r["template_id"] for r in self.report["profile"]["rule_sets"]})
+        chosen, ok = QInputDialog.getItem(self, "Confirm document type and boundaries",
+                                        "After inspecting source pages, select the type. This records an operator resolution of conflicting signals.", templates, 0, False)
+        if ok:
+            from composition.pdf_source.classification import classify
+            self.record_boundary_edit(classify(self.report, index, chosen), index)
+
+    def load_classified_review(self, descriptor):
+        def ready(value):
+            report = value["detection"]
+            if report.get("source_sha256") != self.context_sha256:
+                self.scan_failed("Saved review belongs to another source. Scan again.")
+                return
+            self.set_collection_profile(report["profile"])
+            self.source = self.window.spec.to_dict()["source"]
+            self.report = report
+            self.report["accepted"] = False
+            self.show_report()
+        self.run_smart_task({"task": "mailpiece_review_load", "descriptor": descriptor}, ready)
+
     def split(self):
         index = self.selected_row()
-        if not self.report or index < 0:
+        if not self.report or index < 0 or self.scan_worker:
             return
         start, end = self.report["groups"][index]
         if start == end:
@@ -571,12 +640,14 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             return
         page, ok = QInputDialog.getInt(self, "Split mailpiece", "Source page where the next envelope starts", start+1, start+1, end)
         if ok:
-            self.record_boundary_edit(edit_boundary(self.report, index, split_page=page), index+1)
+            self.record_boundary_edit(self.edit_detection(index, split_page=page), index+1)
 
     def merge(self):
+        if self.scan_worker or not self.report:
+            return
         try:
             index = self.selected_row()
-            self.record_boundary_edit(edit_boundary(self.report, index, merge_previous=True), index-1)
+            self.record_boundary_edit(self.edit_detection(index, merge_previous=True), index-1)
         except (ValueError, TypeError) as exc:
             self.detail.setPlainText(str(exc))
 
@@ -587,7 +658,7 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
         if self.window.spec.source.sha256 != self.source["sha256"]:
             self.summary.setText("The project source changed. Close this review and scan the current source.")
             return
-        if self.report["config"].get("version", 1) == 2:
+        if self.report.get("report_version") == 3 or self.report.get("config", {}).get("version", 1) == 2:
             # Validate bytes in the background, then commit after the worker releases
             # the project lock. Never accept stale page boundaries after a file edit.
             before = copy.deepcopy(self.window.spec.to_dict())
@@ -601,8 +672,10 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             self.scan_progress.setRange(0, 0)
             self.scan_progress.show()
             self.cancel_button.setEnabled(True)
-            self.scan_worker = self.window.worker({"task": "mailpiece_review_source", "source": self.source["path"],
-                                                   "expected_sha256": self.source["sha256"]}, verified.append,
+            request = {"task": "mailpiece_review_source", "source": self.source["path"], "expected_sha256": self.source["sha256"]}
+            if self.report.get("report_version") == 3:
+                request.update(report=copy.deepcopy(self.report), directory=str(self.window.directory / "accepted-classifications"))
+            self.scan_worker = self.window.worker(request, verified.append,
                                                   self.scan_failed, active=True)
             self.update_apply()
             def ended():
@@ -613,7 +686,7 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
                     self.scan_failed("The project changed during source validation. Scan and review again.")
                     return
                 self.source = verified[-1]["source"]
-                self.commit_report()
+                self.commit_report(verified[-1].get("descriptor"))
             if self.scan_worker:
                 self.scan_worker.ended.connect(ended)
             else:
@@ -621,16 +694,23 @@ class MailpieceDialog(SmartDetectionControls, QDialog):
             return
         self.commit_report()
 
-    def commit_report(self):
+    def commit_report(self, descriptor=None):
         raw = self.window.spec.to_dict()
         raw["source"] = self.source
         raw["settings"]["groups"] = copy.deepcopy(self.report["groups"])
         raw["settings"]["excluded_pages"] = list(self.report["excluded_pages"])
-        raw["detection_review"] = copy.deepcopy(self.report)
-        raw["detection_review"]["accepted"] = True
+        if self.report.get("report_version") == 3:
+            if not descriptor:
+                self.scan_failed("Classification acceptance evidence is missing. Check again.")
+                return
+            raw["overlay_version"] = 9
+            raw["detection_review"] = descriptor
+        else:
+            raw["detection_review"] = copy.deepcopy(self.report)
+            raw["detection_review"]["accepted"] = True
+            raw["detection_review"]["accepted_at"] = now()
         if raw.get("source_link"):
             raw["source_link"]["review_required"] = False
-        raw["detection_review"]["accepted_at"] = now()
         if self.window.commit(raw, "Apply reviewed mailpiece detection"):
             self.accept()
 

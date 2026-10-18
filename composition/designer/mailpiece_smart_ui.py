@@ -26,6 +26,7 @@ SIGNAL_LABELS = {"first_text": "First-page feature", "document_id": "Identity ch
 
 class SmartDetectionControls:
     def setup_smart_controls(self):
+        self.customer_profile = None
         self.smart_config = None
         self.pending_smart_scan = False
         self.teaching = False
@@ -97,7 +98,37 @@ class SmartDetectionControls:
         self.pair_mode.addItem("Teaching examples", "teaching")
         self.pair_mode.currentIndexChanged.connect(lambda *_: self.refresh_pair())
         self.form.insertRow(3, "Compare pages", self.pair_mode)
+        self.library_button = QPushButton("Detection Profile Library…")
+        self.library_button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.library_button.clicked.connect(self.open_library)
+        self.profile_label = QLabel("Single rule · no profile selected")
+        self.profile_label.setWordWrap(True)
+        self.profile_label.setMinimumWidth(0)
+        self.profile_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.profile_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.form.insertRow(0, self.library_button)
+        self.form.insertRow(1, self.profile_label)
         self.update_smart_controls()
+
+    def set_collection_profile(self, profile):
+        from composition.pdf_source.profile_library import validate_profile
+        value = validate_profile(profile, for_scan=True)
+        self.method.setCurrentIndex(self.method.findData("smart"))
+        self.teaching = False
+        self.invalidate()
+        self.customer_profile = value
+        self.profile_label.setText(f"{value['name']} · revision {value['revision']} · {len(value['rule_sets'])} rule sets")
+        self.update_method()
+
+    def open_library(self):
+        from .mailpiece_profile_library import ProfileLibraryDialog
+        dialog = ProfileLibraryDialog(self.window, self.smart_config, parent=self)
+        if dialog.exec() == dialog.DialogCode.Accepted and dialog.selected_profile:
+            self.set_collection_profile(dialog.selected_profile)
+
+    def clear_collection_profile(self):
+        self.customer_profile = None
+        self.profile_label.setText("Single rule · no profile selected")
 
     def update_smart_controls(self):
         smart = self.method.currentData() == "smart"
@@ -139,6 +170,7 @@ class SmartDetectionControls:
     def analyze(self, *, scan_after=False):
         self.method.setCurrentIndex(self.method.findData("smart"))
         self.end_teaching()
+        self.clear_collection_profile()
         def ready(value):
             self.source = value["source"]
             self.set_suggestions(value["suggestions"])
@@ -156,6 +188,8 @@ class SmartDetectionControls:
         self.choose_suggestion()
 
     def choose_suggestion(self, *_):
+        if hasattr(self, "profile_label"):
+            self.clear_collection_profile()
         suggestion = self.suggestions.currentData()
         self.smart_config = copy.deepcopy(suggestion["config"]) if suggestion else None
         self.invalidate()
@@ -186,6 +220,7 @@ class SmartDetectionControls:
         self.secondary_preview.request(self.source or self.window.spec.to_dict()["source"], min(page+1, self.window.spec.source.pages))
 
     def begin_teaching(self):
+        self.clear_collection_profile()
         self.method.setCurrentIndex(self.method.findData("smart"))
         self.teaching = True
         self.whole.setChecked(False)
@@ -242,8 +277,14 @@ class SmartDetectionControls:
                              "id_regions": self.taught_ids, "marker_terms": terms or None}, ready)
 
     def open_profile(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open mailpiece profile", "", "Mailpiece profiles (*.pdmp)")
+        path, _ = QFileDialog.getOpenFileName(self, "Open mailpiece profile", "", "Mailpiece profiles (*.pdmp *.pdmpx)")
         if not path:
+            return
+        if Path(path).suffix.lower() == ".pdmpx":
+            from core.resources import data_dir
+            self.run_smart_task({"task": "mailpiece_library", "operation": "open", "path": path,
+                                 "root": str(data_dir() / "composition" / "mailpiece-profiles")},
+                                lambda value: self.set_collection_profile(value["profile"]))
             return
         def ready(value):
             self.method.setCurrentIndex(self.method.findData("smart"))
@@ -254,6 +295,16 @@ class SmartDetectionControls:
         self.run_smart_task({"task": "mailpiece_profile_load", "path": path}, ready)
 
     def save_profile(self):
+        if self.customer_profile:
+            from core.resources import data_dir
+            path, _ = QFileDialog.getSaveFileName(self, "Export detection profile", "", "Customer detection profile (*.pdmpx)")
+            if path:
+                self.window.worker({"task": "mailpiece_library", "operation": "export", "path": path,
+                                    "profile": copy.deepcopy(self.customer_profile),
+                                    "root": str(data_dir() / "composition" / "mailpiece-profiles")},
+                                   lambda value: self.summary.setText("Profile exported: " + value["path"]),
+                                   self.scan_failed)
+            return
         if not self.smart_config:
             self.summary.setText("Analyze or teach a rule before saving its profile.")
             return
@@ -267,6 +318,9 @@ class SmartDetectionControls:
                                lambda message: self.summary.setText(message))
 
     def smart_scan(self):
+        if self.customer_profile:
+            self.run_smart_task({"task": "mailpiece_collection_scan", "profile": copy.deepcopy(self.customer_profile)}, self.scanned)
+            return
         if not self.smart_config:
             self.analyze(scan_after=True)
             return

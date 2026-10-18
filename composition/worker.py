@@ -138,6 +138,32 @@ def dispatch(request: dict, *, session=None) -> dict:
             image.unlink(missing_ok=True)
             raise CompositionError("Source changed during preview.")
         return {"image": str(image), "geometry": geom}
+    if task == "mailpiece_library":
+        from composition.pdf_source.profile_library import ProfileLibrary, export_profile, read_profile
+        library = ProfileLibrary(request["root"])
+        operation = request["operation"]
+        if operation == "list":
+            return library.list(is_cancelled=cancelled)
+        if operation == "save":
+            return {"profile": library.save(request["profile"])}
+        if operation == "read":
+            return {"profile": library.read(request["profile_id"])}
+        if operation == "duplicate":
+            return {"profile": library.duplicate(request["profile_id"], request["name"])}
+        if operation == "import":
+            return {"profile": library.import_profile(request["path"])}
+        if operation == "export":
+            return {"path": export_profile(request["path"], request["profile"])}
+        if operation == "open":
+            return {"profile": read_profile(request["path"])}
+        raise ValueError("Unknown mailpiece library operation.")
+    if task == "mailpiece_collection_scan":
+        from composition.pdf_source.multi_detection import scan_pdf
+        return scan_pdf(request["source"], request["profile"], cache_path=request["cache"],
+                        expected_sha256=request.get("expected_sha256"), progress=progress, is_cancelled=cancelled)
+    if task == "mailpiece_review_load":
+        from composition.pdf_source.classification import load_report
+        return {"detection": load_report(request["descriptor"])}
     if task in ("mailpiece_analyze", "mailpiece_smart_scan", "mailpiece_teach"):
         from composition.pdf_source.detection import DetectionConfig
         from composition.pdf_source.smart_detection import analyze_pdf, scan_pdf, teach_pdf
@@ -165,7 +191,14 @@ def dispatch(request: dict, *, session=None) -> dict:
                                 uniform=True, progress=progress, is_cancelled=cancelled)
         if source.sha256 != request["expected_sha256"]:
             raise CompositionError("Source PDF changed. Reinspect the source, then scan and review before accepting boundaries.")
-        return {"source": asdict(source)}
+        result = {"source": asdict(source)}
+        if request.get("report", {}).get("report_version") == 3:
+            from composition.pdf_source.classification import accept_report
+            report = request["report"]
+            if report.get("source_sha256") != source.sha256 or report.get("pages") != source.pages:
+                raise CompositionError("Classified review does not match this source.")
+            result["descriptor"] = accept_report(report, request["directory"])
+        return result
     if task == "mailpiece_scan":
         from composition.pdf_source.detection import DetectionConfig, scan_pdf
         return scan_pdf(request["source"], DetectionConfig(**request["config"]),
