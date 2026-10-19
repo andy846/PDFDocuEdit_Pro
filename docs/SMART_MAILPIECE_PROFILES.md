@@ -517,3 +517,43 @@ regression began before the last UI/save-lock cases; final targeted results veri
 those changes. Windows dark/light and 200% native screenshots were inspected;
 macOS hardware was not tested. Ruff, source verification, compile and whitespace
 checks passed. No claim of production-device or customer-file certification is made.
+
+### Library name collisions (2026-10-19 follow-up)
+
+New library entries and renames require a unique display name across single-rule
+profiles and multi-template collections. Comparison uses Unicode NFKC, ignores
+leading/trailing whitespace and is case-insensitive; stored spelling is retained.
+Create, duplicate, portable import and detection-preview registration use the same
+check. A conflicting name reports an error and never overwrites another identity.
+The portable file may already have saved successfully; its existing separate
+Library-registration warning still explains that outcome.
+
+To revise existing rules, select the saved profile in Library, use it in detection,
+then save with the same name. The selected identity and expected revision protect
+the update. Reimporting one identical standalone configuration is idempotent when
+exactly one entry matches; ambiguous historical duplicates require selection.
+
+Existing duplicate profiles are preserved and labelled **Duplicate 1/2**
+in deterministic identity order. Select each entry, inspect its recognition details,
+change its name and choose **Save revision / rename** to distinguish them. A
+specifically selected duplicate may still save a revision under its unchanged
+normalized name; new identities and renames cannot create another collision.
+Historical revisions remain immutable. Importing an older revision cannot change
+the current display name; importing a newer one checks the name again.
+
+Name checking and revision writes share a nonblocking OS lock across application
+windows/processes. A busy writer gets a retry message. The persistent internal
+`.library-write.lock` file contains no profile data, is excluded from catalogue
+listing/capacity and is released by the OS when its handle closes. File formats,
+detection algorithms and production authorization are unchanged. Name checks run
+in the existing worker, bounded by the existing 300-entry library limit.
+
+Follow-up verification: 98 affected tests passed (46 catalogue, 18 profile UI,
+25 detection/save integrations, 9 legacy profile tests), with no failures or skips.
+Tests cover case/whitespace/fullwidth collisions, cross-type names, v1/v2 portable
+imports, immutable history, selected-identity revisions, existing duplicates and
+Windows cross-process write exclusion. Native Windows light/dark screenshots at
+200% were inspected. Ruff and source-contract checks passed. The full application
+suite was not repeated for this focused follow-up; the preceding full-run evidence
+above belongs to the integration baseline. macOS OS-lock behavior was not tested.
+Local synthetic evidence is under `build/probes/profile-name-safety/`.

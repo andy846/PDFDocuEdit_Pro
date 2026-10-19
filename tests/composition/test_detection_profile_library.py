@@ -254,3 +254,144 @@ def test_malformed_single_profile_does_not_hide_other_library_entries(tmp_path):
     result = library.list()
     assert [entry["profile_id"] for entry in result["entries"]] == [saved["profile_id"]]
     assert result["errors"]
+
+
+@pytest.mark.parametrize("name", ["eMPF", " EMPF ", "ｅＭＰＦ"])
+@pytest.mark.parametrize("operation", ["create", "rename", "duplicate", "import", "single"])
+def test_library_rejects_duplicate_names_across_entry_types(tmp_path, name, operation):
+    m = api()
+    library = m.ProfileLibrary(tmp_path / "library")
+    original = library.save(profile())
+    other = m.new_profile("Another profile")
+    if operation == "rename":
+        other = library.save(other)
+    before = {p.relative_to(library.root): p.read_bytes() for p in library.root.rglob("r*.pdmp*")}
+    with pytest.raises(CompositionError, match="name already exists"):
+        if operation == "create":
+            library.save(m.new_profile(name))
+        elif operation == "rename":
+            library.rename(other["profile_id"], name)
+        elif operation == "duplicate":
+            library.duplicate(original["profile_id"], name)
+        elif operation == "import":
+            other["name"] = name
+            library.import_profile(m.export_profile(tmp_path / "imported", other))
+        else:
+            single = region_config()
+            single["profile_name"] = name
+            library.add_single(single)
+    assert library.read(original["profile_id"]) == original
+    assert {p.relative_to(library.root): p.read_bytes() for p in library.root.rglob("r*.pdmp*")} == before
+
+
+def test_same_name_with_changed_single_rules_requires_selected_identity(tmp_path):
+    from composition.pdf_source.profiles import save_profile
+
+    m = api()
+    library = m.ProfileLibrary(tmp_path / "library")
+    saved = library.add_single(region_config())
+    changed = deepcopy(saved["config"])
+    changed["region_mm"][0] += 1
+    with pytest.raises(CompositionError, match="name already exists"):
+        library.add_single(changed)
+    portable = save_profile(tmp_path / "changed", DetectionConfig(**changed))
+    with pytest.raises(CompositionError, match="name already exists"):
+        library.import_profile(portable)
+    changed["profile_name"] = " REGION LETTERS "
+    revised = library.add_single(changed, profile_id=saved["profile_id"], revision=1)
+    assert revised["profile_id"] == saved["profile_id"] and revised["revision"] == 2
+    assert len(library.list()["entries"]) == 1
+
+
+def legacy_duplicate_library(root):
+    """Synthetic historical catalogue; never touch the operator's saved profiles."""
+    from composition.pdf_source.profiles import save_profile
+
+    m = api()
+    for identity, x in (("old_b", 9), ("old_a", 8)):
+        cfg = region_config()
+        cfg["region_mm"][0] = x
+        save_profile(root / identity / "r000001.pdmp", DetectionConfig(**cfg))
+    return m.ProfileLibrary(root)
+
+
+def test_existing_duplicate_profiles_are_preserved_and_can_be_resolved(tmp_path):
+    library = legacy_duplicate_library(tmp_path / "library")
+    entries = library.list()["entries"]
+    assert [entry["profile_id"] for entry in entries] == ["old_a", "old_b"]
+    original = {entry["profile_id"]: library.read(entry["profile_id"]) for entry in entries}
+    changed = deepcopy(original["old_b"]["config"])
+    changed["region_mm"][0] += 1
+    revised = library.add_single(changed, profile_id="old_b", revision=1)
+    assert revised["revision"] == 2 and revised["profile_id"] == "old_b"
+    assert library.read("old_a") == original["old_a"]
+    renamed = library.rename("old_b", "Second layout")
+    assert renamed["revision"] == 3
+    with pytest.raises(CompositionError, match="name already exists"):
+        library.rename("old_b", "Region letters")
+    assert library.read("old_a", 1) == original["old_a"]
+
+
+def test_concurrent_library_writer_cannot_bypass_name_check(tmp_path):
+    import subprocess
+    import sys
+
+    m = api()
+    library = m.ProfileLibrary(tmp_path / "library")
+    with library._writing():
+        with pytest.raises(CompositionError, match="busy"):
+            m.ProfileLibrary(library.root).save(profile())
+        result = subprocess.run([
+            sys.executable, "-c",
+            "import sys; from composition.pdf_source.profile_library import ProfileLibrary, new_profile; "
+            "ProfileLibrary(sys.argv[1]).save(new_profile('eMPF'))", str(library.root),
+        ], capture_output=True, text=True, timeout=20)
+        assert result.returncode != 0 and "library is busy" in result.stderr
+    saved = library.save(profile())
+    assert library.read(saved["profile_id"]) == saved
+    assert not library.list()["errors"]
+
+
+def test_v2_portable_import_cannot_create_duplicate_name(tmp_path):
+    from composition.pdf_source.profiles import save_profile
+
+    m = api()
+    library = m.ProfileLibrary(tmp_path / "library")
+    original = library.save(profile())
+    cfg = config()
+    cfg["profile_name"] = " EMPF "
+    path = save_profile(tmp_path / "portable", DetectionConfig(**cfg))
+    with pytest.raises(CompositionError, match="name already exists"):
+        library.import_profile(path)
+    assert library.list()["entries"][0]["profile_id"] == original["profile_id"]
+
+
+def test_imported_historical_names_do_not_replace_current_or_bypass_conflicts(tmp_path):
+    m = api()
+    library = m.ProfileLibrary(tmp_path / "library")
+    saved = library.save(profile())
+    other = m.new_profile("Another profile")
+    other["revision"] = 3
+    library.import_profile(m.export_profile(tmp_path / "other", other))
+    historical = deepcopy(other)
+    historical.update(revision=2, name=saved["name"])
+    library.import_profile(m.export_profile(tmp_path / "historical", historical))
+    assert library.read(other["profile_id"])["name"] == "Another profile"
+    future = deepcopy(historical)
+    future["revision"] = 4
+    with pytest.raises(CompositionError, match="name already exists"):
+        library.import_profile(m.export_profile(tmp_path / "future", future))
+    assert library.import_profile(m.export_profile(tmp_path / "same", saved)) == saved
+
+
+def test_ambiguous_identical_legacy_profiles_require_explicit_identity(tmp_path):
+    from composition.pdf_source.profiles import save_profile
+
+    m = api()
+    library = m.ProfileLibrary(tmp_path / "library")
+    cfg = region_config()
+    for identity in ("old_a", "old_b"):
+        save_profile(library.root / identity / "r000001.pdmp", DetectionConfig(**cfg))
+    with pytest.raises(CompositionError, match="name already exists"):
+        library.add_single(cfg)
+    assert library.add_single(cfg, profile_id="old_b", revision=1)["profile_id"] == "old_b"

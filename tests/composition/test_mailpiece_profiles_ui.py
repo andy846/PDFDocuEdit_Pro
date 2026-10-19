@@ -401,3 +401,32 @@ def test_selected_single_profile_shows_ready_without_collection_only_fields(over
         assert "Text present in selected region" in manager.rule_detail.toPlainText()
     finally:
         manager.reject()
+
+
+def test_old_duplicate_names_are_distinguishable_and_rename_failure_keeps_selection(overlay, tmp_path):
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+    from tests.composition.test_detection_profile_library import legacy_duplicate_library
+
+    root = tmp_path / "library"
+    library = legacy_duplicate_library(root)
+    manager = ProfileLibraryDialog(overlay, root=root)
+    manager.show()
+    try:
+        wait_until(lambda: not manager.busy and len(manager.records) == 2)
+        labels = [manager.entries.item(i).text() for i in range(2)]
+        assert labels[0] != labels[1] and all("duplicate" in label.lower() for label in labels)
+        manager.entries.setCurrentRow(1)
+        wait_until(lambda: not manager.busy and manager.saved is not None)
+        assert manager.saved["profile_id"] == "old_b"
+        manager.name.setText("Different layout")
+        manager.save_revision()
+        wait_until(lambda: not manager.busy and manager.saved["revision"] == 2)
+        manager.name.setText(" REGION LETTERS ")
+        manager.save_revision()
+        wait_until(lambda: not manager.busy and "name already exists" in manager.status.text())
+        assert manager.saved["profile_id"] == "old_b" and manager.saved["revision"] == 2
+        assert manager.name.text() == " REGION LETTERS " and not manager.use_button.isEnabled()
+        assert library.read("old_a")["revision"] == 1
+        assert library.read("old_b")["name"] == "Different layout"
+    finally:
+        manager.reject()

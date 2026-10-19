@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections import Counter
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer
@@ -196,15 +197,23 @@ class ProfileLibraryDialog(QDialog):
 
     def refresh(self):
         def ready(result):
+            from composition.pdf_source.profile_library import profile_name_key
+
             self.records = result["entries"]
+            counts = Counter(profile_name_key(entry["name"]) for entry in self.records)
+            seen = Counter()
             self.entries.blockSignals(True)
             self.entries.clear()
             for entry in self.records:
                 category = "Single rule" if entry.get("kind") == "single_mailpiece_detection" else "Multiple templates"
-                self.entries.addItem(f"{entry['name']} · r{entry['revision']} · {category}")
+                key = profile_name_key(entry["name"])
+                seen[key] += 1
+                duplicate = f" · Duplicate {seen[key]}" if counts[key] > 1 else ""
+                self.entries.addItem(f"{entry['name']}{duplicate} · r{entry['revision']} · {category}")
             self.entries.blockSignals(False)
+            duplicate_hint = " Some profiles share a name; select one and rename it." if any(n > 1 for n in counts.values()) else ""
             self.status.setText(
-                "; ".join(result["errors"]) if result["errors"] else f"{len(self.records)} saved profiles"
+                ("; ".join(result["errors"]) if result["errors"] else f"{len(self.records)} saved profiles") + duplicate_hint
             )
 
         self.task("list", ready)
