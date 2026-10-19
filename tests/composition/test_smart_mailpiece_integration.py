@@ -128,6 +128,7 @@ def test_reviewed_detection_workflow_preserves_upstream_and_actual_audit(tmp_pat
 def overlay(app, tmp_path, monkeypatch):
     monkeypatch.setattr(OverlayWindow, "load_fonts", lambda self: None)
     monkeypatch.setattr(OverlayWindow, "render_preview", lambda self: None)
+    monkeypatch.setattr(MailpieceDialog, "library_root", lambda self: str(tmp_path / "library"), raising=False)
     window = OverlayWindow()
     path = fixture_pdf(tmp_path/"source.pdf")
     settings = EnvelopeSettings(pages_per_envelope=1)
@@ -494,4 +495,111 @@ def test_invalid_region_profile_does_not_open_save_picker(overlay, monkeypatch):
     dialog.save_profile()
     assert "selected search region" in dialog.summary.text()
     assert not overlay.workers
+    dialog.reject()
+
+
+
+def test_manual_save_appears_in_library_and_use_restores_current_method(overlay, tmp_path, monkeypatch):
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+    from composition.pdf_source.profile_library import ProfileLibrary
+
+    original = overlay.spec.to_dict()
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.method.setCurrentIndex(dialog.method.findData("region_present"))
+    dialog.whole.setChecked(False)
+    for control, number in zip(dialog.region, [8, 19, 70, 8], strict=True):
+        control.setValue(number)
+    dialog.scan()
+    wait_until(lambda: dialog.report is not None and not overlay.workers)
+    library = ProfileLibrary(dialog.library_root())
+    assert library.list()["entries"] == []  # Scanning never creates library entries.
+    target = tmp_path / "saved.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    dialog.save_profile()
+    wait_until(lambda: not overlay.workers)
+    assert target.exists()
+    entries = library.list()["entries"]
+    assert len(entries) == 1
+    dialog.method.setCurrentIndex(dialog.method.findData("page_number"))
+    def select_saved(manager):
+        manager.show()
+        wait_until(lambda: not manager.busy and len(manager.records) == 1)
+        manager.entries.setCurrentRow(0)
+        wait_until(lambda: not manager.busy and manager.value is not None)
+        assert manager.use_button.isEnabled()
+        assert str(tmp_path / "library") in manager.location.text()
+        manager.use_profile()
+        return manager.result()
+    monkeypatch.setattr(ProfileLibraryDialog, "exec", select_saved)
+    dialog.open_library()
+    assert dialog.method.currentData() == "region_present"
+    assert [c.value() for c in dialog.region] == [8, 19, 70, 8]
+    assert dialog.report is None and not dialog.acknowledge.isChecked()
+    assert not dialog.apply_button.isEnabled()
+    dialog.scan()
+    wait_until(lambda: dialog.report is not None and not overlay.workers)
+    assert dialog.report["groups"] == [[1, 2], [3, 5], [6, 6]]
+    assert overlay.spec.to_dict() == original
+    dialog.reject()
+
+
+def test_external_save_reports_library_failure_without_losing_file(overlay, tmp_path, monkeypatch):
+    library_root = tmp_path / "not-a-directory"
+    library_root.write_text("occupied")
+    monkeypatch.setattr(MailpieceDialog, "library_root", lambda self: str(library_root))
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.method.setCurrentIndex(dialog.method.findData("page_number"))
+    target = tmp_path / "preserved.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    wait_until(lambda: not overlay.workers)
+    dialog.save_profile()
+    wait_until(lambda: not overlay.workers)
+    assert target.exists()
+    assert "Library" in dialog.summary.text() and "not" in dialog.summary.text().lower()
+    assert load_profile(target)["version"] == 1
+    dialog.reject()
+
+
+
+def test_save_opened_collection_also_registers_it_in_library(overlay, tmp_path, monkeypatch):
+    from composition.pdf_source.profile_library import ProfileLibrary, new_profile, new_rule
+
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    value = new_profile("External collection")
+    value["rule_sets"] = [new_rule("Letters", analyzed(overlay.spec.source.path, tmp_path / "collection.sqlite")["detection"]["config"], template_id="LETTER")]
+    dialog.set_collection_profile(value)
+    target = tmp_path / "collection.pdmpx"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    wait_until(lambda: not overlay.workers)
+    dialog.save_profile()
+    wait_until(lambda: not overlay.workers)
+    library = ProfileLibrary(dialog.library_root())
+    assert target.exists()
+    assert len(library.list()["entries"]) == 1
+    assert library.read(value["profile_id"]) == value
+    assert dialog.single_library_profile is None
+    dialog.reject()
+
+
+
+def test_save_locks_library_until_registration_finishes(overlay, tmp_path, monkeypatch):
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+
+    dialog = MailpieceDialog(overlay)
+    dialog.show()
+    dialog.method.setCurrentIndex(dialog.method.findData("page_number"))
+    wait_until(lambda: not overlay.workers)
+    target = tmp_path / "one-save.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    monkeypatch.setattr(ProfileLibraryDialog, "exec", lambda self: pytest.fail("Library opened before Save completed"))
+    dialog.save_profile()
+    assert overlay.active_worker is not None
+    dialog.open_library()
+    assert "Wait" in dialog.summary.text()
+    wait_until(lambda: not overlay.workers)
+    assert target.exists()
+    assert overlay.active_worker is None
     dialog.reject()

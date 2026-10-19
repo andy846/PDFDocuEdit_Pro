@@ -435,3 +435,85 @@ profile modules, including the two malformed-name cases added after the full run
 started. No claim of native macOS validation is made. Ruff, source verification and
 whitespace checks passed; native Windows dark/light synthetic previews were visually
 inspected at 200% scaling. The owner application and customer file were untouched.
+
+
+## Save / Detection Profile Library integration — 2026-10-19
+
+This resolves the library limitation described in the preceding UAT correction.
+The library is an operator-maintained catalogue: it does not learn, create entries,
+or import files merely because a PDF was analyzed or scanned.
+
+- Explicit **Save profile** keeps the chosen portable file and registers its rules
+  in the same Detection Profile Library. This applies to standalone v1/v2 `.pdmp`
+  and externally opened multi-template `.pdmpx` profiles.
+- Existing region/text/page-counter/ID/separator/combined v1 files can be imported
+  through the existing **Import .pdmp / .pdmpx** action. No directory-wide discovery,
+  migration or automatic import is performed. Existing owner files remain in place.
+- **Use saved profile** restores a standalone rule through the existing detection
+  method/config controls, or a collection through the existing multi-rule route.
+  It invalidates the current PDF review and never accepts boundaries or production.
+- Save/registration uses the existing active worker lock. Opening Library before it
+  finishes is rejected with a wait message. Library refresh runs after worker-end
+  releases the owner lock, so newly imported/saved entries appear immediately.
+- Portable-file success and catalogue-registration failure are reported separately.
+  The saved file remains usable if the library is unavailable, full or has a revision
+  conflict. Unexpected programming exceptions retain existing worker diagnostics.
+
+### Storage and compatibility
+
+The Windows library location is still the per-user application-data location,
+normally `%LOCALAPPDATA%/PDFDocuEdit/PDFDocuEdit Pro/composition/mailpiece-profiles`.
+The dialog displays its actual resolved root (including an explicit update-root
+override when used). It remains independent of the source checkout / D-drive path.
+
+Existing collection folders and `rNNNNNN.pdmpx` revisions are unchanged. Standalone
+profiles use their own generated-identity folders with immutable `rNNNNNN.pdmp`
+revisions. The existing portable `.pdmp` wrapper/config schema is retained; name is
+stored in `config.profile_name`, while identity/revision are inferred from controlled
+library folder/filenames. Runtime `single_mailpiece_detection` records are not a new
+public project/profile format. Mixed collection/standalone revisions are rejected.
+
+Single-rule and multi-template entries are labelled separately. Standalone name,
+rename, duplicate, immutable revisions and export work in the existing editor.
+Collection-only fields are hidden for standalone entries; edit their detection
+settings by using the profile in the detection preview and saving again. Standalone
+files retain their existing name/rules-only metadata (no new description field).
+Saving an unchanged standalone config deduplicates identical entries. Saving an
+edited selected profile with the same name adds a revision; choosing another file
+name creates a separate entry. Collection imports retain the original revision/
+identity and conflict protection. Multi-template v2 primary-signal requirements,
+customer-production profile validation and production authorization are unchanged.
+
+All library I/O remains in the existing worker. Lists transfer bounded metadata,
+not page datasets. The 300-profile / 1,000-revision and existing file-size limits,
+containment, malformed-profile rejection and atomic non-overwriting revision writes
+remain enforced. Cancellation before a standalone revision write retains the prior
+revision. No client PDF text, accepted boundaries or old source paths are added.
+
+### Owner UAT
+
+1. Save the current project before restarting the development app.
+2. Open Auto Detect, choose an existing manual method (for example Text present in
+   selected region), configure its region and scan a representative PDF.
+3. Choose Save profile, select a portable filename, and wait for the Library success
+   message. Saving must leave the current boundary review/acknowledgement intact.
+4. Open Detection Profile Library. The new entry should be listed as Single rule,
+   with the resolved library path visible. Select it and use it for a fresh scan.
+5. To reuse an earlier portable file, use Import once; no manual file move is needed.
+6. Rename/duplicate/export an entry, then switch between standalone and multi-template
+   entries. Each new PDF must still be scanned, reviewed and explicitly accepted.
+
+Local RED/GREEN, native Windows dark/light 200% visual evidence and full regression
+results are retained under `build/probes/detection-library-integration/`. Only
+synthetic fixtures were used; the owner's existing local profile was not read,
+modified, moved or committed. No version bump, packaging, push or release occurred.
+
+Verification completed: full regression, 211 isolated modules, 2,961
+passed / 4 skipped / zero failures. The existing skips cover
+native macOS symlink/Keychain/arm64 signing and host file-symlink permissions.
+The final four affected profile modules passed 76 distinct
+tests (the last catalogue run includes malformed standalone-file isolation). Full
+regression began before the last UI/save-lock cases; final targeted results verify
+those changes. Windows dark/light and 200% native screenshots were inspected;
+macOS hardware was not tested. Ruff, source verification, compile and whitespace
+checks passed. No claim of production-device or customer-file certification is made.

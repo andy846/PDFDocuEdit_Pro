@@ -28,7 +28,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from composition.pdf_source.profile_library import new_profile, new_rule, validate_profile
+from composition.pdf_source.profile_library import (
+    is_single_profile,
+    new_profile,
+    new_rule,
+    new_single_profile,
+    validate_library_profile,
+)
 from composition.template.model import CompositionError
 
 
@@ -45,14 +51,20 @@ class ProfileLibraryDialog(QDialog):
         self.saved = None
         self.busy = False
         self.closed = False
+        self.refresh_pending = False
         self.setWindowTitle("Mailpiece Detection Profile Library")
         self.resize(840, 620)
         outer = QVBoxLayout(self)
         help_text = QLabel(
-            "Profiles contain recognition rules only. Teach regions in the detection preview, then add or replace a rule here. Every new PDF still needs a scan and explicit boundary review."
+            "Profiles are created, saved or imported by you; scanning does not create profiles automatically. Save profile adds your current rules here. Every new PDF still needs a scan and explicit boundary review."
         )
         help_text.setWordWrap(True)
         outer.addWidget(help_text)
+        self.location = QLabel("Library location: " + self.root)
+        self.location.setWordWrap(True)
+        self.location.setTextFormat(Qt.TextFormat.PlainText)
+        self.location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        outer.addWidget(self.location)
         splitter = QSplitter()
         self.entries = QListWidget()
         self.entries.currentRowChanged.connect(self.open_selected)
@@ -61,6 +73,7 @@ class ProfileLibraryDialog(QDialog):
         scroll.setWidgetResizable(True)
         self.editor = QWidget()
         form = QFormLayout(self.editor)
+        self.form = form
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.name = QLineEdit()
         self.name.setMaxLength(120)
@@ -100,12 +113,13 @@ class ProfileLibraryDialog(QDialog):
         ):
             form.addRow(label, widget)
         self.actions = []
+        self.rule_actions = []
         for title, callback in (
             ("Create profile", self.create_profile),
             ("Save revision / rename", self.save_revision),
             ("Duplicate profile…", self.duplicate_profile),
             ("Import .pdmp / .pdmpx…", self.import_profile),
-            ("Export .pdmpx…", self.export_profile),
+            ("Export profile…", self.export_profile),
             ("Add taught rule", self.add_taught_rule),
             ("Replace selected with taught rule", self.replace_taught_rule),
             ("Remove selected rule", self.remove_rule),
@@ -114,6 +128,8 @@ class ProfileLibraryDialog(QDialog):
             button.clicked.connect(callback)
             form.addRow(button)
             self.actions.append(button)
+            if callback in (self.add_taught_rule, self.replace_taught_rule, self.remove_rule):
+                self.rule_actions.append(button)
         scroll.setWidget(self.editor)
         splitter.addWidget(scroll)
         splitter.setSizes([220, 580])
@@ -167,6 +183,11 @@ class ProfileLibraryDialog(QDialog):
             self.editor.setEnabled(True)
             self.entries.setEnabled(True)
             self.update_use()
+            if self.status.text() == "Working…":
+                self.status.setText("Profile loaded. Choose Use saved profile to scan the current PDF." if self.saved else "Ready.")
+            if self.refresh_pending:
+                self.refresh_pending = False
+                QTimer.singleShot(0, self.refresh)
 
         if self.pending_worker:
             self.pending_worker.ended.connect(ended)
@@ -179,7 +200,8 @@ class ProfileLibraryDialog(QDialog):
             self.entries.blockSignals(True)
             self.entries.clear()
             for entry in self.records:
-                self.entries.addItem(f"{entry['name']} · r{entry['revision']}")
+                category = "Single rule" if entry.get("kind") == "single_mailpiece_detection" else "Multiple templates"
+                self.entries.addItem(f"{entry['name']} · r{entry['revision']} · {category}")
             self.entries.blockSignals(False)
             self.status.setText(
                 "; ".join(result["errors"]) if result["errors"] else f"{len(self.records)} saved profiles"
@@ -204,13 +226,17 @@ class ProfileLibraryDialog(QDialog):
         self.description.setPlainText(value["description"])
         self.name.blockSignals(False)
         self.description.blockSignals(False)
-        self.revision.setText(f"{value['revision']} · {value['profile_id']}")
+        self.revision.setText(str(value["revision"]) if is_single_profile(value) else f"{value['revision']} · {value['profile_id']}")
         self.populate_rules()
+        self.description.setEnabled(not is_single_profile(value))
         self.update_use()
 
     def create_profile(self):
         if not self.busy:
-            self.display(new_profile("New profile"), saved=False)
+            if self.taught_config and self.taught_config.get("version", 1) == 1:
+                self.display(new_single_profile(self.taught_config, name="New profile"), saved=False)
+            else:
+                self.display(new_profile("New profile"), saved=False)
             self.name.setFocus()
             self.name.selectAll()
 
@@ -224,32 +250,47 @@ class ProfileLibraryDialog(QDialog):
         valid = False
         if self.value and self.value == self.saved:
             try:
-                validate_profile(self.value, for_scan=True)
+                validate_library_profile(self.value, for_scan=True)
                 valid = True
             except CompositionError:
                 pass
         self.use_button.setEnabled(valid and not self.busy)
+        single = is_single_profile(self.value)
+        self.description.setEnabled(not single)
+        for button in self.rule_actions:
+            button.setEnabled(not single)
+        self.primary.setEnabled(not single)
+        self.combination.setEnabled(not single)
+        for control in (self.description, self.rules, self.primary, self.combination):
+            self.form.setRowVisible(control, not single)
+        self.rule_detail.setMaximumHeight(180 if single else 120)
 
     def populate_rules(self):
         self.rules.blockSignals(True)
-        self.rules.setRowCount(len(self.value["rule_sets"]))
-        for row, rule in enumerate(self.value["rule_sets"]):
+        single = is_single_profile(self.value)
+        rows = ([{"name": "Single detection rule", "template_id": "Not applicable", "primary":
+                  " + ".join(rule["kind"] for rule in self.value["config"]["rules"])}]
+                if single else self.value["rule_sets"])
+        self.rules.setRowCount(len(rows))
+        for row, rule in enumerate(rows):
             for column, key in enumerate(("name", "template_id", "primary")):
                 item = QTableWidgetItem(rule[key])
-                if column == 2:
+                if column == 2 or single:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.rules.setItem(row, column, item)
         self.rules.blockSignals(False)
+        if single:
+            self.rules.selectRow(0)
         self.show_rule()
 
     def rules_changed(self, item):
-        if self.value and item.column() < 2:
+        if self.value and not is_single_profile(self.value) and item.column() < 2:
             self.value["rule_sets"][item.row()][("name", "template_id")[item.column()]] = item.text()
             self.update_use()
 
     def signal_settings_changed(self, *_):
         row = self.rules.currentRow()
-        if self.value and 0 <= row < len(self.value["rule_sets"]):
+        if self.value and not is_single_profile(self.value) and 0 <= row < len(self.value["rule_sets"]):
             rule = self.value["rule_sets"][row]
             if self.primary.currentData():
                 rule["primary"] = self.primary.currentData()
@@ -262,7 +303,26 @@ class ProfileLibraryDialog(QDialog):
         self.primary.blockSignals(True)
         self.combination.blockSignals(True)
         self.primary.clear()
-        if self.value and 0 <= row < len(self.value["rule_sets"]):
+        if is_single_profile(self.value):
+            config = self.value["config"]
+            region = config.get("region_mm")
+            lines = ["Single detection rule · edit settings in the detection preview.",
+                     "Whole page" if region is None else "X / Y / W / H: " + " / ".join(f"{v:g}" for v in region) + " mm",
+                     "Combination: " + config["combine"]]
+            for signal in config["rules"]:
+                lines.append({"region_present": "Text present in selected region", "first_text": "First-page text",
+                              "page_number": "Printed page restart", "document_id": "Identity change",
+                              "separator": "Separator"}.get(signal["kind"], signal["kind"]))
+                if signal.get("pattern"):
+                    lines.append("  " + signal["pattern"])
+                if signal.get("terms"):
+                    lines.append("  " + " + ".join(signal["terms"]))
+                if signal.get("region_mm"):
+                    lines.append("  X / Y / W / H: " + " / ".join(f"{v:g}" for v in signal["region_mm"]) + " mm")
+                for field in signal.get("fields", []):
+                    lines.append("  Identity label: " + field["label"])
+            self.rule_detail.setPlainText("\n".join(lines))
+        elif self.value and 0 <= row < len(self.value["rule_sets"]):
             rule = self.value["rule_sets"][row]
             kinds = {signal["kind"] for signal in rule["config"]["rules"]}
             for name in ("first_text", "page_number"):
@@ -292,7 +352,9 @@ class ProfileLibraryDialog(QDialog):
         self.combination.blockSignals(False)
 
     def add_taught_rule(self):
-        if not self.value or not self.taught_config or len(self.value["rule_sets"]) >= 16:
+        if is_single_profile(self.value):
+            return
+        if not self.value or not self.taught_config or self.taught_config.get("version", 1) != 2 or len(self.value["rule_sets"]) >= 16:
             self.status.setText(
                 "Teach a static first-page feature in the detection preview first (maximum 16 rule sets)."
             )
@@ -308,7 +370,7 @@ class ProfileLibraryDialog(QDialog):
 
     def replace_taught_rule(self):
         row = self.rules.currentRow()
-        if self.value and self.taught_config and 0 <= row < len(self.value["rule_sets"]):
+        if self.value and not is_single_profile(self.value) and self.taught_config and self.taught_config.get("version", 1) == 2 and 0 <= row < len(self.value["rule_sets"]):
             rule = self.value["rule_sets"][row]
             replacement = new_rule(rule["name"], self.taught_config, template_id=rule["template_id"])
             replacement["rule_id"] = rule["rule_id"]
@@ -318,7 +380,7 @@ class ProfileLibraryDialog(QDialog):
 
     def remove_rule(self):
         row = self.rules.currentRow()
-        if self.value and 0 <= row < len(self.value["rule_sets"]):
+        if self.value and not is_single_profile(self.value) and 0 <= row < len(self.value["rule_sets"]):
             self.value["rule_sets"].pop(row)
             self.populate_rules()
             self.update_use()
@@ -326,8 +388,8 @@ class ProfileLibraryDialog(QDialog):
     def saved_result(self, result):
         self.display(result["profile"])
         self.status.setText("Revision saved. Use this profile to scan and review the current PDF.")
-        # A subsequent refresh is scheduled after the worker releases the owner lock.
-        QTimer.singleShot(0, self.refresh)
+        # Refresh only after ended releases the busy/owner locks.
+        self.refresh_pending = True
 
     def save_revision(self):
         if self.value:
@@ -353,9 +415,8 @@ class ProfileLibraryDialog(QDialog):
         if not self.saved or self.value != self.saved:
             self.status.setText("Save the current revision before exporting.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export detection profile", "", "Detection collection (*.pdmpx)"
-        )
+        pattern = "Single detection profile (*.pdmp)" if is_single_profile(self.saved) else "Detection collection (*.pdmpx)"
+        path, _ = QFileDialog.getSaveFileName(self, "Export detection profile", "", pattern)
         if path:
             self.task(
                 "export",

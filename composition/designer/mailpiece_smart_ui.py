@@ -29,6 +29,7 @@ SIGNAL_LABELS = {"first_text": "First-page feature", "document_id": "Identity ch
 class SmartDetectionControls:
     def setup_smart_controls(self):
         self.customer_profile = None
+        self.single_library_profile = None
         self.smart_config = None
         self.pending_smart_scan = False
         self.teaching = False
@@ -127,19 +128,49 @@ class SmartDetectionControls:
         self.teaching = False
         self.invalidate()
         self.customer_profile = value
+        self.single_library_profile = None
         self.lesson_dirty = False
         self.pending_profile_save = False
         self.profile_label.setText(f"{value['name']} · revision {value['revision']} · {len(value['rule_sets'])} rule sets")
         self.update_method()
 
+    def library_root(self):
+        from core.resources import data_dir
+        return str(data_dir() / "composition" / "mailpiece-profiles")
+
+    def use_single_profile(self, config, *, library_profile=None):
+        self.clear_collection_profile()
+        self.teaching = False
+        self.lesson_dirty = False
+        self.pending_profile_save = False
+        self.smart_config = None
+        self.invalidate()
+        self.restore_config(config)
+        self.update_method()
+        self.single_library_profile = copy.deepcopy(library_profile)
+        self.profile_label.setText(config.get("profile_name") or "Loaded profile")
+        self.summary.setText("Profile loaded. Scan this PDF and review its new boundaries before applying.")
+
     def open_library(self):
+        if self.scan_worker or self.window.active_worker:
+            self.summary.setText("Wait for the current operation before opening the Library.")
+            return
         from .mailpiece_profile_library import ProfileLibraryDialog
-        dialog = ProfileLibraryDialog(self.window, self.smart_config, parent=self)
+        try:
+            config = asdict(self.config())
+        except ValueError:
+            config = None
+        dialog = ProfileLibraryDialog(self.window, config, root=self.library_root(), parent=self)
         if dialog.exec() == dialog.DialogCode.Accepted and dialog.selected_profile:
-            self.set_collection_profile(dialog.selected_profile)
+            from composition.pdf_source.profile_library import is_single_profile
+            if is_single_profile(dialog.selected_profile):
+                self.use_single_profile(dialog.selected_profile["config"], library_profile=dialog.selected_profile)
+            else:
+                self.set_collection_profile(dialog.selected_profile)
 
     def clear_collection_profile(self):
         self.customer_profile = None
+        self.single_library_profile = None
         self.profile_label.setText("Single rule · no profile selected")
 
     def update_smart_controls(self):
@@ -328,21 +359,12 @@ class SmartDetectionControls:
         if not path:
             return
         if Path(path).suffix.lower() == ".pdmpx":
-            from core.resources import data_dir
             self.run_smart_task({"task": "mailpiece_library", "operation": "open", "path": path,
-                                 "root": str(data_dir() / "composition" / "mailpiece-profiles")},
+                                 "root": self.library_root()},
                                 lambda value: self.set_collection_profile(value["profile"]))
             return
         def ready(value):
-            self.clear_collection_profile()
-            self.teaching = False
-            self.lesson_dirty = False
-            self.pending_profile_save = False
-            self.smart_config = None
-            self.restore_config(value["config"])
-            self.update_method()
-            self.profile_label.setText(value["config"].get("profile_name") or "Loaded profile")
-            self.summary.setText("Profile loaded. Scan this PDF and review its new boundaries before applying.")
+            self.use_single_profile(value["config"])
         self.run_smart_task({"task": "mailpiece_profile_load", "path": path}, ready)
 
     def save_profile(self):
@@ -354,14 +376,13 @@ class SmartDetectionControls:
             self.teach_scan(save_after=True)
             return
         if smart and self.customer_profile:
-            from core.resources import data_dir
             path, _ = QFileDialog.getSaveFileName(self, "Export detection profile", "", "Customer detection profile (*.pdmpx)")
             if path:
                 self.window.worker({"task": "mailpiece_library", "operation": "export", "path": path,
                                     "profile": copy.deepcopy(self.customer_profile),
-                                    "root": str(data_dir() / "composition" / "mailpiece-profiles")},
-                                   lambda value: self.summary.setText("Profile exported: " + value["path"]),
-                                   self.scan_failed)
+                                    "root": self.library_root(), "register": True},
+                                   self.profile_saved,
+                                   self.scan_failed, active=True)
             return
         if smart and not self.smart_config:
             self.summary.setText("Choose Analyze PDF or Teach a feature first. For teaching, draw a static text heading; Save profile tests it before saving. QR/image matching is not supported.")
@@ -376,9 +397,23 @@ class SmartDetectionControls:
         if path:
             # Saving configuration must not discard the current boundary review.
             config["profile_name"] = Path(path).stem[:120]
-            self.window.worker({"task": "mailpiece_profile_save", "path": path, "config": config},
-                               lambda value: self.summary.setText("Profile saved: " + value["path"]),
-                               lambda message: self.summary.setText(message))
+            identity = ({"profile_id": self.single_library_profile["profile_id"], "revision": self.single_library_profile["revision"]}
+                        if self.single_library_profile else {})
+            self.window.worker({"task": "mailpiece_profile_save", "path": path, "config": config,
+                                "root": self.library_root(), "library_identity": identity},
+                               self.profile_saved,
+                               lambda message: self.summary.setText(message), active=True)
+
+    def profile_saved(self, value):
+        if value.get("library_error"):
+            self.summary.setText("File saved: " + value["path"] + ". Library not updated: " + value["library_error"])
+        else:
+            from composition.pdf_source.profile_library import is_single_profile
+            saved = value.get("library_profile")
+            self.single_library_profile = copy.deepcopy(saved) if is_single_profile(saved) else None
+            if self.single_library_profile:
+                self.profile_label.setText(f"{self.single_library_profile['name']} · revision {self.single_library_profile['revision']}")
+            self.summary.setText("Profile saved and added to Library: " + value["path"])
 
     def smart_scan(self):
         if self.teaching and self.lesson_dirty:

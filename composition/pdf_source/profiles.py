@@ -17,10 +17,10 @@ def _validate_profile_config(config):
         raise CompositionError("Detection profile name must be text up to 120 characters.")
 
 
-def save_profile(path, config):
+def save_profile(path, config, *, overwrite=True):
     _validate_profile_config(config)
     target = Path(path).with_suffix(".pdmp")
-    with atomic_output(target) as temporary:
+    with atomic_output(target, overwrite=overwrite) as temporary:
         temporary.write_text(json.dumps({"profile_version": 1, "config": asdict(config)}, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(target)
 

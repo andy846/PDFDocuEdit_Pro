@@ -6,6 +6,7 @@ import copy
 import json
 import re
 import uuid
+from dataclasses import asdict
 from itertools import islice
 from pathlib import Path
 
@@ -14,11 +15,52 @@ from core.io_atomic import atomic_output
 from core.output_safety import contained_path
 
 from .detection import DetectionConfig
+from .profiles import _validate_profile_config, load_profile, save_profile
 
 MAX_BYTES = 1024 * 1024
 MAX_RULES = 16
 MAX_PROFILES = 300
 MAX_REVISIONS = 1000
+
+
+def is_single_profile(value):
+    return isinstance(value, dict) and value.get("kind") == "single_mailpiece_detection"
+
+
+def new_single_profile(config, *, name=None, profile_id=None, revision=1):
+    """Runtime library metadata; disk/export retains the existing .pdmp schema."""
+    return validate_single_profile({
+        "kind": "single_mailpiece_detection", "profile_id": profile_id or uuid.uuid4().hex,
+        "name": name or config.get("profile_name") or "Detection profile", "description": "",
+        "revision": revision, "config": copy.deepcopy(config),
+    })
+
+
+def validate_single_profile(raw):
+    if not is_single_profile(raw) or set(raw) != {"kind", "profile_id", "name", "description", "revision", "config"}:
+        raise CompositionError("Invalid single-rule library profile.")
+    identifier(raw["profile_id"])
+    _text(raw["name"], 120)
+    if raw["description"] != "" or type(raw["revision"]) is not int or not 1 <= raw["revision"] <= MAX_REVISIONS:
+        raise CompositionError("Invalid single-rule profile metadata.")
+    try:
+        config = DetectionConfig(**raw["config"])
+    except TypeError as exc:
+        raise CompositionError("Invalid single-rule detection configuration.") from exc
+    _validate_profile_config(config)
+    config.profile_name = raw["name"]
+    return {**copy.deepcopy(raw), "config": asdict(config)}
+
+
+def validate_library_profile(value, *, for_scan=False):
+    return validate_single_profile(value) if is_single_profile(value) else validate_profile(value, for_scan=for_scan)
+
+
+def export_library_profile(path, value):
+    if is_single_profile(value):
+        checked = validate_single_profile(value)
+        return save_profile(path, DetectionConfig(**checked["config"]))
+    return export_profile(path, value)
 
 
 def _text(value, maximum, *, empty=False):
@@ -142,20 +184,24 @@ class ProfileLibrary:
         folder = contained_path(self.root, identifier(profile_id))
         if not folder.exists():
             return []
-        paths = list(islice(folder.glob("r*.pdmpx"), MAX_REVISIONS + 1))
+        paths = list(islice(folder.glob("r*.pdmp*"), MAX_REVISIONS + 1))
         if len(paths) > MAX_REVISIONS:
             raise CompositionError("Profile revision limit reached.")
-        if any(not re.fullmatch(r"r[0-9]{6}\.pdmpx", p.name) for p in paths):
+        if any(not re.fullmatch(r"r[0-9]{6}\.pdmpx?", p.name) for p in paths):
             raise CompositionError("Invalid profile revision filename.")
+        if len({p.suffix for p in paths}) > 1:
+            raise CompositionError("Profile revisions cannot mix single-rule and collection formats.")
         return sorted(paths)
 
     def read(self, profile_id, revision=None):
         paths = self._files(profile_id)
         if not paths:
             raise FileNotFoundError("Profile is not in the library.")
-        path = (
-            paths[-1] if revision is None else contained_path(self.root, profile_id, f"r{revision:06d}.pdmpx")
-        )
+        if revision is not None and (type(revision) is not int or not 1 <= revision <= MAX_REVISIONS):
+            raise CompositionError("Invalid profile revision.")
+        path = contained_path(self.root, profile_id, paths[-1].name if revision is None else f"r{revision:06d}{paths[-1].suffix}")
+        if path.suffix == ".pdmp":
+            return new_single_profile(load_profile(path), profile_id=profile_id, revision=int(path.stem[1:]))
         value = read_profile(path)
         if value["profile_id"] != profile_id or path.stem != f"r{value['revision']:06d}":
             raise CompositionError("Profile revision identity changed.")
@@ -174,32 +220,61 @@ class ProfileLibrary:
             try:
                 value = self.read(folder.name)
                 entries.append({key: value[key] for key in ("profile_id", "name", "description", "revision")}
-                               | {"rule_count": len(value["rule_sets"])})
+                               | {"rule_count": 1 if is_single_profile(value) else len(value["rule_sets"]),
+                                  "kind": value["kind"]})
             except (OSError, ValueError, CompositionError) as exc:
                 errors.append(f"{folder.name}: {exc}")
         entries.sort(key=lambda item: item["name"].casefold())
         return {"entries": entries, "errors": errors}
 
     def save(self, profile):
-        value = validate_profile(profile)
+        value = validate_library_profile(profile)
         paths = self._files(value["profile_id"])
         if paths:
             current = self.read(value["profile_id"])
-            if current["revision"] != value["revision"]:
+            if current["revision"] != value["revision"] or current["kind"] != value["kind"]:
                 raise CompositionError("Profile revision changed; reopen before saving.")
             value["revision"] += 1
         elif value["revision"] != 1:
             raise CompositionError("New profiles start at revision 1.")
         if not paths and len(self.list()["entries"]) >= MAX_PROFILES:
             raise CompositionError("Library limit is 300 profiles.")
-        value = validate_profile(value)
-        target = contained_path(self.root, value["profile_id"], f"r{value['revision']:06d}.pdmpx")
+        value = validate_library_profile(value)
+        suffix = ".pdmp" if is_single_profile(value) else ".pdmpx"
+        target = contained_path(self.root, value["profile_id"], f"r{value['revision']:06d}{suffix}")
         try:
-            with atomic_output(target, overwrite=False) as temporary:
-                temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+            if is_single_profile(value):
+                save_profile(target, DetectionConfig(**value["config"]), overwrite=False)
+            else:
+                with atomic_output(target, overwrite=False) as temporary:
+                    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
         except FileExistsError as exc:
             raise CompositionError("Profile revision changed; reopen before saving.") from exc
         return value
+
+    def add_single(self, config, *, profile_id=None, revision=None, is_cancelled=lambda: False):
+        if is_cancelled():
+            raise CompositionError("Profile save cancelled.")
+        value = new_single_profile(config)
+        if profile_id:
+            current = self.read(profile_id)
+            if not is_single_profile(current) or current["revision"] != revision:
+                raise CompositionError("Profile revision changed; reopen before saving.")
+            if current["name"] == value["name"]:
+                value.update(profile_id=profile_id, revision=revision)
+                if is_cancelled():
+                    raise CompositionError("Profile save cancelled.")
+                return current if current == value else self.save(value)
+        for entry in self.list(is_cancelled=is_cancelled)["entries"]:
+            if is_cancelled():
+                raise CompositionError("Profile save cancelled.")
+            if entry["kind"] == "single_mailpiece_detection" and entry["name"] == value["name"]:
+                saved = self.read(entry["profile_id"])
+                if saved["config"] == value["config"]:
+                    return saved
+        if is_cancelled():
+            raise CompositionError("Profile save cancelled.")
+        return self.save(value)
 
     def rename(self, profile_id, name):
         value = self.read(profile_id)
@@ -212,6 +287,15 @@ class ProfileLibrary:
         return self.save(value)
 
     def import_profile(self, path):
+        if Path(path).suffix.lower() == ".pdmp":
+            # Collections retain their existing v2 import contract; v1 stays single.
+            checked_path = Path(path)
+            if checked_path.is_symlink() or getattr(checked_path, "is_junction", lambda: False)():
+                raise CompositionError("Linked profiles are not supported.")
+            config = load_profile(path)
+            if config["version"] == 1:
+                config["profile_name"] = config.get("profile_name") or checked_path.stem[:120]
+                return self.add_single(config)
         value = read_profile(path)
         target = contained_path(self.root, value["profile_id"], f"r{value['revision']:06d}.pdmpx")
         if target.exists():

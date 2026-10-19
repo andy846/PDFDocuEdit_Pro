@@ -153,7 +153,11 @@ def dispatch(request: dict, *, session=None) -> dict:
         value = read_profile(request["path"])
         return {"project": apply_profile(project, value).to_dict()}
     if task == "mailpiece_library":
-        from composition.pdf_source.profile_library import ProfileLibrary, export_profile, read_profile
+        from composition.pdf_source.profile_library import (
+            ProfileLibrary,
+            export_library_profile,
+            read_profile,
+        )
         library = ProfileLibrary(request["root"])
         operation = request["operation"]
         if operation == "list":
@@ -167,7 +171,13 @@ def dispatch(request: dict, *, session=None) -> dict:
         if operation == "import":
             return {"profile": library.import_profile(request["path"])}
         if operation == "export":
-            return {"path": export_profile(request["path"], request["profile"])}
+            result = {"path": export_library_profile(request["path"], request["profile"])}
+            if request.get("register"):
+                try:
+                    result["library_profile"] = library.import_profile(result["path"])
+                except (OSError, ValueError) as exc:
+                    result["library_error"] = str(exc)
+            return result
         if operation == "open":
             return {"profile": read_profile(request["path"])}
         raise ValueError("Unknown mailpiece library operation.")
@@ -193,8 +203,17 @@ def dispatch(request: dict, *, session=None) -> dict:
         return scan_pdf(request["source"], DetectionConfig(**request["config"]), cache_path=request["cache"], **options)
     if task == "mailpiece_profile_save":
         from composition.pdf_source.detection import DetectionConfig
+        from composition.pdf_source.profile_library import ProfileLibrary
         from composition.pdf_source.profiles import save_profile
-        return {"path": save_profile(request["path"], DetectionConfig(**request["config"]))}
+        result = {"path": save_profile(request["path"], DetectionConfig(**request["config"]))}
+        if request.get("root"):
+            # The portable file is already safe even if the library is unavailable.
+            try:
+                result["library_profile"] = ProfileLibrary(request["root"]).add_single(
+                    request["config"], **request.get("library_identity", {}), is_cancelled=cancelled)
+            except (OSError, ValueError) as exc:
+                result["library_error"] = str(exc)
+        return result
     if task == "mailpiece_profile_load":
         from composition.pdf_source.profiles import load_profile
         return {"config": load_profile(request["path"])}

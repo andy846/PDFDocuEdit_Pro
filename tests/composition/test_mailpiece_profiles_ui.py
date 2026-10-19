@@ -321,3 +321,83 @@ def test_library_displays_recognition_rules_as_operator_text(overlay, tmp_path):
     assert "'kind':" not in detail
     assert manager.value["rule_sets"][0]["template_id"] == "TYPE_01"
     manager.reject()
+
+
+
+def test_library_imports_existing_region_file_and_refreshes_entries(overlay, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog
+
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+    from composition.pdf_source.detection import DetectionConfig
+    from composition.pdf_source.profiles import load_profile, save_profile
+
+    source = save_profile(tmp_path / "existing.pdmp", DetectionConfig(
+        rules=[{"kind": "region_present"}], region_mm=[8, 19, 70, 8], profile_name="Existing letters"))
+    manager = ProfileLibraryDialog(overlay, root=tmp_path / "library")
+    manager.show()
+    wait_until(lambda: not manager.busy)
+    assert not manager.records
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (source, ""))
+    manager.import_profile()
+    wait_until(lambda: not manager.busy and len(manager.records) == 1)
+    assert manager.use_button.isEnabled()
+    assert "Text present" in manager.rule_detail.toPlainText()
+    assert manager.value["config"]["region_mm"] == [8, 19, 70, 8]
+    manager.name.setText("Renamed letters")
+    assert not manager.use_button.isEnabled()
+    manager.save_revision()
+    wait_until(lambda: not manager.busy and manager.saved["revision"] == 2)
+    target = tmp_path / "exported.pdmp"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    manager.export_profile()
+    wait_until(lambda: not manager.busy)
+    assert load_profile(target)["profile_name"] == "Renamed letters"
+    manager.use_profile()
+    assert manager.selected_profile["kind"] == "single_mailpiece_detection"
+    assert manager.selected_profile["revision"] == 2
+
+
+def test_create_region_library_profile_requires_manual_save(overlay, tmp_path):
+    from dataclasses import asdict
+
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+    from composition.pdf_source.detection import DetectionConfig
+    from composition.pdf_source.profile_library import ProfileLibrary
+
+    root = tmp_path / "library"
+    config = asdict(DetectionConfig(rules=[{"kind": "region_present"}], region_mm=[8, 19, 70, 8]))
+    manager = ProfileLibraryDialog(overlay, config, root=root)
+    manager.show()
+    wait_until(lambda: not manager.busy)
+    manager.create_profile()
+    assert manager.value["kind"] == "single_mailpiece_detection"
+    assert not manager.use_button.isEnabled()
+    assert not ProfileLibrary(root).list()["entries"]
+    manager.name.setText("Manually created")
+    manager.save_revision()
+    wait_until(lambda: not manager.busy and len(manager.records) == 1)
+    assert manager.use_button.isEnabled()
+    manager.reject()
+
+
+
+def test_selected_single_profile_shows_ready_without_collection_only_fields(overlay, tmp_path):
+    from composition.designer.mailpiece_profile_library import ProfileLibraryDialog
+    from composition.pdf_source.profile_library import ProfileLibrary
+    from tests.composition.test_detection_profile_library import region_config
+
+    root = tmp_path / "library"
+    ProfileLibrary(root).add_single(region_config())
+    manager = ProfileLibraryDialog(overlay, root=root)
+    manager.show()
+    try:
+        wait_until(lambda: not manager.busy and len(manager.records) == 1)
+        manager.entries.setCurrentRow(0)
+        wait_until(lambda: not manager.busy and manager.saved is not None)
+        assert manager.status.text() != "Working…"
+        assert not manager.description.isVisible()
+        assert not manager.primary.isVisible() and not manager.combination.isVisible()
+        assert manager.use_button.isEnabled()
+        assert "Text present in selected region" in manager.rule_detail.toPlainText()
+    finally:
+        manager.reject()
