@@ -24,7 +24,25 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
-## Development update: Safe commands and Production Review dashboard
+## New in v3.0.10: Reusable detection, bounded output and Editor improvements
+
+* Windows Managed update packages only; Installer, Portable and macOS are not rebuilt.
+* Smart Mailpiece Detection reuses one page index across document-type rules.
+  Review exceptions and explicitly accept boundaries for each new PDF.
+* Detection Profile Library integrates saved/imported rules and immutable revisions.
+  New names are checked for collisions; historical duplicates remain identifiable.
+* Customer presets associate detection with TemplateID-specific overlay layouts.
+  Existing sequences, duplex padding, barcode checks and production approval apply.
+* PDF/PS parts keep complete envelopes and can include sheet/envelope counts and
+  D/S printing mode in configurable ordered filenames. Output limits remain enforced.
+* PS output deduplicates resources losslessly. Editor conversion supports validated
+  reuse, progress, cancellation and separate conversion/open timing.
+* Production uses a compact console. Rotated editing bounds, Designer page actions
+  and Windows project-file routing have been corrected.
+* Older projects remain readable. New classified/type-aware overlay v9 projects
+  require this reader. Physical printer/inserter proof remains separate.
+
+### Safe commands and Production Review dashboard
 
 * Command Palette rechecks the exact command against the current workspace and
   its current availability before execution. Disabled or stale selections cannot
@@ -40,8 +58,7 @@ supports Windows x64, with an account-enabled Apple Silicon Mac testing build (n
   remain Incomplete even when supported audit targets were decoded.
 * Font substitutions use existing scan counts and report links. Missing metrics
   remain Not Available; record/template references are not physical output pages.
-* This development update awaits owner review; it does not change version,
-  production authorization, barcode algorithms or file formats.
+* Dashboard presentation does not change production authorization or barcode algorithms.
 
 ## New in v3.0.9: Print paper safety and visible shutdown
 

@@ -1,15 +1,26 @@
-# PDFDocuEdit Pro V3.0.9
+# PDFDocuEdit Pro V3.0.10
 
 > Windows 日常開發／實測固定使用 `D:\Python_Project\PDFdocuEdit_Pro` 及 `.venv-dev`；啟動請用 `scripts\launch_dev.cmd`。[開發位置、環境及回退說明](docs/DEVELOPMENT_WORKSPACE.md)。
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.9 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
-本輪原生打包及實機結果見 [v3.0.9 驗收紀錄](docs/RELEASE_VALIDATION_3.0.9.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+v3.0.10 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+本輪原生打包及實機結果見 [v3.0.10 驗收紀錄](docs/RELEASE_VALIDATION_3.0.10.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
 
-## 開發更新：Command Dispatch Safety 與 Production Review Dashboard
+## v3.0.10：可重用偵測 Profile、生產輸出與編輯改善
 
-此更新等待 owner review，未提升公開版本或發布。
+本版依擁有人要求準備 Windows 更新包；正式發布及驗收狀態見上述紀錄。
+
+- Smart Mailpiece Detection 重用同一 PDF Page Index，支援多文件類型規則、分類與例外覆核；明確接受後才進入既有生產流程。
+- Detection Profile Library 整合 Save／Open／Import，保留不可變修訂；新建及改名檢查同名，舊有重名項目保留並可辨認。
+- Customer Production Profile 可重用偵測規則及 TemplateID 對應 Overlay；序號、雙面補白、條碼及正式批准仍沿用既有安全關口。
+- PDF／PS 按完整信封分件，提供容量上限及帶有紙數、封數、D／S 的可自訂檔名。見 [輸出限制](docs/BOUNDED_PRODUCTION_OUTPUT.md)。
+- PostScript 輸出使用無損資源去重；Editor 加入已驗證轉換快取、進度、取消及分段耗時。
+- Production 改為緊湊控制台；修正旋轉後編輯工具選取邊界及 Designer 頁面操作。外部開啟 .pdcx／.pdflow 使用正確 Designer 路由。
+- 新分類／Overlay 功能使用 overlay v9；舊格式可讀，新 v9 專案不能用舊版本開啟。實體打印機／插封機及 macOS 本輪未驗收。
+- 詳情見 [Release notes](docs/RELEASE_NOTES_3.0.10.md) 及 [Profile 相容性說明](docs/SMART_MAILPIECE_PROFILES.md)。
+
+### Command Dispatch Safety 與 Production Review Dashboard
 
 - Command Palette 執行前重新核對目前模式、精確指令 ID 及可用狀態；舊選項、停用指令或檢查失敗不執行。
 - Production Review 的 Summary 加入唯讀 dashboard：預計封數／頁數、實體紙張、補白背面、單雙面、紙種、Printer Profile、輸出位置及問題入口。
