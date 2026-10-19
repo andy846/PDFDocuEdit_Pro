@@ -7,6 +7,7 @@ import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from core import viewer as viewer_module
@@ -448,6 +449,15 @@ def assert_active_page_size(window, session):
     assert window.bottom_bar._current_page == session.page
 
 
+def wait_session_page(session, page):
+    # Canvas navigation deliberately yields to native readers holding DOCUMENT_LOCK.
+    # Observe completion, rather than assuming set_page always executes inline.
+    deadline = time.monotonic() + 5
+    while (session.page != page or session.canvas.current_page != page) and time.monotonic() < deadline:
+        QTest.qWait(10)
+    assert session.page == session.canvas.current_page == page
+
+
 def test_page_size_follows_tab_activation_without_navigation(editor, tmp_path):
     first, second = sized_documents(editor, tmp_path)
     assert_active_page_size(editor, second)
@@ -459,19 +469,57 @@ def test_page_size_follows_tab_activation_without_navigation(editor, tmp_path):
 def test_page_size_restores_mixed_page_and_ignores_inactive_navigation(editor, tmp_path):
     first, second = sized_documents(editor, tmp_path)
     editor.goto_page(1)
+    wait_session_page(second, 1)
     assert second.page == 1
     assert_active_page_size(editor, second)
     editor.workspace.set_current_session(first)
     assert_active_page_size(editor, first)
     second.canvas.set_page(0)
+    wait_session_page(second, 0)
     assert second.page == 0
     assert_active_page_size(editor, first)
     second.canvas.set_page(1)
+    wait_session_page(second, 1)
     assert_active_page_size(editor, first)
     editor.workspace.set_current_session(second)
     assert second.page == 1
     assert_active_page_size(editor, second)
     editor.goto_page(0)
+    wait_session_page(second, 0)
+    assert_active_page_size(editor, second)
+
+
+@pytest.mark.parametrize("inactive", [False, True])
+def test_page_size_navigation_completes_after_native_reader_releases_lock(editor, tmp_path, inactive):
+    from threading import Event, Thread
+
+    from core.pdf_engine import DOCUMENT_LOCK
+
+    first, second = sized_documents(editor, tmp_path)
+    if inactive:
+        editor.workspace.set_current_session(first)
+    entered, release = Event(), Event()
+
+    def reader():
+        with DOCUMENT_LOCK:
+            entered.set()
+            release.wait(5)
+
+    worker = Thread(target=reader, name="navigation-lock-regression", daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        second.canvas.set_page(1)
+        assert second.page == second.canvas.current_page == 0
+        assert "set_page" in second.canvas._deferred_pdf_calls
+        assert editor.workspace.current_session() is (first if inactive else second)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    wait_session_page(second, 1)
+    assert_active_page_size(editor, first if inactive else second)
+    editor.workspace.set_current_session(second)
     assert_active_page_size(editor, second)
 
 

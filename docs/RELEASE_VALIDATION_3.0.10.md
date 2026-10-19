@@ -43,7 +43,37 @@ from staging, builds and publication; it is not read or changed.
 | Physical printer / RIP / inserter / real customer jobs | Not tested | Software fixtures do not certify equipment |
 
 Prior development regression reports are historical evidence, not substituted
-for the frozen release candidate. Existing signing/publication gates are retained.
+for the frozen release candidate. Existing signing/publication validators are retained.
+
+## Initial native attempt and test-timing diagnosis
+
+Run [39274757369](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/39274757369)
+used `01d10da069a1e18ca935d0e85c2f540f98678849`. All 211 modules ran, with
+one failure in the mixed-page inactive-navigation test; packaging did not start.
+Its original result and logs are retained, not relabelled successful.
+
+The isolated test and full document-window module passed locally, while a
+repeated synthetic trace reproduced the immediate assertion failure. It recorded
+`set_page(1)` queued in `_deferred_pdf_calls` while a native PDF reader held the
+shared lock. Once the queued operation ran, both session and canvas correctly
+reported page 1. Navigation intentionally avoids blocking the Qt thread.
+
+The regression now waits for that actual completion with a bounded deadline,
+retains every active/inactive page-size assertion, and adds deterministic active
+and inactive tests holding the real lock from a worker thread. No product code,
+navigation behavior or test expectation is weakened. The corrected test source
+is committed and frozen again; a new complete native run is required. Local
+trace evidence is under `build/probes/release-v3.0.10/`.
+
+## Explicit owner acceptance arrangement
+
+When asked about candidate-specific real-account login, the owner explicitly
+instructed: “不用, 發佈更新包後我會自行更新, 到時再測試, 唔得會同你講”.
+That login check remains Pending / Not Tested and must not be set true. After
+native regression, package/signature/source validation, isolated successive
+upgrades and exact remote draft verification, publication proceeds under this
+recorded owner exception. The standard publisher's operator gate is unchanged;
+the exception and actual publication operation are recorded separately.
 
 ## Timing and recovery
 
