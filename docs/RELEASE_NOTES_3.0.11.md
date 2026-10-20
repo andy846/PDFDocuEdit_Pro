@@ -1,0 +1,22 @@
+# PDFDocuEdit Pro v3.0.11 — Windows Managed update
+
+本輪按擁有人要求，只提供 **Windows x64 升級更新包**，保留帳戶版及舊 Managed Launcher 更新入口；不製作新版 Installer、Portable 或 macOS 附件。
+
+## 更新內容
+
+- **開檔及渲染復原**：開檔準備失敗時保留並復原原有 Engine、未套用表單、歷史及顯示狀態。渲染失敗先有限重試，持續失敗顯示 Retry／Close；只有頁面實際顯示後才報告載入完成。原先間歇空白 Tab 的唯一自然觸發原因仍未確認，不能視為已完整定位原事故。
+- **旋轉頁面註解**：修正內建／自訂印章比例，圖片與簽名縮放位置，以及 FreeText／Callout 的方向、外觀和箭頭座標。
+- **可編輯水印**：文字／圖片水印提供九種位置、毫米偏移、比例、小數角度、透明度及背景預覽。新水印保持為可列印的普通 PDF 內容；儲存重開後可選取、修改、移動、縮放或刪除。外部工具重寫後不能確認所有權的內容會阻止破壞性編輯；舊有已壓平水印不會自動變成可編輯物件。
+- **圖片比例**：Create 的 Keep proportions 控制實際放置結果；Manage 取消比例後，下一次拖角可自由調整，毋須先按 Apply，亦保留尚未套用的尺寸輸入。
+- **圖片／Rubber Stamp 角度**：新增及選取後可設定 -360° 至 360° 小數角度。傾斜圖片控制點跟隨物件方向，調整闊高不再改變角度或產生斜切；圖片原始資料及內建印章向量外觀保持不變。
+- **安全與相容**：沿用 Undo/Redo、讀取器生命週期、來源文件保護及既有 PDF 引擎。共享印章外觀採獨立更新，避免影響另一個物件。
+
+## 更新方式及限制
+
+現有 Windows Managed 安裝使用 **Help → Check for Updates**。private／legacy 兩個 ZIP 為相同程式內容，並非兩個 Portable。首次安裝沿用 [v3.0.7 Managed 安裝版](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.7)，再更新。
+
+macOS 本輪不提供附件；舊 Mac 更新器查詢 Windows-only latest 可能提示缺少 Mac 更新附件，已安裝程式可繼續使用。Mac、實體 DPI 切換、打印機／RIP／插封機及真實客戶工作未在本輪驗收。
+
+沿用擁有人先發布、更新後自行測試登入的安排；本候選真實帳戶登入維持 **Pending / Not Tested**，不以 frozen 登入畫面 smoke 冒充登入驗收。
+
+本版本原生驗收、簽署及公開核對狀態見 [v3.0.11 驗收紀錄](RELEASE_VALIDATION_3.0.11.md)。
