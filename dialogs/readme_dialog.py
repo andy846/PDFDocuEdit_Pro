@@ -24,6 +24,19 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## New in v3.0.11: Annotation reliability and image / stamp controls
+
+* Windows Managed updates only; Installer, Portable and macOS are not rebuilt.
+* Opening failures restore the previous document state. Rendering failures retry
+  within a limit and show Retry / Close if recovery is unsuccessful.
+* Rotated-page stamps, images, signatures and FreeText use consistent geometry.
+* New text/image watermarks support position presets, millimetre offsets, scale,
+  fractional angles, opacity, preview and later editing after saving/reopening.
+* Image Keep proportions controls placement and resizing. Images and Rubber
+  Stamps support fractional angles from -360 to 360 degrees; angled image resize
+  handles follow the object without changing its orientation or shearing it.
+* Original image data, vector stamp appearances and Undo/Redo are preserved.
+
 ## New in v3.0.10: Reusable detection, bounded output and Editor improvements
 
 * Windows Managed update packages only; Installer, Portable and macOS are not rebuilt.

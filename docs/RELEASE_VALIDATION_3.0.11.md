@@ -39,6 +39,21 @@ Previous development evidence includes 644 affected regression tests and 60 at
 200% Qt scaling for the final image/stamp patch, and earlier complete baseline
 regression; none substitutes for this new frozen release candidate.
 
+## Initial candidate and metadata correction
+
+The first frozen candidate `477c959efb21c067caf97e3e2282f6720af221a2`,
+run [39460312241](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/39460312241),
+ran all 216 modules: 3,108 passed, 3 skipped and one failure. The version contract
+still asserted 3.0.10. Investigation also found that the in-app release overview
+and Windows file/installer metadata had not been updated with the public version.
+Packaging did not start. The failed logs and original evidence are retained.
+
+The version contract is updated to require 3.0.11 while preserving every metadata
+assertion; the in-app overview and Windows metadata are synchronized. No editing
+or production behavior changes. The corrected source requires a new frozen SHA
+and a complete new native regression; previous passing modules are not relabelled
+as evidence for the new candidate.
+
 ## Delivery
 
 Release URL, hashes, actual native results and timing: Pending.
