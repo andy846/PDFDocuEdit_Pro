@@ -4,7 +4,8 @@
 
 **唯一日常開發／實測位置：`D:\Python_Project\PDFdocuEdit_Pro`。**
 
-- 分支：`codex/deep-search-restore-layout`，繼續使用同一開發歷史。
+- 分支：本機 `main`，2026-10-20 已整合原開發線，繼續使用同一開發歷史。
+- GitHub `main` 只有在另行授權推送後才會同步；本機整合不會改變已安裝／已發布版本。
 - Python：`.venv-dev\Scripts\python.exe`（3.12.14）。
 - Python 基底：D 槽既有 `.venv-tools\python\cpython-3.12-windows-x86_64-none`；需要保留。
 - Codex 的 `PDFdocEdit Pro` 專案入口已核對為此 D 槽目錄。
@@ -74,16 +75,26 @@ Git 回退 bundle、SHA256 清單及原始 worktree 狀態保存在本機：
 先保存文件並正常關閉應用程式／worker；若任何工作目錄有未提交修改，先停止回退並保存修改。
 核對備份 `manifest.json` 與 Git bundle 驗證記錄，不使用強制 checkout、reset 或 clean。
 
-要暫時交回原工作區，先在 D 槽切回仍保留的 `codex/media-profile-library`，
-再在 C 槽 `print-composition-v3` checkout `codex/deep-search-restore-layout`。
-最新開發提交不會被刪除；回退只是交還分支 checkout，並非清除新提交。
-C 槽保留原有啟動環境與產物，必要時可作診斷。
+2026-10-20 整合後，不再以切換到舊開發分支或將 `main` 交回 C 槽作日常回退。
+歷史比較可使用保留的 C 槽 detached checkout；最新來源及歷史提交繼續由 D 槽 `main` 保存。
+如需回退產品修補，先核對指定提交及目前修改，再於 D 槽以可追蹤的還原提交處理，
+不要直接清除歷史或覆蓋來源。C 槽原有環境與產物保留作診斷。
 
 **不要在驗收前刪除 C 槽 worktree、任何 `.venv*` 或 `.venv-tools`。**
 驗收完成後清理 C 槽必須另外盤點 ignored／本機檔案，確認驗收證據及私密資料的處理方式，
 不可直接遞迴刪除或強制移除 worktree。
 
 ## 驗收證據
+
+### 2026-10-20 本機 main 整合
+
+GitHub／原本機 main 為 `cfc1977`，是 D 槽開發線的祖先。修補先保存為 `dfccece`，
+再以 fast-forward 整合到 D 槽 `main`；兩邊 tree 完全相同，沒有衝突解決或產品來源重寫。
+合併前 83 項及合併後 104 項測試通過；完整修補驗證見
+[Annotate & Edit 報告](ANNOTATE_EDIT_RELIABILITY.md)。
+C 槽 `macos-parity` 工作區原先乾淨，現保留在 `cfc1977` detached 狀態，解除 main 佔用。
+今次已合併的 `codex/deep-search-restore-layout` 本機分支可安全收起；其他歷史分支不作啟動入口。
+沒有推送、打包或發布；`BOCHK.pdmp` 及其他本機檔案保留。
 
 遷移後的完整回歸、原生 Windows UI、原生工具及啟動入口驗證結果列於本文後續驗收段落。
 合成文件測試不代表實際打印機／插封機或客戶文件驗收。
