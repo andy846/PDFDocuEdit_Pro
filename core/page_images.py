@@ -74,14 +74,14 @@ def _write_rect(page: fitz.Page, xref: int, rect: fitz.Rect) -> None:
 
 
 def add_page_image(page: fitz.Page, rect: fitz.Rect, path: str | Path,
-                   *, signature: bool = False) -> int:
+                   *, signature: bool = False, rotation: int = 0) -> int:
     with DOCUMENT_LOCK:
         # PyMuPDF's insertion transform on rotated, cropped pages can use a
         # different CropBox origin. Insert in native page space then restore
         # the display rotation under the same document lock / transaction.
-        rotation = page.rotation
+        page_rotation = page.rotation
         try:
-            if rotation:
+            if page_rotation:
                 page.set_rotation(0)
             # External PDFs need not enclose their original graphics state in
             # q/Q. insert_image wraps those streams automatically, creating
@@ -89,10 +89,10 @@ def add_page_image(page: fitz.Page, rect: fitz.Rect, path: str | Path,
             # after wrapping so only the placement is identified and tagged.
             page.wrap_contents()
             before = set(page.get_contents())
-            image_xref = page.insert_image(rect, filename=str(path), overlay=True)
+            image_xref = page.insert_image(rect, filename=str(path), overlay=True, rotate=rotation)
         finally:
-            if rotation:
-                page.set_rotation(rotation)
+            if page_rotation:
+                page.set_rotation(page_rotation)
         created = [xref for xref in page.get_contents() if xref not in before]
         if len(created) != 1:
             raise PageImageError("Unable to identify the new image placement.")
@@ -102,6 +102,8 @@ def add_page_image(page: fitz.Page, rect: fitz.Rect, path: str | Path,
         # insert_image preserves proportions and centres within the drawn box.
         width = float(page.parent.xref_get_key(image_xref, "Width")[1])
         height = float(page.parent.xref_get_key(image_xref, "Height")[1])
+        if rotation % 180:
+            width, height = height, width
         scale = min(rect.width / width, rect.height / height)
         fitted = fitz.Rect(0, 0, width * scale, height * scale)
         fitted += (rect.x0 + (rect.width - fitted.width) / 2,
@@ -126,9 +128,23 @@ def _image_transform(stream: bytes):
         raise PageImageError("This image placement was changed by another PDF tool; editing it is blocked to protect page content.")
     values = tuple(float(part) for part in match[1].split())
     a, b, c, d, _e, _f = values
-    if not all(isfinite(value) for value in values) or b != 0 or c != 0 or a <= 0 or d <= 0:
+    orthogonal = (b == c == 0 and a * d > 0) or (a == d == 0 and b * c < 0)
+    if not all(isfinite(value) for value in values) or not orthogonal:
         raise PageImageError("This image transform is no longer supported for editing.")
     return match, values
+
+
+def _placement_delta(page: fitz.Page, old: fitz.Rect, rect: fitz.Rect) -> fitz.Matrix:
+    """Map old native geometry to new geometry in the PDF content coordinate system."""
+    sx, sy = rect.width / old.width, rect.height / old.height
+    delta = fitz.Matrix(sx, 0, 0, sy, rect.x0 - sx * old.x0, rect.y0 - sy * old.y0)
+    rotation = page.rotation
+    try:
+        page.set_rotation(0)
+        native = page.transformation_matrix
+    finally:
+        page.set_rotation(rotation)
+    return native * delta * ~native
 
 
 def update_page_image(page: fitz.Page, xref: int, rect: fitz.Rect,
@@ -145,11 +161,10 @@ def update_page_image(page: fitz.Page, xref: int, rect: fitz.Rect,
         stream = page.parent.xref_stream(xref)
         match, (a, b, c, d, e, f) = _image_transform(stream)
         old = entry["rect"]
-        # Retain insert_image's native CropBox translation, including rotated
-        # pages. Only the placement's scale and translation are changed.
-        values = (a * rect.width / old.width, b, c,
-                  d * rect.height / old.height,
-                  e + rect.x0 - old.x0, f - (rect.y1 - old.y1))
+        # Scale/translate the entire CTM, including its rotation-dependent
+        # origin. Merely changing e/f by the rectangle delta moves inverted
+        # or quarter-turned images to the wrong edge when they are resized.
+        values = fitz.Matrix(a, b, c, d, e, f) * _placement_delta(page, old, rect)
         replacement = " ".join(f"{v:.9g}" for v in values).encode("ascii")
         # PDF page duplication can share content streams. Copy on write keeps
         # editing this placement from changing a duplicate or another page.

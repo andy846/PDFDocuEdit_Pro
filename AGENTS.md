@@ -25,6 +25,7 @@
 ## 固定開發工作區
 
 - 日常開發、實測與啟動統一使用 `D:\Python_Project\PDFdocuEdit_Pro` 及 `.venv-dev`。
+- 唯一日常開發線為上述 D 槽工作區的本機 `main`；歷史分支及 C 槽回退工作區不作實測入口。本機整合不等於已同步 GitHub。
 - C 槽 `print-composition-v3` 僅暫留作遷移回退；不要自動回到該目錄開發或啟動。
 - 不自動建立／切換其他分支或 worktree；任何發布仍按上述流程另外授權。
 

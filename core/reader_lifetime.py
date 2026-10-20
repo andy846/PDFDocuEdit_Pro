@@ -78,3 +78,7 @@ def pause_readers(consumers):
     finally:
         for consumer in consumers:
             consumer._reader_pause_count -= 1
+            if not consumer._reader_pause_count:
+                resume = getattr(consumer, "resume_readers", None)
+                if resume is not None:
+                    resume()

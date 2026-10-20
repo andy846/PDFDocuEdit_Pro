@@ -32,7 +32,7 @@ from core.annotations import (
     freetext_visual_metrics,
     list_annotations,
 )
-from core.diagnostics import connect_interrupts, log_failure
+from core.diagnostics import connect_interrupts, log_failure, log_lifecycle
 from core.measurement import PageScale, page_scale, saved_measurements
 from core.pdf_engine import DOCUMENT_LOCK
 from core.reader_lifetime import ReaderBusyError, ReaderLease, wait_for_readers
@@ -144,7 +144,7 @@ TEXT_MARK_TOOLS = {
     ToolMode.STRIKEOUT: "strikeout",
     ToolMode.SQUIGGLY: "squiggly",
 }
-STAMP_ASPECT = 0.35
+STAMP_ASPECT = 50 / 190  # intrinsic MuPDF standard-stamp appearance
 
 
 def callout_line_points(
@@ -220,6 +220,8 @@ class PdfCanvas(QScrollArea):
     """Page canvas preserving the pre-P2 API while adding layout/tool modes."""
 
     pageRendered = pyqtSignal(int)
+    pageRenderFailed = pyqtSignal(int, str)
+    documentCloseRequested = pyqtSignal()
     pageChanged = pyqtSignal(int)
     zoomChanged = pyqtSignal(float)
     selectionChanged = pyqtSignal(str)
@@ -254,6 +256,9 @@ class PdfCanvas(QScrollArea):
         # rapid page change from clearing/replacing a newer render.
         self._pending: set[tuple[int, int]] = set()
         self._render_jobs = {}
+        self._preview_readers = []
+        self._render_failures: dict[int, int] = {}
+        self._render_errors: set[int] = set()
         self._page_views: dict[int, PageView] = {}
         self._rows: list[tuple[int, list[int]]] = []
         self._cache = PageRenderCache()
@@ -319,6 +324,9 @@ class PdfCanvas(QScrollArea):
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(80)
         self._resize_timer.timeout.connect(self._apply_pending_relayout)
+        self._resume_timer = QTimer(self)
+        self._resume_timer.setSingleShot(True)
+        self._resume_timer.timeout.connect(self._fill_render_queue)
 
         self._last_magnifier: tuple[int, QPoint] | None = None
 
@@ -338,6 +346,10 @@ class PdfCanvas(QScrollArea):
 
     # --- document lifecycle ----------------------------------------------
     def load_doc(self, doc: fitz.Document, zoom: float = 1.0) -> None:
+        log_lifecycle("canvas.load", document=id(doc), generation=self._generation,
+                      pending=len(self._pending), paused=getattr(self, "_reader_pause_count", 0))
+        self._render_failures.clear()
+        self._render_errors.clear()
         self.rulers.clear_guides()
         self._doc = doc
         self._measurements.clear()
@@ -362,11 +374,16 @@ class PdfCanvas(QScrollArea):
 
     def reader_events(self):
         tasks = list(self._render_jobs.values())
+        self._preview_readers = [task for task in self._preview_readers if not task.done.is_set()]
+        tasks.extend(self._preview_readers)
         if self._magnifier_task is not None:
             tasks.append(self._magnifier_task)
         return [ReaderLease(task) for task in tasks]
 
     def clear(self, wait=True) -> None:
+        self._resume_timer.stop()
+        self._render_failures.clear()
+        self._render_errors.clear()
         for token, task in list(self._render_jobs.items()):
             if self._pool.tryTake(task):
                 task.done.set()
@@ -400,6 +417,8 @@ class PdfCanvas(QScrollArea):
     def refresh(self) -> None:
         """Re-render everything after the document content changed."""
         self._generation += 1
+        self._render_failures.clear()
+        self._render_errors.clear()
         self._cache.clear()
         self._large_sizes = {}
         self._teardown_views()
@@ -470,7 +489,12 @@ class PdfCanvas(QScrollArea):
             fill=str(self._annot_options["fill"]),
             width=float(self._annot_options["width"]),
             opacity=float(self._annot_options["opacity"]),
+            aspect=self._stamp_aspect() if self._tool_mode == ToolMode.STAMP else None,
         )
+
+    def _stamp_aspect(self) -> float:
+        image = QImage(str(self._annot_options["stamp_image_path"] or ""))
+        return image.height() / image.width() if not image.isNull() else STAMP_ASPECT
 
     # --- layout modes ----------------------------------------------------
     @_document_locked
@@ -916,11 +940,11 @@ class PdfCanvas(QScrollArea):
             ToolMode.FREETEXT_CALLOUT,
         }:
             style = self._annotation_style()
-            callout = (
-                callout_line_points(self._doc.load_page(page_num).cropbox, pdf_rect)
-                if self._tool_mode == ToolMode.FREETEXT_CALLOUT
-                else ()
-            )
+            callout = ()
+            if self._tool_mode == ToolMode.FREETEXT_CALLOUT:
+                page = self._doc.load_page(page_num)
+                visible_points = callout_line_points(page.rect, pdf_rect * page.rotation_matrix)
+                callout = tuple(tuple(fitz.Point(point) * page.derotation_matrix) for point in visible_points)
             self.annotationRequested.emit(
                 AnnotationOp(
                     kind=str(self._tool_mode),
@@ -930,6 +954,7 @@ class PdfCanvas(QScrollArea):
                     color=self._annot_options["color"],
                     width=self._annot_options["width"],
                     style=style,
+                    visual_rotation=self._doc[page_num].rotation,
                 )
             )
             return
@@ -953,15 +978,11 @@ class PdfCanvas(QScrollArea):
             return
         if self._tool_mode == ToolMode.STAMP:
             stamp_image_path = str(self._annot_options["stamp_image_path"] or "")
-            aspect = STAMP_ASPECT
-            if stamp_image_path:
-                image = QImage(stamp_image_path)
-                if not image.isNull() and image.width() > 0:
-                    aspect = max(0.1, min(3.0, image.height() / image.width()))
-            height = pdf_rect.width * aspect
-            stamp_rect = fitz.Rect(
-                pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y0 + height
-            )
+            visual = QRectF(widget_rect).normalized()
+            visual.setHeight(visual.width() * self._stamp_aspect())
+            visual = visual.intersected(QRectF(overlay.rect()))
+            stamp_rect = fitz.Rect(overlay.widget_to_pdf(visual.topLeft()),
+                                   overlay.widget_to_pdf(visual.bottomRight())).normalize()
             self.annotationRequested.emit(
                 AnnotationOp(
                     kind="stamp",
@@ -969,6 +990,7 @@ class PdfCanvas(QScrollArea):
                     rects=(stamp_rect,),
                     stamp_kind=self._annot_options["stamp_kind"],
                     image_path=stamp_image_path,
+                    visual_rotation=self._doc[page_num].rotation,
                 )
             )
             return
@@ -984,6 +1006,7 @@ class PdfCanvas(QScrollArea):
                     page=page_num,
                     rects=(pdf_rect,),
                     image_path=image_path,
+                    visual_rotation=self._doc[page_num].rotation,
                 )
             )
 
@@ -1107,6 +1130,7 @@ class PdfCanvas(QScrollArea):
                 text=text,
                 color=self._annot_options["color"],
                 style=style,
+                visual_rotation=self._doc[page_num].rotation,
             )
         )
 
@@ -1305,6 +1329,9 @@ class PdfCanvas(QScrollArea):
                 continue
             page = self._doc.load_page(page_num)
             view = PageView(page_num, page, self._pager)
+            view.retryRequested.connect(self.retry_page)
+            view.closeRequested.connect(self.documentCloseRequested.emit)
+            view.render_error.setVisible(page_num in self._render_errors)
             view.set_show_caption(self._show_captions)
             rect = self._page_rect_in_layout(page_num)
             view.setGeometry(
@@ -1396,7 +1423,8 @@ class PdfCanvas(QScrollArea):
 
     def _request_render(self, page_num: int, high: bool = False) -> None:
         token = (self._generation, page_num)
-        if getattr(self, "_reader_pause_count", 0) or not self._doc or token in self._pending:
+        if (getattr(self, "_reader_pause_count", 0) or not self._doc
+                or token in self._pending or page_num in self._render_errors):
             return
         dpr = self.devicePixelRatioF()
         key = (id(self._doc), page_num, round(self._zoom * dpr, 3), round(dpr, 3))
@@ -1437,9 +1465,23 @@ class PdfCanvas(QScrollArea):
         task = self._render_jobs.pop((generation, page_num), None)
         self.last_render_ms = getattr(task, "render_ms", 0.0)
         self._pending.discard((generation, page_num))
-        if generation != self._generation or not self._doc or image is None:
+        if generation != self._generation or not self._doc or not key or key[0] != id(self._doc):
             if self._doc and generation != self._generation:
                 self._fill_render_queue()
+            return
+        if image is None or image.isNull():
+            failures = self._render_failures.get(page_num, 0) + 1
+            self._render_failures[page_num] = failures
+            log_lifecycle("render.failed", document=id(self._doc), generation=generation,
+                          page=page_num, attempts=failures, pending=len(self._pending),
+                          paused=getattr(self, "_reader_pause_count", 0))
+            if failures >= 2:
+                self._render_errors.add(page_num)
+                view = self._page_views.get(page_num)
+                if view is not None:
+                    view.render_error.show()
+                self.pageRenderFailed.emit(page_num, "Page rendering failed. Use Retry page or close this document.")
+            self.resume_readers()
             return
         # QPixmap is a GUI resource and must only be created on this thread.
         pixmap = QPixmap.fromImage(image)
@@ -1450,6 +1492,21 @@ class PdfCanvas(QScrollArea):
             self.pageRendered.emit(page_num)
         # Refill pages skipped by the prefetch limit without another gesture.
         self._fill_render_queue()
+
+    def resume_readers(self) -> None:
+        """Refill suppressed reads once the final pause owner releases them."""
+        if self._doc is not None and not getattr(self, "_reader_pause_count", 0):
+            self._resume_timer.start(0)
+
+    def retry_page(self, page_num: int) -> None:
+        if self._doc is None or page_num not in self._render_errors:
+            return
+        self._render_errors.discard(page_num)
+        self._render_failures.pop(page_num, None)
+        view = self._page_views.get(page_num)
+        if view is not None:
+            view.render_error.hide()
+        self.resume_readers()
 
     def _view_anchor(self) -> tuple[float, float]:
         """Return the viewport centre as normalized pager coordinates."""

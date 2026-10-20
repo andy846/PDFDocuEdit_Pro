@@ -903,6 +903,13 @@ class PDFViewer(QMainWindow):
         )
 
     def _wire_canvas(self, session: DocumentSession, canvas) -> None:
+        canvas.documentCloseRequested.connect(
+            lambda: self.close_document(self._external_split_source(session, canvas) or session)
+        )
+        canvas.pageRenderFailed.connect(
+            lambda page, message: self.info_bar.show_message(message, "error")
+            if session in self._sessions and self._session is session else None
+        )
         from ui.editable_split import SessionOwnerRoute
         self = SessionOwnerRoute(session)
         canvas.pageChanged.connect(
@@ -1538,7 +1545,10 @@ class PDFViewer(QMainWindow):
             return
         opened = value
         if not isinstance(opened, PdfEngine):
+            self._queued_open_status = "Error"
             self._error("Open failed", "The PDF engine did not return a document.")
+            if not session.engine.is_loaded():
+                self.close_document(session)
             return
         if self._closing or session not in self._sessions:
             opened.close()
@@ -1550,13 +1560,57 @@ class PDFViewer(QMainWindow):
             requested = getattr(session, "_open_requested_at", trace.started)
             trace.values["queue_wait"] = round((trace.started - requested) * 1000, 3)
             trace.started = requested
+        previous = session.engine
+        previous_path = session.display_path
+        view_state = self._capture_session_view_state(session) if previous.is_loaded() else None
+        draft, form_mode = session.form_draft, session.form_mode_active
+        # Retain the old preview and history until all synchronous bootstrap
+        # steps succeed. Engine replacement normally retires both immediately.
+        session.form_draft = None
+        session.form_mode_active = False
+        log_lifecycle("open.bootstrap", session=id(session), document=id(opened.document),
+                      revision=opened.revision, queue=len(self._queued_open_paths), tasks=len(self._tasks))
         try:
-            self._replace_session_engine(session, opened)
-            self._complete_pdf_open(session, display_path)
+            self._replace_session_engine(session, opened, close_previous=False)
+            if not self._complete_pdf_open(session, display_path, reset_history=False):
+                raise RuntimeError("PDF display could not be initialized.")
         except BaseException:
-            if not any(s.engine is opened for w in self.document_windows.live_windows() for s in w._sessions):
+            self._queued_open_status = "Error"
+            session._after_open = None
+            if session.engine is opened:
+                # Retirement uses the failed engine's reader leases; a running
+                # render is never closed merely because initialization failed.
+                self._replace_session_engine(session, previous)
+            else:
                 after_readers([], opened.close)
+            session.form_draft, session.form_mode_active = draft, form_mode
+            if previous.is_loaded():
+                self._complete_pdf_open(session, previous_path or previous.original_path,
+                                        reset_history=False, announce=False)
+                if view_state is not None:
+                    self._restore_session_view_state(session, view_state)
+                if draft is not None and form_mode:
+                    canvas = session.canvas
+                    if draft.preview is not None:
+                        canvas.clear(wait=False)
+                        canvas.load_doc(draft.preview, float(view_state["primary"]["zoom"]))
+                        self._restore_session_view_state(session, view_state)
+                    canvas.set_form_fields(draft.fields)
+                    canvas.set_tool_mode("form")
+                    self._form_panel_sync(session)
+            else:
+                self.close_document(session)
+            log_lifecycle("open.rollback", session=id(session), loaded=previous.is_loaded(),
+                          queue=len(self._queued_open_paths), tasks=len(self._tasks))
             raise
+        session.undo_stack.clear()
+        self._update_undo_actions()
+        if draft is not None and draft.preview is not None:
+            after_readers([], draft.preview.close)
+            draft.preview = None
+        after_readers([], previous.close)
+        log_lifecycle("open.installed", session=id(session), document=id(opened.document),
+                      revision=opened.revision, queue=len(self._queued_open_paths), tasks=len(self._tasks))
         callback = getattr(session, "_after_open", None)
         session._after_open = None
         if callback:
@@ -2512,6 +2566,10 @@ class PDFViewer(QMainWindow):
         self._sync_modified_state()
 
     def _focus_annotation_properties(self, page: int, xref: int) -> None:
+        from core.watermarks import list_watermarks
+        if any(entry["xref"] == xref for entry in list_watermarks(self.engine.document[page])):
+            self._show_watermark_dialog(page, xref)
+            return
         self._select_annotation(page, xref)
         self._show_context("annotate", "Annotation Options")
 
@@ -2863,22 +2921,31 @@ class PDFViewer(QMainWindow):
         self._update_undo_actions()
         self.workspace.set_recent_files(self.settings.recent_files(), self.settings.get("recent_file_info", {}))
         zoom = self.settings.get_zoom_ratio()
-        with trace.span("page_model"):
-            session.canvas.load_doc(self.engine.document, zoom)
+        old_callback = getattr(session, "_first_page_callback", None)
+        if old_callback is not None:
+            session.canvas.pageRendered.disconnect(old_callback)
+            session._first_page_callback = None
         render_started = perf_counter()
         def first_page(page):
-            if page != session.canvas.current_page or session.engine is not opened_engine:
+            if (page != session.canvas.current_page or session.engine is not opened_engine
+                    or session not in self._sessions or self._closing):
                 return
             session.canvas.pageRendered.disconnect(first_page)
+            session._first_page_callback = None
             trace.values["first_page_render"] = round(session.canvas.last_render_ms, 3)
             trace.values["first_page_delivery"] = round((perf_counter() - render_started) * 1000, 3)
             trace.mark("time_to_first_page")
             trace.values["first_visible_page"] = page + 1
             trace.report("first_page")
             session.nav_panel.thumbnails.enable_rendering()
+            if announce:
+                self.info_bar.show_message(f"✅ Loaded: {display_path.name}", "success", 2500)
             QTimer.singleShot(0, lambda: self._cache_recent_preview(session, opened_engine))
         opened_engine = session.engine
+        session._first_page_callback = first_page
         session.canvas.pageRendered.connect(first_page)
+        with trace.span("page_model"):
+            session.canvas.load_doc(self.engine.document, zoom)
         if (
             session.split_canvas is not None
             and session.split_source_session is None
@@ -2913,10 +2980,6 @@ class PDFViewer(QMainWindow):
                 trace.mark("time_to_interactive")
                 trace.report("interactive")
         QTimer.singleShot(0, interactive)
-        if announce:
-            self.info_bar.show_message(
-                f"✅ Loaded: {display_path.name}", "success", 2500
-            )
         return True
 
     def _cache_recent_preview(self, session, engine):
@@ -4721,17 +4784,42 @@ class PDFViewer(QMainWindow):
         if session in self._sessions and session.engine.is_loaded():
             self._session_goto(session, page)
 
-    def _show_watermark_dialog(self) -> None:
+    def _show_watermark_dialog(self, selected_page: int | None = None, xref: int | None = None) -> None:
         if not self.engine.is_loaded():
             self.info_bar.show_message(
                 "Open a PDF before adding a watermark.", "warning"
             )
             return
-        dialog = WatermarkDialog(self.engine.page_count, self._page, self)
+        from core.watermarks import (
+            WatermarkSpec,
+            add_watermark,
+            list_watermarks,
+            remove_watermark,
+            watermark_image,
+            watermark_spec,
+        )
+        session, engine = self._session, self.engine
+        revision = engine.revision
+        current_page = self._page if selected_page is None else selected_page
+        dialog = WatermarkDialog(engine.page_count, current_page, self)
+        existing = None
+        if xref is not None:
+            try:
+                page = engine.document[current_page]
+                existing = next(entry for entry in list_watermarks(page) if entry["xref"] == xref)
+                dialog.configure_existing(watermark_spec(page, xref), watermark_image(page, xref), existing["id"])
+            except (ValueError, StopIteration) as exc:
+                self.info_bar.show_message(str(exc) or "The watermark is no longer available.", "error")
+                return
+        if hasattr(dialog, "enable_preview"):
+            dialog.enable_preview(engine.document, session.canvas)
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
             return
+        if self._session is not session or self.engine is not engine or engine.revision != revision:
+            self.info_bar.show_message("The document changed. Open Watermark again to review the current page.", "warning")
+            return
         details = dialog.details
-        pages = self._pages_from_text(str(details["pages"]))
+        pages = [current_page] if str(details["pages"]).casefold() == "current" else self._pages_from_text(str(details["pages"]))
         if not pages:
             self.info_bar.show_message("Choose a valid page range.", "warning")
             return
@@ -4739,7 +4827,20 @@ class PDFViewer(QMainWindow):
             with self._mutation_transaction("Watermark") as allowed:
                 if not allowed:
                     return
-                if details["mode"] == "text":
+                position = {key: details.get(key, default) for key, default in
+                            (("scale", 1.), ("anchor", "centre"), ("x_mm", 0.), ("y_mm", 0.))}
+                if existing is not None:
+                    from core.watermarks import image_bytes
+                    page = engine.document[current_page]
+                    image = (image_bytes(details["image"]) if details.get("image") else details.get("image_data"))
+                    spec = WatermarkSpec(mode=str(details["mode"]), text=str(details.get("text", "")),
+                                         fontsize=float(details.get("fontsize", 64)),
+                                         rotation=float(details["rotation"]), opacity=float(details["opacity"]),
+                                         image_width_pt=details.get("image_width_pt"),
+                                         color=tuple(details.get("color", (.5, .5, .5))), **position)
+                    add_watermark(page, spec, image=image, identifier=existing["id"])
+                    remove_watermark(page, xref)
+                elif details["mode"] == "text":
                     add_watermark_text(
                         self.engine.document,
                         pages,
@@ -4747,6 +4848,8 @@ class PDFViewer(QMainWindow):
                         fontsize=int(details["fontsize"]),
                         opacity=float(details["opacity"]),
                         rotation=float(details["rotation"]),
+                        color=tuple(details.get("color", (.5, .5, .5))),
+                        **position,
                     )
                 else:
                     add_watermark_image(
@@ -4754,6 +4857,11 @@ class PDFViewer(QMainWindow):
                         pages,
                         str(details["image"]),
                         opacity=float(details["opacity"]),
+                        rotation=float(details.get("rotation", 0)),
+                        scale=float(position.pop("scale")) * .4,
+                        image_data=details.get("image_data"),
+                        image_width_pt=details.get("image_width_pt"),
+                        **position,
                     )
                 self.engine.mark_modified()
         except Exception as exc:

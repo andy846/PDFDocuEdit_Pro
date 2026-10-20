@@ -43,12 +43,14 @@ from PyQt6.QtWidgets import (
 
 from core.annotations import STAMP_IDS
 from core.diagnostics import log_failure
-from core.page_images import IMAGE_KINDS
+from core.page_images import IMAGE_KINDS as PAGE_IMAGE_KINDS
 from core.pdf_engine import parse_page_range
 from styles.tokens import D, S
 
 from .form_mode import FormPanel
 from .motion import MotionIconButton
+
+IMAGE_KINDS = PAGE_IMAGE_KINDS | {"Watermark"}
 
 SWATCHES: dict[str, str] = {
     "yellow": "#ffd54a",
@@ -1051,6 +1053,7 @@ class ContextPanel(QFrame):
                 with QSignalBlocker(self._image_dimensions[key]):
                     self._image_dimensions[key].setValue(value * 25.4 / 72)
             self._image_keep_aspect.setChecked(bool(entry.get("keep_aspect", True)))
+            self._image_keep_aspect.setEnabled(entry.get("kind") != "Watermark")
         editable_text = str(entry.get("kind") or "") in {"Text", "FreeText"}
         self._set_content_editor_visible(editable_text)
         self._property_text.setPlainText(str(entry.get("text") or ""))

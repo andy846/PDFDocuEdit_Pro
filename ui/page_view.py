@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections import OrderedDict
 
 import fitz
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPixmap
-from PyQt6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from styles.theme import is_dark
 from styles.tokens import S
@@ -21,6 +21,9 @@ PAGE_SPACING = 16
 class PageView(QFrame):
     """One page: overlay + drop shadow + optional page-number caption."""
 
+    retryRequested = pyqtSignal(int)
+    closeRequested = pyqtSignal()
+
     def __init__(self, page_num: int, page: fitz.Page, parent=None):
         super().__init__(parent)
         self.setObjectName("pageView")
@@ -29,6 +32,24 @@ class PageView(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(S.XS)
         self.overlay = PageOverlay(page_num)
+        error_layout = QVBoxLayout(self.overlay)
+        error_layout.addStretch()
+        self.render_error = QFrame()
+        message_layout = QVBoxLayout(self.render_error)
+        message = QLabel("This page could not be displayed. Retry, or close the document and open it again.")
+        message.setWordWrap(True)
+        message_layout.addWidget(message)
+        actions = QHBoxLayout()
+        self.retry_render = QPushButton("Retry page")
+        self.retry_render.clicked.connect(lambda: self.retryRequested.emit(self.page_num))
+        close = QPushButton("Close document")
+        close.clicked.connect(self.closeRequested.emit)
+        actions.addWidget(self.retry_render)
+        actions.addWidget(close)
+        message_layout.addLayout(actions)
+        error_layout.addWidget(self.render_error)
+        error_layout.addStretch()
+        self.render_error.hide()
         self.overlay.set_geometry_info(
             page.rect, 1.0, page.rotation_matrix, page.derotation_matrix
         )
@@ -50,6 +71,7 @@ class PageView(QFrame):
         return f"Page {label}" if label else f"Page {page.number + 1}"
 
     def set_pixmap(self, pixmap: QPixmap, page: fitz.Page | None = None) -> None:
+        self.render_error.hide()
         self.overlay.set_pixmap(pixmap)
         if page is not None:
             self.caption.setText(self._caption_text(page))

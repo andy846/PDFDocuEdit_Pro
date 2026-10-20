@@ -430,11 +430,13 @@ class PageOverlay(QWidget):
         fill: str = "",
         width: float = 1.5,
         opacity: float = 1.0,
+        aspect: float | None = None,
     ) -> None:
         self._active_preview_style = {
             "kind": str(kind), "color": str(color), "fill": str(fill),
             "width": max(0.5, float(width)),
             "opacity": max(0.0, min(1.0, float(opacity))),
+            "aspect": aspect,
         }
         self.update()
 
@@ -499,6 +501,9 @@ class PageOverlay(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(rect.adjusted(-2, -2, 2, 2), 4.0, 4.0)
         if self._marquee:
+            if self._active_preview_style.get("aspect"):
+                self._marquee.setHeight(self._marquee.width() * self._active_preview_style["aspect"])
+                self._marquee = self._marquee.intersected(QRectF(self.rect()))
             style = self._active_preview_style
             border = QColor(str(style.get("color") or colors["primary"]))
             border.setAlpha(
@@ -1357,7 +1362,7 @@ class PageOverlay(QWidget):
         self._geometry_drag = {
             "origin": QPointF(point), "original_rect": QRectF(rect),
             "rect": QRectF(rect), "handle": handle,
-            "image": entry.get("kind") in IMAGE_KINDS,
+            "image": entry.get("kind") in IMAGE_KINDS | {"Watermark"},
             "keep_aspect": bool(entry.get("keep_aspect", True)),
         }
 

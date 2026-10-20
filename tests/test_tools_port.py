@@ -1116,6 +1116,12 @@ def test_legacy_status_messages_on_load_and_save(tmp_path, monkeypatch):
     source = make_pdf(tmp_path / "msg.pdf")
     messages = _messages(window)
     window._load_file_sync(str(source))
+    # Opening is now announced only once the first page has visible pixels.
+    from tests.test_open_performance import wait_until
+    canvas = window._session.canvas
+    if not canvas._page_views or canvas._page_views[0].overlay._pixmap is None:
+        assert not any("✅ Loaded: msg.pdf" in message for message in messages)
+    wait_until(lambda: 0 in canvas._page_views and canvas._page_views[0].overlay._pixmap is not None)
     assert any("✅ Loaded: msg.pdf" in message for message in messages)
 
     window.save_file()

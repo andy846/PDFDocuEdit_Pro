@@ -26,6 +26,7 @@ from .page_images import add_page_image, list_page_images, remove_page_image, up
 from .pdf_engine import DOCUMENT_LOCK
 from .redaction_images import prepare_spot_images
 from .system_fonts import is_pdf_base_font, resolve_system_font
+from .watermarks import list_watermarks, remove_watermark, update_watermark_geometry
 
 STAMP_IDS: dict[str, int] = {
     "Approved": 0,
@@ -110,6 +111,7 @@ class AnnotationOp:
     stamp_kind: str = "Draft"
     image_path: str = ""
     style: AnnotationStyle | None = None
+    visual_rotation: int = 0
 
     def description(self) -> str:
         labels = {
@@ -424,13 +426,21 @@ def _set_system_freetext_appearance(
         text_rect.x1 - appearance_rect.x0,
         text_rect.y1 - appearance_rect.y0,
     ).normalize()
+    rotation = max(0, target.rotation) % 360
+    layout_rotation = fitz.Matrix(rotation)
+    layout_bounds = fitz.Rect(0, 0, width, height) * layout_rotation
+    offset = (-layout_bounds.x0, -layout_bounds.y0) * 2
+    if rotation:
+        local_text = local_text * layout_rotation + offset
+        width, height = layout_bounds.width, layout_bounds.height
 
     temp_index = doc.page_count
     temp_page = doc.new_page(width=width, height=height)
     stroke = _rgb(style.stroke)
     if len(callout) == 3:
         local_points = [
-            fitz.Point(x - appearance_rect.x0, y - appearance_rect.y0)
+            fitz.Point(x - appearance_rect.x0, y - appearance_rect.y0) * layout_rotation
+            + fitz.Point(-layout_bounds.x0, -layout_bounds.y0)
             for x, y in callout
         ]
         temp_page.draw_polyline(
@@ -501,7 +511,7 @@ def _set_system_freetext_appearance(
         return False
     doc.xref_set_key(appearance_xref, "Resources", resources[1])
     doc.xref_set_key(appearance_xref, "BBox", _pdf_array((0, 0, width, height)))
-    doc.xref_set_key(appearance_xref, "Matrix", "[1 0 0 1 0 0]")
+    doc.xref_set_key(appearance_xref, "Matrix", _pdf_array(tuple(layout_rotation)))
     doc.update_stream(appearance_xref, stream)
     doc.xref_set_key(annot_xref, _SYSTEM_FONT_KEY, fitz.get_pdf_str(style.font))
     doc.xref_set_key(annot_xref, _TEXT_RECT_KEY, _pdf_array(text_rect))
@@ -779,6 +789,7 @@ def add_freetext(
     *,
     callout: Sequence[tuple[float, float]] = (),
     boxed: bool = False,
+    visual_rotation: int = 0,
 ) -> None:
     page = _page(doc, page_num)
     requested_font = style.font or "Helv"
@@ -802,6 +813,7 @@ def add_freetext(
         opacity=max(0.0, min(1.0, style.opacity)),
         **callout_options,
         align=max(0, min(2, int(style.alignment))),
+        rotate=int(visual_rotation) % 360,
     )
     if boxed:
         # PyMuPDF 1.26 rejects border_color / border_width in the
@@ -837,11 +849,23 @@ def add_stamp(
     page_num: int,
     rect: fitz.Rect,
     stamp_kind: str = "Draft",
+    visual_rotation: int = 0,
 ) -> None:
     page = _page(doc, page_num)
+    # Native stamps have a 190 x 50 appearance. Construct that appearance
+    # about the requested centre, then rotate once into native page space.
+    rotation = int(visual_rotation) % 360
+    if rotation % 90:
+        raise AnnotationValidationError("Stamp rotation must be a quarter turn.")
+    if rotation in {90, 270}:
+        centre = (rect.tl + rect.br) / 2
+        rect = fitz.Rect(centre.x - rect.height / 2, centre.y - rect.width / 2,
+                         centre.x + rect.height / 2, centre.y + rect.width / 2)
     annot = page.add_stamp_annot(
         rect, stamp=STAMP_IDS.get(stamp_kind, STAMP_IDS["Draft"])
     )
+    if rotation:
+        annot.set_rotation(rotation)
     annot.update()
 
 
@@ -992,7 +1016,7 @@ def list_annotations(page: fitz.Page, *, include_page_images: bool = True) -> li
         pass  # the annotation list itself is stale
     if include_page_images:
         # Interactive annotations render above ordinary image page content.
-        results = list_page_images(page) + results
+        results = list_watermarks(page) + list_page_images(page) + results
     return results
 
 
@@ -1017,6 +1041,8 @@ def remove_annotation(page: fitz.Page, xref: int) -> bool:
     a stale xref disappears can silently delete a different annotation.
     """
     with DOCUMENT_LOCK:
+        if remove_watermark(page, xref):
+            return True
         if remove_page_image(page, xref):
             return True
         try:
@@ -1055,6 +1081,9 @@ def update_annotation_geometry(
 
     with DOCUMENT_LOCK:
         if rect is not None:
+            watermark_xref = update_watermark_geometry(page, xref, rect)
+            if watermark_xref is not None:
+                return watermark_xref
             image_xref = update_page_image(page, xref, rect, keep_aspect=keep_aspect)
             if image_xref is not None:
                 return image_xref
@@ -1411,17 +1440,19 @@ def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
                 style,
                 callout=op.points if op.kind == "freetext_callout" else (),
                 boxed=op.kind != "freetext_typewriter",
+                visual_rotation=op.visual_rotation,
             )
         elif op.kind == "stamp":
             if op.image_path:
-                insert_image(doc, op.page, op.rects[0], op.image_path)
+                add_page_image(_page(doc, op.page), op.rects[0], op.image_path,
+                               rotation=op.visual_rotation)
             else:
-                add_stamp(doc, op.page, op.rects[0], op.stamp_kind)
+                add_stamp(doc, op.page, op.rects[0], op.stamp_kind, op.visual_rotation)
         elif op.kind == "redact":
             redact(doc, op.page, list(op.rects))
         elif op.kind in {"image", "signature_image"}:
             add_page_image(_page(doc, op.page), op.rects[0], op.image_path,
-                           signature=op.kind == "signature_image")
+                           signature=op.kind == "signature_image", rotation=op.visual_rotation)
         else:
             raise ValueError(f"Unknown annotation kind: {op.kind}")
 
@@ -1476,37 +1507,12 @@ def add_watermark_text(
     opacity: float = 0.25,
     rotation: float = 45.0,
     color: tuple[float, float, float] = (0.5, 0.5, 0.5),
+    *, scale: float = 1, anchor: str = "centre", x_mm: float = 0, y_mm: float = 0,
 ) -> None:
-    value = str(text).strip()
-    if not value:
-        raise ValueError("Watermark text cannot be empty.")
-    size = max(4.0, float(fontsize))
-    alpha = max(0.0, min(1.0, float(opacity)))
-    with DOCUMENT_LOCK:
-        for page_num in pages:
-            if not 0 <= page_num < doc.page_count:
-                continue
-            page = doc.load_page(page_num)
-            centre = page.rect.tl + (page.rect.br - page.rect.tl) * 0.5
-            max_width = max(20.0, page.rect.width * 0.82)
-            text_width = fitz.get_text_length(value, fontname="helv", fontsize=size)
-            if text_width > max_width:
-                size *= max_width / text_width
-                text_width = max_width
-            baseline = fitz.Point(
-                centre.x - text_width / 2,
-                centre.y + size * 0.35,
-            )
-            page.insert_text(
-                baseline,
-                value,
-                fontname="helv",
-                fontsize=size,
-                color=color,
-                fill_opacity=alpha,
-                overlay=True,
-                morph=(centre, fitz.Matrix(float(rotation))),
-            )
+    from .watermarks import WatermarkSpec, add_watermarks
+    spec = WatermarkSpec(text=str(text).strip(), fontsize=fontsize, opacity=opacity,
+                         rotation=rotation, color=color, scale=scale, anchor=anchor, x_mm=x_mm, y_mm=y_mm)
+    add_watermarks(doc, pages, spec)
 
 
 def add_watermark_image(
@@ -1515,12 +1521,12 @@ def add_watermark_image(
     image_path: str | Path,
     opacity: float = 0.25,
     scale: float = 0.4,
+    *, rotation: float = 0, anchor: str = "centre", x_mm: float = 0, y_mm: float = 0,
+    image_data: bytes | None = None,
+    image_width_pt: float | None = None,
 ) -> None:
-    png = _image_with_opacity_png(image_path, opacity)
-    try:
-        with DOCUMENT_LOCK:
-            for page_num in pages:
-                if 0 <= page_num < doc.page_count:
-                    _insert_image_fit(doc.load_page(page_num), png, scale)
-    finally:
-        png.unlink(missing_ok=True)
+    from .watermarks import WatermarkSpec, add_watermarks
+    image = image_data if image_data is not None else Path(image_path).read_bytes()
+    spec = WatermarkSpec(mode="image", opacity=opacity, scale=scale / .4,
+                         rotation=rotation, anchor=anchor, x_mm=x_mm, y_mm=y_mm, image_width_pt=image_width_pt)
+    add_watermarks(doc, pages, spec, image=image)
