@@ -3,58 +3,104 @@
 ## Source and scope
 
 Owner authorized direct public Windows update-only publication on 2026-10-21
-(Hong Kong). Product workspace: `D:/Python_Project/PDFdocuEdit_Pro`; local branch
-`main`; product base `f1ddd9e1717ee6be2a1f9c83d82c9c9c79e59ed6`.
+(Hong Kong). Workspace `D:/Python_Project/PDFdocuEdit_Pro`, local branch `main`.
 Installer, Portable and macOS are explicitly out of scope.
 
-Reuse the pre-existing remote `codex/windows-update-v3.0.8` publication ref by
-fast-forward only; no local branch/worktree creation or switch. This preserves
-one local main development line and the existing release-CI deduplication.
-The owner's untracked profile is not read, staged or uploaded.
+| Item | Record |
+|---|---|
+| Version / tag | 3.0.11 / v3.0.11 |
+| Frozen source | `a6d0b30c575ba0b6d1b9aa8e962d652f8fa9a783` |
+| Source fingerprint | `a033c00a46528b8586e19cd4d1239a96dab77c9b1e17b4d77b2a41d08ab9e09c` |
+| Product base | `f1ddd9e1717ee6be2a1f9c83d82c9c9c79e59ed6` |
+| Publication ref | Existing `codex/windows-update-v3.0.8`, fast-forward only |
+| Native run | [39464763633](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/39464763633), exact frozen SHA |
+| Source quality | [Passed run 39464763581](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/39464763581) |
+| Public release | [v3.0.11](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.11), latest, non-prerelease |
+| Published UTC | 2026-10-20T17:56:51Z |
 
-Frozen SHA, fingerprint, run ID, stage timings and artifact paths will be recorded
-in `build/probes/release-v3.0.11/progress.json` and finalized here after publication.
+No new local branch or worktree was created; no branch switch or merge.
+Remote main was not pushed. The existing publication ref preserves one local
+main development line and avoids duplicate native regression. The untracked
+operator profile was not read, staged or uploaded.
 
 ## Acceptance
 
-| Check | Status |
+| Check | Actual result |
 |---|---|
-| Source metadata / release contracts | Pending |
-| Complete Windows native isolated regression | Pending — development tests do not replace this gate |
-| Windows update-only candidate and frozen login-ready / worker admission | Pending |
-| Exact candidate source / hash / signature checks | Pending |
-| Original Launcher successive frozen upgrades | Pending |
-| Current candidate real-account login | Pending / Not Tested — owner previously directed post-publication testing and now again requests direct publication |
-| Draft remote asset checks | Pending |
-| Public tag / both Windows signed routes / attachment hashes | Pending |
+| Source/release contracts | Refreeze: 27 passed / 2 host symlink/junction permission skips; repository Ruff and diff checks passed |
+| Windows complete isolated regression | 216 exact tracked test modules; 3109 passed / 3 skipped; 0 failures/errors; evidence SHA verified |
+| Windows native update-only package | Passed; private/legacy ZIPs have identical bytes; no installer/portable |
+| Frozen login-ready / unauthenticated worker rejection | Passed; composition, print and PDF-operations admission checked |
+| Original frozen Launcher upgrades | Passed: 3.0.3 → 3.0.10 → 3.0.11; original Launcher and settings preserved |
+| Credential isolation | Passed; private local data, require-signin marker and blocked network; no real credentials |
+| Real-account login | Pending / Not Tested; owner-directed post-publication test |
+| Candidate provenance, index and update signatures | Passed using existing trust anchor and validators |
+| Draft names/sizes/SHA256 | Passed; exact 10 assets checked by existing publisher |
+| Public tag/latest and anonymous update routes | Passed; tag equals frozen SHA; both signatures and ZIP links verified |
 | Installer / Portable / macOS | Out of scope |
-| Physical printer / RIP / inserter / customer jobs | Not Tested |
+| Physical printer / RIP / inserter / actual customer jobs | Not Tested |
 
-The owner's continuing arrangement is: “不用, 發佈更新包後我會自行更新, 到時再測試,
-唔得會同你講”. Preserve a source-specific exception record; never mark login true.
-All remaining native, signing, package, successive-upgrade and publication gates
-remain required. Do not modify the standard acceptance gate to fabricate a pass.
+The owner previously directed: “不用, 發佈更新包後我會自行更新, 到時再測試,
+唔得會同你講”, and requested direct publication again for this release.
+The source-specific exception is recorded separately. `windows_account_login=false`
+remains unchanged; frozen login-ready is not real-account acceptance. The standard
+operator gate was not changed. All other native, signing, upgrade, upload and
+post-publication gates were completed. Development tests were not substituted
+for the full frozen native candidate regression.
 
-Previous development evidence includes 644 affected regression tests and 60 at
-200% Qt scaling for the final image/stamp patch, and earlier complete baseline
-regression; none substitutes for this new frozen release candidate.
+## Stage timings (UTC)
 
-## Initial candidate and metadata correction
+| Stage | Start | End | Duration |
+|---|---|---|---|
+| Initial source preparation | 2026-10-20T16:44:33.185948+00:00 | 2026-10-20T16:45:50.462017+00:00 | 77.28 s |
+| Initial regression — version failure | 2026-10-20T16:47:20Z | 2026-10-20T17:12:47Z | 1527.00 s |
+| Full isolated regression | 2026-10-20T17:18:57Z | 2026-10-20T17:48:50Z | 1793.00 s |
+| Native account release candidates | 2026-10-20T17:48:50Z | 2026-10-20T17:51:08Z | 138.00 s |
+| download | 2026-10-20T17:51:45.164329+00:00 | 2026-10-20T17:53:12.858961+00:00 | 87.69 s |
+| candidate-validation | 2026-10-20T17:53:12.860962+00:00 | 2026-10-20T17:53:14.096235+00:00 | 1.24 s |
+| seal | 2026-10-20T17:53:14.098233+00:00 | 2026-10-20T17:53:19.150834+00:00 | 5.05 s |
+| isolated-upgrades | 2026-10-20T17:53:19.151820+00:00 | 2026-10-20T17:53:55.960011+00:00 | 36.81 s |
+| publication | 2026-10-20T17:55:04.210226+00:00 | 2026-10-20T17:56:52.418482+00:00 | 108.21 s |
+| public-verification | 2026-10-20T17:56:52.420484+00:00 | 2026-10-20T17:57:04.381278+00:00 | 11.96 s |
 
-The first frozen candidate `477c959efb21c067caf97e3e2282f6720af221a2`,
+## Initial candidate failure and correction
+
+Initial candidate `477c959efb21c067caf97e3e2282f6720af221a2`,
 run [39460312241](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/39460312241),
-ran all 216 modules: 3,108 passed, 3 skipped and one failure. The version contract
-still asserted 3.0.10. Investigation also found that the in-app release overview
-and Windows file/installer metadata had not been updated with the public version.
-Packaging did not start. The failed logs and original evidence are retained.
+ran all 216 modules: 3,108 passed, 3 skipped and one outdated-version contract
+failure. Packaging did not start. The version contract, in-app release overview
+and Windows file/installer version metadata were synchronized to 3.0.11; every
+metadata assertion was preserved. No editing or production behavior changed.
+The corrected source ran a complete new native regression. Initial failed logs
+and artifacts are retained under the per-release probe directory, not relabelled.
+Local refreeze preflight attempts first encountered restricted sandbox temporary
+directory permissions; using a task-specific D-drive TEMP/TMP and fresh pytest
+base directory yielded the recorded 27 passed / 2 host permission skips.
 
-The version contract is updated to require 3.0.11 while preserving every metadata
-assertion; the in-app overview and Windows metadata are synchronized. No editing
-or production behavior changes. The corrected source requires a new frozen SHA
-and a complete new native regression; previous passing modules are not relabelled
-as evidence for the new candidate.
+Total wall-clock from source preparation to anonymous verification:
+4351.20 seconds.
+Windows native validation ran once per frozen source. A local waiting-process bookkeeping repair
+occurred before artifact download; it did not restart native tests or change
+candidate evidence. Task temporary downloads used the D drive.
 
-## Delivery
+The first draft creation succeeded but its immediate authenticated list lookup
+returned no matching draft, so publication stopped before uploading. A subsequent
+read confirmed draft ID `418698473` and the exact frozen SHA; only publication
+was resumed. Existing assets were verified, never overwritten; native tests,
+signing and upgrade acceptance were retained. The initial publication log remains
+available separately from the resumed log.
 
-Release URL, hashes, actual native results and timing: Pending.
+## Published payload and delivery
+
+Both Windows ZIPs: 360,192,402 bytes each;
+SHA256 `42fa4a00e85915dd239b79f81b4279c596a3e8d0463f360197a4197cf3d85681`.
+Existing Managed installations use **Help → Check for Updates**.
+No macOS download for this version; older Mac updaters may report missing Mac
+assets on this Windows-only latest release. Installed Mac applications remain usable.
+
+Local audit records under `build/probes/release-v3.0.11/`: `progress.json`,
+`native-validation.json`, `upgrade-qa/result.json`, `owner-publication-result.json`,
+`post-publication-validation.json`, signed index and per-stage logs. These local
+records, keys, settings and user profiles are not committed.
+
 Public version notes: [v3.0.11](RELEASE_NOTES_3.0.11.md).
