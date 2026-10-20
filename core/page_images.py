@@ -7,8 +7,9 @@ the same placement service; they do not create cryptographic signatures.
 
 from __future__ import annotations
 
+import hashlib
 import re
-from math import isfinite
+from math import atan2, cos, degrees, hypot, isfinite, radians, sin
 from pathlib import Path
 
 import fitz
@@ -19,6 +20,7 @@ _RECT = "PDFdocuEditImageRect"
 _ASPECT = "PDFdocuEditImageAspect"
 _ORIGIN = "PDFdocuEditImageOrigin"
 _KIND = "PDFdocuEditImageKind"
+_TRANSFORM_HASH = "PDFdocuEditImageTransformHash"
 IMAGE_KINDS = frozenset({"Image", "Signature Image"})
 _NUMBER = rb"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 _MATRIX = re.compile(rb"\s*q\s+(" + rb"\s+".join([_NUMBER] * 6)
@@ -54,9 +56,22 @@ def _placement(page: fitz.Page, xref: int, contents: set[int] | None = None) -> 
         return None
     aspect = page.parent.xref_get_key(xref, _ASPECT)[1] != "false"
     kind = "Signature Image" if page.parent.xref_get_key(xref, _KIND)[1] == "/Signature" else "Image"
-    return {"kind": kind, "xref": xref, "rect": rect,
+    match = _MATRIX.fullmatch(page.parent.xref_stream(xref))
+    angle = 0.
+    geometry = {}
+    if match:
+        values = tuple(map(float, match[1].split()))
+        a, b, *_ = values
+        angle = (degrees(atan2(b, a)) - page.rotation + 180) % 360 - 180
+        native = _native_matrix(page)
+        matrix = fitz.Matrix(*values)
+        quad = [fitz.Point(x, y) * matrix * native for x, y in ((0, 1), (1, 1), (0, 0), (1, 0))]
+        geometry = {"image_quad": [(p.x, p.y) for p in quad],
+                    "image_size": (hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y),
+                                   hypot(quad[2].x - quad[0].x, quad[2].y - quad[0].y))}
+    return {"kind": kind, "xref": xref, "rect": rect, "rotation": angle,
             "keep_aspect": aspect, "text": "", "subject": "Added image",
-            "opacity": 1.0, "width": 0.0}
+            "opacity": 1.0, "width": 0.0, **geometry}
 
 
 def list_page_images(page: fitz.Page) -> list[dict]:
@@ -74,7 +89,8 @@ def _write_rect(page: fitz.Page, xref: int, rect: fitz.Rect) -> None:
 
 
 def add_page_image(page: fitz.Page, rect: fitz.Rect, path: str | Path,
-                   *, signature: bool = False, rotation: int = 0) -> int:
+                   *, signature: bool = False, rotation: int = 0,
+                   angle: float = 0, keep_aspect: bool = True) -> int:
     with DOCUMENT_LOCK:
         # PyMuPDF's insertion transform on rotated, cropped pages can use a
         # different CropBox origin. Insert in native page space then restore
@@ -89,7 +105,8 @@ def add_page_image(page: fitz.Page, rect: fitz.Rect, path: str | Path,
             # after wrapping so only the placement is identified and tagged.
             page.wrap_contents()
             before = set(page.get_contents())
-            image_xref = page.insert_image(rect, filename=str(path), overlay=True, rotate=rotation)
+            image_xref = page.insert_image(rect, filename=str(path), overlay=True, rotate=rotation,
+                                          keep_proportion=keep_aspect)
         finally:
             if page_rotation:
                 page.set_rotation(page_rotation)
@@ -110,9 +127,12 @@ def add_page_image(page: fitz.Page, rect: fitz.Rect, path: str | Path,
                    rect.y0 + (rect.height - fitted.height) / 2,
                    rect.x0 + (rect.width - fitted.width) / 2,
                    rect.y0 + (rect.height - fitted.height) / 2)
-        _write_rect(page, xref, fitted)
-        page.parent.xref_set_key(xref, _ASPECT, "true")
+        _write_rect(page, xref, fitted if keep_aspect else rect)
+        page.parent.xref_set_key(xref, _ASPECT, "true" if keep_aspect else "false")
         page.parent.xref_set_key(xref, _KIND, "/Signature" if signature else "/Image")
+        _write_transform_hash(page, xref)
+        if angle:
+            xref = update_page_image(page, xref, fitted if keep_aspect else rect, rotation=angle)
         return xref
 
 
@@ -122,33 +142,47 @@ def _replace_content(page: fitz.Page, old: int, new: int | None) -> None:
     page.parent.xref_set_key(page.xref, "Contents", value)
 
 
-def _image_transform(stream: bytes):
+def _write_transform_hash(page, xref):
+    digest = hashlib.sha256(page.parent.xref_stream(xref)).hexdigest()
+    page.parent.xref_set_key(xref, _TRANSFORM_HASH, fitz.get_pdf_str(digest))
+
+
+def _image_transform(stream: bytes, *, trusted_affine=False):
     match = _MATRIX.fullmatch(stream)
     if match is None:
         raise PageImageError("This image placement was changed by another PDF tool; editing it is blocked to protect page content.")
     values = tuple(float(part) for part in match[1].split())
     a, b, c, d, _e, _f = values
     orthogonal = (b == c == 0 and a * d > 0) or (a == d == 0 and b * c < 0)
-    if not all(isfinite(value) for value in values) or not orthogonal:
+    if (not all(isfinite(value) for value in values) or a * d - b * c <= 0
+            or (not orthogonal and not trusted_affine)):
         raise PageImageError("This image transform is no longer supported for editing.")
     return match, values
+
+
+def _native_matrix(page):
+    rotation = page.rotation
+    try:
+        if rotation:
+            page.set_rotation(0)
+        return page.transformation_matrix
+    finally:
+        if rotation:
+            page.set_rotation(rotation)
 
 
 def _placement_delta(page: fitz.Page, old: fitz.Rect, rect: fitz.Rect) -> fitz.Matrix:
     """Map old native geometry to new geometry in the PDF content coordinate system."""
     sx, sy = rect.width / old.width, rect.height / old.height
     delta = fitz.Matrix(sx, 0, 0, sy, rect.x0 - sx * old.x0, rect.y0 - sy * old.y0)
-    rotation = page.rotation
-    try:
-        page.set_rotation(0)
-        native = page.transformation_matrix
-    finally:
-        page.set_rotation(rotation)
+    native = _native_matrix(page)
     return native * delta * ~native
 
 
 def update_page_image(page: fitz.Page, xref: int, rect: fitz.Rect,
-                      *, keep_aspect: bool | None = None) -> int | None:
+                      *, keep_aspect: bool | None = None,
+                      rotation: float | None = None,
+                      image_size: tuple[float, float] | None = None) -> int | None:
     with DOCUMENT_LOCK:
         entry = _placement(page, xref)
         if entry is None:
@@ -159,13 +193,52 @@ def update_page_image(page: fitz.Page, xref: int, rect: fitz.Rect,
                 or not bounds.contains(rect)):
             raise PageImageError("Keep the image inside the page, with width and height at least 1 pt.")
         stream = page.parent.xref_stream(xref)
-        match, (a, b, c, d, e, f) = _image_transform(stream)
+        hash_kind, digest = page.parent.xref_get_key(xref, _TRANSFORM_HASH)
+        if hash_kind == "string" and hashlib.sha256(stream).hexdigest() != digest:
+            raise PageImageError("This image placement was changed; editing is blocked to protect page content.")
+        match, (a, b, c, d, e, f) = _image_transform(stream, trusted_affine=hash_kind == "string")
         old = entry["rect"]
         # Scale/translate the entire CTM, including its rotation-dependent
         # origin. Merely changing e/f by the rectangle delta moves inverted
         # or quarter-turned images to the wrong edge when they are resized.
-        values = fitz.Matrix(a, b, c, d, e, f) * _placement_delta(page, old, rect)
-        replacement = " ".join(f"{v:.9g}" for v in values).encode("ascii")
+        if rotation is not None and (not isfinite(rotation) or abs(rotation) > 360):
+            raise PageImageError("Choose a finite angle between -360 and 360 degrees.")
+        if image_size is not None or rotation is not None:
+            native = _native_matrix(page)
+            current = degrees(atan2(b, a))
+            angle = current if rotation is None else rotation + page.rotation
+            width, height = entry["image_size"] if image_size is None else image_size
+            if not all(isfinite(v) and v >= 1 for v in (width, height)):
+                raise PageImageError("Image width and height must be finite and at least 1 pt.")
+            # Resize along the image's own axes. Scaling its axis-aligned
+            # bounding rectangle would shear a slanted image and change angle.
+            units = hypot(native.a, native.b)
+            width, height = width / units, height / units
+            ca, sa = cos(radians(angle)), sin(radians(angle))
+            values = fitz.Matrix(width * ca, width * sa, -height * sa, height * ca, 0, 0)
+            relative = fitz.Rect(0, 0, 1, 1) * values * native
+            if abs((angle - current + 180) % 360 - 180) < .00001:
+                centre = fitz.Point(rect.x0 + relative.width / 2, rect.y0 + relative.height / 2)
+            else:
+                # Rotating keeps the centre; an explicit X/Y change translates
+                # that centre independently. Pure size edits retain X/Y bounds.
+                centre = (old.tl + old.br) / 2 + (rect.tl - old.tl)
+            centre *= ~native
+            values.e = centre.x - (values.a + values.c) / 2
+            values.f = centre.y - (values.b + values.d) / 2
+            corners = [fitz.Point(x, y) * values * native for x, y in ((0, 0), (1, 0), (0, 1), (1, 1))]
+            rect = fitz.Rect(min(p.x for p in corners), min(p.y for p in corners),
+                             max(p.x for p in corners), max(p.y for p in corners))
+            if not (bounds + (-.01, -.01, .01, .01)).contains(rect):
+                raise PageImageError("The rotated image extends outside the page. Move it inward or reduce its size.")
+        else:
+            sx, sy = rect.width / old.width, rect.height / old.height
+            if abs(sx - sy) > .00001 and abs(a * b) > .00001:
+                raise PageImageError("Use image width and height to resize a rotated image without changing its angle.")
+            values = fitz.Matrix(a, b, c, d, e, f) * _placement_delta(page, old, rect)
+        # PDF numbers do not support scientific notation, including near-zero
+        # sine/cosine values produced by repeated quarter-turn editing.
+        replacement = " ".join(f"{v:.9f}" for v in values).encode("ascii")
         # PDF page duplication can share content streams. Copy on write keeps
         # editing this placement from changing a duplicate or another page.
         new_xref = page.parent.get_new_xref()
@@ -176,6 +249,7 @@ def update_page_image(page: fitz.Page, xref: int, rect: fitz.Rect,
         if keep_aspect is not None:
             page.parent.xref_set_key(new_xref, _ASPECT, "true" if keep_aspect else "false")
         _replace_content(page, xref, new_xref)
+        _write_transform_hash(page, new_xref)
         return new_xref
 
 
@@ -185,6 +259,10 @@ def remove_page_image(page: fitz.Page, xref: int) -> bool:
             return False
         # An external optimiser may have merged this stream with other page
         # content. Never remove the whole stream unless it is still our image.
-        _image_transform(page.parent.xref_stream(xref))
+        stream = page.parent.xref_stream(xref)
+        kind, digest = page.parent.xref_get_key(xref, _TRANSFORM_HASH)
+        if kind == "string" and hashlib.sha256(stream).hexdigest() != digest:
+            raise PageImageError("This image placement was changed; removal is blocked to protect page content.")
+        _image_transform(stream, trusted_affine=kind == "string")
         _replace_content(page, xref, None)
         return True

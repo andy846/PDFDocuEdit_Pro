@@ -421,6 +421,13 @@ class ContextPanel(QFrame):
         self._annot_alignment.addItem("Right", 2)
         self._annot_alignment.currentIndexChanged.connect(self._emit_annotation_style)
         self._style_form.addRow("Alignment", self._annot_alignment)
+        self._annot_rotation = QDoubleSpinBox()
+        self._annot_rotation.setRange(-360, 360)
+        self._annot_rotation.setDecimals(1)
+        self._annot_rotation.setSuffix("°")
+        self._annot_rotation.setKeyboardTracking(False)
+        self._annot_rotation.valueChanged.connect(self._emit_annotation_style)
+        self._style_form.addRow("Rotation", self._annot_rotation)
         layout.addLayout(self._style_form)
 
 
@@ -465,6 +472,10 @@ class ContextPanel(QFrame):
         image_row.addWidget(self._image_edit, 1)
         image_row.addWidget(self._image_browse)
         layout.addLayout(image_row)
+        self._new_image_keep_aspect = QCheckBox("Keep proportions")
+        self._new_image_keep_aspect.setChecked(True)
+        self._new_image_keep_aspect.toggled.connect(self._emit_annotation_style)
+        layout.addWidget(self._new_image_keep_aspect)
 
         layout.addStretch(1)
 
@@ -515,6 +526,7 @@ class ContextPanel(QFrame):
         properties.addRow("Content", self._property_text)
         self._image_geometry = QWidget()
         geometry_form = QFormLayout(self._image_geometry)
+        self._image_geometry_form = geometry_form
         geometry_form.setContentsMargins(0, 0, 0, 0)
         self._image_dimensions = {}
         for key, title in (("x", "X"), ("y", "Y"), ("width", "Width"), ("height", "Height")):
@@ -528,9 +540,17 @@ class ContextPanel(QFrame):
         self._image_keep_aspect = QCheckBox("Keep proportions")
         self._image_keep_aspect.setChecked(True)
         geometry_form.addRow(self._image_keep_aspect)
+        self._image_keep_aspect.toggled.connect(self._change_image_aspect)
+        self._object_rotation = QDoubleSpinBox()
+        self._object_rotation.setRange(-360, 360)
+        self._object_rotation.setDecimals(1)
+        self._object_rotation.setSuffix("°")
+        self._object_rotation.setKeyboardTracking(False)
+        geometry_form.addRow("Rotation", self._object_rotation)
         help_text = QLabel("Drag the image to move it; drag a corner to resize. Hold Shift to resize freely. Coordinates use the unrotated page's top-left corner.")
         help_text.setWordWrap(True)
         geometry_form.addRow(help_text)
+        self._image_geometry_help = help_text
         properties.addRow(self._image_geometry)
         self._image_geometry.hide()
         self._image_dimensions["width"].valueChanged.connect(lambda value: self._resize_image_dimension("width", value))
@@ -845,6 +865,8 @@ class ContextPanel(QFrame):
             "font": self._annot_font.currentText(),
             "font_size": float(self._annot_font_size.value()),
             "alignment": int(self._annot_alignment.currentData() or 0),
+            "rotation": self._annot_rotation.value(),
+            "keep_aspect": self._new_image_keep_aspect.isChecked(),
         }
 
     def _emit_annotation_style(self, *_args) -> None:
@@ -857,6 +879,8 @@ class ContextPanel(QFrame):
             self._annot_font,
             self._annot_font_size,
             self._annot_alignment,
+            self._annot_rotation,
+            self._new_image_keep_aspect,
         )
         blockers = [QSignalBlocker(control) for control in controls]
         try:
@@ -865,6 +889,8 @@ class ContextPanel(QFrame):
             )
             self._current_fill = str(values.get("fill") or "")
             self._annot_width.setValue(float(values.get("width", 1.5)))
+            self._annot_rotation.setValue(float(values.get("rotation", 0)))
+            self._new_image_keep_aspect.setChecked(bool(values.get("keep_aspect", True)))
             self._annot_opacity.setValue(
                 round(float(values.get("opacity", 1.0)) * 100)
             )
@@ -1010,6 +1036,8 @@ class ContextPanel(QFrame):
         self._set_form_field_visible(self._annot_font, text_visible)
         self._set_form_field_visible(self._annot_font_size, text_visible)
         self._set_form_field_visible(self._annot_alignment, text_visible)
+        self._set_form_field_visible(self._annot_rotation, stamp_visible or image_visible)
+        self._new_image_keep_aspect.setVisible(image_visible)
         self._stamp_label.setVisible(stamp_visible)
         self._stamp_kind.setVisible(stamp_visible)
         self._stamp_actions.setVisible(stamp_visible)
@@ -1042,23 +1070,36 @@ class ContextPanel(QFrame):
             return
         entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
         is_image = entry.get("kind") in IMAGE_KINDS
-        self._image_geometry.setVisible(is_image)
-        if is_image:
+        is_stamp = entry.get("kind") == "Stamp"
+        self._image_geometry.setVisible(is_image or is_stamp)
+        if is_image or is_stamp:
             rect = fitz.Rect(entry["rect"])
-            self._image_ratio = rect.width / rect.height
+            width, height = entry.get("image_size", (rect.width, rect.height))
+            self._image_ratio = width / height
             self._image_original_dimensions = dict(zip(("x", "y", "width", "height"),
-                                                       (rect.x0, rect.y0, rect.width, rect.height), strict=True))
+                                                       (rect.x0, rect.y0, width, height), strict=True))
             for key, value in zip(("x", "y", "width", "height"),
-                                  (rect.x0, rect.y0, rect.width, rect.height), strict=True):
+                                  (rect.x0, rect.y0, width, height), strict=True):
                 with QSignalBlocker(self._image_dimensions[key]):
                     self._image_dimensions[key].setValue(value * 25.4 / 72)
-            self._image_keep_aspect.setChecked(bool(entry.get("keep_aspect", True)))
+            with QSignalBlocker(self._image_keep_aspect):
+                self._image_keep_aspect.setChecked(bool(entry.get("keep_aspect", True)))
+            self._image_keep_aspect.setVisible(not is_stamp)
             self._image_keep_aspect.setEnabled(entry.get("kind") != "Watermark")
+            with QSignalBlocker(self._object_rotation):
+                self._object_rotation.setValue(float(entry.get("rotation") or 0))
+            self._object_rotation.setEnabled(entry.get("kind") != "Watermark" and entry.get("rotation") is not None)
+            self._object_rotation.setVisible(entry.get("kind") != "Watermark")
+            self._image_geometry_form.labelForField(self._object_rotation).setVisible(entry.get("kind") != "Watermark")
+            self._image_geometry_help.setText(
+                "Width/height follow the image before rotation. X/Y locate its bounds on the unrotated page. Drag corners to resize; Shift resizes freely."
+                if "image_size" in entry else
+                "Coordinates use the unrotated page's top-left corner. Drag corners to resize.")
         editable_text = str(entry.get("kind") or "") in {"Text", "FreeText"}
         self._set_content_editor_visible(editable_text)
         self._property_text.setPlainText(str(entry.get("text") or ""))
         self._apply_properties.setText(
-            "Apply Position && Size" if is_image else
+            "Apply Position && Size" if is_image or is_stamp else
             "Apply Style & Content" if editable_text else "Apply Style"
         )
         self._apply_properties.setEnabled(True)
@@ -1105,6 +1146,26 @@ class ContextPanel(QFrame):
         with QSignalBlocker(self._image_dimensions[other]):
             self._image_dimensions[other].setValue(value / ratio if key == "width" else value * ratio)
 
+    def _change_image_aspect(self, checked: bool) -> None:
+        item = self._annot_list.currentItem()
+        if item is None:
+            return
+        entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        if entry.get("kind") in PAGE_IMAGE_KINDS:
+            # The checkbox controls the next drag immediately. Do not apply
+            # unrelated dimension drafts until the explicit Apply action.
+            drafts = {key: field.value() for key, field in self._image_dimensions.items()}
+            angle = self._object_rotation.value()
+            self.editAnnotationRequested.emit(int(entry["page"]), int(entry["xref"]),
+                {"rect": fitz.Rect(entry["rect"]), "keep_aspect": checked})
+            # The synchronous source refresh may replace the list item / xref.
+            # Keep unapplied dimensions and angle without mutating that source.
+            for key, value in drafts.items():
+                with QSignalBlocker(self._image_dimensions[key]):
+                    self._image_dimensions[key].setValue(value)
+            with QSignalBlocker(self._object_rotation):
+                self._object_rotation.setValue(angle)
+
     def _emit_annotation_selected(self, item) -> None:
         if item is None:
             return
@@ -1123,7 +1184,7 @@ class ContextPanel(QFrame):
             return
         payload = self._style_payload()
         entry = item.data(Qt.ItemDataRole.UserRole + 1) or {}
-        if entry.get("kind") in IMAGE_KINDS:
+        if entry.get("kind") in IMAGE_KINDS | {"Stamp"}:
             # Display rounding must not change a precise PDF coordinate when
             # the user only changes an unrelated setting (or presses Apply).
             def points(key):
@@ -1133,6 +1194,20 @@ class ContextPanel(QFrame):
             x, y, width, height = (points(key) for key in ("x", "y", "width", "height"))
             payload = {"rect": fitz.Rect(x, y, x + width, y + height),
                        "keep_aspect": self._image_keep_aspect.isChecked()}
+            if "image_size" in entry:
+                old = fitz.Rect(entry["rect"])
+                quad = entry.get("image_quad")
+                if quad:
+                    original_w, original_h = entry["image_size"]
+                    u = (fitz.Point(quad[1]) - fitz.Point(quad[0])) / original_w
+                    v = (fitz.Point(quad[2]) - fitz.Point(quad[0])) / original_h
+                    bounds_w = abs(u.x) * width + abs(v.x) * height
+                    bounds_h = abs(u.y) * width + abs(v.y) * height
+                else:
+                    bounds_w, bounds_h = old.width, old.height
+                payload.update(rect=fitz.Rect(x, y, x + bounds_w, y + bounds_h), image_size=(width, height))
+            if entry.get("kind") != "Watermark" and self._object_rotation.isEnabled():
+                payload["rotation"] = self._object_rotation.value()
         if str(entry.get("kind") or "") in {"Text", "FreeText"}:
             payload["text"] = self._property_text.toPlainText()
         page = int(entry.get("page", 0))
@@ -1185,7 +1260,7 @@ class ContextPanel(QFrame):
             self._filter_annotations()
             if restore_item is not None:
                 self._annot_list.setCurrentItem(restore_item)
-                if (restore_item.data(Qt.ItemDataRole.UserRole + 1) or {}).get("kind") in IMAGE_KINDS:
+                if (restore_item.data(Qt.ItemDataRole.UserRole + 1) or {}).get("kind") in IMAGE_KINDS | {"Stamp"}:
                     with QSignalBlocker(self):
                         self._load_selected_annotation(restore_item)
             elif self._annot_list.currentItem() is None:

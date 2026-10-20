@@ -2625,6 +2625,8 @@ class PDFViewer(QMainWindow):
                     rect=payload.get("rect"),
                     points=tuple(payload.get("points") or ()),
                     keep_aspect=payload.get("keep_aspect"),
+                    rotation=payload.get("rotation"),
+                    image_size=payload.get("image_size"),
                 )
                 if new_xref is None:
                     raise ValueError("This annotation cannot be moved or resized.")
@@ -4198,6 +4200,8 @@ class PDFViewer(QMainWindow):
             "font": values.get("font", "Helv"),
             "font_size": values.get("font_size", 14.0 if text_defaults else 11.0),
             "alignment": values.get("alignment", 0),
+            "rotation": values.get("rotation", 0),
+            "keep_aspect": values.get("keep_aspect", True),
         }
         self._set_canvas_tool(key)
         self.context_panel.set_annotation_tool(key)

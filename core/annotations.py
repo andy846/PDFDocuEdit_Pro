@@ -25,6 +25,7 @@ from core.measurement import (
 from .page_images import add_page_image, list_page_images, remove_page_image, update_page_image
 from .pdf_engine import DOCUMENT_LOCK
 from .redaction_images import prepare_spot_images
+from .stamp_geometry import stamp_rotation as _stamp_rotation
 from .system_fonts import is_pdf_base_font, resolve_system_font
 from .watermarks import list_watermarks, remove_watermark, update_watermark_geometry
 
@@ -112,6 +113,8 @@ class AnnotationOp:
     image_path: str = ""
     style: AnnotationStyle | None = None
     visual_rotation: int = 0
+    rotation: float = 0
+    keep_aspect: bool = True
 
     def description(self) -> str:
         labels = {
@@ -217,6 +220,11 @@ def validate_annotation_op(doc: fitz.Document, op: AnnotationOp) -> AnnotationOp
             raise AnnotationValidationError(f"Unknown annotation kind: {op.kind}")
         if not 0 <= int(op.page) < doc.page_count:
             raise AnnotationValidationError("The annotation target page is invalid.")
+        if kind in {"image", "signature_image", "stamp"}:
+            if not isfinite(float(op.rotation)) or abs(float(op.rotation)) > 360:
+                raise AnnotationValidationError("Choose a finite angle between -360 and 360 degrees.")
+            if not isinstance(op.keep_aspect, bool):
+                raise AnnotationValidationError("Keep proportions must be enabled or disabled.")
 
         style = op.style or AnnotationStyle(stroke=op.color, width=op.width)
         if not isfinite(float(style.width)) or float(style.width) <= 0:
@@ -850,6 +858,7 @@ def add_stamp(
     rect: fitz.Rect,
     stamp_kind: str = "Draft",
     visual_rotation: int = 0,
+    angle: float = 0,
 ) -> None:
     page = _page(doc, page_num)
     # Native stamps have a 190 x 50 appearance. Construct that appearance
@@ -867,6 +876,9 @@ def add_stamp(
     if rotation:
         annot.set_rotation(rotation)
     annot.update()
+    if angle:
+        from .stamp_geometry import update_stamp_geometry
+        update_stamp_geometry(page, annot, annot.rect, angle)
 
 
 def redact(doc: fitz.Document, page_num: int, rects: Sequence[fitz.Rect]) -> None:
@@ -1009,6 +1021,7 @@ def list_annotations(page: fitz.Page, *, include_page_images: bool = True) -> li
                     "alignment": alignment,
                     "vertices": vertices,
                     "line_ends": line_ends,
+                    **({"rotation": _stamp_rotation(page, annot)} if kind == "Stamp" else {}),
                 }
             )
     except Exception:
@@ -1076,6 +1089,8 @@ def update_annotation_geometry(
     rect: fitz.Rect | None = None,
     points: Sequence[tuple[float, float]] = (),
     keep_aspect: bool | None = None,
+    rotation: float | None = None,
+    image_size: tuple[float, float] | None = None,
 ) -> int | None:
     """Move/resize an annotation and return its stable (possibly new) xref."""
 
@@ -1084,7 +1099,8 @@ def update_annotation_geometry(
             watermark_xref = update_watermark_geometry(page, xref, rect)
             if watermark_xref is not None:
                 return watermark_xref
-            image_xref = update_page_image(page, xref, rect, keep_aspect=keep_aspect)
+            image_xref = update_page_image(page, xref, rect, keep_aspect=keep_aspect,
+                                           rotation=rotation, image_size=image_size)
             if image_xref is not None:
                 return image_xref
         target = next(
@@ -1109,6 +1125,9 @@ def update_annotation_geometry(
                             if entry.identifier == record.identifier), None)
             return updated.line_xref if updated is not None else None
         kind = str(target.type[1])
+        if kind == "Stamp" and rect is not None:
+            from .stamp_geometry import update_stamp_geometry
+            return update_stamp_geometry(page, target, rect, rotation)
         if kind == "Line" and len(points) == 2:
             border = dict(target.border or {})
             colors = dict(target.colors or {})
@@ -1445,14 +1464,15 @@ def apply_annotation(doc: fitz.Document, op: AnnotationOp) -> None:
         elif op.kind == "stamp":
             if op.image_path:
                 add_page_image(_page(doc, op.page), op.rects[0], op.image_path,
-                               rotation=op.visual_rotation)
+                               rotation=op.visual_rotation, angle=op.rotation, keep_aspect=op.keep_aspect)
             else:
-                add_stamp(doc, op.page, op.rects[0], op.stamp_kind, op.visual_rotation)
+                add_stamp(doc, op.page, op.rects[0], op.stamp_kind, op.visual_rotation, op.rotation)
         elif op.kind == "redact":
             redact(doc, op.page, list(op.rects))
         elif op.kind in {"image", "signature_image"}:
             add_page_image(_page(doc, op.page), op.rects[0], op.image_path,
-                           signature=op.kind == "signature_image", rotation=op.visual_rotation)
+                           signature=op.kind == "signature_image", rotation=op.visual_rotation,
+                           angle=op.rotation, keep_aspect=op.keep_aspect)
         else:
             raise ValueError(f"Unknown annotation kind: {op.kind}")
 

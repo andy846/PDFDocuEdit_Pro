@@ -9,7 +9,7 @@ from math import hypot
 
 import fitz
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from core.measurement import SavedMeasurement, distance_mm, format_distance
@@ -431,12 +431,15 @@ class PageOverlay(QWidget):
         width: float = 1.5,
         opacity: float = 1.0,
         aspect: float | None = None,
+        fit_aspect: float | None = None,
+        rotation: float = 0,
     ) -> None:
         self._active_preview_style = {
             "kind": str(kind), "color": str(color), "fill": str(fill),
             "width": max(0.5, float(width)),
             "opacity": max(0.0, min(1.0, float(opacity))),
             "aspect": aspect,
+            "fit_aspect": fit_aspect, "rotation": rotation,
         }
         self.update()
 
@@ -505,6 +508,18 @@ class PageOverlay(QWidget):
                 self._marquee.setHeight(self._marquee.width() * self._active_preview_style["aspect"])
                 self._marquee = self._marquee.intersected(QRectF(self.rect()))
             style = self._active_preview_style
+            fit_aspect = style.get("fit_aspect")
+            if fit_aspect:
+                centre = self._marquee.center()
+                width = min(self._marquee.width(), self._marquee.height() / fit_aspect)
+                self._marquee.setSize(QRectF(0, 0, width, width * fit_aspect).size())
+                self._marquee.moveCenter(centre)
+            painter.save()
+            if style.get("kind") in {"stamp", "image", "signature"}:
+                centre = self._marquee.center()
+                painter.translate(centre)
+                painter.rotate(-float(style.get("rotation", 0)))
+                painter.translate(-centre)
             border = QColor(str(style.get("color") or colors["primary"]))
             border.setAlpha(
                 max(110, round(255 * float(style.get("opacity", 1.0))))
@@ -540,6 +555,7 @@ class PageOverlay(QWidget):
                 self._marquee.bottomRight(),
             ):
                 painter.drawEllipse(point, 3.5, 3.5)
+            painter.restore()
         if self._preview:
             style = self._active_preview_style
             preview_color = QColor(str(style.get("color") or colors["primary"]))
@@ -791,6 +807,12 @@ class PageOverlay(QWidget):
             for x, y in entry.get("vertices", ())
         ]
 
+    def _image_corners(self, entry):
+        if entry.get("image_quad"):
+            return [self.pdf_point_to_widget(fitz.Point(p)) for p in entry["image_quad"]]
+        rect = self.pdf_rect_to_widget(fitz.Rect(entry["rect"]))
+        return [rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()]
+
     def _paint_selected_annotation(self, painter: QPainter, colors: dict) -> None:
         entry = self._selected_entry()
         if entry is None:
@@ -815,6 +837,16 @@ class PageOverlay(QWidget):
                         painter.drawEllipse(point, 5.0, 5.0)
             return
         rect = self.pdf_rect_to_widget(fitz.Rect(entry["rect"]))
+        if entry.get("image_quad"):
+            corners = self._image_corners(entry)
+            if self._geometry_drag and "image_quad" in self._geometry_drag:
+                corners = self._geometry_drag["image_quad"]
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolygon(QPolygonF([corners[i] for i in (0, 1, 3, 2)]))
+            painter.setBrush(QColor(colors["primary"]))
+            for point in corners:
+                painter.drawRect(QRectF(point.x() - 4, point.y() - 4, 8, 8))
+            return
         if self._geometry_drag and self._geometry_drag.get("rect") is not None:
             rect = self._geometry_drag["rect"]
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -1026,8 +1058,7 @@ class PageOverlay(QWidget):
             entry = self._hit_annotation(event.position())
             cursor = Qt.CursorShape.ArrowCursor
             if entry is not None and entry.get("kind") in IMAGE_KINDS:
-                rect = self.pdf_rect_to_widget(fitz.Rect(entry["rect"]))
-                corners = (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight())
+                corners = self._image_corners(entry)
                 handle = next((index for index, value in enumerate(corners)
                                if hypot(event.position().x() - value.x(), event.position().y() - value.y()) <= 10), None)
                 cursor = (Qt.CursorShape.SizeFDiagCursor if handle in {0, 3}
@@ -1319,9 +1350,8 @@ class PageOverlay(QWidget):
     def _hit_annotation(self, point: QPointF) -> dict | None:
         selected = self._selected_entry()
         if selected is not None and selected.get("kind") in IMAGE_KINDS:
-            rect = self.pdf_rect_to_widget(fitz.Rect(selected["rect"]))
             if any(hypot(point.x() - corner.x(), point.y() - corner.y()) <= 10
-                   for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight())):
+                   for corner in self._image_corners(selected)):
                 return selected
         for entry in reversed(self._annotations):
             if str(entry.get("kind")) == "Line":
@@ -1354,7 +1384,7 @@ class PageOverlay(QWidget):
             }
             return
         rect = self.pdf_rect_to_widget(fitz.Rect(entry["rect"]))
-        corners = (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight())
+        corners = self._image_corners(entry)
         handle = next(
             (index for index, value in enumerate(corners) if hypot(point.x() - value.x(), point.y() - value.y()) <= 10.0),
             None,
@@ -1365,12 +1395,47 @@ class PageOverlay(QWidget):
             "image": entry.get("kind") in IMAGE_KINDS | {"Watermark"},
             "keep_aspect": bool(entry.get("keep_aspect", True)),
         }
+        if entry.get("image_quad"):
+            self._geometry_drag.update(original_quad=corners, image_quad=corners,
+                                       original_size=entry["image_size"], image_size=entry["image_size"])
 
     def _update_geometry_drag(self, point: QPointF) -> None:
         drag = self._geometry_drag
         if drag is None:
             return
         delta = point - drag["origin"]
+        if "image_quad" in drag:
+            corners = drag["original_quad"]
+            handle = drag["handle"]
+            if handle is None:
+                changed = [p + delta for p in corners]
+                box = QPolygonF(changed).boundingRect()
+                shift = QPointF(max(0., -box.left()) + min(0., self.width() - box.right()),
+                                max(0., -box.top()) + min(0., self.height() - box.bottom()))
+                changed = [p + shift for p in changed]
+            else:
+                u, v = corners[1] - corners[0], corners[2] - corners[0]
+                old_w, old_h = hypot(u.x(), u.y()), hypot(v.x(), v.y())
+                u, v = u / old_w, v / old_h
+                anchor = corners[(3, 2, 1, 0)[handle]]
+                vector = point - anchor
+                width = max(2., QPointF.dotProduct(vector, u) * (-1 if handle in {0, 2} else 1))
+                height = max(2., QPointF.dotProduct(vector, v) * (-1 if handle in {0, 1} else 1))
+                if drag["keep_aspect"] and not (QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier):
+                    width = max(width, height * old_w / old_h)
+                    height = width * old_h / old_w
+                top_left = anchor - (u * width if handle in {0, 2} else QPointF()) - (
+                    v * height if handle in {0, 1} else QPointF())
+                changed = [top_left, top_left + u * width, top_left + v * height,
+                           top_left + u * width + v * height]
+                if not QRectF(self.rect()).contains(QPolygonF(changed).boundingRect()):
+                    return
+                drag["image_size"] = (drag["original_size"][0] * width / old_w,
+                                      drag["original_size"][1] * height / old_h)
+            drag["image_quad"] = changed
+            drag["rect"] = QPolygonF(changed).boundingRect()
+            self.update()
+            return
         if "original_points" in drag:
             points = [QPointF(value) for value in drag["original_points"]]
             endpoint = drag["endpoint"]
@@ -1449,7 +1514,10 @@ class PageOverlay(QWidget):
             return None
         first = self.widget_to_pdf(rect.topLeft())
         second = self.widget_to_pdf(rect.bottomRight())
-        return {"rect": fitz.Rect(first, second).normalize()}
+        result = {"rect": fitz.Rect(first, second).normalize()}
+        if "image_size" in drag:
+            result["image_size"] = drag["image_size"]
+        return result
 
     @staticmethod
     def _points_close(first: QPointF, second: QPointF, tolerance: float = 3.0) -> bool:

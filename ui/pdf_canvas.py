@@ -285,6 +285,8 @@ class PdfCanvas(QScrollArea):
             "width": 1.5,
             "stamp_kind": "Draft",
             "stamp_image_path": "",
+            "rotation": 0.,
+            "keep_aspect": True,
             "image_path": "",
             "fill": "",
             "opacity": 1.0,
@@ -483,6 +485,9 @@ class PdfCanvas(QScrollArea):
         self.annotationSelectionCleared.emit()
 
     def _configure_annotation_preview(self, overlay: PageOverlay) -> None:
+        image = QImage(str(self._annot_options["image_path"] or "")) if (
+            self._tool_mode in {ToolMode.IMAGE, ToolMode.SIGNATURE}
+            and self._annot_options["keep_aspect"]) else QImage()
         overlay.set_annotation_preview_style(
             self._tool_mode.value,
             color=str(self._annot_options["color"]),
@@ -490,6 +495,8 @@ class PdfCanvas(QScrollArea):
             width=float(self._annot_options["width"]),
             opacity=float(self._annot_options["opacity"]),
             aspect=self._stamp_aspect() if self._tool_mode == ToolMode.STAMP else None,
+            fit_aspect=image.height() / image.width() if not image.isNull() else None,
+            rotation=float(self._annot_options["rotation"]),
         )
 
     def _stamp_aspect(self) -> float:
@@ -991,6 +998,7 @@ class PdfCanvas(QScrollArea):
                     stamp_kind=self._annot_options["stamp_kind"],
                     image_path=stamp_image_path,
                     visual_rotation=self._doc[page_num].rotation,
+                    rotation=float(self._annot_options["rotation"]),
                 )
             )
             return
@@ -1007,6 +1015,8 @@ class PdfCanvas(QScrollArea):
                     rects=(pdf_rect,),
                     image_path=image_path,
                     visual_rotation=self._doc[page_num].rotation,
+                    rotation=float(self._annot_options["rotation"]),
+                    keep_aspect=bool(self._annot_options["keep_aspect"]),
                 )
             )
 
