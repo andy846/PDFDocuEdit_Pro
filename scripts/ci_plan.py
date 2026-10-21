@@ -24,6 +24,7 @@ UI_TESTS = (
     "tests/test_sidebar_navigation.py",
     "tests/test_private_auth_ui.py",
     "tests/test_watermark_close_reopen.py",
+    "tests/test_session_temp_cleanup.py",
     "tests/composition/test_production_review_ui.py",
     "tests/test_workflow_inspection_ui.py",
     "tests/composition/test_profile_library_ui.py",

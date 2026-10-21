@@ -317,6 +317,11 @@ class DocumentSession(QObject):
         """Quiesce background renders and release the document exactly once."""
         if getattr(self, "_retirement_started", False):
             return
+        # History owns separate immutable copies, not the live readers' files.
+        # Clear on the UI thread, before detaching anything: an active restore
+        # must reject retirement without disturbing the current document.
+        self.engine._require_outside_transaction()
+        self.undo_stack.clear()
         readers = self.canvas.reader_events() + self.nav_panel.thumbnails.reader_events()
         self.canvas.clear(wait=False)
         if self.split_canvas is not None:
