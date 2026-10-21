@@ -242,6 +242,7 @@ class WatermarkDialog(ToolDialog):
             self._preview_timer.start()
 
     def _start_preview(self):
+        from core.diagnostics import log_lifecycle
         from ui.watermark_preview import WatermarkPreviewTask
         if self._preview_closed or self._source_doc is None:
             return
@@ -261,6 +262,7 @@ class WatermarkDialog(ToolDialog):
                                     self._embedded_image, self.image.text(), self._preview_snapshot,
                                     self._preview_generation, self._existing_id)
         self._preview_jobs = [task]
+        log_lifecycle("watermark.preview_started", generation=self._preview_generation)
         self._preview_owner._preview_readers.append(task)
         task.signals.finished.connect(self._preview_finished)
         QThreadPool.globalInstance().start(task)
@@ -279,10 +281,13 @@ class WatermarkDialog(ToolDialog):
             self.preview.setText(result["error"] or "Preview cancelled")
 
     def done(self, result):
+        from core.diagnostics import log_lifecycle
         self._preview_closed = True
         self._preview_timer.stop()
         for task in self._preview_jobs:
             task.cancelled.set()
+        log_lifecycle("watermark.dialog_closed", accepted=result == self.DialogCode.Accepted,
+                      readers=sum(not task.done.is_set() for task in self._preview_jobs))
         super().done(result)
 
     def _browse_image(self) -> None:

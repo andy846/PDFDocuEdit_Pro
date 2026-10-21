@@ -6,6 +6,7 @@ from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QDialog
 
+from core.diagnostics import log_lifecycle
 from ui.icons import icon
 
 from . import guard
@@ -99,6 +100,9 @@ class PrivateApplication(QObject):
         self.pending_paths.extend(str(p) for p in paths)
         if self.startup_pending or self.exiting:
             return
+        if self.viewer and not self._viewer_accepts_paths():
+            log_lifecycle("account.open_waiting_for_close", pending=len(self.pending_paths))
+            return
         target = self.viewer if self.viewer and not self.locked else self.login
         if target is self.viewer:
             manager = getattr(self.viewer, "document_windows", None)
@@ -110,9 +114,32 @@ class PrivateApplication(QObject):
         self._drain_paths()
 
     def _drain_paths(self):
-        if self.ready and self.viewer and not self.locked and self.controller.approval and self.pending_paths:
+        if (self.ready and self.viewer and self._viewer_accepts_paths()
+                and not self.locked and self.controller.approval and self.pending_paths):
             paths, self.pending_paths = self.pending_paths, []
             self.open_paths(self.viewer, paths)
+
+    def _viewer_accepts_paths(self):
+        check = getattr(self.viewer, "can_accept_open_requests", None)
+        return check() if check else not getattr(self.viewer, "_window_closed", False)
+
+    def _viewer_close_state_changed(self, state):
+        from ui.close_lifecycle import ClosePhase
+        if self.viewer is None or self.sender() is not self.viewer._close_lifecycle:
+            return
+        log_lifecycle("account.close_state", phase=state['phase'], pending=len(self.pending_paths),
+                      closed=self.viewer._window_closed)
+        if state['phase'] in (ClosePhase.IDLE, ClosePhase.FAILED, ClosePhase.CLOSED):
+            # Never observe an accepted close from inside its unsaved modal loop.
+            # These states are published after the decision or safe retirement.
+            self._schedule_closed_check()
+
+    def _schedule_closed_check(self):
+        owner = self.viewer
+        QTimer.singleShot(0, lambda: self._closed() if (
+            not sip.isdeleted(self) and self.viewer is owner
+            and (owner is None or not sip.isdeleted(owner))
+        ) else None)
 
     def prepare_account(self, approval):
         if self.viewer and self.viewer_account != approval.user_id:
@@ -139,6 +166,9 @@ class PrivateApplication(QObject):
             self.viewer = self.viewer_factory()
             self.viewer_account = approval.user_id
             self.viewer.installEventFilter(self)
+            lifecycle = getattr(self.viewer, "_close_lifecycle", None)
+            if lifecycle is not None:
+                lifecycle.stateChanged.connect(self._viewer_close_state_changed)
             self.account_action = QAction(icon("lock"), "Account…", self.viewer)
             self.account_action.setObjectName("privateAccountAction")
             self.account_action.triggered.connect(self.account)
@@ -256,7 +286,7 @@ class PrivateApplication(QObject):
                         manager.set_locked(True)
             # closeEvent may arrange asynchronous worker cleanup; visibility is
             # checked after the event has completed, never inside the event filter.
-            QTimer.singleShot(0, self._closed)
+            self._schedule_closed_check()
         else:
             self._closed()
 
@@ -279,14 +309,29 @@ class PrivateApplication(QObject):
                 if owner in windows:
                     return True
                 owner = owner.parent()
-        if watched is self.viewer and event.type() == QEvent.Type.Close:
-            QTimer.singleShot(0, self._closed)
+        if (watched is self.viewer and event.type() == QEvent.Type.Close
+                and getattr(watched, "_close_lifecycle", None) is None):
+            self._schedule_closed_check()
         return super().eventFilter(watched, event)
 
     def _closed(self):
         if self.viewer is None and self.closing_for is None:
             return
-        if self.viewer and self.viewer.isVisible():
+        lifecycle = getattr(self.viewer, "_close_lifecycle", None)
+        if self.viewer and lifecycle is not None and not self.viewer._window_closed:
+            from ui.close_lifecycle import ClosePhase
+            if (lifecycle.handling_close or lifecycle.teardown_started
+                    or lifecycle.phase not in (ClosePhase.IDLE, ClosePhase.FAILED)):
+                return
+            # A canceled preflight may resume requests received during its modal.
+            self.closing_for = None
+            self.pending_approval = None
+            if self.locked and self.recovery:
+                self.recovery.show()
+            if self.pending_paths:
+                self.accept_paths([])
+            return
+        if self.viewer and lifecycle is None and self.viewer.isVisible():
             # A canceled save prompt must not sign out or restore revoked access.
             controller = getattr(self.viewer, "_mode_controller", None)
             if not getattr(controller, "exit_approved", False):
@@ -297,6 +342,7 @@ class PrivateApplication(QObject):
             return
         old, self.viewer = self.viewer, None
         if old:
+            log_lifecycle("account.viewer_closed", pending=len(self.pending_paths))
             self.update_restart = bool(getattr(old, "_update_restart", False))
             old.removeEventFilter(self)
             old.deleteLater()
@@ -311,6 +357,13 @@ class PrivateApplication(QObject):
             self.controller.sign_out()
             self.pending_paths.clear()
             self.login.show()
+            return
+        if (self.pending_paths and not self.update_restart and not self.locked
+                and self.controller.approval is not None):
+            # An external open during Discard is newer operator intent. Reuse
+            # normal admission, but never the retired viewer or its documents.
+            log_lifecycle("account.open_after_retirement", pending=len(self.pending_paths))
+            self.admit(self.controller.approval)
             return
         self.quit()
 
@@ -337,4 +390,5 @@ class PrivateApplication(QObject):
 
     def _exit_app(self):
         from updates.runtime import RESTART_EXIT_CODE
+        log_lifecycle("account.exit", restart=self.update_restart, pending=len(self.pending_paths))
         self.app.exit(RESTART_EXIT_CODE if self.update_restart else 0)

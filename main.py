@@ -304,6 +304,8 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
     app.setOrganizationName("PDFDocuEdit")
     app.setOrganizationDomain("pdfdocuedit.local")
     app.setApplicationVersion(APP_VERSION)
+    from core.diagnostics import configure_lifecycle_logging
+    configure_lifecycle_logging()
     app.setWindowIcon(_application_icon())
     from auth.config import configuration
     try:

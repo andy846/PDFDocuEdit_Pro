@@ -1331,8 +1331,18 @@ class PDFViewer(QMainWindow):
     def _on_tab_close_requested(self, session: DocumentSession) -> None:
         self.close_document(session)
 
+    def can_accept_open_requests(self) -> bool:
+        """A retired/closing window must never be resurrected by shell routing."""
+        lifecycle = getattr(self, "_close_lifecycle", None)
+        manager = getattr(self, "document_windows", None)
+        from ui.close_lifecycle import ClosePhase
+        return not (self._closing or self._window_closed
+                    or (lifecycle is not None and (lifecycle.handling_close or
+                        lifecycle.phase not in (ClosePhase.IDLE, ClosePhase.FAILED)))
+                    or (manager is not None and manager.pending_exit))
+
     def open_in_new_tab(self, path: str, *, on_open=None) -> DocumentSession | None:
-        if self._printing:
+        if self._printing or not self.can_accept_open_requests():
             return None
         controller = getattr(self, "_mode_controller", None)
         if controller:
@@ -1344,7 +1354,7 @@ class PDFViewer(QMainWindow):
         return session
 
     def load_file(self, path: str, *, on_open=None) -> None:
-        if self._printing:
+        if self._printing or not self.can_accept_open_requests():
             return
         existing = self.document_windows.find_path(path)
         if existing is not None and existing[1].engine.is_loaded():
@@ -1396,11 +1406,11 @@ class PDFViewer(QMainWindow):
         made Windows report the app as loading. The zero-delay handoff lets
         the native main window and loading status become visible first.
         """
+        if not self.can_accept_open_requests():
+            return
         controller = getattr(self, "_mode_controller", None)
         if paths and controller:
             controller.request_mode("pdf")
-        if self._closing or self.document_windows.pending_exit:
-            return
         self._queued_open_paths.extend((path, None, None, perf_counter()) for path in paths if path)
         self._schedule_queued_open()
 
@@ -1479,6 +1489,10 @@ class PDFViewer(QMainWindow):
         requested_at: float | None = None,
     ) -> None:
         display_path = Path(path)
+        self._open_request_sequence = getattr(self, "_open_request_sequence", 0) + 1
+        session._open_request_id = self._open_request_sequence
+        log_lifecycle("open.request", request=session._open_request_id, session=id(session),
+                      queue=len(self._queued_open_paths), tasks=len(self._tasks))
         session._open_requested_at = perf_counter() if requested_at is None else requested_at
         options = {}
         if display_path.suffix.casefold() in {".ps", ".eps"}:
@@ -2939,6 +2953,8 @@ class PDFViewer(QMainWindow):
             trace.mark("time_to_first_page")
             trace.values["first_visible_page"] = page + 1
             trace.report("first_page")
+            log_lifecycle("open.first_page", request=getattr(session, "_open_request_id", 0),
+                          session=id(session), generation=session.canvas._generation, page=page)
             session.nav_panel.thumbnails.enable_rendering()
             if announce:
                 self.info_bar.show_message(f"✅ Loaded: {display_path.name}", "success", 2500)
