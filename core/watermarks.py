@@ -10,8 +10,10 @@ import hashlib
 import io
 import json
 import re
+import unicodedata
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
+from functools import lru_cache
 from math import cos, isfinite, radians, sin
 from pathlib import Path
 from uuid import uuid4
@@ -202,24 +204,95 @@ def watermark_image(page, xref) -> bytes | None:
         return page.parent.xref_stream(int(value.split()[0])) if kind == "xref" else None
 
 
+def _codepoints(characters):
+    return ", ".join(f"U+{point:04X}" for point in sorted({ord(c) for c in characters})[:8])
+
+
+@lru_cache(maxsize=2)
+def _builtin_text_font(name):
+    return fitz.Font(name)
+
+
+@lru_cache(maxsize=4)
+def _bundled_text_font(path, size, mtime):
+    # File identity invalidates a cached face if development assets change.
+    del size, mtime
+    return fitz.Font(fontfile=path)
+
+
+def _text_fonts(preferred):
+    for name in (preferred, "china-s" if preferred == "helv" else "helv"):
+        yield _builtin_text_font(name)
+    from .pdf_runtime import asset_root
+    for name in ("NotoSans-Regular.ttf", "NotoSansCJKhk-Regular.otf"):
+        path = asset_root() / "fonts" / name
+        try:
+            stamp = path.stat()
+            font = _bundled_text_font(str(path), stamp.st_size, stamp.st_mtime_ns)
+        except (OSError, ValueError, RuntimeError):
+            # An unavailable optional face is not permission to replace glyphs.
+            continue
+        yield font
+
+
+def preflight_watermark_text(text):
+    """Resolve one exact face; no implicit fallback, shaping or system scan."""
+    with DOCUMENT_LOCK:
+        characters = set(text)
+        unsupported = {c for c in characters if (
+            unicodedata.bidirectional(c) in {"R", "AL", "AN"}
+            or unicodedata.category(c).startswith("M")
+            or unicodedata.category(c) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+            # Conjoining Hangul Jamo are letters (Lo), but need composition
+            # shaping; exact extraction alone cannot detect separated glyphs.
+            or 0x1100 <= ord(c) <= 0x11FF
+            or 0xA960 <= ord(c) <= 0xA97F
+            or 0xD7B0 <= ord(c) <= 0xD7FF
+        )}
+        if unsupported:
+            raise WatermarkError(
+                "Watermark text needs unsupported shaping or contains control characters "
+                f"({_codepoints(unsupported)}). Use supported single-line text or an image watermark.")
+        preferred = "helv" if all(ord(c) < 256 for c in text) else "china-s"
+        missing = characters
+        for font in _text_fonts(preferred):
+            uncovered = {c for c in characters if not font.has_glyph(ord(c), fallback=False)}
+            if not uncovered:
+                return font
+            if len(uncovered) < len(missing):
+                missing = uncovered
+        raise WatermarkError(
+            f"No available watermark font covers all characters ({_codepoints(missing)}). "
+            "Use supported text or an image watermark.")
+
+
+def _verify_text_source(source, text):
+    # Verify the emitted encoding after serialization, not only glyph coverage.
+    with fitz.open(stream=source.tobytes(), filetype="pdf") as checked:
+        actual = checked[0].get_text("text", sort=False).removesuffix("\n")
+    if actual != text:
+        changed = set(text).symmetric_difference(actual) or set(text)
+        raise WatermarkError(
+            f"Watermark output did not preserve the entered text ({_codepoints(changed)}). "
+            "Use supported text or an image watermark.")
+
+
 def _local_content(spec, image):
     """Return one small vector/text or embedded image source page, no PDF rasterization."""
     source = fitz.open()
     try:
         if spec.mode == "text":
-            # Built-in CJK font for non-Latin text, as elsewhere in MuPDF;
-            # preserve Unicode and vectors rather than replacing characters.
-            fontname = "helv" if all(ord(c) < 256 for c in spec.text) else "china-s"
-            font = fitz.Font(fontname)
+            font = preflight_watermark_text(spec.text)
+            fontname = "helv" if font.name == "Helvetica" else "WatermarkFont"
             size = spec.fontsize * spec.scale
             width = max(1., font.text_length(spec.text, fontsize=size))
             height = max(1., (font.ascender - font.descender) * size)
             local = source.new_page(width=width, height=height)
             if fontname != "helv":
                 local.insert_font(fontname="WatermarkFont", fontbuffer=font.buffer)
-                fontname = "WatermarkFont"
             local.insert_text((0, font.ascender * size), spec.text, fontname=fontname,
                               fontsize=size, color=tuple(spec.color), fill_opacity=spec.opacity)
+            _verify_text_source(source, spec.text)
         else:
             if not image:
                 raise WatermarkError("Choose a watermark image.")

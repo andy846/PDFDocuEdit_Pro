@@ -8,7 +8,7 @@ from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 from core.diagnostics import log_failure, log_lifecycle
 from core.pdf_engine import DOCUMENT_LOCK
-from core.watermarks import add_watermark, image_bytes, list_watermarks, remove_watermark
+from core.watermarks import WatermarkError, add_watermark, image_bytes, list_watermarks, remove_watermark
 from ui.page_view import render_page_image
 
 
@@ -51,6 +51,8 @@ class WatermarkPreviewTask(QRunnable):
                         return
                     zoom = min(600 / page.rect.width, 340 / page.rect.height)
                     result["image"] = render_page_image(copy, 0, zoom, 1.)
+        except WatermarkError as exc:
+            result["error"] = str(exc)
         except Exception:
             log_failure("Watermark preview failed")
             result["error"] = "Preview unavailable. Check the watermark size, image and position."

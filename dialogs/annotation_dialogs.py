@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThreadPool, QTimer
+from PyQt6.QtCore import QSignalBlocker, Qt, QThreadPool, QTimer
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.pdf_engine import parse_page_range
-from core.watermarks import ANCHORS, WatermarkSpec
+from core.watermarks import ANCHORS, WatermarkSpec, preflight_watermark_text
 from ui.responsive import reveal_widget
 
 from .base import ToolDialog
@@ -66,6 +66,8 @@ class WatermarkDialog(ToolDialog):
         self._image_width_pt = None
         self._watermark_color = (.5, .5, .5)
         self._existing_id = None
+        self._original_opacity = None
+        self._opacity_edited = False
         self._source_doc = self._preview_owner = self._preview_snapshot = None
         self._preview_jobs = []
         self._preview_generation = 0
@@ -136,11 +138,10 @@ class WatermarkDialog(ToolDialog):
         opacity_label.addWidget(self.opacity_value)
         opacity_layout.addLayout(opacity_label)
         self.opacity = QSlider(Qt.Orientation.Horizontal)
-        self.opacity.setRange(5, 100)
+        self.opacity.setRange(0, 100)
         self.opacity.setValue(25)
-        self.opacity.valueChanged.connect(
-            lambda value: self.opacity_value.setText(f"{value}%")
-        )
+        self.opacity.valueChanged.connect(self._opacity_changed)
+        self.opacity.actionTriggered.connect(self._opacity_action)
         opacity_layout.addWidget(self.opacity)
         options_row.addLayout(opacity_layout, 1)
         self._root.addLayout(options_row)
@@ -196,7 +197,7 @@ class WatermarkDialog(ToolDialog):
         self._root.addWidget(buttons)
         for control in (self.text, self.image, self.pages):
             control.textChanged.connect(self._queue_preview)
-        for control in (self.fontsize, self.rotation, self.opacity, self.scale, self.x_offset, self.y_offset):
+        for control in (self.fontsize, self.rotation, self.scale, self.x_offset, self.y_offset):
             control.valueChanged.connect(self._queue_preview)
         self.anchor.currentIndexChanged.connect(self._queue_preview)
         self.image_mode.toggled.connect(self._mode_changed)
@@ -207,6 +208,24 @@ class WatermarkDialog(ToolDialog):
         self.rotation.setValue(0 if image else 45)
         self._queue_preview()
 
+    def _selected_opacity(self):
+        if self._original_opacity is not None and not self._opacity_edited:
+            return self._original_opacity
+        return self.opacity.value() / 100
+
+    def _opacity_changed(self, *_args):
+        self._opacity_edited = True
+        self.opacity_value.setText(f"{self._selected_opacity() * 100:g}%")
+        self._queue_preview()
+
+    def _opacity_action(self, action):
+        # Native styles can emit SliderMove just by pressing the handle.
+        # Actual movement is covered by valueChanged; explicit Home/End or
+        # steps still allow choosing a rounded endpoint already on the slider.
+        if action not in (QSlider.SliderAction.SliderMove.value,
+                          QSlider.SliderAction.SliderNoAction.value):
+            self._opacity_changed()
+
     def configure_existing(self, spec, image, identifier=None):
         self.setWindowTitle("Edit Watermark")
         self._embedded_image, self._existing_id = image, identifier
@@ -215,7 +234,11 @@ class WatermarkDialog(ToolDialog):
         self.text.setText(spec.text)
         self.fontsize.setValue(round(spec.fontsize))
         self.rotation.setValue(spec.rotation)
+        self._original_opacity, self._opacity_edited = spec.opacity, False
+        blocker = QSignalBlocker(self.opacity)
         self.opacity.setValue(round(spec.opacity * 100))
+        del blocker
+        self.opacity_value.setText(f"{self._selected_opacity() * 100:g}%")
         self.scale.setValue(spec.scale * 100)
         self.anchor.setCurrentIndex(self.anchor.findData(spec.anchor))
         self.x_offset.setValue(spec.x_mm)
@@ -231,7 +254,7 @@ class WatermarkDialog(ToolDialog):
     def _spec(self):
         return WatermarkSpec(mode="image" if self.image_mode.isChecked() else "text",
                              text=self.text.text().strip(), fontsize=self.fontsize.value(),
-                             rotation=self.rotation.value(), opacity=self.opacity.value() / 100,
+                             rotation=self.rotation.value(), opacity=self._selected_opacity(),
                              scale=self.scale.value() / 100, anchor=self.anchor.currentData(),
                              x_mm=self.x_offset.value(), y_mm=self.y_offset.value(),
                              image_width_pt=self._image_width_pt, color=self._watermark_color)
@@ -322,7 +345,7 @@ class WatermarkDialog(ToolDialog):
                 "text": self.text.text().strip(),
                 "fontsize": self.fontsize.value(),
                 "rotation": self.rotation.value(),
-                "opacity": self.opacity.value() / 100.0,
+                "opacity": self._selected_opacity(),
                 "pages": pages,
             }
         else:
@@ -336,7 +359,7 @@ class WatermarkDialog(ToolDialog):
             self.details = {
                 "mode": "image",
                 "image": image,
-                "opacity": self.opacity.value() / 100.0,
+                "opacity": self._selected_opacity(),
                 "pages": pages,
                 "image_data": self._embedded_image if not image else None,
             }
@@ -346,6 +369,8 @@ class WatermarkDialog(ToolDialog):
                             color=self._watermark_color)
         try:
             self._spec().validate()
+            if self.text_mode.isChecked():
+                preflight_watermark_text(self._spec().text)
         except ValueError as exc:
             self.show_error(str(exc))
             self.details = None

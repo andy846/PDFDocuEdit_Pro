@@ -4811,6 +4811,7 @@ class PDFViewer(QMainWindow):
             )
             return
         from core.watermarks import (
+            WatermarkError,
             WatermarkSpec,
             add_watermark,
             list_watermarks,
@@ -4886,7 +4887,9 @@ class PDFViewer(QMainWindow):
                 self.engine.mark_modified()
         except Exception as exc:
             log_failure('viewer._show_watermark_dialog: fallback after failure', 10)
-            self._error("Watermark failed", str(exc))
+            cause = exc.__cause__
+            detail = f"{cause} {exc}" if isinstance(cause, WatermarkError) else str(exc)
+            self._error("Watermark failed", detail)
             return
         self._refresh_session_canvases(self._session)
         self._sync_modified_state()
