@@ -1,11 +1,19 @@
-# PDFDocuEdit Pro V3.0.11
+# PDFDocuEdit Pro V3.1.0
 
 > Windows 日常開發／實測固定使用 `D:\Python_Project\PDFdocuEdit_Pro` 及 `.venv-dev`；啟動請用 `scripts\launch_dev.cmd`。[開發位置、環境及回退說明](docs/DEVELOPMENT_WORKSPACE.md)。
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.0.11 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用 v3.0.7。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
-本輪原生打包及實機結果見 [v3.0.11 驗收紀錄](docs/RELEASE_VALIDATION_3.0.11.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+v3.1.0 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用既有完整安裝版。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+本輪原生打包及實機結果見 [v3.1.0 驗收紀錄](docs/RELEASE_VALIDATION_3.1.0.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+
+## v3.1.0：安全重開、暫存清理及水印完整性
+
+- 關閉時按真正完成的視窗退休狀態處理；Apply／Discard 之後再開 PDF 使用有效的新 Viewer，避免交給已關閉的隱藏視窗。
+- 安全退休文件時釋放該文件擁有的 Undo／Redo 暫存 PDF；不掃描或刪除其他程式及歷史暫存檔。
+- 文字水印逐字檢查字型、使用既有附帶 fallback，並核對序列化輸出字碼；缺字及不支援成形明確拒絕，保留原文件及水印。
+- 文字／圖片透明度支援 0–100%；修改其他屬性或原位點擊滑塊不會把原有小數透明度取整。
+- 詳情及限制見 [v3.1.0 Release notes](docs/RELEASE_NOTES_3.1.0.md)、[水印完整性](docs/WATERMARK_INTEGRITY.md)、[關閉重開](docs/WATERMARK_CLOSE_REOPEN.md) 及 [暫存生命週期](docs/TEMP_PDF_LIFECYCLE.md)。
 
 ## v3.0.11：旋轉註解、水印與圖片／印章編輯
 

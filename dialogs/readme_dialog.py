@@ -24,6 +24,21 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## New in v3.1.0: Safe reopening, temporary cleanup and watermark integrity
+
+* Windows Managed updates only; Installer, Portable and macOS are not rebuilt.
+* Closing after Apply / Discard observes actual window retirement. Later open
+  requests use a fresh live Viewer instead of a hidden, retired document window.
+* Retired document sessions release their owned Undo/Redo temporary PDFs after
+  safe checks; unrelated or historical temporary files are not swept.
+* Text watermarks check exact glyph coverage, try bundled fonts and verify the
+  serialized text before changing pages. Unsupported shaping, missing glyphs or
+  incorrect encoding are rejected explicitly, preserving the original document.
+* Text/image opacity supports 0–100%. Editing other properties preserves the
+  original fractional opacity until the opacity control is actually adjusted.
+* Existing detection profiles, production review and signed update routes remain
+  available. Production and physical equipment acceptance remain job-specific.
+
 ## New in v3.0.11: Annotation reliability and image / stamp controls
 
 * Windows Managed updates only; Installer, Portable and macOS are not rebuilt.

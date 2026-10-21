@@ -288,7 +288,7 @@ python -m scripts.unified_release publish --folder <簽署目錄> --notes <RELEA
 
 只有擁有人明確要求時使用；預設仍為雙平台完整發布。此模式不把缺少的 Mac／Installer／Portable 標成 Passed，不改更新信任或 Windows 測試門檻。
 
-1. 使用 `codex/windows-update-v<VERSION>` 分支凍結來源；一般 CI 保留 Source quality，正式 Windows 全部隔離回歸交由 native workflow 執行一次。
+1. 在已核准開發線凍結來源。擁有人明確要求同步主線時，先核對遠端 main 為祖先，再普通 fast-forward 推送並直接對 main 派送候選，不另建或切換分支。既有 `codex/windows-update-v<VERSION>` 發布分支仍可沿用；一般 CI 保留 Source quality，正式 Windows 全部隔離回歸由 native workflow 完整執行。main 的一般 CI 可能額外並行，不把它誤作同一候選證據或因此跳過 native gate。
 2. 派送 `gh workflow run unified-release.yml --ref <分支> -f release_scope=windows-update --repo andy846/PDFDocuEdit_Pro`。Mac job 明確略過；Windows 仍跑完整回歸、PyInstaller、frozen login-ready 及未登入 worker 拒絕。
 3. `scripts.build_release_candidate --updates-only` 不建立 Installer 或 Portable ZIP。僅在隔離 smoke 目錄建立測試用 Managed 樹；不是發布產物。
 4. 收集 Windows candidate 後，沿用 `scripts.unified_release seal`，額外傳 `--scope windows-update`。簽署 index 綁定範圍及唯一 Windows 平台，候選只接受 private／legacy 更新 ZIP、各 SHA256 及兩份 candidate metadata。
