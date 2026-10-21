@@ -23,7 +23,10 @@ Remote main was not pushed. The existing publication ref preserves one local
 main development line and avoids duplicate native regression. The untracked
 operator profile was not read, staged or uploaded.
 
-## Acceptance
+## Acceptance at publication
+
+This table preserves the publication-time evidence. Subsequent owner acceptance
+is recorded separately below.
 
 | Check | Actual result |
 |---|---|
@@ -47,6 +50,31 @@ remains unchanged; frozen login-ready is not real-account acceptance. The standa
 operator gate was not changed. All other native, signing, upgrade, upload and
 post-publication gates were completed. Development tests were not substituted
 for the full frozen native candidate regression.
+
+## Post-publication owner acceptance — 2026-10-22 (Hong Kong)
+
+The owner explicitly confirmed that all three items below passed on the
+**published v3.0.11**, replying “全部通過” to the question naming these items.
+This is owner-reported real-world acceptance, not an additional automated test
+run or agent-operated machine test.
+
+| Check | Updated acceptance |
+|---|---|
+| Real-account login | Passed — owner-confirmed on 2026-10-22 |
+| Physical printer / RIP / inserter | Passed — owner-confirmed on 2026-10-22 |
+| Actual customer PDF workflows | Passed — owner-confirmed on 2026-10-22 |
+
+The publication-time `windows_account_login=false` record and source-specific
+exception remain historical evidence; they have not been rewritten to imply
+pre-publication acceptance. Equipment models and individual job details were
+not supplied and are not inferred.
+
+This confirmation does not establish a unique cause for every intermittent
+blank-tab incident. The later local Watermark close/reopen repair (`b8301da`)
+and history temporary-file cleanup (`afaaeb6`) are not part of published
+v3.0.11, and are not covered by this owner acceptance. Their separate reports
+are [Watermark close/reopen](WATERMARK_CLOSE_REOPEN.md) and
+[temporary PDF lifecycle](TEMP_PDF_LIFECYCLE.md).
 
 ## Stage timings (UTC)
 

@@ -15,8 +15,10 @@
 
 現有 Windows Managed 安裝使用 **Help → Check for Updates**。private／legacy 兩個 ZIP 為相同程式內容，並非兩個 Portable。首次安裝沿用 [v3.0.7 Managed 安裝版](https://github.com/andy846/PDFDocuEdit_Pro/releases/tag/v3.0.7)，再更新。
 
-macOS 本輪不提供附件；舊 Mac 更新器查詢 Windows-only latest 可能提示缺少 Mac 更新附件，已安裝程式可繼續使用。Mac、實體 DPI 切換、打印機／RIP／插封機及真實客戶工作未在本輪驗收。
+macOS 本輪不提供附件；舊 Mac 更新器查詢 Windows-only latest 可能提示缺少 Mac 更新附件，已安裝程式可繼續使用。發布當日未完成 Mac、實體 DPI 切換、打印機／RIP／插封機及真實客戶工作的驗收；發布後補充見下文。
 
-沿用擁有人先發布、更新後自行測試登入的安排；本候選真實帳戶登入維持 **Pending / Not Tested**，不以 frozen 登入畫面 smoke 冒充登入驗收。
+發布當日沿用擁有人先發布、更新後自行測試登入的安排；當時本候選真實帳戶登入記錄為 **Pending / Not Tested**，不以 frozen 登入畫面 smoke 冒充登入驗收。
+
+**2026-10-22 實測驗收補充（香港時間）：**擁有人已確認正式 v3.0.11 的真實帳戶登入、實體打印機／RIP／插封機及真實客戶 PDF 工作流程全部通過。此為擁有人回報的發布後驗收；原始發布證據保留。詳見 [驗收紀錄](RELEASE_VALIDATION_3.0.11.md)。後續尚未發布的本機修補另行驗收。
 
 本版本原生驗收、簽署及公開核對狀態見 [v3.0.11 驗收紀錄](RELEASE_VALIDATION_3.0.11.md)。
