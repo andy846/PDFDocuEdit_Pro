@@ -7528,6 +7528,15 @@ class PDFViewer(QMainWindow):
         # Every recoverable check happens before cancellation or reader retirement.
         lifecycle.prepare_preferences()
         lifecycle.mark_teardown_started()
+        search = getattr(self, "_deep_search_dialog", None)
+        if search is not None:
+            # Hidden non-modal tools do not receive a close event when their
+            # owner closes. Wake paused search workers before Qt teardown.
+            search.close()
+            if search.background_task_count():
+                event.ignore()
+                self._defer_close("deep_search")
+                return
         self.workspace.end_pair()
         if controller:
             if not controller.shutdown_workspaces():

@@ -130,6 +130,9 @@ class CloseLifecycle(QObject):
                 tasks += sum(len(p.workers) for p in merge.tool_pages())
             tasks += sum(d._task is not None for d in getattr(window, '_comparison_dialogs', []))
             tasks += sum(d.worker is not None for d in getattr(window, '_pdf_operation_dialogs', []))
+            search = getattr(window, '_deep_search_dialog', None)
+            if search is not None:
+                tasks += search.background_task_count()
         elapsed = 0 if self.started is None else max(0, int(monotonic() - self.started))
         return dict(phase=int(self.phase), reason=self.reason or 'preparation',
                     failed=self.is_failed, can_return=self.can_return_to_work(),
@@ -269,6 +272,9 @@ class CloseLifecycle(QObject):
             if any(d._task for d in getattr(window, "_comparison_dialogs", [])):
                 return False
             if any(d.worker for d in getattr(window, "_pdf_operation_dialogs", [])):
+                return False
+            search = getattr(window, '_deep_search_dialog', None)
+            if search is not None and search.background_task_count():
                 return False
             readers = list(getattr(window, "_window_reader_events", []))
             if controller:

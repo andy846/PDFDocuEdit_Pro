@@ -41,6 +41,7 @@ class CloseStatusBar(QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
         reasons = {
+            'deep_search': 'Waiting for Deep Search jobs to stop safely.',
             'preferences': 'Could not save application preferences before closing.',
             'preparation': 'Close preparation could not finish.',
             'cleanup': 'Safe shutdown could not finish.',

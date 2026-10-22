@@ -104,6 +104,10 @@ class DeepSearchDialog(ToolDialog):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(100)
         self._poll_timer.timeout.connect(self._poll_search)
+        self._close_timer = QTimer(self)
+        self._close_timer.setSingleShot(True)
+        self._close_timer.setInterval(25)
+        self._close_timer.timeout.connect(self._try_close_search)
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(200)
@@ -374,7 +378,7 @@ class DeepSearchDialog(ToolDialog):
         super().keyPressEvent(event)
 
     def _search(self) -> None:
-        if self._task is not None or self._export_task is not None:
+        if self._closing_search or self._task is not None or self._export_task is not None:
             return  # a search is already running
         query = self.query.text().strip()
         if not query:
@@ -1064,24 +1068,31 @@ class DeepSearchDialog(ToolDialog):
     def reject(self) -> None:
         self.close()
 
+    def background_task_count(self) -> int:
+        """Include the native pool's tail after the finished signal was queued."""
+        search = max(int(self._task is not None), self._search_pool.activeThreadCount())
+        return (search + int(self._export_task is not None)
+                + int(self._queries is not None and self._queries.task is not None))
+
     def _try_close_search(self):
-        if self._task is not None or self._export_task is not None:
-            return
-        if self._queries is not None and self._queries.task is not None:
-            return
-        QTimer.singleShot(0, self.close)
+        if self.background_task_count():
+            self._close_timer.start()
+        else:
+            self.close()
 
     def closeEvent(self, event) -> None:
         self._closing_search = True
         self._poll_timer.stop()
         self._filter_timer.stop()
         self._cancel_search()
+        self.search_button.setEnabled(False)
         if self._queries is not None:
             self._queries.close()
-        if (self._task is not None or self._export_task is not None
-                or (self._queries is not None and self._queries.task is not None)):
+        if self.background_task_count():
             self.status.setText("Closing · waiting for background search to stop safely…")
+            self._close_timer.start()
             event.ignore()
             return
+        self._close_timer.stop()
         self._store.close()
         super().closeEvent(event)
