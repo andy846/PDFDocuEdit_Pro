@@ -1,8 +1,8 @@
 from pathlib import Path
 
-import fitz
 import pytest
 
+from core.pdf_backend import fitz
 from core.pdf_operations.batch import analyse_batch, execute_batch
 from core.pdf_operations.model import PdfOptions
 from core.variables import VariableError

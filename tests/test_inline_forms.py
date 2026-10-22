@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import core.viewer as viewer_module
 from core.forms import enumerate_fields
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 
 _APP = None

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from threading import Event
 
-import fitz
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 from core.diagnostics import log_failure, log_lifecycle
+from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 from core.watermarks import WatermarkError, add_watermark, image_bytes, list_watermarks, remove_watermark
 from ui.page_view import render_page_image

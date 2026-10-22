@@ -5,7 +5,6 @@ import subprocess
 import sys
 from dataclasses import asdict
 
-import fitz
 import pytest
 
 from composition.overlay.model import BarcodeProfile, BarcodeToken, EnvelopeSpec, OverlayObject
@@ -14,6 +13,7 @@ from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.planner import EnvelopePlan
 from composition.pdf_source.source import inspect_source, snapshot_source
 from composition.template.model import CompositionError, Element
+from core.pdf_backend import fitz
 
 
 def make_source(path, pages=6, rotation=0, crop=False):

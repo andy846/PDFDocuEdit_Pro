@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import json
 
-import fitz
 import pytest
 
 from composition.data.source import import_records
@@ -18,6 +17,8 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
+from tests.font_assertions import assert_span_face
 from tests.production_approval import generate
 
 
@@ -42,7 +43,8 @@ def test_only_missing_character_uses_repair_and_primary_pixels_are_unchanged():
         assert a[0].get_pixmap().samples == b[0].get_pixmap().samples
     raw = render_preview(repaired, {"Name": "\u7530"})
     parts = spans(raw)
-    assert next(span for span in parts if "\u7530" in span["text"])["font"].startswith("NotoSansCJK")
+    with fitz.open(stream=raw, filetype="pdf") as doc:
+        assert_span_face(doc[0], next(span for span in parts if "\u7530" in span["text"]), "Noto Sans CJK HK")
     assert all("CJK" not in span["font"] for span in parts if "\u7530" not in span["text"])
     assert len({round(span["origin"][1], 3) for span in parts}) == 1
     # A configured repair never replaces a glyph already supplied by the primary font.

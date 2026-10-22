@@ -1,7 +1,6 @@
 """Independent read-only comparison workspace with cooperative background jobs."""
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import Qt, QThreadPool, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from core.comparison import compare_snapshots, manual_pair, snapshot_file, unpair
 from core.diagnostics import log_failure
+from core.pdf_backend import fitz
 from core.tasks import FunctionTask
 from ui.pdf_canvas import PdfCanvas
 from ui.responsive import ResponsiveDialog

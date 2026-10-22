@@ -7,7 +7,6 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import QAbstractTableModel, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 from core.performance import PerformanceTrace
 from core.tasks import FunctionTask

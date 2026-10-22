@@ -5,7 +5,6 @@ import json
 import shutil
 from pathlib import Path
 
-import fitz
 import pytest
 
 from composition.data.source import import_records
@@ -15,6 +14,7 @@ from composition.overlay.qc import check_mark
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine
 from tests.production_approval import generate
 

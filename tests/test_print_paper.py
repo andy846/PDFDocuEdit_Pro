@@ -1,10 +1,10 @@
 """Paper negotiation must require an explicit decision, never silent A4."""
-import fitz
 import pytest
 from PyQt6.QtCore import QSizeF
 from PyQt6.QtGui import QPageLayout, QPageSize
 from PyQt6.QtPrintSupport import QPrinter
 
+from core.pdf_backend import fitz
 from ui.print_layout import (
     PaperCapabilities,
     PaperDecision,

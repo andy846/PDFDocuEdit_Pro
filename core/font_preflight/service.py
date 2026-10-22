@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import fitz
-
 from core.io_atomic import atomic_output
+from core.pdf_backend import fitz
 from core.pdf_io import validate_pdf_file
 from core.pdf_operations.analysis import check_cancel, file_hash, open_pdf, structure_check
 

@@ -5,12 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from core import viewer as viewer_module
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from core.watermarks import list_watermarks
 from dialogs.annotation_dialogs import WatermarkDialog

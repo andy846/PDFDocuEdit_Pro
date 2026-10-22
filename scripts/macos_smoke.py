@@ -22,7 +22,10 @@ def generate_checked_fixture(worker, job, directory):
 
 
 def main(argv):
-    import fitz
+    from core.pdf_backend import fitz
+
+    # isort: split
+
     from PyQt6.QtWidgets import QApplication
 
     from composition.engine.barcode_profiles import BarcodeProfile

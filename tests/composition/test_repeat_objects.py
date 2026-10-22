@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict
 
-import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
@@ -20,6 +19,7 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
 from tests.composition.test_workspace import close_window
 
 

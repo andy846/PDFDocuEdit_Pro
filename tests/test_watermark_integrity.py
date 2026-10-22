@@ -1,7 +1,6 @@
 """Watermark text must survive encoding, and untouched opacity must roundtrip."""
 import io
 
-import fitz
 import pytest
 from PIL import Image
 from PyQt6.QtCore import Qt
@@ -9,6 +8,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QAbstractSlider, QDialog, QStyle, QStyleOptionSlider
 
 from core import viewer as viewer_module
+from core.pdf_backend import fitz
 from core.watermarks import (
     WatermarkError,
     WatermarkSpec,

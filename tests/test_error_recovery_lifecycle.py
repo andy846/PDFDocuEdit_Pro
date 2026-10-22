@@ -8,12 +8,12 @@ from pathlib import Path
 from threading import Event, Timer
 from time import monotonic
 
-import fitz
 import pytest
 from PyQt6.QtCore import QRunnable, QThreadPool
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QMessageBox
 
+from core.pdf_backend import fitz
 from tests.test_document_windows import documents, wait_closed
 from tests.test_document_windows import editor as editor
 from tests.test_open_performance import wait_until
@@ -144,6 +144,7 @@ def test_partial_redaction_rollback_preserves_readers_and_safe_cause(editor, tmp
 def test_callback_failure_does_not_cross_qt_slot_or_strand_activity(tmp_path, stage):
     script = r"""
 import os,time
+from core.pdf_backend import fitz
 from PyQt6.QtWidgets import QApplication
 from core import viewer as v
 from core.settings import SettingsManager

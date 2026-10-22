@@ -1,11 +1,11 @@
 """Point-based annotation edits must change native geometry and appearance."""
 from __future__ import annotations
 
-import fitz
 import numpy as np
 import pytest
 
 from core.annotations import AnnotationValidationError, list_annotations, update_annotation_geometry
+from core.pdf_backend import fitz
 
 KINDS = ("Highlight", "Underline", "StrikeOut", "Squiggly", "Ink", "Polygon")
 

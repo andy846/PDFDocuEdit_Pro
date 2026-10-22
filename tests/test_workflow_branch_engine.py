@@ -3,11 +3,11 @@ import csv
 import json
 from pathlib import Path
 
-import fitz
 import pytest
 
 from composition.template.model import CompositionError, Element, PageSpec, Template
 from composition.template.serializer import save_project
+from core.pdf_backend import fitz
 from tests.production_approval import execute_routes
 from workflow.branch_engine import approve_routes, prepare_routes, rows
 from workflow.branch_graph import add_route, edge

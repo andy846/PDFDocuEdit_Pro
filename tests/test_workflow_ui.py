@@ -386,9 +386,8 @@ def test_failed_boundary_edit_keeps_last_successful_grouping(standalone,tmp_path
 
 
 def test_region_editor_small_pdf_and_invalid_draft_remain_visible(standalone,tmp_path):
-    import fitz
-
     from composition.template.model import MM_TO_PT
+    from core.pdf_backend import fitz
     w=standalone
     source=tmp_path/"small.pdf"
     with fitz.open() as pdf:

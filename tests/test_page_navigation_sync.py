@@ -1,8 +1,8 @@
-import fitz
 import pytest
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+from core.pdf_backend import fitz
 from ui.pdf_canvas import CAPTION_H, LayoutMode, PdfCanvas
 
 

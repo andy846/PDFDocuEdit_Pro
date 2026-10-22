@@ -4,9 +4,9 @@ import json
 import sys
 import threading
 
-import fitz
 import pytest
 
+from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 from core.printing import (
     PrintJob,

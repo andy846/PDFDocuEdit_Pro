@@ -15,8 +15,6 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
-
 from composition.data.sequences import CompositionRecords, open_records, sequence_record
 from composition.engine.assets import qpdf_executable
 from composition.engine.fonts import RecordFontError
@@ -25,6 +23,7 @@ from composition.engine.rules import RecordRuleError
 from composition.production.journal import production_claim, publish_package
 from composition.template.model import CompositionError, Template, required_fields
 from composition.template.serializer import file_hash
+from core.pdf_backend import fitz
 
 from .model import JobResult, ProductionJob, now, validate_output_name, validate_output_template
 from .resources import peak_memory

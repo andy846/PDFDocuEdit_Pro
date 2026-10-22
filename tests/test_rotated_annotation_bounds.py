@@ -1,7 +1,6 @@
 """Annotation bounds use unrotated, CropBox-relative MuPDF coordinates."""
 from __future__ import annotations
 
-import fitz
 import pytest
 
 from core.annotations import (
@@ -12,6 +11,7 @@ from core.annotations import (
     update_annotation_geometry,
     validate_annotation_op,
 )
+from core.pdf_backend import fitz
 from ui.page_overlay import pdf_rect_to_widget, widget_point_to_pdf
 
 

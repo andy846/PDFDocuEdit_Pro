@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 
+from core.pdf_backend import fitz
 from core.tools import deep_search
 from ui.deep_search_dialog import OPEN_CURRENT, OPEN_NEW_TAB, OPEN_SYSTEM, DeepSearchDialog
 

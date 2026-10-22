@@ -3,9 +3,9 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
-import fitz
 import pytest
 
+from core.pdf_backend import fitz
 from core.pdf_operations.analysis import analyse
 from core.pdf_operations.model import PdfOperationError, PdfOptions
 from core.pdf_operations.service import execute

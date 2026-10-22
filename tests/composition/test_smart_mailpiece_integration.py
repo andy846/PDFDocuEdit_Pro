@@ -6,7 +6,6 @@ import csv
 import json
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication, QFileDialog, QInputDialog, QScrollArea
 
@@ -27,6 +26,7 @@ from composition.pdf_source.smart_detection import (
 )
 from composition.pdf_source.source import inspect_source
 from composition.template.model import CompositionError
+from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_smart_mailpieces import fixture_pdf
 from tests.composition.test_workspace import wait_until

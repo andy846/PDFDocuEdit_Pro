@@ -8,9 +8,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import fitz
-
 from core.cancellation import TaskCancelled
+from core.pdf_backend import fitz
 
 PDF_METADATA_KEYS = frozenset(
     {

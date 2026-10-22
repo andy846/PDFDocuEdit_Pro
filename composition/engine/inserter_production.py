@@ -4,13 +4,12 @@ from __future__ import annotations
 import csv
 import json
 
-import fitz
-
 from composition.data.sequences import sequence_record
 from composition.overlay.qc import check_mark
 from composition.production.generator import _csv_value, check_cancel
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
+from core.pdf_backend import fitz
 
 from .barcode_profiles import INSERTER_I25, profile_values, require_current_inserters
 from .rules import ElementPlan

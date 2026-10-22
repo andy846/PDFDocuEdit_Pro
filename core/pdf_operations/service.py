@@ -11,11 +11,11 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
 from PIL import Image, ImageChops
 
 from composition.production.model import new_job_id
 from core.io_atomic import atomic_output
+from core.pdf_backend import fitz
 from core.pdf_io import set_safe_pdf_metadata, validate_pdf_file
 from core.pdf_runtime import qpdf_executable
 from core.platform_service import PlatformService

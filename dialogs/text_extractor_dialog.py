@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import QPoint, QRect, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
@@ -25,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.pdf_backend import fitz
 from core.pdf_engine import parse_page_range
 
 from .base import ToolDialog, remember_save_directory, start_in_save_directory

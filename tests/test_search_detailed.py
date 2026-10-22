@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
-
+from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine, search_pdf_file
 
 

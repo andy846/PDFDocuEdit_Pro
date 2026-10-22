@@ -1,6 +1,5 @@
 """Exercise every custom dialog family at small logical screen sizes."""
 
-import fitz
 import pytest
 from PyQt6.QtCore import QPoint, QRect, QSettings
 from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
@@ -8,6 +7,7 @@ from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 from core.commands import Command
 from core.ocr import OCRMode, OCRResult
 from core.page_plan import PagePlanEntry, PlanReader
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from dialogs.annotation_dialogs import WatermarkDialog
 from dialogs.barcode_dialogs import BarcodeResultsDialog, BarcodeScanDialog

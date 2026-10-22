@@ -23,7 +23,7 @@ class FakeWorker(QObject):
 
 
 def base_pdf(tmp_path):
-    import fitz
+    from core.pdf_backend import fitz
 
     path = tmp_path / "source.pdf"
     with fitz.open() as doc:

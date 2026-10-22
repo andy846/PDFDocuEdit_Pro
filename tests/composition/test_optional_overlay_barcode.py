@@ -5,7 +5,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication
 
@@ -15,6 +14,7 @@ from composition.overlay.model import BarcodeProfile, EnvelopeSpec, OverlayJob, 
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
 from composition.template.model import Element
+from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import make_source, sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import wait_until

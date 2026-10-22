@@ -5,7 +5,6 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
 import pytest
 
 from composition.media.model import PrinterProfile, default_media
@@ -23,6 +22,7 @@ from composition.production.generator import JobCancelled
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, Element, FontSpec, PageSpec, Template
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.production_approval import execute_batch, generate, overlay_generate
 from tests.test_mail_merge_workflow import pair, recipe

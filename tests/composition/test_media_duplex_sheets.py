@@ -3,7 +3,6 @@ import csv
 import json
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtWidgets import QDialog, QTableWidgetItem
 
@@ -13,6 +12,7 @@ from composition.media.model import default_media
 from composition.media.planner import build_print_plan
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, Element, PageSpec, Template
+from core.pdf_backend import fitz
 from tests.composition.test_postscript import ps_media
 from tests.composition.test_workspace import wait_until
 from tests.production_approval import generate

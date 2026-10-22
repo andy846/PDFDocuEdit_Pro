@@ -11,10 +11,9 @@ from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
 
-import fitz
-
 from core.diagnostics import log_failure
 from core.measurement import copy_page_scale
+from core.pdf_backend import fitz
 
 from .io_atomic import atomic_output
 from .pdf_io import validate_pdf_file

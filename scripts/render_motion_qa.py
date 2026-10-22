@@ -6,14 +6,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-import fitz
-from PyQt6.QtCore import QEvent
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
-
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from core.pdf_backend import fitz  # noqa: E402
+
+# isort: split
+
+from PyQt6.QtCore import QEvent  # noqa: E402
+from PyQt6.QtTest import QTest  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 import core.viewer as viewer_module  # noqa: E402
 from core.settings import SettingsManager  # noqa: E402

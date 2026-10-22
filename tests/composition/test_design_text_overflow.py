@@ -3,7 +3,6 @@ import math
 import os
 from pathlib import Path
 
-import fitz
 import pytest
 from PIL import Image, ImageChops
 from PyQt6.QtCore import Qt, QTimer
@@ -15,6 +14,7 @@ from composition.engine.assets import asset_root
 from composition.engine.renderer import render_preview
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError, Element, Template
+from core.pdf_backend import fitz
 from styles.components import global_style
 from tests.composition.test_workspace import close_window, wait_until
 from tests.production_approval import dispatch

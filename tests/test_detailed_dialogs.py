@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QApplication, QDialog
 
+from core.pdf_backend import fitz
 from dialogs.barcode_dialogs import BarcodeResultsDialog, BarcodeScanDialog
 from dialogs.batch_print_dialog import BatchPrintDialog
 from dialogs.batch_tools import CompressionDialog, MergePDFDialog, OverlayDialog

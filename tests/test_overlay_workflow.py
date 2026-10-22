@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 import pytest
 
 from core.overlay import (
@@ -12,6 +11,7 @@ from core.overlay import (
     scan_overlay_inputs,
     template_page_number,
 )
+from core.pdf_backend import fitz
 from core.tools import ToolError, overlay_pdf, overlay_pdfs
 
 

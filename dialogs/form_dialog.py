@@ -1,7 +1,6 @@
 """Staged AcroForm editor. The preview owns a private document."""
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from core.diagnostics import log_failure
 from core.forms import apply_values, enumerate_fields, validate_values
+from core.pdf_backend import fitz
 from dialogs.base import ToolDialog
 from ui.pdf_canvas import PdfCanvas
 

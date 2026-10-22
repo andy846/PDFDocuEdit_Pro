@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 
-import fitz
 import pytest
 from PIL import Image
 
@@ -13,6 +12,7 @@ from composition.engine.fonts import load_font
 from composition.engine.renderer import import_background, render_preview
 from composition.template.model import CompositionError, Element, FontSpec, Template
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
 
 pytestmark = pytest.mark.skipif(
     not (asset_root() / "fonts" / "NotoSans-Regular.ttf").exists(), reason="Prepared fonts required."

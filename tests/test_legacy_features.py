@@ -3,11 +3,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import core.viewer as viewer_module
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from dialogs.readme_dialog import README_CONTENT, ReadmeDialog
 from ui.icons import _PATHS

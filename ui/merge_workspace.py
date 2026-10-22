@@ -10,7 +10,6 @@ from bisect import bisect_right
 from collections import OrderedDict, deque
 from pathlib import Path
 
-import fitz
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QItemSelectionModel,
@@ -61,6 +60,7 @@ from core.merge import (
     save_merge_list,
     strict_pages,
 )
+from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 from core.platform_service import PlatformService
 from core.tasks import FunctionTask

@@ -16,6 +16,12 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] in {
     from auth.guard import require_worker_access
     require_worker_access()
 
+# Initialize native PDF / ONNX libraries after worker authorization and before
+# Qt DLLs. The launcher and core package retain their lazy import behavior.
+from core.pdf_backend import fitz as _pdf_backend  # noqa: F401
+
+# isort: split
+
 # Worker dispatch must precede Qt/editor imports in frozen development builds.
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--print-worker":
     from core.print_worker import main as print_worker_main

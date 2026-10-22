@@ -1,10 +1,10 @@
 """Measurement gestures must preserve coordinates without endpoint jumps."""
-import fitz
 import pytest
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
+from core.pdf_backend import fitz
 from ui.page_overlay import PageOverlay
 
 

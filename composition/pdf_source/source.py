@@ -4,10 +4,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import fitz
-
 from composition.production.generator import check_cancel
 from composition.template.model import CompositionError
+from core.pdf_backend import fitz
 
 from .model import SourceInfo
 from .planner import EnvelopePlan

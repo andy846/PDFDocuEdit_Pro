@@ -1,13 +1,13 @@
 """Real Qt drag and Viewer transaction coverage for native point annotations."""
 from __future__ import annotations
 
-import fitz
 import pytest
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtTest import QTest
 
 from core.annotations import list_annotations, update_annotation_geometry
+from core.pdf_backend import fitz
 from tests.test_annotation_transactions import annotation_app as annotation_app
 from tests.test_annotation_transactions import viewer as viewer
 from tests.test_point_annotation_geometry import KINDS, assert_points, groups, make_annotation

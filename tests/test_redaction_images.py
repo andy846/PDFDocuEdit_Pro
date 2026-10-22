@@ -1,9 +1,9 @@
 """Image-pixel redaction for spot-colour scans without modifying shared sources."""
 
-import fitz
 import pytest
 
 from core.annotations import apply_redaction_marks, redact
+from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine, PdfEngineError
 from core.redaction_images import redaction_spot_image_count
 

@@ -18,7 +18,7 @@ from math import cos, isfinite, radians, sin
 from pathlib import Path
 from uuid import uuid4
 
-import fitz
+from core.pdf_backend import fitz
 
 from .page_images import _placement_delta, _replace_content
 from .pdf_engine import DOCUMENT_LOCK

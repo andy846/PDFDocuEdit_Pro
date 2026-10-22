@@ -10,12 +10,11 @@ from contextlib import closing, nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import fitz
-
 from composition.production.generator import check_cancel
 from composition.template.model import MM_TO_PT, CompositionError
 from composition.template.serializer import file_hash
 from core.io_atomic import atomic_output
+from core.pdf_backend import fitz
 
 
 @dataclass

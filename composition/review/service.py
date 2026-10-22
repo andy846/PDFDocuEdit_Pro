@@ -15,8 +15,6 @@ from contextlib import ExitStack, closing
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
-
 from composition.data.sequences import open_records, sequence_record
 from composition.engine.barcode_profiles import INSERTER_I25, profile_values
 from composition.engine.generic_layout import CONTEXT_KEY
@@ -28,6 +26,7 @@ from composition.pdf_source.source import _hash
 from composition.production.generator import JobCancelled, check_cancel
 from composition.production.model import ProductionJob, resolve_output_name
 from composition.template.model import MM_TO_PT, CompositionError, Template, required_fields
+from core.pdf_backend import fitz
 
 from .model import ReviewContext, ReviewIssue, ReviewSnapshot
 

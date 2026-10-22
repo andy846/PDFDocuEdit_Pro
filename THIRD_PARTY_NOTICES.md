@@ -1,5 +1,23 @@
 # Third-party notices
 
+## PyMuPDF
+
+The PDF runtime uses PyMuPDF, distributed under the GNU Affero General Public
+License version 3 or an Artifex commercial licence. Its installed distribution
+metadata and original COPYING file accompany frozen builds. The runtime version
+is recorded in that metadata; an experimental upgrade candidate does not change
+the application's pinned dependency.
+
+An experimental PyMuPDF 2.0 installation additionally includes its official
+Layout/PyMuPDF4LLM code and standard dependencies, including ONNX Runtime,
+NetworkX, PyYAML, psutil and tabulate. Any future frozen candidate must retain
+their distribution metadata, available licence files and bundled resources.
+Layout use is disabled in this application's engine-only configuration; its
+import-time dependencies remain installed. The current 2.0 frozen assessment
+is blocked; see docs/PYMUPDF2_COMPATIBILITY_REVIEW.md. No 2.0 update is published.
+
+Upstream: https://github.com/pymupdf/PyMuPDF
+
 ## Ghostscript 10.05.1
 
 The Windows distribution and macOS arm64 candidate bundle Ghostscript for PDF/PostScript conversion.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import fitz
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -21,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.forms import FormField, apply_values, enumerate_fields
+from core.pdf_backend import fitz
 
 
 @dataclass

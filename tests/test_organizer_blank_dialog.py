@@ -1,12 +1,12 @@
 import sys
 
-import fitz
 import pytest
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QPushButton
 
 from core.page_plan import POINTS_PER_MM
+from core.pdf_backend import fitz
 from dialogs.document_dialogs import VisualOrganizerDialog
 from dialogs.organizer_tools import BlankPagesDialog
 

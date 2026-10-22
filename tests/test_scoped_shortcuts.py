@@ -1,12 +1,12 @@
 from dataclasses import replace
 
-import fitz
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from core.commands import Command, find_shortcut_conflict, shortcut_conflict
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from dialogs.document_dialogs import VisualOrganizerDialog
 from ui.diagnostics_dialog import PreferencesDialog

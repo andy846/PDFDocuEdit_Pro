@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fitz
 import pytest
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -9,6 +8,8 @@ from composition.data.source import import_records
 from composition.engine.renderer import render_preview
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, Template
+from core.pdf_backend import fitz
+from tests.font_assertions import assert_span_face
 from tests.production_approval import expect_blocked, generate
 
 
@@ -47,7 +48,8 @@ def test_excel_cell_fonts_do_not_override_template_preview_or_production(tmp_pat
     with fitz.open(stream=previews[0], filetype="pdf") as first, fitz.open(stream=previews[1], filetype="pdf") as second:
         assert first[0].get_pixmap().samples == second[0].get_pixmap().samples
         assert "田" in first[0].get_text()
-        assert first[0].get_text("dict")["blocks"][0]["lines"][0]["spans"][0]["font"].startswith("NotoSansCJK")
+        span = first[0].get_text("dict")["blocks"][0]["lines"][0]["spans"][0]
+        assert_span_face(first[0], span, "Noto Sans CJK HK")
     for store in stores:
         result = generate(ProductionJob(template.to_dict(), str(store.path), str(tmp_path / "out")))
         assert result.status == "completed", result.error

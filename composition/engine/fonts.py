@@ -5,10 +5,10 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-import fitz
 from fontTools.ttLib import TTFont
 
 from composition.template.model import CompositionError, FontSpec
+from core.pdf_backend import fitz
 
 from .assets import asset_root
 

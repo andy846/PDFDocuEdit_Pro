@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import fitz
 import pytest
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
@@ -11,6 +10,7 @@ from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
 from composition.media.planner import preview_plan
 from composition.overlay.serializer import load_project, save_project
+from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import make_source, sample_spec
 from tests.composition.test_workspace import close_window, wait_until
 

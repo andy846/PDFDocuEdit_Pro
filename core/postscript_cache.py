@@ -18,9 +18,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-import fitz
-
 from core.cancellation import TaskCancelled
+from core.pdf_backend import fitz
 from core.pdf_io import validate_pdf_file
 
 _LOG = logging.getLogger("pdfdocuedit")

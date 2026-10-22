@@ -2,11 +2,11 @@
 import time
 from threading import Event, get_ident
 
-import fitz
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QTimer
 
+from core.pdf_backend import fitz
 from core.search_results_store import SearchResultsStore
 from ui.deep_search_dialog import DeepSearchDialog
 

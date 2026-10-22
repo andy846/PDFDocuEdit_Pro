@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-import fitz
 import pytest
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -13,6 +12,7 @@ from core.font_preflight.matching import evaluate_sources
 from core.font_preflight.model import FontPreflightError
 from core.font_preflight.service import analyze_batch, export_report, prepare_repair, repair_copy, repair_job
 from core.font_preflight.syntax import Name, Ref, parse
+from core.pdf_backend import fitz
 from core.pdf_operations.analysis import PdfCancelled
 
 

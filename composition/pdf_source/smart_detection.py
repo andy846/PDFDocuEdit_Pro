@@ -9,10 +9,9 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
-
 from composition.production.generator import check_cancel
 from composition.template.model import MM_TO_PT, CompositionError
+from core.pdf_backend import fitz
 
 from .detection import DetectionConfig
 from .model import EnvelopeSettings

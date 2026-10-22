@@ -1,7 +1,7 @@
-import fitz
 import numpy as np
 import pytest
 
+from core.pdf_backend import fitz
 from core.pdf_operations.appearances import AppearanceError, flatten_page
 
 

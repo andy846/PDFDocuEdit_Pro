@@ -12,8 +12,6 @@ from dataclasses import asdict
 from itertools import islice
 from pathlib import Path
 
-import fitz
-
 from composition.engine.assets import qpdf_executable
 from composition.media.planner import PrintPlan, overlay_plan
 from composition.pdf_source.source import inspect_source, snapshot_source
@@ -23,6 +21,7 @@ from composition.production.model import now
 from composition.production.resources import peak_memory
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
+from core.pdf_backend import fitz
 from core.variables import VariableContext, resolve_filename
 
 from .model import EnvelopeSpec, OverlayResult

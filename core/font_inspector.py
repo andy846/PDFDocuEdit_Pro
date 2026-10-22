@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-import fitz
+from core.pdf_backend import fitz
 
 from .system_fonts import is_pdf_base_font, resolve_system_font
 

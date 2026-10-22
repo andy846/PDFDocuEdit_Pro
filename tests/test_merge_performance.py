@@ -3,12 +3,12 @@ from pathlib import Path
 from threading import Event, get_ident
 from time import monotonic
 
-import fitz
 import pytest
 from PyQt6.QtCore import QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QTableWidget, QWidget
 
+from core.pdf_backend import fitz
 from core.tools import ToolError, merge_pdfs
 from dialogs.batch_tools import MergePDFDialog
 

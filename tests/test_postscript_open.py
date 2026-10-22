@@ -4,9 +4,9 @@ import sys
 from pathlib import Path
 from time import monotonic
 
-import fitz
 import pytest
 
+from core.pdf_backend import fitz
 from tests.test_postscript_cache import IDENTITY, pdf
 
 

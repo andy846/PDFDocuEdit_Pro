@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fitz
 import pytest
 
 from core.font_inspector import (
@@ -8,6 +7,7 @@ from core.font_inspector import (
     remove_subset_prefix,
     suggested_annotation_font,
 )
+from core.pdf_backend import fitz
 
 
 def test_inspect_font_at_returns_span_resource_and_style() -> None:

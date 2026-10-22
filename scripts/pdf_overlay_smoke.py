@@ -4,7 +4,10 @@ from __future__ import annotations
 import json
 import time
 
-import fitz
+from core.pdf_backend import fitz
+
+# isort: split
+
 from PyQt6.QtCore import QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication

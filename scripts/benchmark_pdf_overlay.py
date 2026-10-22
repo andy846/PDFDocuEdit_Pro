@@ -15,13 +15,12 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def one_case(pages, directory, duplex, chunk):
     sys.path.insert(0, str(ROOT))
-    import fitz
-
     from composition.overlay.generator import generate
     from composition.overlay.model import BarcodeProfile, EnvelopeSpec, OverlayJob, OverlayObject
     from composition.pdf_source.model import EnvelopeSettings
     from composition.pdf_source.source import inspect_source
     from composition.template.model import Element
+    from core.pdf_backend import fitz
     directory.mkdir(parents=True, exist_ok=True)
     source = directory / "synthetic-source.pdf"
     with fitz.open() as document:

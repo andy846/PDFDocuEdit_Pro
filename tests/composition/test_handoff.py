@@ -7,7 +7,6 @@ import shutil
 from dataclasses import replace
 from pathlib import Path
 
-import fitz
 import pytest
 
 from composition.handoff import capture_pdf, validate_link
@@ -17,6 +16,7 @@ from composition.pdf_source.model import EnvelopeSettings
 from composition.template.model import CompositionError, Template
 from composition.template.serializer import load_project as load_template
 from composition.template.serializer import save_project as save_template
+from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine
 from tests.composition.test_pdf_overlay_models import make_source
 from tests.production_approval import overlay_generate as generate

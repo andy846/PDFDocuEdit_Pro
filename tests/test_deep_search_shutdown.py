@@ -8,12 +8,12 @@ import sys
 from pathlib import Path
 from threading import Event
 
-import fitz
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QRunnable
 from PyQt6.QtTest import QTest
 
+from core.pdf_backend import fitz
 from core.tasks import FunctionTask
 from tests.test_deep_search_responsive import wait
 from tests.test_document_windows import editor as editor

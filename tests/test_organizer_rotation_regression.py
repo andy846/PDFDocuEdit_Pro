@@ -2,7 +2,6 @@
 from dataclasses import replace
 
 import cv2
-import fitz
 import pytest
 from PIL import Image
 from PyQt6.QtCore import Qt
@@ -10,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QGroupBox
 from pyzbar.pyzbar import decode
 
 from core.page_plan import PagePlanEntry, PlanReader, export_plan
+from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine
 from dialogs.document_dialogs import VisualOrganizerDialog
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 
-import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QFontDatabase, QKeySequence
@@ -14,6 +13,7 @@ from composition.designer.workspace import CompositionWindow
 from composition.overlay.serializer import save_project as save_overlay
 from composition.template.model import DataConfig, Element, Template
 from composition.template.serializer import save_project
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from core.viewer import PDFViewer
 from tests.composition.test_pdf_overlay_models import sample_spec

@@ -2,13 +2,13 @@
 from threading import Event, get_ident
 from time import monotonic
 
-import fitz
 import pytest
 from PyQt6.QtCore import QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.page_plan import PlanReader, blank_entry
+from core.pdf_backend import fitz
 from dialogs.document_dialogs import VisualOrganizerDialog
 from dialogs.virtual_organizer import VirtualOrganizerGrid
 from scripts.benchmark_open import synthetic_pdf

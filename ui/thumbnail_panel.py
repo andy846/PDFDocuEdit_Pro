@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import OrderedDict
 from threading import Event
 
-import fitz
 from PyQt6.QtCore import (
     QAbstractListModel,
     QEvent,
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.diagnostics import connect_interrupts, log_failure
+from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 from core.reader_lifetime import ReaderBusyError, ReaderLease, wait_for_readers
 from styles.tokens import D, S

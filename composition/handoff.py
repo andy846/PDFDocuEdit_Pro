@@ -8,11 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-import fitz
-
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
 from composition.production.generator import check_cancel
+from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 
 

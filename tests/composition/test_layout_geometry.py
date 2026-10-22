@@ -4,7 +4,6 @@ import copy
 import math
 from dataclasses import asdict
 
-import fitz
 import pytest
 from PIL import Image
 from PyQt6.QtCore import QPointF, Qt
@@ -20,6 +19,7 @@ from composition.overlay.renderer import render_preview as overlay_preview
 from composition.template.geometry import element_bounds
 from composition.template.model import CompositionError, Element, Template
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import close_window

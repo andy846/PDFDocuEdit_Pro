@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import fitz
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QThreadPool
 from PyQt6.QtWidgets import QDialog, QMessageBox
@@ -10,6 +9,7 @@ from PyQt6.QtWidgets import QDialog, QMessageBox
 import core.annotation_io as annotation_io
 import core.viewer as viewer_module
 from core.annotations import AnnotationOp, list_document_annotations
+from core.pdf_backend import fitz
 from core.settings import SettingsManager
 
 

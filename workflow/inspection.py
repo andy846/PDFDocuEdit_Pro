@@ -11,8 +11,6 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import fitz
-
 from composition.data.sequences import open_records
 from composition.data.source import import_records, normalize_field, suggest_import
 from composition.production.generator import JobCancelled, check_cancel
@@ -25,6 +23,7 @@ from composition.template.model import (
 )
 from composition.template.serializer import file_hash, load_project
 from core.io_atomic import atomic_output
+from core.pdf_backend import fitz
 
 from .model import WorkflowRun
 from .registry import EXTRA_KINDS

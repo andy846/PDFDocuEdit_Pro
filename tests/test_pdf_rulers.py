@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fitz
 import pytest
 from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter
@@ -8,6 +7,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from core.measurement import set_page_scale
+from core.pdf_backend import fitz
 from ui.page_overlay import PageOverlay
 from ui.pdf_canvas import LayoutMode, PdfCanvas, ToolMode
 from ui.pdf_rulers import MM_PER_POINT, major_interval

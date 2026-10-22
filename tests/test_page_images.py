@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fitz
 import pytest
 from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtGui import QPixmap
@@ -16,6 +15,7 @@ from core.annotations import (
     update_annotation_geometry,
 )
 from core.page_images import PageImageError, list_page_images
+from core.pdf_backend import fitz
 from ui.context_panel import ContextPanel
 from ui.page_overlay import PageOverlay
 

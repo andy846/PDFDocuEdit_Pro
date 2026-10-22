@@ -16,7 +16,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import fitz
+from core.pdf_backend import fitz
+
+# isort: split
+
 from PyQt6.QtWidgets import QApplication
 
 from ui.pdf_canvas import LayoutMode, PdfCanvas

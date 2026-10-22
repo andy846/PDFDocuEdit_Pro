@@ -1,7 +1,6 @@
 """Rotated boxes use visible page edges, without changing saved model positions."""
 from dataclasses import asdict
 
-import fitz
 import pytest
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtTest import QTest
@@ -15,6 +14,7 @@ from composition.template.geometry import element_bounds
 from composition.template.layout import arrange_elements
 from composition.template.model import CompositionError, Element, Template
 from composition.template.serializer import load_project, save_project
+from core.pdf_backend import fitz
 from tests.composition.test_i25 import decoded_i25
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_pdf_overlay_ui import finish

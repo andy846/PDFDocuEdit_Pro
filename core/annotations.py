@@ -10,8 +10,6 @@ from functools import lru_cache
 from math import hypot, isfinite
 from pathlib import Path
 
-import fitz
-
 from core.diagnostics import log_failure
 from core.measurement import (
     distance_mm,
@@ -21,6 +19,7 @@ from core.measurement import (
     set_page_scale,
     write_marker,
 )
+from core.pdf_backend import fitz
 
 from .page_images import (
     _native_matrix,
@@ -882,12 +881,17 @@ def add_stamp(
     annot = page.add_stamp_annot(
         rect, stamp=STAMP_IDS.get(stamp_kind, STAMP_IDS["Draft"])
     )
-    if rotation:
+    native_rotation_supported = fitz.VersionBind.split(".")[0] != "2"
+    if rotation and native_rotation_supported:
         annot.set_rotation(rotation)
     annot.update()
-    if angle:
+    if angle or (rotation and not native_rotation_supported):
         from .stamp_geometry import update_stamp_geometry
-        update_stamp_geometry(page, annot, annot.rect, angle)
+        # Keep the established vector appearance. MuPDF 2.0's native
+        # set_rotation()/update() may leave its /AP matrix unrotated.
+        # The shared helper applies the page compensation exactly once.
+        effective_angle = angle if angle else rotation - page.rotation
+        update_stamp_geometry(page, annot, annot.rect, effective_angle)
 
 
 def redact(doc: fitz.Document, page_num: int, rects: Sequence[fitz.Rect]) -> None:

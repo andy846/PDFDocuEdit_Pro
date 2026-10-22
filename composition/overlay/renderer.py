@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
-
 from composition.engine.renderer import Renderer
 from composition.engine.rules import ElementPlan, Selection
 from composition.media.planner import overlay_plan
@@ -12,6 +10,7 @@ from composition.pdf_source.planner import applies
 from composition.pdf_source.source import _stat
 from composition.template.geometry import element_bounds
 from composition.template.model import MM_TO_PT, CompositionError
+from core.pdf_backend import fitz
 
 from .geometry import check_object_bounds
 from .model import barcode_field, render_template

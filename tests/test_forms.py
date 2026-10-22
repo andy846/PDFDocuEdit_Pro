@@ -1,7 +1,7 @@
-import fitz
 import pytest
 
 from core.forms import FormError, apply_values, enumerate_fields, parse_calculation, validate_values
+from core.pdf_backend import fitz
 
 
 def form_pdf():
@@ -62,6 +62,12 @@ def test_unicode_appearance_retains_editable_value():
         widget = page.load_widget(enumerate_fields(doc)[2].widgets[0].xref)
         widget.script_calc = None
         widget.update()
+        # 2.0's fixture builder moves actions to a logical parent. Its Widget
+        # setter does not remove that inherited action; remove it explicitly
+        # when preparing this non-calculated Unicode fixture.
+        kind, parent = doc.xref_get_key(widget.xref, "Parent")
+        if kind == "xref":
+            doc.xref_set_key(int(parent.split()[0]), "AA/C", "null")
         apply_values(doc, {'A': '中文測試 English'})
         with fitz.open(stream=doc.tobytes(), filetype='pdf') as saved:
             assert enumerate_fields(saved)[0].value == '中文測試 English'
@@ -213,3 +219,57 @@ def test_unsupported_calculation_does_not_feed_stale_values_to_dependents():
         values, warnings = validate_values(fields, {"B": "8"})
         assert values["Total"] == fields[2].value
         assert any("Total: depends on an unsupported" in warning for warning in warnings)
+
+
+def inherited_action(doc, widget_xref, key, source):
+    """Build a genuine parent field, keeping the Page alive in the caller."""
+    kind, value = doc.xref_get_key(widget_xref, "Parent")
+    if kind == "xref":
+        owner = int(value.split()[0])
+    else:
+        owner = doc.get_new_xref()
+        name = doc.xref_get_key(widget_xref, "T")[1]
+        doc.update_object(owner, f"<< /T {fitz.get_pdf_str(name)} /FT /Tx /Kids [{widget_xref} 0 R] >>")
+        doc.xref_set_key(widget_xref, "Parent", f"{owner} 0 R")
+        doc.xref_set_key(widget_xref, "T", "null")
+        fields = doc.xref_get_key(doc.pdf_catalog(), "AcroForm/Fields")[1]
+        doc.xref_set_key(doc.pdf_catalog(), "AcroForm/Fields", fields.replace(f"{widget_xref} 0 R", f"{owner} 0 R"))
+    doc.xref_set_key(widget_xref, key, "null")
+    doc.xref_set_key(owner, key, f"<< /S /JavaScript /JS {fitz.get_pdf_str(source)} >>")
+
+
+def test_inherited_calculation_is_not_silently_lost():
+    with form_pdf() as doc:
+        page = doc[0]
+        total = list(page.widgets())[2]
+        inherited_action(doc, total.xref, "AA/C", 'AFSimple_Calculate("SUM", new Array("A", "B"));')
+        assert enumerate_fields(doc)[2].calculation
+        apply_values(doc, {"A": "7"})
+        with fitz.open(stream=doc.tobytes(), filetype="pdf") as saved:
+            assert {f.name: f.value for f in enumerate_fields(saved)} == {"A": "7", "B": "3", "Total": "10"}
+            assert enumerate_fields(saved)[2].calculation
+            apply_values(saved, {"B": "4"})
+            assert enumerate_fields(saved)[2].value == "11"
+
+
+@pytest.mark.parametrize("key", ["A", "AA/K", "AA/F", "AA/V", "AA/Bl", "AA/Fo"])
+def test_inherited_scripts_still_require_acknowledgement(key):
+    with form_pdf() as doc:
+        page = doc[0]
+        first = list(page.widgets())[0]
+        inherited_action(doc, first.xref, key, "customBusinessRule();")
+        before = doc.tobytes(no_new_id=True)
+        with pytest.raises(FormError, match="Confirm unsupported scripts"):
+            apply_values(doc, {"A": "7"})
+        assert doc.tobytes(no_new_id=True) == before
+
+
+def test_non_javascript_action_enumeration_is_read_only():
+    with form_pdf() as doc:
+        page = doc[0]
+        first = list(page.widgets())[0]
+        doc.xref_set_key(first.xref, "A", "<< /S /URI /URI (https://example.invalid/) >>")
+        before = doc.tobytes(no_new_id=True)
+        assert not enumerate_fields(doc)[0].scripts
+        assert doc.tobytes(no_new_id=True) == before
+        assert doc.xref_get_key(first.xref, "A/S") == ("name", "/URI")

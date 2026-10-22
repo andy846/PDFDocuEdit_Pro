@@ -1,11 +1,11 @@
 from dataclasses import asdict
 
-import fitz
 import pytest
 
 from composition.pdf_source.detection import DetectionConfig
 from composition.pdf_source.profile_library import new_profile, new_rule
 from composition.template.model import CompositionError
+from core.pdf_backend import fitz
 from tests.composition.test_smart_mailpieces import Index
 
 

@@ -9,7 +9,7 @@ import math
 import re
 import uuid
 
-import fitz
+from core.pdf_backend import fitz
 
 
 class AppearanceError(ValueError):

@@ -8,7 +8,7 @@ import csv
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
+from core.pdf_backend import fitz
 
 
 def run_new_features(output: Path) -> dict:

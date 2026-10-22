@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fitz
 from PyQt6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
@@ -44,6 +43,7 @@ from PyQt6.QtWidgets import (
 from core.annotations import STAMP_IDS
 from core.diagnostics import log_failure
 from core.page_images import IMAGE_KINDS as PAGE_IMAGE_KINDS
+from core.pdf_backend import fitz
 from core.pdf_engine import parse_page_range
 from styles.tokens import D, S
 

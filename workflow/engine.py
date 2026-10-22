@@ -5,8 +5,6 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
-
 from composition.overlay.generator import generate
 from composition.overlay.model import EnvelopeSpec, OverlayJob
 from composition.overlay.serializer import load_project as load_overlay
@@ -20,6 +18,7 @@ from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
 from core.io_atomic import atomic_output
 from core.merge import MergeItem, MergeSpec, merge_pdf_items
+from core.pdf_backend import fitz
 
 from .extraction import ExtractionSpec, ExtractionStore, scan_pdf
 from .model import WorkflowRun

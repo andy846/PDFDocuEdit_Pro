@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import fitz
+from core.pdf_backend import fitz
 
 from .measurement import copy_page_scales
 from .pdf_io import set_safe_pdf_metadata, validate_pdf_file

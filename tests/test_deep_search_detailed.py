@@ -6,7 +6,6 @@ import csv
 import time
 from pathlib import Path
 
-import fitz
 from PyQt6.QtWidgets import QApplication
 
 from core.deep_search import (
@@ -17,6 +16,7 @@ from core.deep_search import (
     parse_keywords,
     search_folder_detailed,
 )
+from core.pdf_backend import fitz
 from core.search_report import ReportMeta, export_csv, export_html
 from core.search_results_store import SearchResultsStore
 from ui.deep_search_dialog import DeepSearchDialog

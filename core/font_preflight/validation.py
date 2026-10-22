@@ -2,8 +2,7 @@
 
 import hashlib
 
-import fitz
-
+from core.pdf_backend import fitz
 from core.pdf_operations.analysis import check_cancel
 
 from .inventory import object_value

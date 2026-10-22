@@ -16,8 +16,12 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--compositio
     from composition.worker import main as worker_main
     raise SystemExit(worker_main(sys.argv[2:]))
 
-import fitz
 from PIL import Image
+
+from core.pdf_backend import fitz
+
+# isort: split
+
 from PyQt6.QtCore import QSettings, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtTest import QTest

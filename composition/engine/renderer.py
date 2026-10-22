@@ -7,7 +7,6 @@ import re
 from contextlib import ExitStack
 from pathlib import Path
 
-import fitz
 import segno
 from barcode import ITF, Code128
 from PIL import Image
@@ -20,6 +19,7 @@ from composition.template.model import (
     Template,
     validate_template,
 )
+from core.pdf_backend import fitz
 
 from .fonts import load_font, permits_subsetting
 from .glyphs import GlyphFonts

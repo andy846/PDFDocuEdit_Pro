@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import fitz
 from PyQt6.QtCore import QPointF, QRectF
 
+from core.pdf_backend import fitz
 from ui.page_overlay import (
     extract_words_in_rect,
     pdf_rect_to_widget,

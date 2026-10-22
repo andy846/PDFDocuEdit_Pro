@@ -1,9 +1,9 @@
 import json
 from dataclasses import replace
 
-import fitz
 import pytest
 
+from core.pdf_backend import fitz
 from core.pdf_operations.analysis import PdfCancelled, analyse
 from core.pdf_operations.model import PdfOperationError, PdfOptions
 from core.pdf_operations.service import execute

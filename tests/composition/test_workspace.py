@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import time
 
-import fitz
 import pytest
 from PyQt6.QtCore import QTimer
 from PyQt6.QtTest import QTest
@@ -13,6 +12,7 @@ from composition.designer.workspace import CompositionWindow
 from composition.engine.assets import asset_root
 from composition.template.model import DataConfig
 from composition.template.serializer import load_project
+from core.pdf_backend import fitz
 
 pytestmark = pytest.mark.skipif(
     not (asset_root() / "qpdf" / "qpdf.exe").exists(), reason="Prepared Windows composition runtime required."

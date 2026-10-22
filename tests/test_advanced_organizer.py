@@ -1,7 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
@@ -21,6 +20,7 @@ from core.page_plan import (
     parse_page_selection,
     reverse_selected,
 )
+from core.pdf_backend import fitz
 from dialogs.document_dialogs import VisualOrganizerDialog
 from dialogs.organizer_tools import CropDialog, SplitPlanDialog
 

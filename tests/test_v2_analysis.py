@@ -3,7 +3,6 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-import fitz
 from PIL import Image
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QPixmap
@@ -25,6 +24,7 @@ from core.analysis import (
     _image_classification,
     inspect_and_analyze,
 )
+from core.pdf_backend import fitz
 from core.pdf_engine import PagePlanEntry, PdfEngine
 from core.platform_service import PlatformService, ProcessResult
 from core.verapdf import (

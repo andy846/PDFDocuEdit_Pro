@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-import fitz
 import pytest
 from PyQt6.QtCore import QObject, QPointF, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
@@ -19,6 +18,7 @@ from composition.pdf_source.detection import DetectionConfig, detect_texts, page
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
 from composition.template.model import MM_TO_PT, CompositionError, Element, Template
+from core.pdf_backend import fitz
 from tests.composition.test_mailpiece_detection import make_pdf, variable_spec
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import close_window

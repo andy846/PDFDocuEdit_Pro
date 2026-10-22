@@ -5,13 +5,13 @@ import json
 import shutil
 from pathlib import Path
 
-import fitz
 import pytest
 
 from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayObject
 from composition.overlay.serializer import load_project, save_project
 from composition.production.generator import JobCancelled
 from composition.template.model import MM_TO_PT, CompositionError, Element
+from core.pdf_backend import fitz
 from tests.production_approval import execute
 from workflow.extraction import ExtractionSpec, ExtractionStore, Region, extract_page, scan_pdf
 from workflow.model import WorkflowNode, WorkflowRun, WorkflowSpec

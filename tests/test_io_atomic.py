@@ -1,12 +1,12 @@
 from pathlib import Path
 
-import fitz
 import pytest
 
 import core.annotation_io as annotation_io
 import core.io_atomic as io_atomic
 import core.pdf_engine as pdf_engine
 from core.io_atomic import atomic_output
+from core.pdf_backend import fitz
 
 
 @pytest.mark.parametrize("failure", ["write", "validation", "replace"])

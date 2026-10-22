@@ -15,10 +15,9 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 
-import fitz
-
 from core.diagnostics import log_failure
 from core.measurement import copy_page_scale, copy_page_scales
+from core.pdf_backend import fitz
 from core.performance import PerformanceTrace
 
 from .io_atomic import atomic_output

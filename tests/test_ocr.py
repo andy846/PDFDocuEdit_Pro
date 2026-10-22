@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 import pytest
 
 import core.ocr as ocr_module
 from core.ocr import OCRError, OCRMode, OCRRequest, run_ocr
+from core.pdf_backend import fitz
 from core.platform_service import ProcessResult
 from core.tasks import TaskCancelled
 

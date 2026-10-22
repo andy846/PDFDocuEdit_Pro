@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import fitz
 import pytest
 
 from composition.data.source import import_records
@@ -10,6 +9,7 @@ from composition.engine.assets import asset_root
 from composition.production.generator import reconcile
 from composition.production.model import JobResult, ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, Template
+from core.pdf_backend import fitz
 from tests.production_approval import expect_blocked, generate
 
 pytestmark = pytest.mark.skipif(

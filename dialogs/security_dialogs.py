@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,6 +18,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from core.pdf_backend import fitz
 
 from .base import (
     PathLineEdit,

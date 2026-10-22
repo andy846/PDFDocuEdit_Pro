@@ -1,5 +1,4 @@
 """Accepted device settings are retained and browsing does not unlock mutations."""
-import fitz
 import pytest
 from PyQt6.QtCore import QSizeF
 from PyQt6.QtGui import QPageLayout, QPageSize
@@ -7,6 +6,7 @@ from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtWidgets import QDialog
 
 import dialogs.batch_print_dialog as batch_module
+from core.pdf_backend import fitz
 from core.printing import PrintJob
 from dialogs.batch_print_dialog import BatchPrintDialog
 from dialogs.print_profile import printer_profile
