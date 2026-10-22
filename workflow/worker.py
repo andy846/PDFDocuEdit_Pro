@@ -5,8 +5,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+import fitz
+
 from composition.template.model import MM_TO_PT, CompositionError
-from core.pdf_backend import fitz
 
 from .engine import execute, external_fields
 from .extraction import ExtractionSpec, ExtractionStore, extract_page

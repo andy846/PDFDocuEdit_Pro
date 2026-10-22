@@ -1,6 +1,5 @@
 """Observable proportions and arbitrary-angle image/stamp editing."""
-from pathlib import Path
-
+import fitz
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw
@@ -9,7 +8,6 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtTest import QTest
 
 from core.annotations import AnnotationOp, apply_annotation, list_annotations, update_annotation_geometry
-from core.pdf_backend import fitz
 from tests.test_document_windows import documents
 from tests.test_document_windows import editor as editor
 from ui.page_overlay import PageOverlay
@@ -127,18 +125,18 @@ def test_native_stamp_fractional_angle_is_editable_without_drift(page_rotation):
 
 @pytest.mark.parametrize("page_rotation", [0, 90, 180, 270])
 def test_native_stamp_angle_matches_independent_native_reference_after_save(page_rotation):
-    # Keep the independent baseline appearance: 2.0's set_rotation()/update()
-    # no longer produces this rotated native reference. Do not regenerate the
-    # oracle with the implementation being tested or loosen pixel tolerance.
-    fixture = Path(__file__).parent / "fixtures" / "native-draft-stamp-30.pdf"
-    with fitz.open() as doc, fitz.open(fixture) as reference:
+    with fitz.open() as doc, fitz.open() as reference:
         page = doc.new_page(width=595 if page_rotation % 180 == 0 else 842,
                             height=842 if page_rotation % 180 == 0 else 595)
         page.set_rotation(page_rotation)
         apply_annotation(doc, AnnotationOp(kind="stamp", page=0,
             rects=(fitz.Rect(100, 100, 290, 150) * page.derotation_matrix,),
             visual_rotation=page_rotation, rotation=30))
-        expected = np.frombuffer(reference[0].get_pixmap().samples, np.uint8).astype(float)
+        ref = reference.new_page(width=595, height=842)
+        stamp = ref.add_stamp_annot(fitz.Rect(100, 100, 290, 150), stamp=fitz.STAMP_Draft)
+        stamp.set_rotation(30)
+        stamp.update()
+        expected = np.frombuffer(ref.get_pixmap().samples, np.uint8).astype(float)
         with fitz.open(stream=doc.tobytes(garbage=4), filetype="pdf") as reopened:
             actual = np.frombuffer(reopened[0].get_pixmap().samples, np.uint8).astype(float)
             assert np.abs(actual - expected).mean() < .15

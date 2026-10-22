@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 
+import fitz
 import pytest
 
 from composition.engine.assets import asset_root
 from composition.engine.renderer import import_background, render_preview
 from composition.template.model import CompositionError, Element, FontSpec, Template
-from core.pdf_backend import fitz
 
 pytestmark = pytest.mark.skipif(
     not (asset_root() / "fonts" / "NotoSans-Regular.ttf").exists(),

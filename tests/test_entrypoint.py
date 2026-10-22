@@ -17,7 +17,6 @@ import sys
 import traceback
 from types import SimpleNamespace as NS
 from pathlib import Path
-from core.pdf_backend import fitz
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMainWindow
 import main
@@ -146,7 +145,6 @@ assert paths == [first.resolve(), missing.resolve(), second.resolve()]
 
 def test_file_open_event_is_queued_until_viewer_connects() -> None:
     script = """
-from core.pdf_backend import fitz
 from PyQt6.QtCore import QEvent
 from main import PDFDocuEditApplication
 
@@ -180,9 +178,9 @@ assert received == ['/tmp/finder-open.pdf']
 def test_initial_pdf_open_waits_until_window_event_loop(
     tmp_path, monkeypatch
 ) -> None:
+    import fitz
     from PyQt6.QtWidgets import QApplication
 
-    from core.pdf_backend import fitz
     from core.viewer import PDFViewer
 
     app = QApplication.instance() or QApplication(
@@ -213,9 +211,9 @@ def test_initial_pdf_open_waits_until_window_event_loop(
 
 
 def test_queued_pdf_open_completes_in_background(tmp_path) -> None:
+    import fitz
     from PyQt6.QtWidgets import QApplication
 
-    from core.pdf_backend import fitz
     from core.viewer import PDFViewer
 
     app = QApplication.instance() or QApplication(
@@ -242,10 +240,10 @@ def test_queued_encrypted_pdf_resumes_after_modal_password_prompt(
     tmp_path, monkeypatch
 ) -> None:
     """The prompt's nested event loop may finish the first open task early."""
+    import fitz
     from PyQt6.QtWidgets import QApplication
 
     from core import viewer as viewer_module
-    from core.pdf_backend import fitz
     from core.viewer import PDFViewer
 
     app = QApplication.instance() or QApplication(
@@ -323,7 +321,6 @@ import time
 import traceback
 import uuid
 import weakref
-from core.pdf_backend import fitz
 from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication

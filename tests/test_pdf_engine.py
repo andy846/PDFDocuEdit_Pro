@@ -3,13 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Event, Thread
 
+import fitz
 import pytest
 
 import core.pdf_engine as pdf_engine_module
 import core.tools as tools_module
 from core.annotations import AnnotationOp, apply_annotation
 from core.capabilities import Capability, CapabilityId
-from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK, PdfEngine, PdfEngineError, parse_page_range
 from core.pdf_io import PdfValidationError
 from core.platform_service import ProcessResult

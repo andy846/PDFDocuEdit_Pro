@@ -1,6 +1,7 @@
 import csv
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.engine.barcode_profiles import BarcodeProfile
@@ -9,7 +10,6 @@ from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
 from composition.production.model import ProductionJob
 from composition.template.model import Element, PageSpec, SequenceSpec, Template
-from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import make_source
 from tests.production_approval import expect_blocked, generate
 from tests.production_approval import overlay_generate as generate_overlay

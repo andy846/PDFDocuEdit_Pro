@@ -8,9 +8,10 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import fitz
+
 from composition.production.generator import check_cancel
 from composition.template.model import MM_TO_PT, CompositionError
-from core.pdf_backend import fitz
 
 from .model import EnvelopeSettings
 from .planner import EnvelopePlan

@@ -4,12 +4,12 @@ import time
 from pathlib import Path
 from shutil import copyfile
 
+import fitz
 import pytest
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from core.overlay import OverlayFileResult
-from core.pdf_backend import fitz
 from dialogs.overlay_tool import OverlayDialog, OverlayResultsDialog
 
 

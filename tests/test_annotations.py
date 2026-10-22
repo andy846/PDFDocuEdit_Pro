@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import fitz
 import pytest
 
 from core.annotation_io import (
@@ -38,7 +39,6 @@ from core.annotations import (
     update_annotation_geometry,
     update_annotation_text,
 )
-from core.pdf_backend import fitz
 
 
 def make_doc(tmp_path: Path) -> tuple[fitz.Document, Path]:

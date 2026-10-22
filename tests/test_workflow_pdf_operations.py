@@ -2,9 +2,9 @@
 from dataclasses import replace
 from pathlib import Path
 
+import fitz
 import pytest
 
-from core.pdf_backend import fitz
 from tests.production_approval import execute
 from tests.test_pdf_operations import source_file
 from tests.test_workflow_core import configured

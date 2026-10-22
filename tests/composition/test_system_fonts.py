@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import fitz
 import pytest
 from fontTools.ttLib import TTCollection, TTFont
 
@@ -10,7 +11,6 @@ from composition.engine.renderer import render_preview
 from composition.engine.system_fonts import export_face, font_catalogue, inspect_font_file
 from composition.template.model import CompositionError, Element, FontSpec, Template
 from composition.template.serializer import load_project, save_project
-from core.pdf_backend import fitz
 
 
 def test_collection_face_export_and_portable_save(tmp_path):

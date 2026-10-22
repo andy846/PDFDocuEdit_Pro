@@ -45,7 +45,8 @@ def test_new_media_node_inherits_and_roundtrips():
 
 @pytest.mark.parametrize("source,expected",[("project",8),("workflow",6),(None,6)])
 def test_batch_media_source_used_by_inspection_review_and_generation(tmp_path, source, expected):
-    from core.pdf_backend import fitz
+    import fitz
+
     from tests.production_approval import execute_batch
     from workflow.batch import approve
     from workflow.inspection import inspect_step

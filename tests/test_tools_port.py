@@ -7,12 +7,12 @@ import io
 import warnings
 from pathlib import Path
 
+import fitz
 from PIL import Image
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QLineEdit
 
 import core.viewer as viewer_module
-from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from ui.bottom_bar import BottomBar
 from ui.side_panel import SidePanel

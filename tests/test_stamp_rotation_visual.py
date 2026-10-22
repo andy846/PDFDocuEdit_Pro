@@ -1,12 +1,12 @@
 """Visible stamp placement and appearance, rather than annotation existence."""
 from dataclasses import replace
 
+import fitz
 import numpy as np
 import pytest
 from PyQt6.QtCore import QRectF
 
 from core.annotations import apply_annotation
-from core.pdf_backend import fitz
 from tests.test_open_performance import wait_until
 from ui.pdf_canvas import PdfCanvas, ToolMode
 

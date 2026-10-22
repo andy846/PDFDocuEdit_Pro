@@ -5,6 +5,7 @@ import subprocess
 import sys
 from dataclasses import asdict
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QFontDatabase, QImage
@@ -15,7 +16,6 @@ from composition.engine.assets import asset_root
 from composition.engine.renderer import render_preview
 from composition.overlay.renderer import render_preview as overlay_preview
 from composition.template.model import Element
-from core.pdf_backend import fitz
 from styles.theme import apply_theme
 from tests.composition.test_batch_edit import bounded_ui, cleanup, setup_window  # noqa: F401
 
@@ -135,7 +135,6 @@ def test_batch_font_geometry_reaches_actual_pdf(app, tmp_path, overlay):
 def test_200_percent_inspector_smoke_in_isolated_qt_process(tmp_path):
     # A fresh Qt process is required: scale is fixed when QApplication starts.
     script = r'''
-from core.pdf_backend import fitz
 from PyQt6.QtGui import QFont,QFontDatabase
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest

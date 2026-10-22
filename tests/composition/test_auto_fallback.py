@@ -4,6 +4,7 @@ import csv
 import json
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.data.source import import_records
@@ -11,8 +12,6 @@ from composition.engine.fallback import AutoFallback
 from composition.engine.renderer import render_preview
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, PageSpec, Template
-from core.pdf_backend import fitz
-from tests.font_assertions import assert_span_face
 from tests.production_approval import expect_blocked, generate
 
 
@@ -31,8 +30,8 @@ def test_auto_keeps_primary_pixels_and_only_changes_missing_glyphs():
     raw = render_preview(template, {"Name": "田"}, auto_repair=True)
     with fitz.open(stream=raw, filetype="pdf") as doc:
         spans = [s for block in doc[0].get_text("dict")["blocks"] for line in block["lines"] for s in line["spans"]]
-        assert_span_face(doc[0], next(s for s in spans if "田" in s["text"]), "Noto Sans CJK HK")
-        assert_span_face(doc[0], next(s for s in spans if "Client" in s["text"]), "Noto Sans")
+        assert next(s for s in spans if "田" in s["text"])["font"].startswith("NotoSansCJK")
+        assert next(s for s in spans if "Client" in s["text"])["font"].startswith("NotoSans-Regular")
     assert template.elements[0].font.family == "Noto Sans" and not template.elements[0].glyph_repairs
     with pytest.raises(CompositionError, match="U\\+7530"):
         render_preview(template, {"Name": "田"})

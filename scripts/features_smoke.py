@@ -7,10 +7,7 @@ from pathlib import Path
 
 if not getattr(sys, 'frozen', False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core.pdf_backend import fitz
-
-# isort: split
-
+import fitz
 from PyQt6.QtCore import QSettings
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication

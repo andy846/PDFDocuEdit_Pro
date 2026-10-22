@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+import fitz
 import pytest
 from PIL import Image
 
@@ -27,7 +28,6 @@ from composition.template.model import (
     required_fields,
 )
 from composition.template.serializer import load_project, save_project
-from core.pdf_backend import fitz
 from tests.production_approval import dispatch, expect_blocked, generate
 
 

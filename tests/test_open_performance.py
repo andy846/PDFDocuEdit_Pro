@@ -3,6 +3,7 @@ from pathlib import Path
 from threading import Event, get_ident
 from time import monotonic
 
+import fitz
 import pytest
 from PyQt6.QtCore import QAbstractListModel, QTimer
 from PyQt6.QtGui import QImage
@@ -11,7 +12,6 @@ from PyQt6.QtWidgets import QWidget
 
 import core.viewer as viewer_module
 import ui.workspace as workspace_module
-from core.pdf_backend import fitz
 from core.reader_lifetime import after_readers
 from core.settings import SettingsManager
 from scripts.benchmark_open import synthetic_pdf

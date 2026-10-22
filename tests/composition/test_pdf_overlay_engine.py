@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import asdict
 
+import fitz
 import pytest
 
 from composition.overlay.generator import reconcile
@@ -12,7 +13,6 @@ from composition.overlay.model import BarcodeProfile, BarcodeToken, OverlayJob
 from composition.overlay.renderer import render_preview
 from composition.pdf_source.source import inspect_source
 from composition.template.model import CompositionError
-from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import make_source, sample_spec
 from tests.production_approval import expect_blocked
 from tests.production_approval import overlay_generate as generate

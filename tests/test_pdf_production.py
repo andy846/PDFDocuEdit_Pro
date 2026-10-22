@@ -1,9 +1,9 @@
 """Combined analysis must stay read-only, bounded and honest about coverage."""
 import csv
 
+import fitz
 import pytest
 
-from core.pdf_backend import fitz
 from core.pdf_operations.analysis import PdfCancelled
 from core.pdf_operations.overview import analyze_overview
 from ui.pdf_production_workspace import PdfProductionWorkspace

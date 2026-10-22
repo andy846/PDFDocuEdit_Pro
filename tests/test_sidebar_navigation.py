@@ -326,8 +326,9 @@ def test_viewer_responsive_collapse_restores_saved_preference(qt_application, tm
 
 
 def test_sidebar_navigation_does_not_modify_pdf(qt_application, tmp_path, monkeypatch):
+    import fitz
+
     import core.viewer as viewer_module
-    from core.pdf_backend import fitz
     from core.settings import SettingsManager
 
     settings = SettingsManager(tmp_path / "pdf-sidebar-settings.json")

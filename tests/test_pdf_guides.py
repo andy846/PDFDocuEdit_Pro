@@ -1,11 +1,11 @@
 """Reference guides stay on paper, snap in screen pixels, and never alter PDFs."""
+import fitz
 import pytest
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QKeyEvent, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QInputDialog
 
-from core.pdf_backend import fitz
 from ui.pdf_canvas import LayoutMode, PdfCanvas, ToolMode
 from ui.pdf_rulers import MM_PER_POINT
 

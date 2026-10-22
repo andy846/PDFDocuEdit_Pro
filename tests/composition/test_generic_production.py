@@ -295,11 +295,11 @@ def test_cycle_audit_preserves_source_rows_after_sorting(tmp_path):
 
 @pytest.mark.parametrize("configured_logic", [False, True])
 def test_qr_sequence_reopen_and_real_pdf_decode_remain_variable(tmp_path, configured_logic):
+    import fitz
     from PIL import Image
     from pyzbar.pyzbar import ZBarSymbol, decode
 
     from composition.engine.barcode_profiles import BarcodeToken
-    from core.pdf_backend import fitz
 
     template = Template(record_mode="generated", generated_count=3, sequences=[SequenceSpec("Seq", start=1, padding=6)])
     profile = BarcodeProfile(name="Content / variable fields", tokens=[

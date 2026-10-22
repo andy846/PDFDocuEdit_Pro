@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.template.model import CompositionError, Element, PageSpec, SequenceSpec, Template
 from composition.template.serializer import save_project
-from core.pdf_backend import fitz
 from tests.production_approval import execute_batch
 from workflow.batch import BatchJob, BatchRun, approve, load_record, prepare, save_record
 from workflow.model import WorkflowSpec

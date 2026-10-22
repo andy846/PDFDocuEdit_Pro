@@ -47,7 +47,8 @@ def memory(pid):
 
 
 def main():
-    from core.pdf_backend import fitz
+    import fitz
+
     from core.printing import (
         PrintJob,
         PrintRenderSettings,

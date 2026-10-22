@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from core.pdf_backend import fitz
+import fitz
 
 MM_TO_PT = 72.0 / 25.4
 PageMapping = Literal["repeat_last", "cycle", "matching_only"]

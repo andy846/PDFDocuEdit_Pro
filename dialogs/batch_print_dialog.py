@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import fitz
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPageSize
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinterInfo
@@ -35,7 +36,6 @@ from PyQt6.QtWidgets import (
 )
 
 from core.diagnostics import log_failure
-from core.pdf_backend import fitz
 
 from .base import ToolDialog
 from .batch_tools import PdfFileTable

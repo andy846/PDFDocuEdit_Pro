@@ -12,8 +12,9 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+import fitz
+
 from core.diagnostics import log_failure
-from core.pdf_backend import fitz
 
 from .capabilities import CapabilityId, detect_capabilities
 from .measurement import copy_page_scales

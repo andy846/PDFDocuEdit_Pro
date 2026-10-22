@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from enum import StrEnum
 from math import hypot
 
+import fitz
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import QApplication, QLineEdit, QWidget
@@ -14,7 +15,6 @@ from PyQt6.QtWidgets import QApplication, QLineEdit, QWidget
 from core.annotations import POINT_ANNOTATION_KINDS
 from core.measurement import SavedMeasurement, distance_mm, format_distance
 from core.page_images import IMAGE_KINDS
-from core.pdf_backend import fitz
 from styles.theme import get_colors
 
 SELECTION_ALPHA = 56

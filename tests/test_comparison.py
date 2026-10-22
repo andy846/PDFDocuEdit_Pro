@@ -1,7 +1,7 @@
+import fitz
 import pytest
 
 from core.comparison import compare_snapshots, manual_pair, snapshot_file, unpair
-from core.pdf_backend import fitz
 from core.tasks import TaskCancelled
 
 

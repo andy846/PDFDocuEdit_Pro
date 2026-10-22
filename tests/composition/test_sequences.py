@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 
+import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication, QDialogButtonBox
 
@@ -24,7 +25,6 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
-from core.pdf_backend import fitz
 from tests.composition.test_designer_controls import cleanup, wait
 from tests.production_approval import dispatch, expect_blocked, generate
 

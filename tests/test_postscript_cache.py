@@ -2,9 +2,8 @@
 import hashlib
 import sqlite3
 
+import fitz
 import pytest
-
-from core.pdf_backend import fitz
 
 IDENTITY = {"sha256": "a" * 64, "version": "test-1"}
 PROFILE = {"kind": "editor-v1"}

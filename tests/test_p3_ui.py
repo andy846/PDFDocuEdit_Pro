@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtGui import QFontDatabase, QImage
@@ -15,7 +16,6 @@ from core.annotations import (
     AnnotationStyle,
     freetext_visual_metrics,
 )
-from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from ui.pdf_canvas import ToolMode
 

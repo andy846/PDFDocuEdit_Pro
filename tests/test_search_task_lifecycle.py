@@ -6,11 +6,11 @@ import sys
 from pathlib import Path
 from threading import Event
 
+import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication
 
 import core.viewer as viewer_module
-from core.pdf_backend import fitz
 from tests.composition.test_workspace import wait_until
 from tests.test_search_page_actions import window_for
 
@@ -149,7 +149,6 @@ def test_search_native_lifecycle_stress_in_subprocess(tmp_path):
     result = subprocess.run(
         [sys.executable, "-c",
          "from pathlib import Path; import sys; "
-         "from core.pdf_backend import fitz; "
          "from tests.test_search_task_lifecycle import _stress; _stress(Path(sys.argv[1]))",
          str(tmp_path)],
         cwd=Path(__file__).resolve().parents[1],

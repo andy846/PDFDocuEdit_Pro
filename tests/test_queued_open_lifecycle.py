@@ -1,9 +1,9 @@
 """Issue #18: queued opens own only their own activity, including early returns."""
 from threading import Event
 
+import fitz
 from PyQt6.QtWidgets import QApplication
 
-from core.pdf_backend import fitz
 from tests.test_document_windows import documents
 from tests.test_document_windows import editor as editor
 from tests.test_open_performance import wait_until

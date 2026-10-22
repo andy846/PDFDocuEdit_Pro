@@ -13,9 +13,10 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+import fitz
+
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
-from core.pdf_backend import fitz
 from core.pdf_io import validate_pdf_file
 from core.variables import VariableContext
 

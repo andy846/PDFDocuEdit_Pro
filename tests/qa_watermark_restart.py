@@ -14,10 +14,7 @@ from uuid import uuid4
 def phase_run(phase, directory):
     os.environ['PDFDOCUEDIT_ENABLE_COMPOSITION']='0'
     os.environ['PDFDOCUEDIT_UPDATE_ROOT']=str(directory/'isolated-data')
-    from core.pdf_backend import fitz
-
-    # isort: split
-
+    import fitz
     from PyQt6.QtCore import QSettings, QTimer
     from PyQt6.QtWidgets import QApplication, QMessageBox
 

@@ -3,10 +3,10 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import fitz
 from PyQt6.QtWidgets import QApplication
 
 import core.viewer as viewer_module
-from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from ui.command_palette import CommandPalette
 

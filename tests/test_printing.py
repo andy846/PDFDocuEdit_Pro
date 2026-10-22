@@ -1,6 +1,7 @@
 import time
 from threading import Event
 
+import fitz
 import pytest
 from PyQt6.QtCore import QThread, QTimer
 from PyQt6.QtPrintSupport import QPrinter
@@ -8,7 +9,6 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 import ui.print_controller as controller_module
-from core.pdf_backend import fitz
 from core.printing import PrintJob, PrintRenderSettings, prepare_print_job
 from core.tasks import TaskCancelled
 from ui.print_controller import PrintController

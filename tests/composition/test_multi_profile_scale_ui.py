@@ -2,6 +2,7 @@
 
 import time
 
+import fitz
 import pytest
 from PyQt6.QtCore import QTimer
 
@@ -11,7 +12,6 @@ from composition.overlay.model import EnvelopeSpec
 from composition.pdf_source.model import EnvelopeSettings
 from composition.pdf_source.source import inspect_source
 from composition.production.resources import peak_memory
-from core.pdf_backend import fitz
 from tests.composition.test_multi_rule_detection import profile
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import wait_until

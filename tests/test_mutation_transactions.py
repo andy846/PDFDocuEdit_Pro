@@ -1,8 +1,8 @@
 from pathlib import Path
 
+import fitz
 import pytest
 
-from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine, PdfEngineError
 from core.undo import UndoStack
 

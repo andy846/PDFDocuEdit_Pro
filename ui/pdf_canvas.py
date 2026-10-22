@@ -9,6 +9,7 @@ from math import hypot
 from threading import Event
 from time import perf_counter
 
+import fitz
 from PyQt6.QtCore import (
     QEvent,
     QObject,
@@ -33,7 +34,6 @@ from core.annotations import (
 )
 from core.diagnostics import connect_interrupts, log_failure, log_lifecycle
 from core.measurement import PageScale, page_scale, saved_measurements
-from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK
 from core.reader_lifetime import ReaderBusyError, ReaderLease, wait_for_readers
 from core.tasks import FunctionTask

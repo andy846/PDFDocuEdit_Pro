@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
+import fitz
 from PyQt6.QtCore import (
     QBuffer,
     QByteArray,
@@ -105,7 +106,6 @@ from core.measurement import (
 )
 from core.ocr import OCRMode, OCRResult, run_ocr
 from core.overlay import OverlayFileResult
-from core.pdf_backend import fitz
 from core.pdf_engine import (
     DOCUMENT_LOCK,
     PdfEngine,

@@ -2,11 +2,11 @@
 import hashlib
 from pathlib import Path
 
+import fitz
 import pytest
 
 import composition.media.postscript as ps
 from composition.production.generator import JobCancelled
-from core.pdf_backend import fitz
 from tests.composition.test_postscript import ps_media
 
 

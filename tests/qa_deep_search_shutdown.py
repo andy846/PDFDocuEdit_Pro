@@ -8,9 +8,7 @@ from threading import Event
 
 
 def run(folder: Path, route: str) -> None:
-    from core.pdf_backend import fitz
-
-    # isort: split
+    import fitz
     from PyQt6.QtCore import QCoreApplication, QEvent, QSettings, QThreadPool, QTimer
     from PyQt6.QtWidgets import QApplication
 

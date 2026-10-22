@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.overlay.model import BarcodeProfile, BarcodeToken, EnvelopeSpec, OverlayJob, OverlayObject
@@ -16,7 +17,6 @@ from composition.pdf_source.multi_detection import scan_pdf
 from composition.pdf_source.planner import SYSTEM_FIELDS, EnvelopePlan
 from composition.pdf_source.source import inspect_source
 from composition.template.model import CompositionError, Element
-from core.pdf_backend import fitz
 from tests.composition.test_multi_rule_detection import profile
 from tests.production_approval import expect_blocked, overlay_generate
 

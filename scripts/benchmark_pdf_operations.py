@@ -15,8 +15,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def one_case(pages, directory, operation):
     sys.path.insert(0, str(ROOT))
+    import fitz
+
     from composition.production.resources import peak_memory
-    from core.pdf_backend import fitz
     from core.pdf_operations.model import PdfOptions
     from core.pdf_operations.service import run
     directory.mkdir(parents=True, exist_ok=False)

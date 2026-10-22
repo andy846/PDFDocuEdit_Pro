@@ -7,6 +7,7 @@ from collections import OrderedDict
 from dataclasses import replace
 from pathlib import Path
 
+import fitz
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
@@ -57,7 +58,6 @@ from core.page_plan import (
     parse_page_selection,
     reverse_selected,
 )
-from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK, PagePlanEntry, parse_page_range
 
 from .base import SortableTableWidget, ToolDialog

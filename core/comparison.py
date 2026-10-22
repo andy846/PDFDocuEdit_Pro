@@ -8,9 +8,9 @@ import unicodedata
 from dataclasses import dataclass
 
 import cv2
+import fitz
 import numpy as np
 
-from core.pdf_backend import fitz
 from core.tasks import TaskCancelled
 
 

@@ -2,6 +2,7 @@ import copy
 from dataclasses import asdict
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.review.authorization import ReviewSession, approve_snapshot
@@ -9,7 +10,6 @@ from composition.review.presentation import ReviewDashboardModel
 from composition.review.service import create_review, review_rows
 from composition.review.ui import ReviewController
 from composition.template.model import CompositionError
-from core.pdf_backend import fitz
 from tests.test_mail_merge_workflow import pair, recipe
 from tests.test_workflow_branch_engine import fixture
 from tests.test_workflow_core import configured, fixture_pdf

@@ -5,6 +5,7 @@ import csv
 import json
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.data.source import import_records
@@ -20,7 +21,6 @@ from composition.template.model import (
     Template,
 )
 from composition.template.serializer import load_project, save_project
-from core.pdf_backend import fitz
 from tests.production_approval import dispatch, expect_blocked, generate
 
 

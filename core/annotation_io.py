@@ -7,8 +7,9 @@ import os
 import tempfile
 from pathlib import Path
 
+import fitz
+
 from core.diagnostics import log_failure
-from core.pdf_backend import fitz
 
 from .annotations import (
     AnnotationOp,

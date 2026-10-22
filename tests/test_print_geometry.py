@@ -1,12 +1,12 @@
 """Effective printable geometry, late driver changes, and margin origins."""
 
+import fitz
 import pytest
 from PyQt6.QtCore import QMarginsF
 from PyQt6.QtGui import QPageLayout, QPageSize
 from PyQt6.QtPrintSupport import QPrinter
 
 import ui.print_controller as module
-from core.pdf_backend import fitz
 from core.printing import PrintJob, PrintRenderSettings, place_print_image
 from core.tasks import TaskCancelled
 from core.viewer import PDFViewer

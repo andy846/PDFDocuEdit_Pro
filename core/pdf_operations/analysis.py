@@ -6,7 +6,8 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from core.pdf_backend import fitz
+import fitz
+
 from core.pdf_runtime import qpdf_executable
 from core.platform_service import PlatformService
 

@@ -6,6 +6,7 @@ import threading
 import time
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QMessageBox
@@ -13,7 +14,6 @@ from PyQt6.QtWidgets import QMessageBox
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
 from composition.overlay.serializer import load_project
-from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK, SearchHit
 from tests.composition.test_pdf_overlay_models import make_source
 from tests.composition.test_workspace import wait_until

@@ -1,10 +1,10 @@
 import logging
 
+import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication
 
 from core.diagnostics import log_failure
-from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine
 from core.tasks import FunctionTask
 from updates.protocol import UpdateError, atomic_json

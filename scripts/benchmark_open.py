@@ -39,9 +39,6 @@ def synthetic_pdf(path, count):
 
 
 def main():
-    from core.pdf_backend import fitz  # noqa: F401
-
-    # isort: split
     from PyQt6.QtCore import QTimer
     from PyQt6.QtWidgets import QApplication
 

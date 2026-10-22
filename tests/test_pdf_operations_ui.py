@@ -1,9 +1,9 @@
 import time
 from pathlib import Path
 
+import fitz
 from PyQt6.QtWidgets import QFileDialog
 
-from core.pdf_backend import fitz
 from core.pdf_operations.model import PdfOperationPlan, PdfOptions
 from dialogs.pdf_operations import PdfOperationDialog
 from ui.variable_name import VariableNameEdit

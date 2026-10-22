@@ -128,9 +128,10 @@ def test_manual_conflict_resolution_is_recorded():
 
 
 def classified_spec(tmp_path):
+    import fitz
+
     from composition.overlay.model import EnvelopeSpec
     from composition.pdf_source.source import inspect_source
-    from core.pdf_backend import fitz
 
     path = tmp_path / "source.pdf"
     with fitz.open() as pdf:

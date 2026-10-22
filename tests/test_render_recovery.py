@@ -1,7 +1,7 @@
 """A failed/paused page must not strand this or the next document."""
+import fitz
 import pytest
 
-from core.pdf_backend import fitz
 from core.reader_lifetime import pause_readers
 from tests.test_document_windows import editor as editor
 from tests.test_open_performance import wait_until

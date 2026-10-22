@@ -2,10 +2,10 @@ import json
 import sqlite3
 from pathlib import Path
 
+import fitz
 import pytest
 
 from composition.production.generator import JobCancelled
-from core.pdf_backend import fitz
 from tests.production_approval import execute, execute_batch
 from tests.test_mail_merge_workflow import pair, recipe
 from tests.test_workflow_core import configured, fixture_pdf

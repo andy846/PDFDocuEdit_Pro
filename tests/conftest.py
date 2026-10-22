@@ -52,10 +52,6 @@ def pytest_configure(config) -> None:
     writes are redirected to an INI file under the system temp directory.
     """
     del config  # unused
-    # Match the application entrypoint's native DLL initialization order.
-    from core.pdf_backend import fitz  # noqa: F401
-
-    # isort: split
     from PyQt6.QtCore import QSettings
 
     settings_dir = tempfile.mkdtemp(prefix="pdfdocuedit-qsettings-")

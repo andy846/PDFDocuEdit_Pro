@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
+import fitz
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from core.pdf_backend import fitz
 from styles.theme import is_dark
 from styles.tokens import S
 

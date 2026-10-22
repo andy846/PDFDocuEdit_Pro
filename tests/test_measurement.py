@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
@@ -24,7 +25,6 @@ from core.measurement import (
     saved_measurements,
     set_page_scale,
 )
-from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine
 from ui.page_overlay import PageOverlay
 

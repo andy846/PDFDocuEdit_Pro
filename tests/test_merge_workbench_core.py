@@ -4,6 +4,7 @@ import csv
 import hashlib
 from pathlib import Path
 
+import fitz
 import pytest
 
 from core.merge import (
@@ -16,7 +17,6 @@ from core.merge import (
     save_merge_list,
     strict_pages,
 )
-from core.pdf_backend import fitz
 from core.tools import ToolError
 
 

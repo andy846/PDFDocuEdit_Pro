@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
@@ -11,7 +12,6 @@ from PyQt6.QtWidgets import QApplication, QFileDialog
 from composition.designer.workspace import CompositionWindow
 from composition.template.model import DataConfig, FontSpec
 from composition.template.serializer import load_project
-from core.pdf_backend import fitz
 from tests.composition.test_designer_controls import cleanup, wait
 
 

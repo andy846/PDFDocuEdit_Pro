@@ -2,10 +2,10 @@
 import time
 from pathlib import Path
 
+import fitz
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
-from core.pdf_backend import fitz
 from ui.pdf_production_workspace import PdfProductionWorkspace
 
 

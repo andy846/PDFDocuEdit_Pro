@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtWidgets import QApplication
 
@@ -19,7 +20,6 @@ from composition.pdf_source.model import EnvelopeSettings, SourceInfo
 from composition.pdf_source.planner import EnvelopePlan
 from composition.pdf_source.source import inspect_source
 from composition.template.model import MM_TO_PT, CompositionError, Element
-from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.production_approval import dispatch
 from tests.production_approval import overlay_generate as generate

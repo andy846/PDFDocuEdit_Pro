@@ -1,10 +1,10 @@
 """Owned printable content stays editable without changing unrelated PDF data."""
 from dataclasses import replace
 
+import fitz
 import numpy as np
 import pytest
 
-from core.pdf_backend import fitz
 from core.watermarks import (
     WatermarkError,
     WatermarkSpec,

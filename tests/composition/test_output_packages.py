@@ -3,10 +3,11 @@
 from collections import namedtuple
 from pathlib import Path
 
+import fitz
+
 from composition.production.model import ProductionJob
 from composition.production.output_policy import OutputPolicy
 from composition.template.model import Element, PageSpec, SequenceSpec, Template
-from core.pdf_backend import fitz
 from tests.production_approval import generate
 
 

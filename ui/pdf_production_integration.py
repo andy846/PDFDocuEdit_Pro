@@ -1,10 +1,9 @@
 """Narrow main-window integration for PDF Production Tools."""
 from pathlib import Path
 
+import fitz
 from PyQt6 import sip
 from PyQt6.QtWidgets import QFileDialog
-
-from core.pdf_backend import fitz
 
 
 def open_production_workspace(window, workspace_type, section):

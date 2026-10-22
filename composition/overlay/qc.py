@@ -1,10 +1,10 @@
 """Exact payload decoding on cropped mark areas in the final assembled PDF."""
 from __future__ import annotations
 
+import fitz
 from PIL import Image
 
 from composition.template.model import CompositionError
-from core.pdf_backend import fitz
 
 
 def _decode_short_i25(image):

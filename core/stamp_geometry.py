@@ -1,7 +1,7 @@
 """Rotate native stamp appearances without rasterizing or regenerating them."""
 from math import atan2, degrees, isfinite
 
-from core.pdf_backend import fitz
+import fitz
 
 
 def _appearance(page, annot):

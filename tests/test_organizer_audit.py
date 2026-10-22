@@ -3,6 +3,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QTest
@@ -16,7 +17,6 @@ from PyQt6.QtWidgets import (
 
 from core.io_atomic import atomic_output
 from core.page_plan import PagePlanEntry, PlanReader, apply_plan_to_document, duplicate_entries, export_plan
-from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine
 from core.undo import UndoStack
 from dialogs.document_dialogs import VisualOrganizerDialog

@@ -2,7 +2,8 @@
 
 from collections import defaultdict
 
-from core.pdf_backend import fitz
+import fitz
+
 from core.pdf_operations.analysis import check_cancel, file_hash, open_pdf
 
 from .model import FontInventory, FontPreflightError, FontResource

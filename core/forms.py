@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
-from core.pdf_backend import fitz
+import fitz
 
 
 class FormError(ValueError):
@@ -19,45 +19,6 @@ class FormError(ValueError):
 
 class UnsupportedCalculation(FormError):
     pass
-
-
-_ACTIONS = {"script": "A", "script_stroke": "AA/K", "script_format": "AA/F",
-            "script_change": "AA/V", "script_calc": "AA/C", "script_blur": "AA/Bl", "script_focus": "AA/Fo"}
-
-
-def _field_chain(doc, xref):
-    owners = []
-    while xref:
-        if xref in owners or len(owners) >= 64:
-            raise FormError("Invalid or cyclic form field hierarchy")
-        owners.append(xref)
-        kind, value = doc.xref_get_key(xref, "Parent")
-        if kind == "null":
-            break
-        if kind != "xref":
-            raise FormError("Invalid form field parent")
-        xref = int(value.split()[0])
-    return owners
-
-
-def _field_action(doc, owners, key):
-    for owner in owners:
-        if doc.xref_get_key(owner, key)[0] == "null":
-            continue
-        kind, value = doc.xref_get_key(owner, key + "/JS")
-        if kind == "null" and doc.xref_get_key(owner, key + "/S") != ("name", "/JavaScript"):
-            return ""  # URI / SubmitForm actions are not JavaScript programs.
-        if kind == "string":
-            return value
-        if kind == "xref":
-            raw = doc.xref_stream(int(value.split()[0]))
-            if raw is not None and len(raw) <= 65536:
-                try:
-                    return raw.decode("utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8")
-                except UnicodeError as exc:
-                    raise FormError("Unsupported form action encoding") from exc
-        raise FormError("Unsupported form action structure")
-    return ""
 
 
 @dataclass(frozen=True)
@@ -97,9 +58,6 @@ def enumerate_fields(doc) -> list[FormField]:
     fields = {}
     for page in doc:
         for widget in page.widgets() or ():
-            owners = _field_chain(doc, widget.xref)
-            actions = {name: getattr(widget, name, None) or _field_action(doc, owners, key)
-                       for name, key in _ACTIONS.items()}
             name = widget.field_name or f"Unnamed field {widget.xref}"
             states = (widget.button_states() or {}).get("normal", ())
             ref = WidgetRef(page.number, widget.xref, tuple(widget.rect), tuple(states))
@@ -108,9 +66,9 @@ def enumerate_fields(doc) -> list[FormField]:
                     name, widget.field_type, widget.field_type_string,
                     widget.field_value, widget.field_flags,
                     choices=tuple(widget.choice_values or ()),
-                    calculation=actions["script_calc"],
+                    calculation=widget.script_calc or "",
                     scripts=tuple(key for key in ("script", "script_stroke", "script_format",
-                        "script_change", "script_blur", "script_focus") if actions[key]),
+                        "script_change", "script_blur", "script_focus") if getattr(widget, key, None)),
                     max_length=widget.text_maxlen or 0, signed=bool(widget.is_signed))
             logical = fields[name]
             if widget.field_type == fitz.PDF_WIDGET_TYPE_LISTBOX and widget.field_flags & (1 << 21):
@@ -342,12 +300,6 @@ def apply_values(doc, staged, signatures=None, *, acknowledge_scripts=False):
         for ref in refs:
             page = doc[ref.page]
             widget = page.load_widget(ref.xref)
-            owners = _field_chain(doc, ref.xref)
-            # 2.0 stores actions on logical parent fields but may omit them on
-            # loaded Widget objects. Preserve them when updating appearances.
-            for attribute, key in _ACTIONS.items():
-                if not getattr(widget, attribute, None):
-                    setattr(widget, attribute, _field_action(doc, owners, key) or None)
             widget.field_value = value[0] if isinstance(value, list) and value else ("" if isinstance(value, list) else value)
             if item.kind == fitz.PDF_WIDGET_TYPE_RADIOBUTTON and (value not in ref.states or value == "Off"):
                 widget.field_value = False

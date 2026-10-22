@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.pdf_backend import fitz
+import fitz
 
 
 def _copy_dictionary(doc, value):

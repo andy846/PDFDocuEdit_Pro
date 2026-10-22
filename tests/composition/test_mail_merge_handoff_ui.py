@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
@@ -11,7 +12,6 @@ from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
 from composition.designer.workspace import CompositionWindow
 from composition.engine.renderer import render_preview
 from composition.template.model import SequenceSpec
-from core.pdf_backend import fitz
 from core.pdf_engine import DOCUMENT_LOCK, SearchHit
 from tests.composition.test_workspace import wait_until
 from tests.composition.test_workspace_handoff import (

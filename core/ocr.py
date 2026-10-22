@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from core.pdf_backend import fitz
+import fitz
 
 from .capabilities import bundled_tesseract_runtime
 from .measurement import copy_page_scales

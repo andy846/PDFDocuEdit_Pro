@@ -264,7 +264,7 @@ class InsertPagesDialog(ToolDialog):
                 source = Path(self.single_path.text())
                 if not source.is_file():
                     raise ValueError("Choose a valid source PDF.")
-                from core.pdf_backend import fitz
+                import fitz
 
                 with fitz.open(source) as document:
                     pages = (
@@ -284,7 +284,7 @@ class InsertPagesDialog(ToolDialog):
                 source = Path(self.repeat_path.text())
                 if not source.is_file():
                     raise ValueError("Choose a valid source PDF.")
-                from core.pdf_backend import fitz
+                import fitz
 
                 with fitz.open(source) as document:
                     pages = parse_page_range(self.repeat_pages.text(), document.page_count)

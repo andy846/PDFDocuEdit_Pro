@@ -1,9 +1,9 @@
 from pathlib import Path
 
+import fitz
 import pytest
 
 from core.annotations import apply_redaction_marks, redact
-from core.pdf_backend import fitz
 from core.pdf_engine import PdfEngine, PdfEngineError
 
 MARKER = "REDACT_PRIVATE_MARKER_74291"

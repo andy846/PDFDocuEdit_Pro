@@ -3,13 +3,13 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox, QTabBar
 
 import core.viewer as viewer_module
-from core.pdf_backend import fitz
 from core.settings import SettingsManager
 
 

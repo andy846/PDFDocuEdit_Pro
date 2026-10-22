@@ -117,9 +117,10 @@ def dispatch(request: dict, *, session=None) -> dict:
                 return (plan.output_page(i) for i in range(start,stop+1))
         return {**asdict(plan.preflight()),"start":start,"rows":list(plan_rows(Window()))}
     if task == "mailpiece_preview":
+        import fitz
+
         from composition.pdf_source.source import _stat, geometry
         from composition.template.model import CompositionError
-        from core.pdf_backend import fitz
         source = Path(request["source"])
         expected = (request["size"], request["mtime_ns"])
         if _stat(source) != expected:
@@ -254,9 +255,10 @@ def dispatch(request: dict, *, session=None) -> dict:
             info["detection_profile"] = validate_profile(previous["profile"], for_scan=True)
         return info
     if task == "overlay_preview":
+        import fitz
+
         from composition.overlay.model import EnvelopeSpec
         from composition.overlay.renderer import render_preview as overlay_preview
-        from core.pdf_backend import fitz
         spec=EnvelopeSpec.from_dict(request["project"])
         database=request.get("external_database", "")
         if database and request.get("external_data"):
@@ -346,10 +348,11 @@ def dispatch(request: dict, *, session=None) -> dict:
         size = import_background(request["source"], request.get("page", 0), request["target"])
         return {"background": request["target"], "width_mm": size[0], "height_mm": size[1]}
     if task == "template_backgrounds":
+        import fitz
+
         from composition.production.generator import check_cancel
         from composition.template.model import MAX_TEMPLATE_PAGES, CompositionError, PageSpec
         from composition.template.serializer import file_hash
-        from core.pdf_backend import fitz
         source=Path(request["source"])
         digest=file_hash(source)
         target=Path(request["target"])
@@ -367,7 +370,7 @@ def dispatch(request: dict, *, session=None) -> dict:
             raise CompositionError("Source changed during template import; import it again.")
         return {"template":Template(name=source.stem,pages=pages).to_dict()}
     if task == "preview":
-        from core.pdf_backend import fitz
+        import fitz
         template = Template.from_dict(request["template"])
         index = request.get("record", 1)
         design = request.get("design", not bool(request.get("store")))

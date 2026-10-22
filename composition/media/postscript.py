@@ -12,10 +12,11 @@ from contextlib import closing
 from pathlib import Path
 from time import monotonic
 
+import fitz
+
 from composition.production.generator import check_cancel
 from composition.template.model import CompositionError
 from composition.template.serializer import file_hash
-from core.pdf_backend import fitz
 
 from .model import MediaSpec, PrinterProfile, validate_stock_mapping
 

@@ -15,10 +15,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import fitz
 import numpy as np
 
 from core.diagnostics import log_failure
-from core.pdf_backend import fitz
 
 from .capabilities import CapabilityId, detect_capabilities
 from .ocr_language import OCR_LANGUAGE, normalize_ocr_language

@@ -12,7 +12,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.pdf_backend import fitz
+import fitz
+
 from core.tools import ToolError, _pdf_files
 
 

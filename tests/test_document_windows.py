@@ -2,6 +2,7 @@
 
 import time
 
+import fitz
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, Qt
@@ -10,7 +11,6 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from core import viewer as viewer_module
-from core.pdf_backend import fitz
 from core.settings import SettingsManager
 
 

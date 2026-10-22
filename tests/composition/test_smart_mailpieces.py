@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+import fitz
 import pytest
 
 from composition.pdf_source.detection import DetectionConfig
@@ -13,7 +14,6 @@ from composition.pdf_source.smart_detection import (
     teach_pdf,
 )
 from composition.template.model import CompositionError
-from core.pdf_backend import fitz
 
 
 class Index:

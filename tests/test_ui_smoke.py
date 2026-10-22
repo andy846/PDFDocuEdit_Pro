@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtWidgets import QApplication
 
 import core.viewer as viewer_module
-from core.pdf_backend import fitz
 from core.settings import SettingsManager
 from styles.tokens import D
 

@@ -7,6 +7,7 @@ import zipfile
 from contextlib import closing
 from datetime import date, datetime, time
 
+import fitz
 import pytest
 from openpyxl import Workbook
 from PyQt6.QtWidgets import QApplication, QDialogButtonBox
@@ -18,7 +19,6 @@ from composition.designer.workspace import CompositionWindow
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, DataConfig, Element, FontSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
-from core.pdf_backend import fitz
 from scripts.composition_excel_fixture import make_xls, make_xlsx
 from tests.composition.test_designer_controls import cleanup, wait
 from tests.production_approval import generate

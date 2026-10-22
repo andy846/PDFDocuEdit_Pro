@@ -1,12 +1,12 @@
 """Closing a document must retire its owned history, never unrelated files."""
 from threading import Event
 
+import fitz
 import pytest
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QMessageBox
 
 from core import viewer as viewer_module
-from core.pdf_backend import fitz
 from tests.test_document_windows import editor as editor
 from tests.test_document_windows import wait_closed
 from tests.test_open_performance import wait_until

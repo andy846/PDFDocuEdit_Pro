@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import fitz
 import pytest
 
 from composition.data.sequences import sequence_record
@@ -19,7 +20,6 @@ from composition.production.generator import JobCancelled
 from composition.production.model import ProductionJob
 from composition.template.model import CompositionError, Element, PageSpec, SequenceSpec, Template
 from composition.template.serializer import load_project, save_project
-from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.production_approval import (
     dispatch,

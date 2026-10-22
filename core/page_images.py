@@ -12,7 +12,7 @@ import re
 from math import atan2, cos, degrees, hypot, isfinite, radians, sin
 from pathlib import Path
 
-from core.pdf_backend import fitz
+import fitz
 
 from .pdf_engine import DOCUMENT_LOCK
 

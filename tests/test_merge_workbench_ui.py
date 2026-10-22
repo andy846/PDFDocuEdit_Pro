@@ -5,12 +5,12 @@ import threading
 import time
 from pathlib import Path
 
+import fitz
 import pytest
 from PyQt6.QtCore import QItemSelectionModel, Qt, QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from core.pdf_backend import fitz
 from tests.composition.test_workspace import wait_until
 from tests.composition.test_workspace_modes import app as mode_app
 from tests.composition.test_workspace_modes import window as mode_window

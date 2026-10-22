@@ -1,2 +1,0 @@
-# PDF byte offsets and visual reference hashes must survive Windows checkouts.
-*.pdf binary

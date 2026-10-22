@@ -54,8 +54,9 @@ def peak_memory_mb():
 
 
 def single(pages):
+    import fitz
+
     from core.font_preflight.inventory import analyze
-    from core.pdf_backend import fitz
 
     with tempfile.TemporaryDirectory(prefix="font-benchmark-") as directory:
         path = Path(directory) / "synthetic.pdf"

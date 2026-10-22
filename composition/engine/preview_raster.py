@@ -39,7 +39,7 @@ def screen_scale(width_pt, height_pt, pixels_per_point):
 
 
 def save_preview(page, target, requested=2):
-    from core.pdf_backend import fitz
+    import fitz
 
     scale = bounded_scale(page.rect.width, page.rect.height, requested)
     pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)

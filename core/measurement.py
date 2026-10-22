@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from math import hypot, isfinite
 
-from core.pdf_backend import fitz
+import fitz
 
 POINT_TO_MM = 25.4 / 72.0
 SCALE_KEY = "PDFDocuEditScale"

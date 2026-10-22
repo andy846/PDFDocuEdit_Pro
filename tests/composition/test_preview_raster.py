@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 
+import fitz
 import pytest
 
 from composition.engine.preview_raster import (
@@ -13,7 +14,6 @@ from composition.engine.preview_raster import (
     screen_scale,
 )
 from composition.template.model import Element, Template
-from core.pdf_backend import fitz
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.production_approval import dispatch
 

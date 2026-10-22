@@ -7,7 +7,7 @@ import sys
 from contextlib import ExitStack
 from pathlib import Path
 
-from core.pdf_backend import fitz
+import fitz
 
 
 def _windows_pipe_stream(number, mode):

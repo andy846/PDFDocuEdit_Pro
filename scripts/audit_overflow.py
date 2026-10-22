@@ -17,10 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from core.pdf_backend import fitz
-
-# isort: split
-
+import fitz
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import (
