@@ -1,11 +1,19 @@
-# PDFDocuEdit Pro V3.1.0
+# PDFDocuEdit Pro V3.1.1
 
 > Windows 日常開發／實測固定使用 `D:\Python_Project\PDFdocuEdit_Pro` 及 `.venv-dev`；啟動請用 `scripts\launch_dev.cmd`。[開發位置、環境及回退說明](docs/DEVELOPMENT_WORKSPACE.md)。
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.1.0 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用既有完整安裝版。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
-本輪原生打包及實機結果見 [v3.1.0 驗收紀錄](docs/RELEASE_VALIDATION_3.1.0.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+v3.1.1 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用既有完整安裝版。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+本輪原生打包及實機結果見 [v3.1.1 驗收紀錄](docs/RELEASE_VALIDATION_3.1.1.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+
+## v3.1.1：標註移動／縮放及 Deep Search 安全退出
+
+- 修正 Highlight、Underline、StrikeOut、Squiggly、Ink、Polygon 拖動／縮放靜默無效；更新原生點位、保留外觀及既有交易／Undo 路徑。
+- 關閉程式時協作取消及等待 Deep Search 的搜尋、查詢及匯出，包括已暫停或隱藏的搜尋視窗，避免視窗消失後程序仍留在背景。
+- 擁有人已在 `0e25c15` 完成這輪實測驗收；正式候選的 CI、封裝及升級證據分開記錄。
+- PyMuPDF 保持 1.26.6；本版不啟用 PyMuPDF 2.0。
+- 詳情見 [Release notes](docs/RELEASE_NOTES_3.1.1.md)、[標註幾何](docs/POINT_ANNOTATION_GEOMETRY.md) 及 [Deep Search 關閉](docs/DEEP_SEARCH_SHUTDOWN.md)。
 
 ## v3.1.0：安全重開、暫存清理及水印完整性
 

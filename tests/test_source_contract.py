@@ -77,19 +77,19 @@ def test_splash_asset_casing_matches_runtime_and_packaging() -> None:
     )
 
 
-def test_release_metadata_is_v3_1_0() -> None:
+def test_release_metadata_is_v3_1_1() -> None:
     from dialogs.readme_dialog import README_CONTENT
 
     assert "PDF Editing & Print Production Suite — v" + APP_VERSION in README_CONTENT
-    assert "New in v3.1.0" in README_CONTENT
-    assert APP_VERSION == "3.1.0"
+    assert "New in v3.1.1" in README_CONTENT
+    assert APP_VERSION == "3.1.1"
     assert "Copyright © 2026 Andy Leung" in COPYRIGHT_NOTICE
-    assert 'version = "3.1.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "3.1.0"' in (
+    assert 'version = "3.1.1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "3.1.1"' in (
         ROOT / "installer/PDFDocuEditPro.iss"
     ).read_text(encoding="utf-8")
-    assert 'VERSION = "3.1.0"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
-    assert "filevers=(3, 1, 0, 0)" in (
+    assert 'VERSION = "3.1.1"' in (ROOT / "scripts/build.py").read_text(encoding="utf-8")
+    assert "filevers=(3, 1, 1, 0)" in (
         ROOT / "installer/PDFDocuEditPro.version.txt"
     ).read_text(encoding="utf-8")
 

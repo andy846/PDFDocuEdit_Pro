@@ -24,6 +24,14 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## New in v3.1.1: Native annotation editing and safe Deep Search shutdown
+
+* Highlight, Underline, StrikeOut, Squiggly, Ink and Polygon moves/resizes update
+  native points and preserve appearance ownership, transactions and Undo/Redo.
+* Application shutdown cooperatively cancels and waits for paused/hidden Deep
+  Search, result-query and report-export jobs before releasing their resources.
+* Windows Managed updates only. PyMuPDF remains pinned to 1.26.6.
+
 ## New in v3.1.0: Safe reopening, temporary cleanup and watermark integrity
 
 * Windows Managed updates only; Installer, Portable and macOS are not rebuilt.
