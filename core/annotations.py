@@ -22,7 +22,13 @@ from core.measurement import (
     write_marker,
 )
 
-from .page_images import add_page_image, list_page_images, remove_page_image, update_page_image
+from .page_images import (
+    _native_matrix,
+    add_page_image,
+    list_page_images,
+    remove_page_image,
+    update_page_image,
+)
 from .pdf_engine import DOCUMENT_LOCK
 from .redaction_images import prepare_spot_images
 from .stamp_geometry import stamp_rotation as _stamp_rotation
@@ -85,6 +91,9 @@ SUPPORTED_ANNOTATION_KINDS = frozenset(
 
 class AnnotationValidationError(ValueError):
     """An annotation request is malformed and must not reach PyMuPDF."""
+
+
+POINT_ANNOTATION_KINDS = frozenset({"Highlight", "Underline", "StrikeOut", "Squiggly", "Ink", "Polygon"})
 
 
 @dataclass(frozen=True)
@@ -990,11 +999,13 @@ def list_annotations(page: fitz.Page, *, include_page_images: bool = True) -> li
                     alignment = int(page.parent.xref_get_key(annot.xref, "Q")[1])
                 except (RuntimeError, TypeError, ValueError):
                     alignment = 0
+            ink_strokes = []
             try:
-                vertices = [
-                    (float(point[0]), float(point[1]))
-                    for point in list(annot.vertices or [])
-                ]
+                if kind == "Ink":
+                    ink_strokes = _annotation_point_groups(annot)
+                    vertices = []  # Keep existing flat-point consumers compatible.
+                else:
+                    vertices = [(float(point[0]), float(point[1])) for point in list(annot.vertices or [])]
             except (RuntimeError, TypeError, ValueError):
                 vertices = []
             try:
@@ -1020,6 +1031,7 @@ def list_annotations(page: fitz.Page, *, include_page_images: bool = True) -> li
                     "font_size": font_size,
                     "alignment": alignment,
                     "vertices": vertices,
+                    **({"ink_strokes": ink_strokes} if kind == "Ink" else {}),
                     "line_ends": line_ends,
                     **({"rotation": _stamp_rotation(page, annot)} if kind == "Stamp" else {}),
                 }
@@ -1082,6 +1094,105 @@ def remove_annotation(page: fitz.Page, xref: int) -> bool:
         return False
 
 
+def _annotation_point_groups(annot):
+    """Read native points without flattening Ink strokes or quad ordering."""
+    try:
+        kind = annot.type[1]
+        raw = annot.vertices or []
+        groups = raw if kind == "Ink" else [raw]
+        result = [[(float(x), float(y)) for x, y in stroke] for stroke in groups]
+        if (not result or any(not stroke for stroke in result)
+                or any(not isfinite(value) for stroke in result for point in stroke for value in point)
+                or (kind == "Ink" and any(len(stroke) < 2 for stroke in result))
+                or (kind == "Polygon" and len(result[0]) < 3)
+                or (kind not in {"Ink", "Polygon"} and len(result[0]) % 4)):
+            raise ValueError("Invalid point structure")
+        if kind not in {"Ink", "Polygon"}:
+            for offset in range(0, len(result[0]), 4):
+                quad = fitz.Quad(result[0][offset:offset + 4])
+                if not quad.is_convex or quad.is_empty:
+                    raise ValueError("Invalid quad")
+        return result
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise AnnotationValidationError("This annotation has invalid geometry; it was not moved.") from exc
+
+
+def _normal_appearance_for_geometry(doc, xref):
+    """Validate appearance before mutation; normal state only is supported."""
+    try:
+        kind, value = doc.xref_get_key(xref, "AP")
+        if kind == "null":
+            return "<<>>", None
+        if kind == "xref":
+            value = doc.xref_object(int(value.split()[0]))
+        elif kind != "dict":
+            raise ValueError("Unsupported AP structure")
+        if not value.strip().startswith("<<"):
+            raise ValueError("Invalid AP dictionary")
+        if any(doc.xref_get_key(xref, "AP/" + state)[0] != "null" for state in ("R", "D")):
+            raise ValueError("Alternate appearance states")
+        normal_kind, normal = doc.xref_get_key(xref, "AP/N")
+        normal_xref = int(normal.split()[0]) if normal_kind == "xref" else None
+        if normal_kind not in {"xref", "null"} or (normal_xref is not None and not doc.xref_is_stream(normal_xref)):
+            raise ValueError("Unsupported normal appearance state")
+        return value, normal_xref
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise AnnotationValidationError("This annotation has unsupported appearance states; editing is blocked.") from exc
+
+
+def _update_point_annotation_geometry(page, target, rect):
+    """Update same-xref native geometry; caller owns mutation rollback."""
+    doc, xref, kind = page.parent, target.xref, target.type[1]
+    requested = fitz.Rect(rect)
+    old = fitz.Rect(target.rect)
+    if (not all(isfinite(v) for v in (*requested, *old))
+            or old.is_empty or old.is_infinite):
+        raise AnnotationValidationError("Choose finite annotation coordinates and a valid source size.")
+    requested.normalize()
+    bounds = page.rect * page.derotation_matrix
+    if requested.is_empty or requested.width < 1 or requested.height < 1:
+        raise AnnotationValidationError("The annotation width and height must be at least one PDF point.")
+    if not (bounds + (-.01, -.01, .01, .01)).contains(requested):
+        raise AnnotationValidationError("Keep the whole annotation inside the visible page.")
+    groups = _annotation_point_groups(target)
+    appearance, old_normal = _normal_appearance_for_geometry(doc, xref)
+    expected = [[(requested.x0 + (x - old.x0) * requested.width / old.width,
+                  requested.y0 + (y - old.y0) * requested.height / old.height)
+                 for x, y in stroke] for stroke in groups]
+    native = ~_native_matrix(page)
+    raw = [[fitz.Point(point) * native for point in stroke] for stroke in expected]
+    def array(values):
+        return "[" + " ".join(f"{value:.9f}" for value in values) + "]"
+    arrays = [array(value for point in stroke for value in point) for stroke in raw]
+    old_stream = doc.xref_stream(old_normal) if old_normal is not None else None
+    # AP dictionaries and their normal streams may be shared. Keep the original
+    # intact and force MuPDF to allocate a dedicated normal appearance.
+    new_appearance = doc.get_new_xref()
+    doc.update_object(new_appearance, appearance)
+    doc.xref_set_key(new_appearance, "N", "null")
+    doc.xref_set_key(xref, "AP", f"{new_appearance} 0 R")
+    key = "InkList" if kind == "Ink" else "Vertices" if kind == "Polygon" else "QuadPoints"
+    doc.xref_set_key(xref, key, "[" + " ".join(arrays) + "]" if kind == "Ink" else arrays[0])
+    doc.xref_set_key(xref, "Rect", array(requested * native))
+    page.load_annot(xref).update()
+    actual = page.load_annot(xref)
+    actual_groups = _annotation_point_groups(actual)
+    if (actual.type[1] != kind or len(actual_groups) != len(expected)
+            or any(len(stroke) != len(wanted) for stroke, wanted in zip(actual_groups, expected, strict=True))
+            or any(abs(value - wanted) > .01
+                   for stroke, wanted_stroke in zip(actual_groups, expected, strict=True)
+                   for point, wanted_point in zip(stroke, wanted_stroke, strict=True)
+                   for value, wanted in zip(point, wanted_point, strict=True))
+            or actual.rect.is_empty or actual.rect.is_infinite
+            or not (bounds + (-.01, -.01, .01, .01)).contains(actual.rect)):
+        raise AnnotationValidationError("Annotation geometry verification failed; the edit could not be completed.")
+    _, new_normal = _normal_appearance_for_geometry(doc, xref)
+    if (new_normal is None or new_normal == old_normal
+            or (old_normal is not None and doc.xref_stream(old_normal) != old_stream)):
+        raise AnnotationValidationError("Annotation appearance verification failed; the edit could not be completed.")
+    return int(xref)
+
+
 def update_annotation_geometry(
     page: fitz.Page,
     xref: int,
@@ -1125,6 +1236,8 @@ def update_annotation_geometry(
                             if entry.identifier == record.identifier), None)
             return updated.line_xref if updated is not None else None
         kind = str(target.type[1])
+        if kind in POINT_ANNOTATION_KINDS and rect is not None:
+            return _update_point_annotation_geometry(page, target, rect)
         if kind == "Stamp" and rect is not None:
             from .stamp_geometry import update_stamp_geometry
             return update_stamp_geometry(page, target, rect, rotation)

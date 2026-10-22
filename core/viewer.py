@@ -2601,7 +2601,7 @@ class PDFViewer(QMainWindow):
         seen = set()
         while cause is not None and id(cause) not in seen:
             seen.add(id(cause))
-            if isinstance(cause, PageImageError):
+            if isinstance(cause, (PageImageError, AnnotationValidationError)):
                 return f"{cause} Original document state was restored."
             cause = cause.__cause__
         return str(error)

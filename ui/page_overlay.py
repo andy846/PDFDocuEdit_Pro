@@ -12,6 +12,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import QApplication, QLineEdit, QWidget
 
+from core.annotations import POINT_ANNOTATION_KINDS
 from core.measurement import SavedMeasurement, distance_mm, format_distance
 from core.page_images import IMAGE_KINDS
 from styles.theme import get_colors
@@ -1393,6 +1394,7 @@ class PageOverlay(QWidget):
             "origin": QPointF(point), "original_rect": QRectF(rect),
             "rect": QRectF(rect), "handle": handle,
             "image": entry.get("kind") in IMAGE_KINDS | {"Watermark"},
+            "bounded": entry.get("kind") in IMAGE_KINDS | {"Watermark"} | POINT_ANNOTATION_KINDS,
             "keep_aspect": bool(entry.get("keep_aspect", True)),
         }
         if entry.get("image_quad"):
@@ -1471,8 +1473,10 @@ class PageOverlay(QWidget):
                     x = anchor.x() - width if handle in {0, 2} else anchor.x()
                     y = anchor.y() - height if handle in {0, 1} else anchor.y()
                     rect = QRectF(x, y, width, height)
-            if drag.get("image"):
+            if drag.get("bounded"):
                 bounds = QRectF(self.rect())
+                if rect.width() > bounds.width() or rect.height() > bounds.height():
+                    return
                 if handle is None:
                     rect.moveLeft(max(0.0, min(rect.left(), bounds.width() - rect.width())))
                     rect.moveTop(max(0.0, min(rect.top(), bounds.height() - rect.height())))
