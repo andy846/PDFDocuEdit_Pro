@@ -53,6 +53,9 @@ supported. No extraction Profile or Profile Library is created.
 - Cancellation or failure before publication preserves the previous output.
   A committed export remains reported as completed if cancellation arrives late.
   Closing waits for workers before releasing the job snapshot, SQLite and previews.
+  A superseded or closing non-publishing preview may be stopped through the
+  existing isolated-worker mechanism, including a blocked native raster call;
+  scan/export workers retain cooperative cancellation and atomic publication.
   Temporary cleanup errors are shown and Close can retry.
 
 These checks detect missing text layers and field problems; they do not certify

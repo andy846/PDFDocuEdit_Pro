@@ -228,3 +228,22 @@ def test_existing_destination_requires_explicit_overwrite_and_csv_whitespace_for
         row = next(csv.DictReader(stream))
     assert row["Code"] == "'  @SUM(1)"
     assert row["Raw: Code"] == "'\t=1+1"
+
+
+def test_home_alias_cannot_bypass_source_overwrite_guard(tmp_path, monkeypatch):
+    from pathlib import Path
+    service = api()
+    source = tmp_path/"source.pdf"
+    spec = fixture_pdf(source)
+    original = source.read_bytes()
+    real_expanduser = Path.expanduser
+    def isolated_home(path):
+        if path.parts and path.parts[0] == "~":
+            return tmp_path.joinpath(*path.parts[1:])
+        return real_expanduser(path)
+    # Resolve the alias inside the fixture, without changing HOME/USERPROFILE
+    # or accessing any actual user document. Atomic output expands this alias.
+    monkeypatch.setattr(Path, "expanduser", isolated_home)
+    with pytest.raises(ValueError, match="overwrite"):
+        service.scan(source, spec, [0], Path("~/source.pdf"))
+    assert source.read_bytes() == original

@@ -57,13 +57,14 @@ class ExtractionHost(QWidget):
             self.pending = ({**request, "raster": True, "_preview_token": preview_token}, callback)
             if self.preview_worker:
                 self.preview_worker.superseded = True
-                self.preview_worker.cancel()
+                self.preview_worker.stop_preview()
             return None
         if not preview and self.active:
             return None
         worker = Worker(self.directory, {"task": "quick_extract", **request}, self)
         worker.superseded = False
         worker.cancel_requested = False
+        worker.is_preview = preview
         self.workers.append(worker)
         if preview:
             self.preview_worker = worker
@@ -71,7 +72,7 @@ class ExtractionHost(QWidget):
             self.active = worker
             if self.preview_worker:
                 self.preview_worker.superseded = True
-                self.preview_worker.cancel()
+                self.preview_worker.stop_preview()
         delivered, errors = [], []
         worker.resultReady.connect(delivered.append)
         worker.failed.connect(errors.append)
@@ -131,7 +132,10 @@ class ExtractionHost(QWidget):
         self.pending = None
         for worker in self.workers:
             worker.cancel_requested = True
-            worker.cancel()
+            if worker.is_preview:
+                worker.stop_preview()
+            else:
+                worker.cancel()
 
     def finish_close(self):
         if not self.workers:

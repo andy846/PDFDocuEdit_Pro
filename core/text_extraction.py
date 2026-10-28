@@ -27,7 +27,7 @@ def check_cancel(cancelled):
 
 def digest_file(path, cancelled=None):
     digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
+    with Path(path).expanduser().open("rb") as stream:
         while chunk := stream.read(1024*1024):
             check_cancel(cancelled)
             digest.update(chunk)
@@ -45,9 +45,9 @@ def signature(spec, pages):
 
 
 def protect_target(target, paths):
-    target = Path(target).resolve()
+    target = Path(target).expanduser().resolve()
     for source in paths:
-        source = Path(source).resolve()
+        source = Path(source).expanduser().resolve()
         if target == source or (target.exists() and source.exists() and target.samefile(source)):
             raise ValueError("Output must not overwrite the source PDF or job database.")
 
@@ -61,6 +61,7 @@ class QuickResult:
 
 
 def scan(source, spec, pages, target, *, protected=(), progress=None, is_cancelled=None):
+    source, target = Path(source).expanduser(), Path(target).expanduser()
     pages = list(pages)
     identity = signature(spec, pages)
     protect_target(target, [source, *protected])
@@ -103,7 +104,7 @@ def scan(source, spec, pages, target, *, protected=(), progress=None, is_cancell
             metadata = {"schema": 1, "accepted": False, "sha256": digest,
                         "source": str(Path(source).resolve()), "signature": identity,
                         "spec": spec.to_dict(), "pages": pages, "issues": issues,
-                        "protected": [str(Path(p).resolve()) for p in protected]}
+                        "protected": [str(Path(p).expanduser().resolve()) for p in protected]}
             db.executemany("INSERT INTO meta VALUES (?,?)", [(k, json.dumps(v)) for k, v in metadata.items()])
             db.commit()
         if digest_file(source, is_cancelled) != digest:
@@ -115,7 +116,7 @@ def scan(source, spec, pages, target, *, protected=(), progress=None, is_cancell
 class QuickStore:
     """Bounded queries; callers never load the entire job into Qt widgets."""
     def __init__(self, path):
-        self.db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        self.db = sqlite3.connect(Path(path).expanduser().resolve().as_uri() + "?mode=ro", uri=True)
         self.db.row_factory = sqlite3.Row
 
     def __enter__(self):
@@ -155,6 +156,7 @@ def _xlsx_check(value):
 def export(database, source, spec, pages, target, *, overwrite=False, progress=None,
            is_cancelled=None, on_committed=None):
     """Publish one artifact atomically; a late cancel cannot retract its receipt."""
+    source, target = Path(source).expanduser(), Path(target).expanduser()
     identity = signature(spec, list(pages))
     with QuickStore(database) as store:
         meta = store.metadata()

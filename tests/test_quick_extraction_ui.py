@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import fitz
+import pytest
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication
 
@@ -250,3 +251,94 @@ def test_draw_region_on_empty_canvas_preserves_shared_editor_behavior(qt_applica
     finally:
         dialog.reject()
         wait_until(lambda: not dialog.host.workers)
+
+
+@pytest.mark.parametrize("mode, expected", [("First 10", list(range(11, 21))),
+                                          ("First 50", list(range(11, 61))), ("Random 50", None)])
+def test_samples_stay_inside_selection_and_cannot_masquerade_as_full_export(qt_application, tmp_path, mode, expected):
+    from dialogs.quick_text_extractor import QuickTextExtractorDialog
+    from workflow.extraction import ExtractionSpec, Region
+    source = tmp_path/"sample.pdf"
+    with fitz.open() as pdf:
+        for number in range(120):
+            pdf.new_page().insert_text((30, 70), f"Page {number+1}")
+        pdf.save(source)
+    spec = ExtractionSpec([Region(name="Page", x_mm=0, y_mm=0, width_mm=150, height_mm=100)])
+    dialog = QuickTextExtractorDialog(source, 0, str(tmp_path/"result.xlsx"), spec=spec.to_dict())
+    dialog.show()
+    try:
+        wait_until(lambda: dialog.source_ready and not dialog.host.workers)
+        dialog.page_mode.setCurrentText("Custom pages")
+        dialog.page_range.setText("11-110")
+        dialog.sample_mode.setCurrentText(mode)
+        dialog.start_scan(sample=True)
+        wait_until(lambda: dialog.result is not None and not dialog.host.workers)
+        pages = [row["page"] for row in dialog.model.rows]
+        if expected is not None:
+            assert pages == expected
+        else:
+            assert len(pages) == 50 and pages == sorted(set(pages))
+            assert all(11 <= p <= 110 for p in pages)
+        assert "Sample" in dialog.status.text()
+        assert not dialog.export_button.isEnabled()
+    finally:
+        dialog.reject()
+        wait_until(lambda: not dialog.host.workers)
+
+
+def test_close_can_stop_a_preview_blocked_inside_native_render(qt_application, tmp_path, monkeypatch):
+    from composition.designer.process import Worker
+    dialog = make_dialog(tmp_path)
+    wait_until(lambda: dialog.source_ready and not dialog.host.workers)
+    # A real child process simulates a native raster call which cannot poll the
+    # cancellation file. Only previews may be stopped this way, never exports.
+    (tmp_path/"blocked_preview.py").write_text(
+        "import json,sys,time\nfrom pathlib import Path\n"
+        "request=json.loads(Path(sys.argv[1]).read_text())\n"
+        "Path(request['started']).write_text('ready')\nwhile True: time.sleep(.05)\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    started = tmp_path/"started"
+    def blocked(directory, request, parent):
+        assert request["operation"] == "preview"
+        return Worker(directory, {**request, "started": str(started)}, parent, worker_module="blocked_preview")
+    monkeypatch.setattr("dialogs.quick_text_extractor.Worker", blocked)
+    dialog.preview()
+    worker = dialog.host.preview_worker
+    try:
+        wait_until(started.exists)
+        dialog.reject()
+        wait_until(lambda: not dialog.host.workers, timeout=2000)
+        assert not dialog.isVisible()
+        assert not dialog.host.directory.exists()
+    finally:
+        if dialog.host.workers:
+            worker.process.kill()
+            wait_until(lambda: not dialog.host.workers)
+
+
+def test_window_close_wakes_paused_search_before_waiting_for_extraction(editor, tmp_path):
+    # The real Search shutdown tests cover pause/wakeup. This dependency models
+    # that paused state while exercising the actual window + extraction lifecycle.
+    class PausedSearch:
+        cancelled = False
+        def background_task_count(self):
+            return 0 if self.cancelled else 1
+        def close(self):
+            self.cancelled = True
+    source = tmp_path/"source.pdf"
+    fixture_pdf(source)
+    editor._open_in_new_tab_sync(str(source))
+    editor._extract_text()
+    wait_until(lambda: bool(getattr(editor, "_text_extraction_dialogs", [])))
+    dialog = editor._text_extraction_dialogs[0]
+    wait_until(lambda: dialog.source_ready and not dialog.host.workers)
+    paused = PausedSearch()
+    editor._deep_search_dialog = paused
+    editor._close_lifecycle.warning_after_ms = 0  # Simulate the shutdown deadline having elapsed.
+    try:
+        dialog.start_scan()
+        assert dialog.host.workers
+        editor.close()
+        wait_until(lambda: not editor.isVisible(), timeout=3000)
+    finally:
+        paused.close()

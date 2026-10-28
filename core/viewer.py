@@ -7499,15 +7499,19 @@ class PDFViewer(QMainWindow):
         extraction_dialogs = list(getattr(self, "_text_extraction_dialogs", []))
         for extraction in extraction_dialogs:
             extraction.reject()
+        search = getattr(self, "_deep_search_dialog", None)
+        if search is not None:
+            # Initiate both cancellations before waiting on either dependency.
+            # Once the close deadline expires, a paused search must not prevent
+            # re-entry that would otherwise finally wake it.
+            search.close()
         if any(not extraction.host.released for extraction in extraction_dialogs):
             event.ignore()
             self._defer_close("pdf_tools")
             return
-        search = getattr(self, "_deep_search_dialog", None)
         if search is not None:
             # Hidden non-modal tools do not receive a close event when their
             # owner closes. Wake paused search workers before Qt teardown.
-            search.close()
             if search.background_task_count():
                 event.ignore()
                 self._defer_close("deep_search")
