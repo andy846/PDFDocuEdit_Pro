@@ -103,15 +103,15 @@ class RegionCanvas(RegionView):
 
 
 class RegionEditor(QDialog):
-    def __init__(self,host,source,spec,page=1):
+    def __init__(self,host,source,spec,page=1,*,canvas_type=RegionCanvas,empty_draft=False):
         super().__init__(host)
         self.host,self.source=host,source
         self.setWindowTitle("Visual Extraction Regions")
         available=self.screen().availableGeometry()
         self.resize(min(1180,int(available.width()*.95)),min(780,int(available.height()*.9)))
         self.regions=copy.deepcopy(spec.get("regions",[]))
-        self.original_empty=not self.regions
-        if not self.regions:
+        self.original_empty=not self.regions and not empty_draft
+        if not self.regions and not empty_draft:
             from dataclasses import asdict
             self.regions=[asdict(Region())]
         self.current=0
@@ -129,6 +129,7 @@ class RegionEditor(QDialog):
             self.addAction(action)
         outer=QVBoxLayout(self)
         top=QHBoxLayout()
+        self.top_layout=top
         self.page=QSpinBox()
         self.page.setRange(1,1000000)
         self.page.setValue(page)
@@ -143,22 +144,28 @@ class RegionEditor(QDialog):
         top.addStretch()
         outer.addLayout(top)
         splitter=QSplitter()
-        self.view=RegionCanvas(self)
+        self.editor_splitter=splitter
+        self.view=canvas_type(self)
         splitter.addWidget(self.view)
         inspector=QWidget()
         right=QVBoxLayout(inspector)
+        self.inspector_layout=right
         self.list=QListWidget()
         self.list.setFixedHeight(75)
         self.list.currentRowChanged.connect(self.select)
         right.addWidget(self.list)
         tools=QHBoxLayout()
+        self.region_tools=tools
+        self.region_buttons=[]
         for text,fn in (("Add",self.add),("Duplicate",self.duplicate),("Delete",self.delete)):
             button=QPushButton(text)
             button.clicked.connect(fn)
+            self.region_buttons.append(button)
             tools.addWidget(button)
         right.addLayout(tools)
         content=QWidget()
         form=QFormLayout(content)
+        self.controls_form=form
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.name=QLineEdit()
@@ -212,6 +219,7 @@ class RegionEditor(QDialog):
         # millimetre and field controls out of a short or high-DPI window.
         right.addWidget(content)
         size_button=QPushButton("Use this page size")
+        self.size_button=size_button
         size_button.setToolTip("Use the displayed PDF page dimensions as the reference for all regions; positions stay in millimetres")
         size_button.clicked.connect(self.use_page_size)
         right.addWidget(size_button)
@@ -296,6 +304,9 @@ class RegionEditor(QDialog):
         self.loading_controls=False
         self.view.update_region()
         self.other_boxes()
+        self.selection_updated()
+
+    def selection_updated(self):
         self.schedule()
 
     def other_boxes(self):

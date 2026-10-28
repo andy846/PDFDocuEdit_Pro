@@ -7,7 +7,9 @@ The original PDF is never used as an extraction output destination.
 
 ## Operator workflow
 
-1. Add, duplicate or draw named regions. Each region becomes **one column**.
+1. The Quick tool starts without a default region. Click **New region**, then
+   drag on the PDF; release to create the field and return to selection mode.
+   Esc cancels drawing without closing the tool. Each region becomes **one column**.
    Drag inside a region to move it; drag its lower-right corner to resize it.
    Millimetre controls, Undo/Redo, Ctrl+wheel zoom and Space-to-pan remain available.
 2. Choose all, current or custom source pages. Preview the selected field's Raw
@@ -21,6 +23,41 @@ The original PDF is never used as an extraction output destination.
 5. Review Issues, then export XLSX, CSV or tab-delimited TXT. Field issues remain
    exportable; an invalid configuration, stale source/results or an unsupported
    output representation blocks that export.
+
+## Same-screen workbench
+
+The field list, PDF and properties share the upper workspace; results span the
+bottom. First use occupies about 92% of the current screen's available area.
+Window size, maximized state, panel proportions and sidebar visibility are
+remembered locally, without saving document data or extraction regions. A moved
+or removed screen is bounded to the available screen on reopening. Properties
+start collapsed in a narrow first-use window and can be toggled from the toolbar.
+
+Drag the horizontal divider to allocate space to results. **Expand results**
+temporarily uses the workspace for the table; **Restore workspace** restores its
+previous split. **Collapse results** hides the table without losing its data.
+At 1280×800 the default table accommodates at least eight complete rows, and at
+960×640 at least six, including a horizontal scrollbar for many fields. The
+minimum visible-row allocation can take more than 40% in a short window.
+
+List entries and PDF badges share the output-order number and field name.
+Select either to activate a region: the active frame is thicker and has a
+lower-right resize handle; other frames are dashed. Clear **All regions** to
+show only the active one. An active overlapping field keeps priority; right-click
+inside overlapping rectangles to choose a field by name. Long names have full
+tooltips. Duplicate keeps dimensions and offsets by up to 5 mm within the page,
+trying the reverse direction at the far edge. A whole-page field may overlap.
+Quick Extraction can delete its final field; extraction is disabled until a new
+field is drawn. The existing Workflow editor retains its original default field.
+
+Common field settings appear in **Properties**; label removal and length rules
+are under **Advanced text rules**. **Text preview** shows the active field's Raw
+and Clean text. Clicking a current result row navigates to its source page;
+clicking a named result column also selects its field. This includes sample
+results, which still cannot be exported. Viewing pages in All/Custom mode,
+selecting fields and changing layout do not invalidate extraction. Current
+preview page mode, real field/rule edits or a changed source require extraction
+again. Drawing waits until the displayed raster matches the chosen source page.
 
 Different page sizes are **not automatically scaled**. Region coordinates are
 millimetres from the visible page's top-left, using the existing rotation and
@@ -82,6 +119,8 @@ output. No `.pdflow` schema or production authorization rules were changed.
 - Quick-only SQLite, selected-page scan and atomic export: `core/text_extraction.py`.
 - Editor snapshot/lifecycle/handoff: `ui/text_extraction_controller.py` and the
   existing main-window close lifecycle.
+- Quick-only workbench/presentation: `dialogs/extraction_workbench.py` and
+  `dialogs/extraction_canvas.py`, using the same Region/ExtractionSpec model.
 - Compatibility: no public version bump, new dependency, Profile format, PDF
   processing engine change or production-authorization change.
 

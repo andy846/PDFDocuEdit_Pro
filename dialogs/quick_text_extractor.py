@@ -1,12 +1,14 @@
 """Quick extraction UI composed from the existing visual region editor."""
 from __future__ import annotations
 
+import copy
 import random
 import tempfile
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
-from PyQt6.QtCore import QAbstractTableModel, Qt, QTimer
+from PyQt6.QtCore import QAbstractTableModel, QEvent, Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -14,12 +16,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QSplitter,
     QTableView,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -29,8 +28,11 @@ from core.diagnostics import log_failure
 from core.pdf_engine import parse_page_range
 from core.text_extraction import signature
 from dialogs.base import remember_save_directory, start_in_save_directory
-from workflow.extraction import ExtractionSpec
+from workflow.extraction import ExtractionSpec, Region
 from workflow.regions_ui import RegionEditor
+
+from .extraction_canvas import ExtractionCanvas
+from .extraction_workbench import ExtractionWorkbench
 
 
 class ExtractionHost(QWidget):
@@ -94,6 +96,8 @@ class ExtractionHost(QWidget):
                     if delivered and (not worker.cancel_requested or committed):
                         callback(delivered[0])
                         if preview:
+                            if request.get("raster"):
+                                self.dialog.raster_page = request["page"]
                             self.dialog.preview_text(delivered[0])
                     elif worker.cancel_requested:
                         self.dialog.status.setText("Cancelled; previous output files are unchanged.")
@@ -179,10 +183,16 @@ class ExtractionTableModel(QAbstractTableModel):
         return super().headerData(section, orientation, role)
 
 
-class QuickTextExtractorDialog(RegionEditor):
+class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
     def __init__(self, source, current_page, suggested, parent=None, *, spec=None,
                  temporary=None, protected=(), handoff=None, page_count=None, source_guard=None):
         host = ExtractionHost(parent, temporary)
+        self._ui_ready = False
+        self._applied_regions = []
+        self._cached_preview = None
+        self.raster_page = None
+        self.draw_mode = False
+        self.show_all_regions = True
         self.result = None
         self.last_output = None
         self.protected = [str(p) for p in protected]
@@ -190,9 +200,11 @@ class QuickTextExtractorDialog(RegionEditor):
         self.offset = 0
         self.suggested = suggested
         self.scan_signature = None
+        self.results_current = False
         self.source_guard = source_guard
         self.source_stale = False
-        super().__init__(host, str(source), spec or {"version": 1, "regions": []}, current_page+1)
+        super().__init__(host, str(source), spec or {"version": 1, "regions": []}, current_page+1,
+                         canvas_type=ExtractionCanvas, empty_draft=True)
         host.dialog = self
         # Production callers provide captured metadata; standalone callers wait
         # for the first worker preview instead of guessing a million pages.
@@ -202,30 +214,31 @@ class QuickTextExtractorDialog(RegionEditor):
         self.setWindowTitle("Extract Text Regions · PDFDocuEdit Pro")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.timer.setInterval(250)
-        form = self.scope.parentWidget().layout()
-        for control in (self.scope, self.role, self.policy):
-            form.setRowVisible(control, False)
-        self.buttons.hide()
-        self.layout().removeWidget(self.buttons)
-        self.editor_splitter = self.view.parentWidget()
-        self.layout().removeWidget(self.editor_splitter)
-        self.editor_page = QWidget()
-        editor_layout = QVBoxLayout(self.editor_page)
-        editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.addWidget(self.editor_splitter)
+        self.setup_workbench()
         self.results_page = QWidget()
         results_layout = QVBoxLayout(self.results_page)
-        self.preview_details = QPlainTextEdit()
-        self.preview_details.setReadOnly(True)
-        self.preview_details.setMaximumHeight(100)
-        self.preview_details.setPlaceholderText("Current page: Raw / Clean / Issues")
-        results_layout.addWidget(self.preview_details)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        self.results_header = QWidget()
+        result_tools = QHBoxLayout(self.results_header)
+        result_tools.setContentsMargins(0, 0, 0, 0)
+        result_tools.addWidget(QLabel("Extraction results"))
+        result_tools.addStretch()
+        self.result_focus_button = QPushButton("Expand results")
+        self.result_focus_button.clicked.connect(self.focus_results)
+        self.collapse_button = QPushButton("Collapse results")
+        self.collapse_button.clicked.connect(self.collapse_results)
+        result_tools.addWidget(self.result_focus_button)
+        result_tools.addWidget(self.collapse_button)
+        results_layout.addWidget(self.results_header)
         self.model = ExtractionTableModel(self)
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setWordWrap(False)
+        self.table.clicked.connect(self.navigate_result)
         results_layout.addWidget(self.table, 1)
-        navigation = QHBoxLayout()
+        self.navigation = QWidget()
+        navigation = QHBoxLayout(self.navigation)
+        navigation.setContentsMargins(0, 0, 0, 0)
         self.previous = QPushButton("Previous 100")
         self.next = QPushButton("Next 100")
         self.previous.clicked.connect(lambda: self.load_rows(max(0, self.offset-100)))
@@ -233,11 +246,7 @@ class QuickTextExtractorDialog(RegionEditor):
         self.page_label = QLabel("No extraction yet")
         for control in (self.previous, self.page_label, self.next):
             navigation.addWidget(control)
-        results_layout.addLayout(navigation)
-        self.tabs = QTabWidget()
-        self.wide = QSplitter(Qt.Orientation.Vertical)
-        self.layout().insertWidget(1, self.tabs, 1)
-        self.layout().insertWidget(2, self.wide, 1)
+        results_layout.addWidget(self.navigation)
         selection = QHBoxLayout()
         self.page_mode = QComboBox()
         self.page_mode.addItems(["All pages", "Current preview page", "Custom pages"])
@@ -283,7 +292,8 @@ class QuickTextExtractorDialog(RegionEditor):
         self.source_timer.setInterval(500)
         self.source_timer.timeout.connect(self.check_source)
         self.source_timer.start()
-        self.arrange()
+        self._ui_ready = True
+        self.finish_workbench()
         self.sync_actions()
 
     def resizeEvent(self, event):
@@ -291,24 +301,152 @@ class QuickTextExtractorDialog(RegionEditor):
         if hasattr(self, "wide"):
             self.arrange()
 
-    def arrange(self):
-        wide = self.width() >= 1100
-        if wide and self.tabs.count():
-            while self.tabs.count():
-                self.tabs.removeTab(0)
-        if wide:
-            self.wide.addWidget(self.editor_page)
-            self.wide.addWidget(self.results_page)
-            self.wide.setSizes([500, 190])
-        elif not self.tabs.count():
-            self.tabs.addTab(self.editor_page, "PDF & fields")
-            self.tabs.addTab(self.results_page, "Preview & results")
-        self.wide.setVisible(wide)
-        self.tabs.setVisible(not wide)
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if self._ui_ready and event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange,
+                                               QEvent.Type.StyleChange):
+            self.view.render_regions()
+            self.arrange()
+
+    def controls_state(self):
+        return (self.name.text(), *(spin.value() for spin in self.region), self.scope.currentData(),
+                self.role.value(), self.policy.currentIndex(), self.format.currentText(), self.required.isChecked(),
+                self.trim.isChecked(), self.join.isChecked(), self.label.text(), self.minimum.value(), self.maximum.value())
+
+    def selection_updated(self):
+        self._display_controls = self.controls_state()
+        if self._ui_ready:
+            if self._cached_preview:
+                self.preview_text(self._cached_preview)
+            else:
+                self.preview_details.clear()
+
+    def save_controls(self, *_):
+        if not self.loading_controls and self.regions and self.controls_state() != getattr(self, "_display_controls", None):
+            super().save_controls()
+
+    def apply_regions(self, regions):
+        changed = regions != self._applied_regions
+        self._applied_regions = copy.deepcopy(regions)
+        super().apply_regions(regions)
+        for index, region in enumerate(self.regions):
+            item = self.list.item(index)
+            item.setText(f"{index+1:02d} · {region['name']}")
+            item.setToolTip(f"{index+1:02d} · {region['name']}")
+        self.view.render_regions()
+        if self._ui_ready:
+            if not self.regions:
+                self.preview_details.clear()
+            if changed:
+                self.invalidate_results()
+                self.schedule()
+            self.sync_actions()
+
+    def other_boxes(self):
+        self.view.render_regions()
+
+    def add(self):
+        if self.draw_mode:
+            self.cancel_add(refresh=True)
+            return
+        if len(self.regions) >= 200 or not self.source_ready or self.host.active:
+            return
+        if self.raster_page != self.page.value():
+            self.schedule(True)
+            self.status.setText("Wait for this page's PDF preview before drawing a new region.")
+            return
+        self.timer.stop()
+        self.token += 1
+        self.host.pending = None
+        if self.host.preview_worker:
+            self.raster_needed = True
+            self.host.preview_worker.superseded = True
+            self.host.preview_worker.stop_preview()
+        self.draw_mode = True
+        self.add_button.setText("Cancel new region")
+        self.view.setCursor(Qt.CursorShape.CrossCursor)
+        self.status.setText("Drag on the PDF to create a new field. Esc cancels without changing existing fields.")
+        self.sync_actions()
+
+    def cancel_add(self, *, refresh=False):
+        self.draw_mode = False
+        self.view.cancel_draft()
+        self.view.setCursor(Qt.CursorShape.ArrowCursor)
+        if hasattr(self, "add_button"):
+            self.add_button.setText("New region")
+        if self._ui_ready:
+            self.sync_actions()
+            if refresh and self.regions and self._cached_preview is None:
+                self.schedule()
+
+    def finish_add(self, rect):
+        before = copy.deepcopy(self.regions)
+        names = {r["name"] for r in self.regions}
+        number = 1
+        while f"Field_{number}" in names:
+            number += 1
+        region = Region(name=f"Field_{number}", x_mm=rect.x(), y_mm=rect.y(), width_mm=rect.width(),
+                        height_mm=rect.height(), page_width_mm=self.geometry[0], page_height_mm=self.geometry[1])
+        region.validate()
+        self.regions.append(asdict(region))
+        self.current = len(self.regions)-1
+        self.cancel_add()
+        self.push(before, "Draw extraction region")
+
+    def duplicate(self):
+        if not self.regions or len(self.regions) >= 200:
+            return
+        before = copy.deepcopy(self.regions)
+        source = copy.deepcopy(before[self.current])
+        base = source["name"][:54]
+        names = {r["name"] for r in before}
+        number, name = 1, base+"_copy"
+        while name in names:
+            number += 1
+            name = base+"_copy"+str(number)
+        source["name"] = name
+        x, y = source["x_mm"], source["y_mm"]
+        def shifted(delta):
+            return (max(0, min(x+delta, source["page_width_mm"]-source["width_mm"])),
+                    max(0, min(y+delta, source["page_height_mm"]-source["height_mm"])))
+        moved = shifted(5)
+        if moved == (x, y):
+            moved = shifted(-5)
+        source["x_mm"], source["y_mm"] = moved
+        self.regions.append(source)
+        self.current = len(self.regions)-1
+        self.push(before, "Duplicate extraction region")
+
+    def delete(self):
+        if not self.regions:
+            return
+        before = copy.deepcopy(self.regions)
+        self.regions.pop(self.current)
+        self.push(before, "Delete extraction region")
+
+    def keyPressEvent(self, event):
+        if self.draw_mode and event.key() == Qt.Key.Key_Escape:
+            self.cancel_add(refresh=True)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def navigate_result(self, index):
+        if not index.isValid() or not self.results_current or self.host.active or not self.check_source():
+            return
+        self.page.setValue(self.model.rows[index.row()]["page"])
+        if index.column() >= 3:
+            field = self.model.fields[index.column()-3]
+            for row, region in enumerate(self.regions):
+                if region["name"] == field:
+                    self.list.setCurrentRow(row)
+                    break
 
     def config(self):
         if not self.check_source():
             raise ValueError("Source PDF changed or closed; close this tool and capture its current revision again.")
+        if not self.regions:
+            raise ValueError("Use New region, then drag on the PDF to create a field.")
         self.save_controls()
         return ExtractionSpec.from_dict({"regions": self.regions, "version": 1})
 
@@ -316,6 +454,7 @@ class QuickTextExtractorDialog(RegionEditor):
         if self.source_guard and not self.source_guard():
             self.source_stale = True
             self.scan_signature = None
+            self.results_current = False
             self.status.setText("Source PDF changed or closed; close this tool and capture its current revision again.")
             self.sync_actions()
         return not self.source_stale
@@ -329,7 +468,7 @@ class QuickTextExtractorDialog(RegionEditor):
 
     def selection_changed(self, *_):
         self.page_range.setEnabled(self.page_mode.currentIndex() == 2 and not self.host.active)
-        if self.page_mode.currentIndex() != 0:
+        if self.page_mode.currentIndex() == 1:
             self.invalidate_results()
 
     def page_mode_changed(self, *_):
@@ -340,6 +479,7 @@ class QuickTextExtractorDialog(RegionEditor):
         if self.result:
             self.status.setText("Results are stale; extract selected pages again before exporting.")
         self.scan_signature = None
+        self.results_current = False
         self.sync_actions()
 
     def sync_actions(self):
@@ -347,18 +487,23 @@ class QuickTextExtractorDialog(RegionEditor):
             return
         busy = self.host.active is not None or self.host.closing
         self.editor_page.setEnabled(not busy)
+        self.inspector.setEnabled(bool(self.regions))
+        self.add_button.setEnabled(not busy and self.source_ready and (self.draw_mode or len(self.regions) < 200))
+        for button in (self.duplicate_button, self.delete_button):
+            button.setEnabled(not busy and bool(self.regions) and not self.draw_mode)
         self.page_mode.setEnabled(not busy)
         self.page_range.setEnabled(not busy and self.page_mode.currentIndex() == 2)
-        self.sample_button.setEnabled(not busy and self.source_ready)
+        self.sample_button.setEnabled(not busy and self.source_ready and bool(self.regions) and not self.draw_mode and not self.source_stale)
         self.sample_mode.setEnabled(not busy)
-        self.extract_button.setEnabled(not busy and self.source_ready and not self.source_stale)
+        self.extract_button.setEnabled(not busy and self.source_ready and bool(self.regions) and not self.draw_mode and not self.source_stale)
         self.export_button.setEnabled(not busy and not self.source_stale and self.result is not None and self.scan_signature is not None)
-        self.workflow_button.setEnabled(not busy and not self.source_stale and self.source_ready and self.handoff is not None)
+        self.workflow_button.setEnabled(not busy and bool(self.regions) and not self.draw_mode and not self.source_stale and self.source_ready and self.handoff is not None)
         self.cancel_button.setEnabled(bool(self.host.workers) and not self.host.closing)
         self.previous.setEnabled(not busy and self.offset > 0 and self.result is not None)
         self.next.setEnabled(not busy and self.result is not None and self.offset+100 < self.result["pages"])
 
     def preview_text(self, result):
+        self._cached_preview = result
         self.source_ready = True
         cells = result.get("cells", [])
         def display(value):
@@ -374,6 +519,7 @@ class QuickTextExtractorDialog(RegionEditor):
         self.sync_actions()
 
     def schedule(self, raster=False):
+        self._cached_preview = None
         if hasattr(self, "preview_details"):
             self.preview_details.clear()
             self.sample.clear()
@@ -398,9 +544,11 @@ class QuickTextExtractorDialog(RegionEditor):
                 pages = sorted(random.sample(pages, min(50, len(pages)))) if mode == 3 else pages[:10 if mode == 1 else 50] if mode else pages
             self.status.setText("Extracting sample…" if sample else "Extracting selected pages…")
             self.scan_signature = None
+            self.results_current = False
             target = self.host.directory/(uuid.uuid4().hex+".sqlite")
             def ready(result):
                 self.result = result
+                self.results_current = True
                 self.scan_signature = None if sample else identity
                 self.status.setText(f'{"Sample" if sample else "Extraction"}: {result["pages"]:,} pages · {result["issues"]:,} field issues. Review before use.')
                 self.load_rows(0)
@@ -423,11 +571,11 @@ class QuickTextExtractorDialog(RegionEditor):
         self.host.request({"operation": "rows", "database": database, "offset": offset}, ready)
 
     def choose_export(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export extracted text", start_in_save_directory(self.suggested),
+        path, _ = QFileDialog.getSaveFileName(self, "Export extracted text", start_in_save_directory(self, self.suggested),
                                               "Excel workbook (*.xlsx);;CSV (*.csv);;Plain text (*.txt)")
         if path:
             # The native save dialog owns the explicit overwrite confirmation.
-            remember_save_directory(path)
+            remember_save_directory(self, path)
             self.export_to(path, overwrite=Path(path).exists())
 
     def export_to(self, target, *, overwrite=False):
@@ -455,6 +603,8 @@ class QuickTextExtractorDialog(RegionEditor):
 
     def reject(self):
         if not self.host.closing:
+            self.save_workbench()
+            self.cancel_add()
             self.host.closing = True
             self.closed = True
             self.timer.stop()

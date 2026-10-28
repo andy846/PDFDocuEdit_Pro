@@ -168,3 +168,115 @@ capture. Startup comparisons and complex customer-page performance are unmeasure
    Reopen a PDF and confirm there are no lingering workers or locked snapshots.
 6. Send custom pages to Visual Workflow, close Quick Extraction, and run to
    extraction/review. Check source provenance and independent review/approval.
+
+## Same-screen workbench revision — 2026-10-28
+
+Baseline: local `main`, `2a2f1d776626f6bb37ab432ae54422255b141e03`.
+Only the pre-existing untracked `BOCHK.pdmp` was present; it was not read or
+modified. No branch, worktree, version/dependency change, push or release.
+
+### Implementation
+
+- Quick-only `dialogs/extraction_workbench.py` reuses the original widgets in a
+  fields/PDF/properties layout above a full-width results table. Raw/Clean is in
+  Text preview; advanced rules collapse. QSettings retains only visual state.
+  First-use geometry is approximately 92% of the available screen; restore and
+  live monitor/DPI signals use the existing screen-bounds helper. Splitter
+  positions are restored once, not reset on every resize.
+- Quick-only `dialogs/extraction_canvas.py` provides explicit New region drawing,
+  Esc cancellation, numbered named badges, active frame/handle, visibility and
+  overlap selection. Labels are clamped visually without changing millimetres.
+  Duplicate offsets within page bounds; the final Quick region can be deleted.
+- `dialogs/quick_text_extractor.py` reuses the same Region/ExtractionSpec, SQLite,
+  workers, formats and Workflow handoff. Current full/sample results navigate to
+  source pages/fields; sample freshness remains separate from export eligibility.
+  Preview-page raster identity blocks drawing on a mismatched displayed page.
+  Both save-directory helpers now receive their owning widget.
+- `workflow/regions_ui.py` exposes optional canvas/empty-draft/selection hooks and
+  widget references only. Default Workflow layout and minimum-one-region behavior
+  remain unchanged. `scripts/ci_plan.py` registers the new UI module.
+
+### Verification evidence
+
+Local evidence is under `build/probes/extract-workbench/`. Ten relevant modules
+ran in separate processes using `scripts.regression_suite.run`: **177 passed,
+0 failed/errors/skipped** before the final review additions. The workbench module
+was then expanded from 10 to 14 cases; its final run passed **14/14**. Together
+with the other nine modules this covers **181 distinct passing cases**, not a
+claim that the entire repository regression suite ran for this UI revision.
+The existing 16-case Quick UI module was also rerun after review fixes.
+
+Covered modules: `test_quick_extraction`, `test_quick_extraction_ui`,
+`test_quick_extraction_workbench_ui`, `test_workflow_core`, `test_workflow_ui`,
+`test_close_status`, `test_ci_plan`, `test_source_contract`, `test_pdf_engine`,
+and `composition/test_mailpiece_profiles_ui` (all under `tests/`).
+
+New coverage includes empty/draw/Esc/delete-last/Undo; 13 regions and repeated
+selection/redraw; duplicate-one-Undo; overlap chooser; long edge badges/theme;
+maximized/geometry/splitter memory; removed-monitor and live monitor/DPI signal
+simulation; sample navigation without export; stale sample rejection; old-raster
+drawing rejection; full resize-handle hit area; custom-page navigation; and
+Export button/helper invocation followed by actual XLSX worker output.
+
+An independent read-only review found a cancelled-raster race, sample-navigation
+rejection and a partially inactive resize handle. All three were reproduced in
+failing tests before correction, then passed. A wide-table test initially found
+the horizontal scrollbar reduced the complete visible row count. The height
+budget now includes that scrollbar and frame; the test uses twelve fields.
+Earlier failed/combined GUI attempts are retained and are not passing evidence.
+
+Synthetic 30-page, 12-field scans with real worker/SQLite results produced:
+
+| Logical window | DPI scale | Light full rows | Dark full rows |
+| --- | --- | ---: | ---: |
+| 1280×800 | 100% | 8 | 8 |
+| 960×640 | 100% | 6 | 6 |
+| 1280×800 | 200% | 8 | 8 |
+| 960×640 | 200% | 6 | 6 |
+
+These are actual table viewport height / unchanged row-height measurements with
+a horizontal scrollbar. Footer bounds were checked. Screenshots were inspected
+for both themes; evidence is in `visual-standard.json`, `visual-hidpi.json` and
+the corresponding PNGs. They are Windows **offscreen Qt** checks with installed
+Windows fonts, not physical monitor/DPI acceptance or packaged GUI UAT.
+
+Commands (TEMP/TMP and update runtime root isolated under the probe directory;
+`QT_QPA_FONTDIR=C:\Windows\Fonts` for offscreen tests):
+
+```powershell
+.\.venv-dev\Scripts\python.exe -m pytest -q tests/test_quick_extraction_workbench_ui.py --basetemp build/probes/extract-workbench/workbench-final-02
+.\.venv-dev\Scripts\python.exe -m pytest -q tests/test_quick_extraction_ui.py --basetemp build/probes/extract-workbench/legacy-final-02
+# QT_QPA_PLATFORM=offscreen; QT_SCALE_FACTOR=1, then 2:
+.\.venv-dev\Scripts\python.exe build/probes/extract-workbench/smoke.py standard
+.\.venv-dev\Scripts\python.exe build/probes/extract-workbench/smoke.py hidpi
+.\.venv-dev\Scripts\python.exe -m ruff check .
+.\.venv-dev\Scripts\python.exe scripts/verify_source.py
+git diff --check
+```
+
+The ten-module harness's exact per-module results are in `regression/result.json`.
+No extraction engine, production authorization or export-format code changed;
+no new speedup or large-dataset benchmark is claimed for this layout-only revision.
+Selection/layout changes avoid launching extra extraction workers; table paging
+remains 100 rows and previews remain lazy. Existing core geometry/rotation/CropBox,
+atomic export and lifecycle tests passed in the focused run.
+
+### Remaining manual acceptance
+
+- Native Windows Save dialog: an isolated synthetic interactive probe could not
+  obtain a targetable desktop window. It was stopped; logs were retained. The
+  automated button test substitutes only the filename chooser, then performs
+  the real export. Native chooser/overwrite-confirmation interaction remains
+  **Not Tested**, rather than inferred from that test.
+- Physical multi-monitor moves, actual system 100%/200% DPI, human keyboard/tab
+  usability, actual customer documents, packaged Windows and macOS: **Not Tested**.
+- The owner's running application was not closed or replaced by this task;
+  a normal restart is required to load modified Python modules.
+
+Owner UAT: reopen Extract Text on a text PDF; confirm no default box; draw 12
+named fields, try overlapping/whole-page duplication, rename long fields, use
+Only selected via All regions, Esc and Undo/Redo. Resize/reopen/maximize and move
+between monitors. Check eight/six complete rows at the specified logical sizes,
+horizontal scroll, result focus/restore, sample/full page-field navigation and
+Raw/Clean. Finally use the native Export chooser for XLSX/CSV/TXT, confirm explicit
+overwrite, cancel an active job, and check safe close and Workflow handoff.

@@ -77,7 +77,7 @@ def test_responsive_keyboard_controls_and_no_profile(qt_application, tmp_path):
             QApplication.processEvents()
             assert dialog.extract_button.isVisible()
             assert dialog.extract_button.geometry().width() > 40
-            assert dialog.tabs.count() == (0 if width >= 1100 else 2)
+            assert dialog.table.isVisible() and dialog.view.isVisible()
         assert not any("profile" in button.text().lower() for button in dialog.findChildren(
             __import__("PyQt6.QtWidgets", fromlist=["QPushButton"]).QPushButton))
     finally:
@@ -107,7 +107,7 @@ def test_handoff_copy_survives_quick_cleanup_and_remains_unaccepted(qt_applicati
 def test_viewer_entry_captures_unsaved_revision_and_closes_workers(editor, tmp_path, monkeypatch):
     from ui.text_extraction_controller import TextExtractionController  # noqa: F401
     source = tmp_path/"source.pdf"
-    fixture_pdf(source)
+    spec = fixture_pdf(source)
     original = source.read_bytes()
     editor._open_in_new_tab_sync(str(source))
     editor.engine.rotate_pages([0], 90)
@@ -120,7 +120,9 @@ def test_viewer_entry_captures_unsaved_revision_and_closes_workers(editor, tmp_p
         assert captured[0].rotation == 90
     assert source.read_bytes() == original
     monkeypatch.setattr(editor, "_confirm_discard_changes", lambda: True)
+    dialog.apply_regions(spec.to_dict()["regions"])
     dialog.start_scan()
+    assert dialog.host.workers
     editor.close()
     wait_until(lambda: not editor.isVisible(), 30000)
     assert not dialog.host.workers
@@ -150,12 +152,13 @@ def test_editor_handoff_adopts_regions_and_pages_in_actual_workflow(integrated, 
 
 def test_source_revision_change_invalidates_results_without_reading_disk(editor, tmp_path):
     source = tmp_path/"source.pdf"
-    fixture_pdf(source)
+    spec = fixture_pdf(source)
     editor._open_in_new_tab_sync(str(source))
     editor._extract_text()
     wait_until(lambda: bool(getattr(editor, "_text_extraction_dialogs", [])))
     dialog = editor._text_extraction_dialogs[0]
     wait_until(lambda: dialog.source_ready and not dialog.host.workers)
+    dialog.apply_regions(spec.to_dict()["regions"])
     dialog.start_scan()
     wait_until(lambda: dialog.result is not None and not dialog.host.workers)
     assert dialog.export_button.isEnabled()
@@ -237,6 +240,7 @@ def test_draw_region_on_empty_canvas_preserves_shared_editor_behavior(qt_applica
     try:
         wait_until(lambda: dialog.source_ready and not dialog.host.workers)
         view = dialog.view
+        dialog.add()
         start, end = view.mapFromScene(QPointF(10, 110)), view.mapFromScene(QPointF(45, 135))
         for kind, point in ((QEvent.Type.MouseButtonPress, start), (QEvent.Type.MouseMove, end),
                             (QEvent.Type.MouseButtonRelease, end)):
@@ -245,8 +249,9 @@ def test_draw_region_on_empty_canvas_preserves_shared_editor_behavior(qt_applica
             handler = {QEvent.Type.MouseButtonPress: view.mousePressEvent, QEvent.Type.MouseMove: view.mouseMoveEvent,
                        QEvent.Type.MouseButtonRelease: view.mouseReleaseEvent}[kind]
             handler(event)
-        assert 30 < dialog.regions[0]["width_mm"] < 40
-        assert 20 < dialog.regions[0]["height_mm"] < 30
+        assert 30 < dialog.regions[-1]["width_mm"] < 40
+        assert 20 < dialog.regions[-1]["height_mm"] < 30
+        assert dialog.regions[0]["width_mm"] == 100
         assert dialog.undo.canUndo()
     finally:
         dialog.reject()
@@ -326,12 +331,13 @@ def test_window_close_wakes_paused_search_before_waiting_for_extraction(editor, 
         def close(self):
             self.cancelled = True
     source = tmp_path/"source.pdf"
-    fixture_pdf(source)
+    spec = fixture_pdf(source)
     editor._open_in_new_tab_sync(str(source))
     editor._extract_text()
     wait_until(lambda: bool(getattr(editor, "_text_extraction_dialogs", [])))
     dialog = editor._text_extraction_dialogs[0]
     wait_until(lambda: dialog.source_ready and not dialog.host.workers)
+    dialog.apply_regions(spec.to_dict()["regions"])
     paused = PausedSearch()
     editor._deep_search_dialog = paused
     editor._close_lifecycle.warning_after_ms = 0  # Simulate the shutdown deadline having elapsed.
