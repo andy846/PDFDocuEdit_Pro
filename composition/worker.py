@@ -34,6 +34,10 @@ def dispatch(request: dict, *, session=None) -> dict:
     def progress(done, total, message):
         emit("progress", done=done, total=total, message=message)
 
+    if task == "quick_extract":
+        from core.text_extraction import dispatch as extract_dispatch
+        return extract_dispatch(request, progress=progress, is_cancelled=cancelled)
+
     if task.startswith("production_review_"):
         from composition.review.service import create_review, preview_sheet, review_rows, validate_snapshot
         if task == "production_review_check":
