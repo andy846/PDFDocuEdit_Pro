@@ -131,7 +131,6 @@ from core.tools import (
     create_page_count_report,
     decrypt_pdf_file,
     encrypt_pdf_file,
-    extract_region_text,
     merge_spreadsheets,
     overlay_pdfs,
     scan_barcodes_batch,
@@ -158,7 +157,6 @@ from dialogs.readme_dialog import ReadmeDialog
 from dialogs.search_open_dialog import SearchOpenDialog
 from dialogs.security_dialogs import DecryptDialog, EncryptDialog
 from dialogs.shortcuts_dialog import ShortcutsDialog
-from dialogs.text_extractor_dialog import TextExtractorDialog
 from dialogs.undo_history_dialog import UndoHistoryDialog
 from styles.components import global_style
 from styles.theme import ThemeMode, apply_theme
@@ -6592,40 +6590,10 @@ class PDFViewer(QMainWindow):
         )
 
     def _extract_text(self) -> None:
-        source = self._require_source()
-        document = self.engine.document
-        if not source or not document:
-            return
-        dialog = TextExtractorDialog(
-            document,
-            self._page,
-            str(source.with_name(f"{source.stem}_extracted.xlsx")),
-            self,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.details:
-            return
-        details = dialog.details
-        snapshot_directory = tempfile.TemporaryDirectory(prefix="pdfdocuedit-extract-")
-        extraction_source = Path(snapshot_directory.name) / "working-copy.pdf"
-        try:
-            self.engine.snapshot(extraction_source)
-        except Exception as exc:
-            log_failure('viewer._extract_text: fallback after failure', 10)
-            snapshot_directory.cleanup()
-            self._error("Text extraction failed", str(exc))
-            return
-        self._run_task(
-            "Extracting selected text region",
-            extract_region_text,
-            extraction_source,
-            details["pages"],
-            details["rect"],
-            details["output"],
-            details["excel"],
-            progress_argument="progress",
-            cancel_argument="is_cancelled",
-            on_finished=self._safe_cleanup(snapshot_directory),
-        )
+        from ui.text_extraction_controller import TextExtractionController
+        if not getattr(self, "_text_extraction_controller", None):
+            self._text_extraction_controller = TextExtractionController(self)
+        self._text_extraction_controller.open()
 
     def _merge_pdfs(self) -> None:
         from ui.merge_controller import MergeController
@@ -7528,6 +7496,13 @@ class PDFViewer(QMainWindow):
         # Every recoverable check happens before cancellation or reader retirement.
         lifecycle.prepare_preferences()
         lifecycle.mark_teardown_started()
+        extraction_dialogs = list(getattr(self, "_text_extraction_dialogs", []))
+        for extraction in extraction_dialogs:
+            extraction.reject()
+        if any(not extraction.host.released for extraction in extraction_dialogs):
+            event.ignore()
+            self._defer_close("pdf_tools")
+            return
         search = getattr(self, "_deep_search_dialog", None)
         if search is not None:
             # Hidden non-modal tools do not receive a close event when their

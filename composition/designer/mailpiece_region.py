@@ -89,7 +89,8 @@ class RegionView(QGraphicsView):
         self.update_region()
 
     def mousePressEvent(self, event):
-        if self.dialog.method.currentData() == "smart" and not self.dialog.teaching:
+        method = getattr(self.dialog, "method", None)
+        if method is not None and method.currentData() == "smart" and not self.dialog.teaching:
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
             return super().mousePressEvent(event)
@@ -128,7 +129,9 @@ class RegionView(QGraphicsView):
                     control.setValue(value)
                     control.blockSignals(False)
                 self.dialog.invalidate()
-                self.dialog.region_selected()
+                selected = getattr(self.dialog, "region_selected", None)
+                if selected is not None:
+                    selected()
             self.update_region()
             event.accept()
         else:
