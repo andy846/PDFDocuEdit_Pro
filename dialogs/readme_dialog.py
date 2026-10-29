@@ -24,6 +24,18 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## New in v3.1.2: Portrait extraction workbench and one-action Excel export
+
+* Named visual regions produce one column each; multiline values remain in one
+  cell. Inspect Raw/Clean, selected source pages and field issues.
+* A full-height PDF sits left; fields, properties and paginated results sit right.
+  Named badges, overlap selection, Undo/Redo and remembered splitters help editing.
+* Extract & Export Excel performs a complete selected-page extraction, or reuses
+  current complete results. Try 10 pages is optional and never authorizes export.
+* More retains Extract only, CSV/TXT exports and Visual Workflow handoff. Existing
+  snapshot, source protection, atomic export and safe worker cleanup remain.
+* Windows Managed updates only; PyMuPDF remains 1.26.6. No extraction Profile.
+
 ## New in v3.1.1: Native annotation editing and safe Deep Search shutdown
 
 * Highlight, Underline, StrikeOut, Squiggly, Ink and Polygon moves/resizes update
