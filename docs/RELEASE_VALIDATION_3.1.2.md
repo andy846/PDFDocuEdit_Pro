@@ -35,3 +35,15 @@ remain source-bound in the local progress record; all other gates still apply.
 Progress, stage times and evidence: build/probes/release-v3.1.2/ (local only).
 Release notes: [3.1.2](RELEASE_NOTES_3.1.2.md).
 Process: [UNIFIED_RELEASE.md](UNIFIED_RELEASE.md).
+
+## Superseded first candidate checks
+
+Main CI run 40793773821 at `b9f4a7421c04e9683841278b9f28fe998d086e55`
+failed two Windows UI cases. The page-raster case observed an idle worker before
+its debounced replacement started. Extending the debounce reproduced the same
+failure locally; the test now waits for page 4's committed raster and the timer,
+without removing its drawing-safety or geometry assertions (16 module tests pass).
+The Organizer auto-scroll failure was not reproduced in targeted or full-module
+local runs (10 module tests pass); its code and assertions remain unchanged.
+Both failures and original diagnostics are retained locally. This candidate is
+superseded; publication requires new exact-source full native and main CI passes.

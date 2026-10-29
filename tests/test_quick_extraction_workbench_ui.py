@@ -333,6 +333,8 @@ def test_new_region_is_not_cancelled_by_an_older_preview(qt_application, tmp_pat
 def test_page_raster_must_match_before_drawing(qt_application, tmp_path):
     dialog = make_dialog(tmp_path)
     try:
+        # A fast cancelled worker can finish before the debounced replacement.
+        dialog.timer.setInterval(1000)
         old_image = dialog.last_image
         dialog.page.setValue(4)  # Landscape, unlike the currently displayed portrait page.
         dialog.preview()
@@ -341,7 +343,8 @@ def test_page_raster_must_match_before_drawing(qt_application, tmp_path):
         before = deepcopy(dialog.regions)
         draw(dialog, (10, 110), (45, 135))
         assert dialog.regions == before
-        wait_until(lambda: not dialog.host.workers and dialog.host.pending is None)
+        wait_until(lambda: dialog.raster_page == 4 and not dialog.timer.isActive()
+                   and not dialog.host.workers and dialog.host.pending is None)
         assert dialog.last_image != old_image
         assert dialog.view.sceneRect().width() > dialog.view.sceneRect().height()
         dialog.add()
