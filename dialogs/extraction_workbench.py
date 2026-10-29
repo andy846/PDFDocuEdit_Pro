@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (
 
 from ui import responsive
 
-LAYOUT_GROUP = "dialogs/extract-region-workbench-v2"
+LAYOUT_GROUP = "dialogs/extract-region-workbench-v3"
+LEGACY_LAYOUT_GROUP = "dialogs/extract-region-workbench-v2"
 
 
 class ExtractionWorkbench:
@@ -26,6 +27,7 @@ class ExtractionWorkbench:
         self._results_focused = False
         self._results_collapsed = False
         self._normal_wide_state = None
+        self._normal_right_state = None
         self._geometry_restored = False
         self._workbench_screen = None
         self._watching_window = False
@@ -52,9 +54,9 @@ class ExtractionWorkbench:
         tools.addWidget(self.duplicate_button)
         tools.addWidget(self.delete_button)
         fields.addLayout(tools)
-        self.hint.setText("New region → drag on PDF\nClick a label to select\nSpace to pan · Ctrl+wheel to zoom")
-        fields.addWidget(self.hint)
-        self.fields_panel.setMinimumWidth(160)
+        self.hint.hide()
+        self.add_button.setToolTip("Drag on the PDF after New region. Esc cancels. Space pans; Ctrl+wheel zooms.")
+        self.fields_panel.setMinimumWidth(140)
 
         self.inspector_layout.removeItem(self.region_tools)
         self.region_tools.setParent(None)
@@ -64,7 +66,7 @@ class ExtractionWorkbench:
         self.inspector.setMinimumWidth(250)
         for control in (self.scope, self.role, self.policy):
             self.controls_form.setRowVisible(control, False)
-        self.advanced = QPushButton("Advanced text rules")
+        self.advanced = QPushButton("Position / size / advanced rules")
         self.advanced.setCheckable(True)
         self.inspector_layout.insertWidget(1, self.advanced)
         self.advanced.toggled.connect(self.toggle_advanced)
@@ -81,7 +83,6 @@ class ExtractionWorkbench:
         self.editor_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.editor_splitter.setChildrenCollapsible(False)
         self.editor_splitter.addWidget(self.fields_panel)
-        self.editor_splitter.addWidget(self.view)
         self.editor_splitter.addWidget(self.tabs)
         self.editor_splitter.setStretchFactor(1, 1)
         self.editor_page = QWidget()
@@ -111,16 +112,31 @@ class ExtractionWorkbench:
         self._layout_ready = True
 
     def finish_workbench(self):
-        self.wide = QSplitter(Qt.Orientation.Vertical)
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.right_splitter.setChildrenCollapsible(False)
+        self.right_splitter.addWidget(self.editor_page)
+        self.right_splitter.addWidget(self.results_page)
+        self.right_page = QWidget()
+        right = QVBoxLayout(self.right_page)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.addWidget(self.right_splitter, 1)
+        right.addWidget(self.status)
+        right.addWidget(self.progress)
+        right.addWidget(self.action_bar)
+        self.wide = QSplitter(Qt.Orientation.Horizontal)
         self.wide.setChildrenCollapsible(False)
-        self.wide.addWidget(self.editor_page)
-        self.wide.addWidget(self.results_page)
+        self.wide.addWidget(self.view)
+        self.wide.addWidget(self.right_page)
+        self.wide.setStretchFactor(0, 1)
+        self.wide.setStretchFactor(1, 1)
+        self.view.setMinimumWidth(220)
         self.layout().insertWidget(1, self.wide, 1)
         self._layout_ready = True
-        geometry = self._settings.value(LAYOUT_GROUP+"/geometry")
+        geometry_group = LAYOUT_GROUP if self._settings.contains(LAYOUT_GROUP+"/geometry") else LEGACY_LAYOUT_GROUP
+        geometry = self._settings.value(geometry_group+"/geometry")
         if geometry:
             self._geometry_restored = self.restoreGeometry(geometry)
-            normal = self._settings.value(LAYOUT_GROUP+"/normal_rect")
+            normal = self._settings.value(geometry_group+"/normal_rect")
             if isinstance(normal, QRect) and normal.isValid():
                 # Qt may clamp restoreGeometry to the old/primary screen before
                 # our current-screen bounds helper runs (notably after docking).
@@ -166,19 +182,25 @@ class ExtractionWorkbench:
         if self.closed:
             return
         self.arrange()
+        controls = self._settings.value(LAYOUT_GROUP+"/controls")
+        if controls:
+            self.editor_splitter.restoreState(controls)
+        else:
+            self.editor_splitter.setSizes([170, 280])
         horizontal = self._settings.value(LAYOUT_GROUP+"/horizontal")
         if horizontal:
-            self.editor_splitter.restoreState(horizontal)
+            self.wide.restoreState(horizontal)
         else:
-            self.editor_splitter.setSizes([200, max(300, self.width()-500), 280])
+            width = self.wide.width()
+            self.wide.setSizes([round(width*.48), round(width*.52)])
         vertical = self._settings.value(LAYOUT_GROUP+"/vertical")
         if vertical:
-            self.wide.restoreState(vertical)
+            self.right_splitter.restoreState(vertical)
         else:
-            height = self.wide.height()
-            bottom = max(self.results_page.minimumHeight(), round(height*.4))
-            self.wide.setSizes([max(160, height-bottom), bottom])
-        self.properties_toggle.setChecked(self._settings.value(LAYOUT_GROUP+"/properties", self.width() >= 1100, type=bool))
+            height = self.right_splitter.height()
+            bottom = max(self.results_page.minimumHeight(), round(height*.66))
+            self.right_splitter.setSizes([max(160, height-bottom), bottom])
+        self.properties_toggle.setChecked(self._settings.value(LAYOUT_GROUP+"/properties", True, type=bool))
         self.fields_toggle.setChecked(self._settings.value(LAYOUT_GROUP+"/list", True, type=bool))
         if self._settings.value(LAYOUT_GROUP+"/collapsed", False, type=bool):
             self.collapse_results()
@@ -188,8 +210,9 @@ class ExtractionWorkbench:
             return
         self._settings.setValue(LAYOUT_GROUP+"/geometry", self.saveGeometry())
         self._settings.setValue(LAYOUT_GROUP+"/normal_rect", self.normalGeometry() if self.isMaximized() else QWidget.geometry(self))
-        self._settings.setValue(LAYOUT_GROUP+"/horizontal", self.editor_splitter.saveState())
-        self._settings.setValue(LAYOUT_GROUP+"/vertical", self._normal_wide_state or self.wide.saveState())
+        self._settings.setValue(LAYOUT_GROUP+"/controls", self.editor_splitter.saveState())
+        self._settings.setValue(LAYOUT_GROUP+"/horizontal", self._normal_wide_state or self.wide.saveState())
+        self._settings.setValue(LAYOUT_GROUP+"/vertical", self._normal_right_state or self.right_splitter.saveState())
         self._settings.setValue(LAYOUT_GROUP+"/properties", self.properties_toggle.isChecked())
         self._settings.setValue(LAYOUT_GROUP+"/list", self.fields_toggle.isChecked())
         self._settings.setValue(LAYOUT_GROUP+"/collapsed", self._results_collapsed)
@@ -198,17 +221,19 @@ class ExtractionWorkbench:
         if not hasattr(self, "wide"):
             return
         if self._results_collapsed:
-            self.results_page.setMinimumHeight(self.results_header.sizeHint().height()+4)
+            self.results_page.setMinimumHeight(self.results_header.sizeHint().height()+self.selection_row.sizeHint().height()+16)
         else:
             rows = 8 if self.width() >= 1280 else 6
             minimum = (rows*self.table.verticalHeader().defaultSectionSize()+self.table.horizontalHeader().height()
                        + self.table.horizontalScrollBar().sizeHint().height()+2*self.table.frameWidth()
-                       + self.results_header.sizeHint().height()+self.navigation.sizeHint().height()+24)
+                       + self.results_header.sizeHint().height()+self.navigation.sizeHint().height()
+                       + self.selection_row.sizeHint().height()+32)
             self.results_page.setMinimumHeight(minimum)
 
     def toggle_advanced(self, checked):
-        for control in (self.label, self.minimum, self.maximum, self.trim):
+        for control in (*self.region, self.label, self.minimum, self.maximum, self.trim):
             self.controls_form.setRowVisible(control, checked)
+        self.size_button.setVisible(checked)
 
     def set_all_regions(self, checked):
         self.show_all_regions = checked
@@ -219,28 +244,34 @@ class ExtractionWorkbench:
             self.collapse_results()
         if not self._results_focused:
             self._normal_wide_state = self.wide.saveState()
+            self._normal_right_state = self.right_splitter.saveState()
+            self.view.hide()
             self.editor_page.hide()
         else:
+            self.view.show()
             self.editor_page.show()
             if self._normal_wide_state:
                 self.wide.restoreState(self._normal_wide_state)
+            if self._normal_right_state:
+                self.right_splitter.restoreState(self._normal_right_state)
             self._normal_wide_state = None
+            self._normal_right_state = None
         self._results_focused = not self._results_focused
-        self.result_focus_button.setText("Restore workspace" if self._results_focused else "Expand results")
+        self.result_focus_button.setText("Restore" if self._results_focused else "Expand")
 
     def collapse_results(self):
         if self._results_focused:
             self.focus_results()
         self._results_collapsed = not self._results_collapsed
         if self._results_collapsed:
-            self._normal_wide_state = self.wide.saveState()
+            self._normal_right_state = self.right_splitter.saveState()
         self.table.setVisible(not self._results_collapsed)
         self.navigation.setVisible(not self._results_collapsed)
         self.result_focus_button.setEnabled(not self._results_collapsed)
-        self.collapse_button.setText("Show results" if self._results_collapsed else "Collapse results")
+        self.collapse_button.setText("Show table" if self._results_collapsed else "Hide table")
         self.arrange()
         if self._results_collapsed:
-            self.wide.setSizes([self.wide.height(), self.results_page.minimumHeight()])
-        elif self._normal_wide_state:
-            self.wide.restoreState(self._normal_wide_state)
-            self._normal_wide_state = None
+            self.right_splitter.setSizes([self.right_splitter.height(), self.results_page.minimumHeight()])
+        elif self._normal_right_state:
+            self.right_splitter.restoreState(self._normal_right_state)
+            self._normal_right_state = None

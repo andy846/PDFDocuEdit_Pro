@@ -75,8 +75,8 @@ def test_responsive_keyboard_controls_and_no_profile(qt_application, tmp_path):
         for width, height in ((1500, 900), (960, 640)):
             dialog.resize(width, height)
             QApplication.processEvents()
-            assert dialog.extract_button.isVisible()
-            assert dialog.extract_button.geometry().width() > 40
+            assert dialog.extract_export_button.isVisible() and dialog.more_button.isVisible()
+            assert dialog.extract_export_button.geometry().width() > 40
             assert dialog.table.isVisible() and dialog.view.isVisible()
         assert not any("profile" in button.text().lower() for button in dialog.findChildren(
             __import__("PyQt6.QtWidgets", fromlist=["QPushButton"]).QPushButton))

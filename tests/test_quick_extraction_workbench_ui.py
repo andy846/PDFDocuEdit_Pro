@@ -9,7 +9,16 @@ from PyQt6.QtWidgets import QApplication
 from tests.test_quick_extraction import fixture_pdf
 from tests.test_quick_extraction_ui import wait_until
 
-GROUP = "dialogs/extract-region-workbench-v2"
+GROUP = "dialogs/extract-region-workbench-v3"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def product_styles(qt_application):
+    from styles.components import global_style
+    original = qt_application.styleSheet()
+    qt_application.setStyleSheet(global_style())
+    yield
+    qt_application.setStyleSheet(original)
 
 
 @pytest.fixture(autouse=True)
@@ -85,6 +94,9 @@ def test_result_viewport_has_real_rows_and_resize_keeps_split(size, minimum, qt_
                               for n in range(1, 51)], fields)
         QApplication.processEvents()
         assert dialog.view.isVisible() and dialog.table.isVisible()
+        assert dialog.view.height() > dialog.view.width()
+        assert dialog.view.height() >= size[1]*.78
+        assert dialog.view.mapTo(dialog, QPoint()).x()+dialog.view.width() < dialog.table.mapTo(dialog, QPoint()).x()
         assert dialog.table.viewport().height() // dialog.table.rowHeight(0) >= minimum
         dialog.wide.setSizes([180, 420])
         before = dialog.wide.sizes()
@@ -92,8 +104,9 @@ def test_result_viewport_has_real_rows_and_resize_keeps_split(size, minimum, qt_
         QApplication.processEvents()
         after = dialog.wide.sizes()
         assert abs(before[1]/sum(before)-after[1]/sum(after)) < .08
-        for button in (dialog.extract_button, dialog.export_button, dialog.cancel_button, dialog.close_button):
+        for button in (dialog.extract_export_button, dialog.more_button, dialog.cancel_button, dialog.close_button):
             point = button.mapTo(dialog, QPoint())
+            assert 0 <= point.x() and point.x()+button.width() <= dialog.width()
             assert 0 <= point.y() and point.y()+button.height() <= dialog.height()
         dialog.focus_results()
         assert not dialog.editor_page.isVisible() and dialog.table.isVisible()
@@ -122,6 +135,55 @@ def test_geometry_and_panels_restore_but_no_document_data_is_saved(qt_applicatio
                        for word in ("source", "region", "field", "text", "output"))
     finally:
         close_dialog(again)
+
+
+def test_long_status_and_custom_page_range_keep_actions_reachable(qt_application, tmp_path):
+    dialog = make_dialog(tmp_path)
+    try:
+        dialog.resize(960, 640)
+        QApplication.processEvents()
+        assert not dialog.page_range.isVisible()
+        dialog.page_mode.setCurrentText("Custom pages")
+        dialog.status.setText("Export failed: "+"very_long_folder/"*30+"result.xlsx")
+        QApplication.processEvents()
+        assert dialog.width() <= 960 and dialog.height() <= 640
+        assert dialog.page_range.isVisible()
+        button = dialog.extract_export_button
+        point = button.mapTo(dialog, QPoint())
+        assert point.x()+button.width() <= 960 and point.y()+button.height() <= 640
+        assert dialog.view.height() >= 499
+    finally:
+        close_dialog(dialog)
+
+
+def test_v2_geometry_migrates_without_old_split_axis_or_collapse(qt_application, tmp_path, monkeypatch):
+    import ui.responsive as responsive
+    monkeypatch.setattr(responsive, "available_area", lambda widget: QRect(0, 0, 1920, 1080))
+    dialog = make_dialog(tmp_path)
+    dialog.resize(1320, 820)
+    settings = QSettings()
+    settings.setValue("dialogs/extract-region-workbench-v2/geometry", dialog.saveGeometry())
+    settings.setValue("dialogs/extract-region-workbench-v2/normal_rect", QRect(10, 10, 1320, 820))
+    settings.setValue("dialogs/extract-region-workbench-v2/horizontal", dialog.right_splitter.saveState())
+    settings.setValue("dialogs/extract-region-workbench-v2/collapsed", True)
+    close_dialog(dialog)
+    settings.remove(GROUP)
+    again = make_dialog(tmp_path)
+    try:
+        assert again.width() == 1320
+        assert again.view.isVisible() and again.table.isVisible()
+        assert again.wide.orientation() == Qt.Orientation.Horizontal
+        assert .4 < again.wide.sizes()[0]/sum(again.wide.sizes()) < .56
+        before = again.right_splitter.sizes()
+        again.focus_results()
+        again.focus_results()
+        assert again.right_splitter.sizes() == before
+        again.collapse_results()
+        again.collapse_results()
+        assert again.right_splitter.sizes() == before
+    finally:
+        close_dialog(again)
+        settings.remove("dialogs/extract-region-workbench-v2")
 
 
 def test_boxes_labels_overlap_selection_and_duplicate_offset(qt_application, tmp_path):

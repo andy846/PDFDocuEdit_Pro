@@ -280,3 +280,110 @@ between monitors. Check eight/six complete rows at the specified logical sizes,
 horizontal scroll, result focus/restore, sample/full page-field navigation and
 Raw/Clean. Finally use the native Export chooser for XLSX/CSV/TXT, confirm explicit
 overwrite, cancel an active job, and check safe close and Workflow handoff.
+
+## Portrait A4 and one-action Excel revision — 2026-10-29
+
+This supersedes the preceding upper-workspace/full-width-bottom-table layout.
+The owner approved the left portrait PDF / right settings and results mockup.
+Baseline: D-drive local `main`, `0d120faf31dd2ce1edce70317195a8e7259227b1`.
+No version, dependency, extraction model/engine, SQLite/export format, production
+authorization, branch/worktree, push or release change. The existing user app
+was left open; `BOCHK.pdmp` was neither read nor modified.
+
+### Changes and safeguards
+
+- `dialogs/extraction_workbench.py`: full-height left PDF (~48% initial width),
+  right settings/results split and right-side footer. Existing scene, named
+  fields, page fitting, pan, zoom and editing remain shared. Geometry/advanced
+  controls collapse; common field properties remain visible. QSettings v3 imports
+  only v2 window geometry, never old splitter axes/collapse flags. Main, settings
+  and right vertical splits retain independent state. Focus/collapse restores.
+- `dialogs/quick_text_extractor.py`: default optional First 10 trial with explicit
+  Sample/Complete/stale/failure status. Primary **Extract & Export Excel…** fully
+  scans selected pages then opens the save chooser, or reuses a current full DB.
+  Trial results never qualify, even if the trial covered every selected page.
+  The continuation runs after the result-row worker, not while the host would
+  reject an overlapping request. Repeated clicks, scan failure/cancellation,
+  close, source invalidation and cancelled chooser do not produce unintended
+  output. Source/config are checked before the chooser and by export afterwards.
+  The Excel primary rejects non-XLSX names without changing the chosen file.
+- **More** retains Extract only, complete-result XLSX/CSV/TXT export and Workflow
+  handoff. No new publication path: overwrite confirmation, source protection,
+  atomic output, safe late commit receipt and worker cleanup remain existing.
+- Tests: existing Quick/workbench modules retain prior lifecycle/geometry checks;
+  new `tests/test_quick_extraction_export_ui.py` uses real worker scans/SQLite/XLSX
+  and substitutes only filename selection. `scripts/ci_plan.py` includes it.
+
+### Results
+
+The isolated 11-module focused regression run passed **192 tests, 0 failures,
+errors or skips**, including Quick extraction core/UI, workbench, one-action
+export, Workflow core/UI, close status, CI/source contracts, PDF engine and
+detection-profile UI. After adding product-wide stylesheet and v2 migration
+coverage, the workbench module passed **16/16**; after adding an all-selected
+trial case, the export module passed **11/11**. This yields **194 distinct
+passing cases** across those modules, not a full-repository regression claim.
+Early expected RED runs and subsequent passing logs remain under
+`build/probes/extract-portrait/`.
+
+New tests exercise actual XLSX values/row counts for a 15-page source, leading
+zeros, trial-before-export versus no trial, stale-rule rescan, full-DB reuse,
+duplicate clicks, chooser cancellation, corrupt input, source changes before or
+inside the chooser and rejecting `.csv` on the Excel-only action. Existing generic
+CSV/TXT tests remain in the core module. Native chooser interaction itself is
+still Not Tested; automated selection uses a substituted chooser, with real
+export workers afterwards.
+
+Independent final read-only review reported no Critical, Important or Minor
+findings. Additional real-worker probes covered a five-page trial covering the
+entire source, repeated primary requests during rows loading, and cancel/close/
+source change during that rows stage. Closing inside the substituted chooser
+also preserved the target. These probes are retained in `review/probe.log` and
+`review/safety.log`; they are separate from the maintained-test count above.
+The reviewer did not judge native chooser interaction, physical monitors/DPI,
+macOS or printing. Those remain untested or outside this UI change, not inferred
+passes. Operator documentation was checked separately against final behavior.
+
+Synthetic 30-page / 12-field worker scans were inspected with **the same global
+stylesheet as the application**, not palette-only Qt controls:
+
+| Logical client size | Scale | Light full rows | Dark full rows | PDF viewport (w×h) |
+| --- | --- | ---: | ---: | --- |
+| 1280×800 | 100% | 8 | 8 | 603×736 |
+| 960×640 | 100% | 6 | 6 | 450×576 |
+| 1280×800 | 200% | 8 | 8 | 603×736 |
+| 960×640 | 200% | 6 | 6 | 450×576 |
+
+Rows are measured from the actual table viewport with unchanged font/row sizing
+and a horizontal scrollbar. Footer bounds and full-height portrait viewport
+were asserted. PNGs and measurements are `visual-styled-standard.json`,
+`visual-styled-hidpi.json` and their specifically named screenshots. The earlier
+palette-only probe showed 11/7 rows and is not the final styled acceptance data.
+These are offscreen Windows Qt checks using Windows fonts and synthetic PDFs;
+physical monitors, actual system DPI moves, packaged Windows, macOS and customer
+documents remain Not Tested. No startup/throughput speedup is claimed.
+
+Commands (TEMP/TMP and runtime root isolated below the probe directory;
+`QT_QPA_FONTDIR=C:\Windows\Fonts`):
+
+```powershell
+.\.venv-dev\Scripts\python.exe -m pytest -q tests/test_quick_extraction_workbench_ui.py --basetemp build/probes/extract-portrait/green-styled-layout
+.\.venv-dev\Scripts\python.exe -m pytest -q tests/test_quick_extraction_export_ui.py --basetemp build/probes/extract-portrait/green-export-03
+# The same scripts.regression_suite.run harness, one process per named module:
+# exact module names/counts/times are in build/probes/extract-portrait/regression/result.json.
+# QT_QPA_PLATFORM=offscreen; QT_SCALE_FACTOR=1, then 2:
+.\.venv-dev\Scripts\python.exe build/probes/extract-portrait/smoke.py styled-standard
+.\.venv-dev\Scripts\python.exe build/probes/extract-portrait/smoke.py styled-hidpi
+.\.venv-dev\Scripts\python.exe -m ruff check .
+.\.venv-dev\Scripts\python.exe scripts/verify_source.py
+git diff --check
+```
+
+Manual UAT: after a normal restart, open a portrait A4 text PDF and draw fields.
+Check the larger left preview, right properties and table, divider/geometry
+memory, More actions and keyboard access. Try 10 pages if desired, then use the
+primary action and verify all selected pages in Excel. Try custom pages, cancel
+the save chooser, edit a field and export again, test native overwrite confirmation
+and close/cancel during a scan. Repeat with a landscape/rotated CropBox PDF,
+physical screen/DPI changes, and Workflow handoff. The software checks do not
+replace operator review of extracted content.

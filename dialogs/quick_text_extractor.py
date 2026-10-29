@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QProgressBar,
     QPushButton,
     QTableView,
@@ -101,8 +102,12 @@ class ExtractionHost(QWidget):
                             self.dialog.preview_text(delivered[0])
                     elif worker.cancel_requested:
                         self.dialog.status.setText("Cancelled; previous output files are unchanged.")
+                        if request.get("operation") == "scan":
+                            self.dialog.result_state.setText("Cancelled")
                     elif errors:
                         self.dialog.status.setText(errors[0])
+                        if request.get("operation") == "scan":
+                            self.dialog.result_state.setText("Extraction failed")
             except Exception as exc:
                 log_failure("Quick extraction callback failed")
                 if not self.closing:
@@ -221,11 +226,13 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
         self.results_header = QWidget()
         result_tools = QHBoxLayout(self.results_header)
         result_tools.setContentsMargins(0, 0, 0, 0)
-        result_tools.addWidget(QLabel("Extraction results"))
+        result_tools.addWidget(QLabel("Results"))
+        self.result_state = QLabel("Not extracted")
+        result_tools.addWidget(self.result_state)
         result_tools.addStretch()
-        self.result_focus_button = QPushButton("Expand results")
+        self.result_focus_button = QPushButton("Expand")
         self.result_focus_button.clicked.connect(self.focus_results)
-        self.collapse_button = QPushButton("Collapse results")
+        self.collapse_button = QPushButton("Hide table")
         self.collapse_button.clicked.connect(self.collapse_results)
         result_tools.addWidget(self.result_focus_button)
         result_tools.addWidget(self.collapse_button)
@@ -247,32 +254,44 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
         for control in (self.previous, self.page_label, self.next):
             navigation.addWidget(control)
         results_layout.addWidget(self.navigation)
-        selection = QHBoxLayout()
+        self.selection_row = QWidget()
+        selection = QHBoxLayout(self.selection_row)
+        selection.setContentsMargins(0, 0, 0, 0)
         self.page_mode = QComboBox()
         self.page_mode.addItems(["All pages", "Current preview page", "Custom pages"])
         self.page_range = QLineEdit()
         self.page_range.setPlaceholderText("Pages: 1,3,5-8")
         self.page_range.setEnabled(False)
+        self.page_range.hide()
         self.sample_mode = QComboBox()
         self.sample_mode.addItems(["All selected", "First 10", "First 50", "Random 50"])
-        self.sample_button = QPushButton("Sample")
+        self.sample_mode.setCurrentIndex(1)
+        self.sample_mode.setMaximumWidth(110)
+        self.sample_button = QPushButton("Try 10 pages")
+        self.sample_button.setToolTip("Optional trial to check fields. Extract & Export Excel always uses the complete selected page range.")
+        self.sample_mode.currentIndexChanged.connect(self.update_sample_label)
         self.sample_button.clicked.connect(lambda: self.start_scan(sample=True))
         selection.addWidget(self.page_mode)
         selection.addWidget(self.page_range, 1)
         selection.addWidget(self.sample_mode)
         selection.addWidget(self.sample_button)
-        self.layout().addLayout(selection)
-        self.status = QLabel("One region = one column. Multiline values stay in one cell.")
+        results_layout.insertWidget(1, self.selection_row)
+        self.status = QLabel("Trial is optional. Extract & Export Excel processes the complete selected page range.")
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.TextFormat.PlainText)
-        self.layout().addWidget(self.status)
         self.progress = QProgressBar()
         self.progress.setMaximumHeight(8)
         self.progress.setTextVisible(False)
-        self.layout().addWidget(self.progress)
-        actions = QHBoxLayout()
-        self.extract_button = QPushButton("Extract selected pages")
-        self.export_button = QPushButton("Export…")
+        self.action_bar = QWidget()
+        actions = QHBoxLayout(self.action_bar)
+        actions.setContentsMargins(0, 0, 0, 0)
+        self.extract_button = QPushButton("Extract only")
+        self.export_button = QPushButton("Export complete results…")
+        self.extract_export_button = QPushButton("Extract && Export Excel…")
+        self.extract_export_button.setObjectName("primary")
+        self.extract_export_button.setProperty("primary", True)
+        self.extract_export_button.setAutoDefault(False)
+        self.extract_export_button.clicked.connect(self.extract_and_export)
         self.workflow_button = QPushButton("Open in Visual Workflow")
         self.cancel_button = QPushButton("Cancel task")
         self.close_button = QPushButton("Close")
@@ -281,9 +300,18 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
         self.workflow_button.clicked.connect(self.open_workflow)
         self.cancel_button.clicked.connect(host.cancel)
         self.close_button.clicked.connect(self.reject)
-        for button in (self.extract_button, self.export_button, self.workflow_button, self.cancel_button, self.close_button):
+        self.more_button = QPushButton("More")
+        more = QMenu(self.more_button)
+        self.more_actions = []
+        for button in (self.extract_button, self.export_button, self.workflow_button):
+            button.setParent(self)
+            button.hide()
+            action = more.addAction(button.text(), button.click)
+            self.more_actions.append((action, button))
+        self.more_button.setMenu(more)
+        for button in (self.more_button, self.extract_export_button, self.cancel_button, self.close_button):
+            button.setAutoDefault(False)
             actions.addWidget(button)
-        self.layout().addLayout(actions)
         self.page_mode.currentIndexChanged.connect(self.page_mode_changed)
         self.page_range.textChanged.connect(self.invalidate_results)
         self.page.valueChanged.connect(self.selection_changed)
@@ -453,6 +481,7 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
     def check_source(self):
         if self.source_guard and not self.source_guard():
             self.source_stale = True
+            self.result_state.setText("Source changed")
             self.scan_signature = None
             self.results_current = False
             self.status.setText("Source PDF changed or closed; close this tool and capture its current revision again.")
@@ -467,6 +496,7 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
         return list(range(self.page.maximum()))
 
     def selection_changed(self, *_):
+        self.page_range.setVisible(self.page_mode.currentIndex() == 2)
         self.page_range.setEnabled(self.page_mode.currentIndex() == 2 and not self.host.active)
         if self.page_mode.currentIndex() == 1:
             self.invalidate_results()
@@ -478,6 +508,7 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
     def invalidate_results(self, *_):
         if self.result:
             self.status.setText("Results are stale; extract selected pages again before exporting.")
+            self.result_state.setText("Out of date")
         self.scan_signature = None
         self.results_current = False
         self.sync_actions()
@@ -487,6 +518,8 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
             return
         busy = self.host.active is not None or self.host.closing
         self.editor_page.setEnabled(not busy)
+        self.view.setEnabled(not busy)
+        self.page.setEnabled(not busy)
         self.inspector.setEnabled(bool(self.regions))
         self.add_button.setEnabled(not busy and self.source_ready and (self.draw_mode or len(self.regions) < 200))
         for button in (self.duplicate_button, self.delete_button):
@@ -496,11 +529,14 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
         self.sample_button.setEnabled(not busy and self.source_ready and bool(self.regions) and not self.draw_mode and not self.source_stale)
         self.sample_mode.setEnabled(not busy)
         self.extract_button.setEnabled(not busy and self.source_ready and bool(self.regions) and not self.draw_mode and not self.source_stale)
+        self.extract_export_button.setEnabled(self.extract_button.isEnabled())
         self.export_button.setEnabled(not busy and not self.source_stale and self.result is not None and self.scan_signature is not None)
         self.workflow_button.setEnabled(not busy and bool(self.regions) and not self.draw_mode and not self.source_stale and self.source_ready and self.handoff is not None)
         self.cancel_button.setEnabled(bool(self.host.workers) and not self.host.closing)
         self.previous.setEnabled(not busy and self.offset > 0 and self.result is not None)
         self.next.setEnabled(not busy and self.result is not None and self.offset+100 < self.result["pages"])
+        for action, button in self.more_actions:
+            action.setEnabled(button.isEnabled())
 
     def preview_text(self, result):
         self._cached_preview = result
@@ -532,7 +568,24 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
             self.raster_needed = True
         super().preview()
 
-    def start_scan(self, *, sample=False):
+    def update_sample_label(self, *_):
+        self.sample_button.setText(["Try selected", "Try 10 pages", "Try 50 pages", "Try random 50"][self.sample_mode.currentIndex()])
+
+    def extract_and_export(self):
+        if self.host.active or self.host.closing or self.draw_mode or not self.source_ready:
+            return
+        try:
+            identity = signature(self.config(), self.selected_pages())
+            if self.results_current and self.result and self.scan_signature == identity:
+                self.choose_export(excel_only=True)
+            else:
+                self.start_scan(on_ready=lambda: self.choose_export(excel_only=True))
+        except ValueError as exc:
+            self.status.setText(str(exc))
+
+    def start_scan(self, *, sample=False, on_ready=None):
+        if self.host.active or self.host.closing or self.draw_mode:
+            return
         if not self.source_ready:
             self.status.setText("Wait for the first PDF preview before extracting.")
             return
@@ -543,6 +596,7 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
                 mode = self.sample_mode.currentIndex()
                 pages = sorted(random.sample(pages, min(50, len(pages)))) if mode == 3 else pages[:10 if mode == 1 else 50] if mode else pages
             self.status.setText("Extracting sample…" if sample else "Extracting selected pages…")
+            self.result_state.setText("Trying sample…" if sample else "Extracting…")
             self.scan_signature = None
             self.results_current = False
             target = self.host.directory/(uuid.uuid4().hex+".sqlite")
@@ -550,15 +604,16 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
                 self.result = result
                 self.results_current = True
                 self.scan_signature = None if sample else identity
+                self.result_state.setText(f'Sample · {result["pages"]:,} / {len(self.selected_pages()):,}' if sample else f'Complete · {result["pages"]:,} pages')
                 self.status.setText(f'{"Sample" if sample else "Extraction"}: {result["pages"]:,} pages · {result["issues"]:,} field issues. Review before use.')
-                self.load_rows(0)
+                self.load_rows(0, on_ready=on_ready)
                 self.sync_actions()
             self.host.request({"operation": "scan", "source": self.source, "pages": pages,
                                "extraction": spec.to_dict(), "target": str(target), "protected": self.protected}, ready)
         except ValueError as exc:
             self.status.setText(str(exc))
 
-    def load_rows(self, offset):
+    def load_rows(self, offset, *, on_ready=None):
         if not self.result:
             return
         self.offset = offset
@@ -568,15 +623,29 @@ class QuickTextExtractorDialog(ExtractionWorkbench, RegionEditor):
                 self.model.replace(result["rows"], result["fields"])
                 total = self.result["pages"]
                 self.page_label.setText(f"{offset+1}–{min(offset+100, total)} / {total:,}")
+                if on_ready:
+                    on_ready()
         self.host.request({"operation": "rows", "database": database, "offset": offset}, ready)
 
-    def choose_export(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export extracted text", start_in_save_directory(self, self.suggested),
-                                              "Excel workbook (*.xlsx);;CSV (*.csv);;Plain text (*.txt)")
-        if path:
-            # The native save dialog owns the explicit overwrite confirmation.
-            remember_save_directory(self, path)
-            self.export_to(path, overwrite=Path(path).exists())
+    def choose_export(self, *, excel_only=False):
+        if self.host.active or self.host.closing:
+            return
+        try:
+            if not self.results_current or not self.result or self.scan_signature != signature(self.config(), self.selected_pages()):
+                raise ValueError("Complete results are not current; use Extract & Export Excel to extract all selected pages.")
+            suggested = str(Path(self.suggested).with_suffix(".xlsx")) if excel_only else self.suggested
+            filters = "Excel workbook (*.xlsx)" if excel_only else "Excel workbook (*.xlsx);;CSV (*.csv);;Plain text (*.txt)"
+            path, _ = QFileDialog.getSaveFileName(self, "Export extracted text", start_in_save_directory(self, suggested), filters)
+            if path:
+                if excel_only and Path(path).suffix.lower() != ".xlsx":
+                    raise ValueError("Use .xlsx for Excel. Other formats are available under More → Export complete results.")
+                # The native save dialog owns explicit overwrite confirmation.
+                remember_save_directory(self, path)
+                self.export_to(path, overwrite=Path(path).exists())
+            else:
+                self.status.setText("Save cancelled; complete extraction results are retained.")
+        except ValueError as exc:
+            self.status.setText(str(exc))
 
     def export_to(self, target, *, overwrite=False):
         try:

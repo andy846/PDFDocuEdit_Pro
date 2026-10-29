@@ -15,30 +15,44 @@ The original PDF is never used as an extraction output destination.
 2. Choose all, current or custom source pages. Preview the selected field's Raw
    and Clean text. `Join lines with spaces` is on by default; turn it off to retain
    line breaks inside the same cell. Raw text always retains the extracted layout.
-3. Optionally sample the first 10, first 50 or random 50 selected pages. A sample
-   is labelled as a sample and cannot be exported as a complete extraction.
-4. Extract selected pages. Results show up to 100 rows at a time. Every selected
-   source page keeps its row, including pages with no extractable text, empty
-   required fields, invalid formats or different geometry.
-5. Review Issues, then export XLSX, CSV or tab-delimited TXT. Field issues remain
-   exportable; an invalid configuration, stale source/results or an unsupported
-   output representation blocks that export.
+3. Optionally use **Try 10 pages** to check the fields. First 10 is the default;
+   first 50, random 50 and all selected are also available. Every trial remains
+   labelled Sample and cannot be exported as complete results, even when its
+   sample happens to include every selected page.
+4. Use **Extract & Export Excel…** for the normal workflow. It fully extracts
+   the selected page range, loads the result table, then opens the Excel save
+   chooser. A current complete extraction is reused; a trial or stale extraction
+   is scanned again. No trial or separate Extract click is required.
+5. For a separate review before saving, choose **More → Extract only**, inspect
+   the table, then use the main Excel action. **More → Export complete results…**
+   retains XLSX, CSV and tab-delimited TXT. Results show up to 100 rows at a time;
+   every selected source page keeps a row, including no-text, empty-required-field,
+   invalid-format and geometry-mismatch pages. Field issues remain exportable;
+   invalid configuration, stale source/results and unsupported output
+   representations still block export.
 
-## Same-screen workbench
+## Portrait-first workbench
 
-The field list, PDF and properties share the upper workspace; results span the
-bottom. First use occupies about 92% of the current screen's available area.
+The PDF occupies the full-height left pane, using approximately 48% of the width
+initially. A portrait A4 page retains its proportions and no longer shares its
+height with the results table. Fields/properties occupy the top-right; results,
+trial/page-range controls and export actions remain on the right. Landscape and
+other page shapes still use the existing fit/zoom/pan controls without stretching.
+First use occupies about 92% of the current screen's available area.
 Window size, maximized state, panel proportions and sidebar visibility are
 remembered locally, without saving document data or extraction regions. A moved
-or removed screen is bounded to the available screen on reopening. Properties
-start collapsed in a narrow first-use window and can be toggled from the toolbar.
+or removed screen is bounded to the available screen on reopening and on screen
+or DPI changes. Properties are initially visible; Fields and Properties can be
+toggled from the toolbar. The new layout imports only window geometry from the
+earlier layout, never its incompatible splitter axes or collapsed state.
 
-Drag the horizontal divider to allocate space to results. **Expand results**
-temporarily uses the workspace for the table; **Restore workspace** restores its
-previous split. **Collapse results** hides the table without losing its data.
+Drag the main divider to adjust PDF/results width and the right-side horizontal
+divider to allocate space to settings/results. **Expand**
+temporarily uses the workspace for the table; **Restore** restores its
+previous splits. **Hide table** hides the table without losing its data.
 At 1280×800 the default table accommodates at least eight complete rows, and at
 960×640 at least six, including a horizontal scrollbar for many fields. The
-minimum visible-row allocation can take more than 40% in a short window.
+minimum visible-row allocation can take more of the right pane in a short window.
 
 List entries and PDF badges share the output-order number and field name.
 Select either to activate a region: the active frame is thicker and has a
@@ -50,14 +64,21 @@ trying the reverse direction at the far edge. A whole-page field may overlap.
 Quick Extraction can delete its final field; extraction is disabled until a new
 field is drawn. The existing Workflow editor retains its original default field.
 
-Common field settings appear in **Properties**; label removal and length rules
-are under **Advanced text rules**. **Text preview** shows the active field's Raw
+Common field settings appear in **Properties**; millimetre geometry, reference page
+size, label removal and length rules are under **Position / size / advanced rules**.
+**Text preview** shows the active field's Raw
 and Clean text. Clicking a current result row navigates to its source page;
 clicking a named result column also selects its field. This includes sample
 results, which still cannot be exported. Viewing pages in All/Custom mode,
 selecting fields and changing layout do not invalidate extraction. Current
 preview page mode, real field/rule edits or a changed source require extraction
 again. Drawing waits until the displayed raster matches the chosen source page.
+The results heading distinguishes Sample, Complete, Out of date and failed or
+cancelled checks. Cancellation/failure/close do not continue to the save chooser;
+cancelling the chooser retains the complete results for a later save. Source and
+configuration are checked again after choosing a destination. The main Excel
+action requires `.xlsx`; other formats remain in More. Existing overwrite
+confirmation and atomic output publication are unchanged.
 
 Different page sizes are **not automatically scaled**. Region coordinates are
 millimetres from the visible page's top-left, using the existing rotation and
