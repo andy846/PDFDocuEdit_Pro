@@ -1,11 +1,19 @@
-# PDFDocuEdit Pro V3.1.2
+# PDFDocuEdit Pro V3.1.3
 
 > Windows 日常開發／實測固定使用 `D:\Python_Project\PDFdocuEdit_Pro` 及 `.venv-dev`；啟動請用 `scripts\launch_dev.cmd`。[開發位置、環境及回退說明](docs/DEVELOPMENT_WORKSPACE.md)。
 
 **PDF Editing & Print Production Suite** — PDF Workspace 與 Document Designer 共用一個主視窗，支援 PDF 編輯、Mail Merge、PDF 套印及可覆核的生產工作流。文件及客戶資料在本機處理。
 
-v3.1.2 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用既有完整安裝版。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
-本輪原生打包及實機結果見 [v3.1.2 驗收紀錄](docs/RELEASE_VALIDATION_3.1.2.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+v3.1.3 今次只提供 Windows x64 Managed 自動更新包，包含帳戶版及舊 Launcher 相容入口。Installer、Portable 及 macOS 不在此輪打包；首次安裝沿用既有完整安裝版。發布／下載狀態以 [GitHub Releases](https://github.com/andy846/PDFDocuEdit_Pro/releases) 為準，Managed 安裝沿用 Check for Updates。
+本輪原生打包及實機結果見 [v3.1.3 驗收紀錄](docs/RELEASE_VALIDATION_3.1.3.md)；未完成項目保持 Pending。Mac 仍未完成 Apple Developer ID／公證，OCR 及 Intel 不在此輪支援範圍。
+
+## v3.1.3：平滑圓角選單及匯出進度修補
+
+- 選單、子選單、下拉框及標準 Tooltip 使用 14px 平滑圓角；主體實色，邊緣抗鋸齒，維持原有深淺色及操作方式。
+- 修正首次選單的透明邊緣初始化、可編輯下拉框背景及 Qt 暫時包裝物件的狀態保存；保留視窗安全清理。
+- Extract Text Region 匯出成功後進度顯示完整 N/N；失敗、取消或來源變動不會冒充完成。
+- 本輪僅 Windows Managed 升級包；PyMuPDF 保持 1.26.6。macOS、實體多螢幕及生產設備驗收不冒認完成。
+- 詳見 [Release notes](docs/RELEASE_NOTES_3.1.3.md) 及 [圓角驗證](docs/POPUP_SMOOTH_EDGES_VALIDATION.md)。
 
 ## v3.1.2：多選區文字抽取、直向工作台及一步 Excel 匯出
 

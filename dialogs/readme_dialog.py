@@ -24,6 +24,17 @@ reusable templates, variable data, PDF overlays and Visual Workflow. Documents
 and customer data are processed locally. The current production distribution
 supports Windows x64, with an account-enabled Apple Silicon Mac testing build (not Apple notarized).
 
+## New in v3.1.3: Smooth popup edges and completed export progress
+
+* Menus, submenus, dropdowns and standard tooltips use 14px antialiased corners,
+  retaining solid bodies, existing themes, keyboard controls and safe cleanup.
+* Editable dropdowns retain their background. Hidden popup setup and Qt-owned
+  state keep first display and tooltip reuse consistent; magnifiers are excluded.
+* Successful Extract Text Region exports finish at N/N after atomic publication.
+  Cancelled, rejected or failed writes do not report successful completion.
+* Windows Managed updates only; PyMuPDF remains 1.26.6. No new installer,
+  portable archive or macOS build is included in this release.
+
 ## New in v3.1.2: Portrait extraction workbench and one-action Excel export
 
 * Named visual regions produce one column each; multiline values remain in one
