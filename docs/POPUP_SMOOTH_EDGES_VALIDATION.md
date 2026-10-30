@@ -173,3 +173,32 @@ passed with normal process exit. The three new GC/exception cases also passed
 on official CPython 3.12.10. Ruff, source verification, documentation links and
 whitespace checks passed. Full startup cost has not been benchmarked; the local
 widget snapshot is taken only for application stylesheet changes, not repaint.
+
+
+### Stop popup callbacks before native application cleanup
+
+The sixth release gate isolated a remaining Workflow teardown fault. A native
+fault address matched SIP's wrapper-map visitor, and a disposal control observed
+popup ChildRemoved callbacks after QApplication retirement began. Qt closingDown
+is not yet true at this binding-level cleanup stage.
+
+The coordinator stops registration and shared tooltip preparation, detaches
+filters and owned signal callbacks, then releases its registry. aboutToQuit
+handles normal shutdown; a weakref finalizer handles wrapper disposal without an
+event loop and captures no application reference. Cleanup does not delete widgets,
+process events or force GC. Two subprocess regressions verify zero late callbacks,
+application collection, event-loop exit, deleted objects and idempotent cleanup.
+They fail before this fix and pass after it. Independent review found no blocker
+and reran both cases. Native traces support this specific correction without
+uniquely diagnosing every historical failure. Complete candidate evidence is
+recorded separately.
+
+
+Early-retirement development verification: 332 passed across 23 isolated modules,
+0 failed/skipped; 63 native Windows UI cases at actual DPR 1.0/1.5/2.0 and all
+36 native layered-surface/pixel checks passed, with normal process exit. Workflow
+settings also passed 12 fresh CPython 3.12.10 processes; print preferences passed
+three. Ruff, source verification, five local documentation destinations and
+whitespace checks passed. Physical monitor migration and packaged candidate
+login remain separate, untested items. This evidence does not replace the new
+complete frozen Windows candidate gate.

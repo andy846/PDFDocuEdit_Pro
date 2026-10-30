@@ -1,4 +1,7 @@
 """Solid popup bodies with per-pixel antialiased edges."""
+import weakref
+
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QRectF, Qt
 from PyQt6.QtGui import QPainter, QPainterPath, QRegion
 from PyQt6.QtWidgets import QAbstractItemView, QComboBox, QFrame, QLabel, QMenu, QStyle, QStyleOption, QWidget
@@ -22,6 +25,8 @@ class _PopupSurfaceEvents(QObject):
         A private Qt widget may lose its temporary Python wrapper. Keep state
         on the QObject itself rather than on that wrapper; never retain it.
         """
+        if getattr(self, "_stopped", False):
+            return
         if not isinstance(widget, QWidget) or widget.isVisible():
             return
         if widget.property('_popup_alpha') or widget.property('_popup_preparing'):
@@ -132,8 +137,38 @@ class PopupShapes(QObject):
         super().__init__(parent)
         self.surfaces = _PopupSurfaceEvents(self)
         self._event_filters = {}
+        self._stopped = False
+
+    def shutdown(self):
+        """Detach Python callbacks before PyQt traverses native QObject wrappers.
+
+        QApplication's binding deletes remaining QObjects by visiting SIP's
+        wrapper map before Qt sets closingDown(). A Python event filter can
+        create temporary wrappers during those deletions and resize that map.
+        Stop at aboutToQuit, or at wrapper finalization when no event loop ran.
+        The finalizer owns this coordinator, never the QApplication wrapper.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
+        self.surfaces._stopped = True
+        for events in list(self._event_filters.values()):
+            if sip.isdeleted(events):
+                continue
+            widget = events.parent()
+            if widget is not None and not sip.isdeleted(widget):
+                widget.removeEventFilter(events)
+                if isinstance(widget, QMenu):
+                    widget.aboutToShow.disconnect(events.prepare_menu)
+            # Even destroyed(QObject*) callbacks can create temporary wrappers
+            # while SIP traverses its native map. No registry pruning is needed
+            # after this final shutdown.
+            events.destroyed.disconnect()
+        self._event_filters.clear()
 
     def register(self, widget):
+        if self._stopped:
+            return
         if isinstance(widget, (QMenu, QComboBox)) or (
             isinstance(widget, QFrame) and isinstance(widget.parentWidget(), QComboBox)
         ) or (
@@ -165,3 +200,5 @@ def install_popup_shapes(app):
     if getattr(app, '_pdfdocuedit_popup_shapes', None) is None:
         coordinator = PopupShapes(app)
         app._pdfdocuedit_popup_shapes = coordinator
+        app.aboutToQuit.connect(coordinator.shutdown)
+        weakref.finalize(app, coordinator.shutdown)

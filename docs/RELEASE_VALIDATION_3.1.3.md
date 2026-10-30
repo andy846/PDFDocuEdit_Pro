@@ -173,3 +173,51 @@ passed with normal process exit. The three new GC/exception cases also passed
 on official CPython 3.12.10. Ruff, source verification, documentation links and
 whitespace checks passed. Full startup cost has not been benchmarked; the local
 widget snapshot is taken only for application stylesheet changes, not repaint.
+
+
+## Superseded sixth candidate and pre-native popup shutdown
+
+Source `6ce48774c2f46e5c9d23d7d775cce2fb4a36a18f`, native run
+[41021591929](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41021591929),
+completed 228 modules: 227 passed; Workflow settings navigation crashed after
+its 13 assertions, before normal module completion. Main CI
+[41021591508](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41021591508)
+passed all 84 UI modules, source quality and neutral Core jobs, but encountered
+the same Windows Core module failure. Publication remained stopped. A local
+five-process control reproduced the native access violation once.
+
+A Windows vectored-exception diagnostic captured the fault at
+`sip.cp312-win_amd64.pyd+0x103e6`. Disassembly matches the installed PyQt6-sip
+13.9.1 wrapper-map visitor; PyQt6's QApplication binding calls this visitor while
+deleting remaining QObjects. Raw stack addresses are not a fully unwound symbolic
+stack and do not uniquely explain every historical crash. A separate application
+disposal control observed ChildRemoved filter callbacks after wrapper retirement
+began, while Qt closingDown was still false. Callback argument conversion can
+create SIP wrappers before the Python filter body runs.
+
+The coordinator detaches filters and owned menu/destruction callbacks before
+native cleanup, via aboutToQuit and a weakref finalizer for wrapper disposal
+without an event loop. Registration and shared tooltip preparation stop first.
+Cleanup is idempotent, retains no QApplication wrapper and neither deletes widgets
+nor processes events/forces GC. Two subprocess regressions cover normal quit,
+direct wrapper disposal, zero late callbacks, application collection, deleted
+objects and repeated cleanup. The regression failed before the fix with late
+ChildRemoved callbacks and passes afterwards. Independent review approved the
+implementation and reran both cases.
+
+The earlier reviewer workflow_destroy_events probe used an unavailable Qt enum
+and is invalid diagnostic evidence; its abort is not a product-crash reproduction.
+A repeated-module harness referenced a nonexistent profile module and returned
+collection error 4, not a product regression. Both raw logs are preserved. Actual
+profile-library tests remain in development QA. New complete source-bound release
+gates are required before publication.
+
+
+Early-retirement development verification: 332 passed across 23 isolated modules,
+0 failed/skipped; 63 native Windows UI cases at actual DPR 1.0/1.5/2.0 and all
+36 native layered-surface/pixel checks passed, with normal process exit. Workflow
+settings also passed 12 fresh CPython 3.12.10 processes; print preferences passed
+three. Ruff, source verification, five local documentation destinations and
+whitespace checks passed. Physical monitor migration and packaged candidate
+login remain separate, untested items. This evidence does not replace the new
+complete frozen Windows candidate gate.

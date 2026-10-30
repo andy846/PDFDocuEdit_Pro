@@ -406,3 +406,84 @@ def test_failed_stylesheet_call_releases_snapshot_and_propagates_error(theme):
         set_application_stylesheet(RejectingApplication(), 'rejected')
     gc.collect()
     assert refs[0]() is None
+
+
+@pytest.mark.parametrize("run_event_loop", [False, True])
+def test_popup_callbacks_stop_before_application_native_destruction(tmp_path, run_event_loop):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = r"""
+import gc
+import weakref
+from PyQt6 import sip
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QApplication, QComboBox, QMenu, QVBoxLayout, QWidget
+from styles.components import global_style
+from styles.popups import _PopupSurfaceEvents
+from styles.theme import apply_theme, set_application_stylesheet
+retiring = False
+late_events = []
+original = _PopupSurfaceEvents.eventFilter
+
+def observed(self, widget, event):
+    if retiring:
+        late_events.append(event.type().name)
+    return original(self, widget, event)
+_PopupSurfaceEvents.eventFilter = observed
+
+class Application(QApplication):
+    def __del__(self):
+        global retiring
+        retiring = True
+
+app = Application([])
+apply_theme(app, 'dark')
+set_application_stylesheet(app, global_style())
+for index in range(80):
+    window = QWidget()
+    window.cycle = window
+    layout = QVBoxLayout(window)
+    for number in range(4):
+        combo = QComboBox(window)
+        combo.addItems(['First', 'Second'])
+        layout.addWidget(combo)
+    window.ensurePolished()
+    window.show()
+    window.close()
+del window, combo, layout
+ref = weakref.ref(app)
+coordinator = app._pdfdocuedit_popup_shapes
+discarded = QMenu()
+discarded.ensurePolished()
+coordinator.register(discarded)
+sip.delete(discarded)
+if __import__('sys').argv[1] == 'True':
+    QTimer.singleShot(0, app.quit)
+    assert app.exec() == 0
+    assert coordinator._stopped and not coordinator._event_filters
+    coordinator.shutdown()  # Repeated cleanup must be harmless.
+    coordinator.surfaces.prepare(discarded)  # No Qt calls after retirement.
+    fresh = QMenu()
+    coordinator.register(fresh)
+    assert not fresh.property('_popup_shape_registered')
+    del fresh
+del app
+gc.collect()
+assert retiring and ref() is None, 'Popup cleanup must not retain QApplication'
+assert not late_events, late_events
+assert sip.isdeleted(coordinator)
+coordinator.shutdown()  # Late finalizer invocation with a deleted QObject.
+coordinator.surfaces.prepare(discarded)
+print('SAFE_APPLICATION_POPUP_RETIREMENT')
+"""
+    result = subprocess.run(
+        [sys.executable, '-X', 'faulthandler', '-c', script, str(run_event_loop)],
+        cwd=Path(__file__).resolve().parent.parent,
+        env={**os.environ, 'PYTHONFAULTHANDLER': '1'},
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'SAFE_APPLICATION_POPUP_RETIREMENT' in result.stdout
