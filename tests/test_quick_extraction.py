@@ -60,6 +60,30 @@ def test_mismatch_empty_and_invalid_values_keep_rows(tmp_path):
         assert store.rows(1, 1)[0]["page"] == 4
 
 
+@pytest.mark.parametrize("suffix", [".xlsx", ".csv", ".txt"])
+@pytest.mark.parametrize("source_changes", [False, True])
+def test_export_progress_completes_only_after_atomic_publication(tmp_path, suffix, source_changes):
+    service = api()
+    source = tmp_path/"source.pdf"
+    spec = fixture_pdf(source)
+    result = service.scan(source, spec, [0, 1, 2, 3, 4], tmp_path/"job.sqlite")
+    target = tmp_path/("result"+suffix)
+    events = []
+    def progress(done, total, _message):
+        events.append((done, total, target.exists()))
+        if source_changes and done == 1:
+            with source.open("ab") as stream:
+                stream.write(b"\nchanged")
+    if source_changes:
+        with pytest.raises(ValueError, match="Source changed during export"):
+            service.export(result.database, source, spec, [0, 1, 2, 3, 4], target, progress=progress)
+        assert not target.exists()
+        assert all(done < total for done, total, _ in events)
+    else:
+        service.export(result.database, source, spec, [0, 1, 2, 3, 4], target, progress=progress)
+        assert events[-1] == (5, 5, True)
+
+
 def test_export_string_types_raw_issues_and_formula_protection(tmp_path):
     service = api()
     source = tmp_path / "source.pdf"

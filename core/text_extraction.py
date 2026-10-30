@@ -198,6 +198,10 @@ def export(database, source, spec, pages, target, *, overwrite=False, progress=N
             check_cancel(is_cancelled)
     if on_committed:
         on_committed(str(target))
+    if progress:
+        # Periodic row updates can stop at 1/N for small reports. Complete only
+        # after the atomic publication, never on a cancelled or failed write.
+        progress(count, count, "Export complete")
     return str(target)
 
 

@@ -387,3 +387,35 @@ the save chooser, edit a field and export again, test native overwrite confirmat
 and close/cancel during a scan. Repeat with a landscape/rotated CropBox PDF,
 physical screen/DPI changes, and Workflow handoff. The software checks do not
 replace operator review of extracted content.
+
+## Post-v3.1.2: completed export left at 1/5 (local fix, 2026-10-29)
+
+Reproduced with five selected PDF pages and real worker/XLSX output: all five
+values were present, but the progress bar remained at 1/5. Export reports row
+progress at row 1, 101, etc.; it lacked a final notification after publication.
+The shared XLSX/CSV/TXT export now reports N/N after the atomic output context
+successfully commits, retaining the existing receipt and cancellation ordering.
+No extraction, output-format, version or production-authorization rules changed.
+
+New tests failed before the fix (three export formats and two real-worker UI
+paths). Source-change rejection tests already passed and remain passing. The
+UI tests cover both direct extraction/export and reuse of a complete scan, and
+read the resulting workbook to verify all five values as well as final progress.
+
+Windows `.venv-dev` results, each UI module in a separate process:
+
+| Command after `python -m pytest` | Result |
+| --- | --- |
+| `tests/test_quick_extraction.py -q` | 21 passed |
+| `tests/test_quick_extraction_export_ui.py -q` | 13 passed |
+| `tests/test_quick_extraction_ui.py -q` | 16 passed |
+| `tests/test_quick_extraction_workbench_ui.py -q` | 16 passed |
+
+Total: 66 passed, 0 failures/skips. Ruff on changed Python files, source
+verification and `git diff --check` passed. TEMP/TMP and pytest basetemps were
+isolated under `build/probes/extract-progress/`; red/green logs are retained there.
+The UI save chooser is controlled in tests; actual file generation and reading
+use the real worker and exporter. Native save-dialog interaction, packaged
+Windows, macOS and customer documents were not tested for this patch. The full
+release suite was not rerun. This is a local main fix, not a changed v3.1.2 asset;
+no version bump, push, packaging or publication was performed.

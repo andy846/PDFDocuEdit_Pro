@@ -48,6 +48,27 @@ def values(path):
     return result
 
 
+@pytest.mark.parametrize("reuse_complete", [False, True])
+def test_five_page_excel_export_finishes_progress(reuse_complete, qt_application, tmp_path, monkeypatch):
+    dialog = make_dialog(tmp_path)
+    target, calls = tmp_path/"five.xlsx", []
+    chooser(monkeypatch, target, calls)
+    try:
+        dialog.page_range.setText("1-5")
+        dialog.page_mode.setCurrentText("Custom pages")
+        if reuse_complete:
+            dialog.start_scan()
+            wait_until(lambda: dialog.result is not None and not dialog.host.workers)
+        dialog.extract_export_button.click()
+        wait_until(lambda: dialog.last_output == str(target) and not dialog.host.workers)
+        assert values(target) == ["00000001", "00000002", "00000003", "00000004", "00000005"]
+        assert dialog.progress.maximum() == 5
+        assert dialog.progress.value() == 5
+        assert str(target) in dialog.status.text()
+    finally:
+        close_dialog(dialog)
+
+
 @pytest.mark.parametrize("trial", [None, "First 10", "All selected"])
 def test_primary_exports_complete_selection_without_mandatory_trial(trial, qt_application, tmp_path, monkeypatch):
     dialog = make_dialog(tmp_path)
