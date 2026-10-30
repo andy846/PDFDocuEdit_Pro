@@ -277,3 +277,45 @@ def test_popup_event_filter_lifetime_belongs_to_watched_widget(theme, kind):
     QCoreApplication.sendPostedEvents(owner, QEvent.Type.DeferredDelete)
     assert sip.isdeleted(widget) and sip.isdeleted(watched_filter)
     assert not sip.isdeleted(coordinator)
+
+
+
+def test_retained_application_globals_exit_cleanly_after_print_preferences(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    result = subprocess.run(
+        [sys.executable, '-X', 'faulthandler', '-m', 'pytest',
+         'tests/test_print_preferences.py', '-q',
+         f'--junitxml={tmp_path / "printing-exit.xml"}'],
+        cwd=Path(__file__).resolve().parent.parent,
+        env={**os.environ, 'PYTHONFAULTHANDLER': '1'},
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_popup_filter_does_not_keep_a_discarded_menu_alive(theme):
+    import gc
+    import weakref
+
+    from PyQt6 import sip
+
+    from styles.popups import _PopupSurfaceEvents
+
+    menu = QMenu()
+    menu.ensurePolished()
+    theme._pdfdocuedit_popup_shapes.register(menu)
+    events = menu.findChildren(_PopupSurfaceEvents, options=Qt.FindChildOption.FindDirectChildrenOnly)
+    assert len(events) == 1
+    ref = weakref.ref(menu)
+    event_ref = weakref.ref(events[0])
+    del menu
+    gc.collect()
+    assert ref() is None
+    assert sip.isdeleted(events[0])
+    del events
+    gc.collect()
+    assert event_ref() is None

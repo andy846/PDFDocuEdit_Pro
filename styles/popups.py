@@ -131,6 +131,7 @@ class PopupShapes(QObject):
     def __init__(self, parent):
         super().__init__(parent)
         self.surfaces = _PopupSurfaceEvents(self)
+        self._event_filters = {}
 
     def register(self, widget):
         if isinstance(widget, (QMenu, QComboBox)) or (
@@ -145,10 +146,15 @@ class PopupShapes(QObject):
             if not widget.property('_popup_shape_registered'):
                 events = _PopupSurfaceEvents(widget)
                 widget.installEventFilter(events)
-                # A private Qt popup can lose its temporary Python wrapper.
-                # A tuple QVariant retains the Python virtual-method owner on
-                # the native QObject, without retaining the watched widget.
-                widget.setProperty('_popup_shape_events', (events,))
+                # Retain Python virtual methods until Qt destroys the filter.
+                # Private popup wrappers can disappear, while PyObject-valued
+                # dynamic properties are unsafe during interpreter teardown.
+                # The registry retains filters, never their watched widgets.
+                key = id(events)
+                self._event_filters[key] = events
+                events.destroyed.connect(
+                    lambda *_args, key=key, live=self._event_filters: live.pop(key, None)
+                )
                 widget.setProperty('_popup_shape_registered', True)
                 if isinstance(widget, QMenu):
                     widget.aboutToShow.connect(events.prepare_menu)

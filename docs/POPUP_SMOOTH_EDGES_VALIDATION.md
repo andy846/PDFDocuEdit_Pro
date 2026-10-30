@@ -112,9 +112,9 @@ The later full release gates exposed application teardown faults that the initia
 popup-only visual checks did not catch. A shared application-owned event filter
 could be retired while hidden widget trees still existed. Each known surface now
 owns its own filter; one application-owned coordinator still handles registration.
-A tuple property on the native QObject retains the Python event-filter wrapper
-across temporary private dropdown wrappers. No popup references are retained by
-the coordinator, and registration remains idempotent without global filtering,
+The initial widget-owned revision used a tuple property for wrapper retention;
+the final registry correction below supersedes that mechanism. No popup
+references are retained by the coordinator, and registration remains idempotent without global filtering,
 new timers or worker threads.
 
 The three ownership tests failed before the fix. The final popup module has 14
@@ -127,3 +127,22 @@ Final lifetime revision development checks: 137 related regression cases; 42 nat
 Windows popup cases across three DPI settings; 36 native layered-surface/pixel
 cases, all passed. These native images are component renders, not desktop
 compositor screenshots. Ruff, source verification and whitespace checks passed.
+
+
+### Final filter-wrapper retention correction
+
+The fourth release gate showed that the intermediate tuple-property approach
+still failed interpreter shutdown. The coordinator now retains only Python event
+filter wrappers in a dictionary, pruned by each filter's Qt destroyed signal.
+Each filter remains parented to its watched widget. No native PyObject-valued
+property retains the callback owner; no watched-widget references are kept.
+Collection tests verify both discarded menus and destroyed filter wrappers are
+released. A subprocess printing/preferences regression failed before this change
+with 8 passing assertions followed by a native fault; it passes after the fix.
+
+Final related checks: 139 passed; four affected modules each passed five fresh
+CPython 3.12.10 processes. Native pytest: 48 passed across three DPI settings.
+36 native pixel assertions passed, but one custom matrix process failed at exit;
+10 exact repeats passed without reproducing it. That failed probe remains a known
+validation limitation with its raw log retained. Full frozen-candidate CI and
+packaged upgrade gates are recorded independently in the release validation.

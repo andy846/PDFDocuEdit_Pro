@@ -105,3 +105,35 @@ Final lifetime revision development checks: 137 related regression cases; 42 nat
 Windows popup cases across three DPI settings; 36 native layered-surface/pixel
 cases, all passed. These native images are component renders, not desktop
 compositor screenshots. Ruff, source verification and whitespace checks passed.
+
+## Superseded fourth candidate and retained-wrapper correction
+
+Source `2ec07fa067d49b353c12a2c7e9566efb27aa6619`, native run
+[41012293252](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41012293252),
+completed 228 modules but failed native process teardown in detailed dialogs,
+print preferences and tools-port checks. Main CI
+[41012261436](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41012261436)
+reported the same modules; source quality and both neutral-platform Core jobs
+passed. The print-preference module reported 8 passing assertions and then
+crashed at interpreter shutdown. Candidate download/signing/publication was
+stopped; CI logs and full failure artifacts were retained.
+
+Print preferences reproduced five consecutive failures on CPython 3.12.10.
+Adding the shared application fixture and removing event-filter delivery at
+exit did not resolve it; the pre-popup theme and disabling registration passed
+controls. Retaining each Python filter wrapper in a coordinator registry until
+its Qt destroyed signal passed five controls. Native PyObject-valued dynamic
+properties are no longer used for filter ownership. Filters remain widget-owned;
+the registry retains no watched widgets and prunes destroyed filter wrappers.
+
+A fresh-process integration regression reproduces the 8-passed-then-native-crash
+path before the change and passes afterwards. The popup suite now has 16 cases,
+including discarded-menu/filter collection; related development checks total
+139 cases. Four affected modules passed five separate CPython 3.12.10 processes
+each. Native popup pytest passed 48 cases across three DPI settings; all 36
+pixel/surface assertions passed. One custom native matrix process nevertheless
+exited with an access violation after its assertions. Ten exact fresh-process
+repeats (five per local/CI Python runtime) passed; that isolated probe exit cause
+is not established and its failed log is retained. No extra shutdown workaround
+was added on that evidence. This limitation remains separate from the new
+complete source-bound candidate gate.
