@@ -71,3 +71,37 @@ The general Core CI job budget is now 60 minutes; native release remains 180.
 No test modules, assertions or production checks were removed. Failed evidence,
 local reproduction runs and source/run associations remain in the local release
 probe directory. This harness/CI-only revision requires a fresh frozen candidate.
+
+## Superseded third candidate and popup lifetime correction
+
+Frozen source `22279f5683cba2eee9377d08b9857087233280e1` failed native run
+[41008773757](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41008773757)
+in `test_overlay_ui.py` and `test_p1_ui.py` during Qt teardown, after completing
+all 228 modules. General main CI
+[41008750942](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41008750942)
+passed Core and source quality but failed the same P1 UI teardown. Previously
+failing measurement, multi-profile and review-fix modules passed this attempt.
+No candidate was signed or published.
+
+P1 teardown reproduced locally on CPython 3.12.10. Three-process controls showed
+the current shared filter crashing twice; the pre-popup theme passed all three.
+Replacing the filter body with a no-op still crashed all three controls, so
+removing drawing or alpha setup did not address the lifetime issue. The shared
+application-owned filter was still watching hidden widget trees during native
+application destruction. Binding each filter to its watched widget corrected
+that ownership boundary. A native QObject tuple property retains its Python
+virtual-method wrapper even when Qt discards a private dropdown wrapper; no
+application-owned collection retains popup windows.
+
+Three ownership regressions failed before the change. The final popup module
+passed 14 cases, including private-wrapper reuse, geometry, alpha and interaction.
+Four formerly failing modules each passed five fresh CPython 3.12.10 processes
+(20 successful executions) without changing their original assertions. Earlier
+harness retirement changes are retained as test ownership improvements; they
+alone did not address all native application teardown faults. The final product
+lifetime revision must pass a new complete candidate gate before publication.
+
+Final lifetime revision development checks: 137 related regression cases; 42 native
+Windows popup cases across three DPI settings; 36 native layered-surface/pixel
+cases, all passed. These native images are component renders, not desktop
+compositor screenshots. Ruff, source verification and whitespace checks passed.

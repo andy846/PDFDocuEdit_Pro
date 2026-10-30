@@ -104,3 +104,26 @@ Owner UAT: after saving work, reopen the D-drive development app when convenient
 Check the reported corner against a white PDF, short/multiline hover text,
 editable/noneditable dropdowns, submenus, arrows/Enter/Esc, clicking outside and
 light/dark changes. The running product was not automatically closed/restarted.
+
+
+## Release-gate lifetime follow-up (2026-10-30)
+
+The later full release gates exposed application teardown faults that the initial
+popup-only visual checks did not catch. A shared application-owned event filter
+could be retired while hidden widget trees still existed. Each known surface now
+owns its own filter; one application-owned coordinator still handles registration.
+A tuple property on the native QObject retains the Python event-filter wrapper
+across temporary private dropdown wrappers. No popup references are retained by
+the coordinator, and registration remains idempotent without global filtering,
+new timers or worker threads.
+
+The three ownership tests failed before the fix. The final popup module has 14
+cases; four formerly failing UI modules passed five fresh CPython 3.12.10 processes
+each. Development results do not replace the fresh full native release gate.
+Detailed failed attempts and source/run identities are recorded in
+[the v3.1.3 release validation](RELEASE_VALIDATION_3.1.3.md).
+
+Final lifetime revision development checks: 137 related regression cases; 42 native
+Windows popup cases across three DPI settings; 36 native layered-surface/pixel
+cases, all passed. These native images are component renders, not desktop
+compositor screenshots. Ruff, source verification and whitespace checks passed.

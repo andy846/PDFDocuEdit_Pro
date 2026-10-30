@@ -254,3 +254,26 @@ def test_first_popup_supports_alpha_when_native_handle_already_exists(theme):
         assert_round(menu)
     finally:
         menu.close()
+
+
+@pytest.mark.parametrize('kind', ['menu', 'combo', 'dropdown'])
+def test_popup_event_filter_lifetime_belongs_to_watched_widget(theme, kind):
+    from PyQt6 import sip
+
+    from styles.popups import _PopupSurfaceEvents
+
+    owner = QComboBox() if kind != 'menu' else QMenu()
+    widget = owner.view().window() if kind == 'dropdown' else owner
+    widget.ensurePolished()
+    coordinator = theme._pdfdocuedit_popup_shapes
+    coordinator.register(widget)
+    filters = widget.findChildren(_PopupSurfaceEvents, options=Qt.FindChildOption.FindDirectChildrenOnly)
+    assert len(filters) == 1, 'Each surface must own its event filter until its own destruction'
+    watched_filter = filters[0]
+    for _ in range(4):
+        coordinator.register(widget)
+    assert widget.findChildren(_PopupSurfaceEvents, options=Qt.FindChildOption.FindDirectChildrenOnly) == filters
+    owner.deleteLater()
+    QCoreApplication.sendPostedEvents(owner, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(widget) and sip.isdeleted(watched_filter)
+    assert not sip.isdeleted(coordinator)

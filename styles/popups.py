@@ -120,10 +120,13 @@ class _PopupSurfaceEvents(QObject):
 
 
 class PopupShapes(QObject):
-    """Application-owned filters installed only on known popup surfaces.
+    """Application-owned coordinator for widget-owned popup filters.
 
     QApplication-wide Python filtering can crash during native Qt teardown.
     The retained proxy registers surfaces during polish; shaping waits for Show.
+    Filters must outlive their watched widgets until each widget is destroyed;
+    parenting one shared filter to QApplication can retire it too early during
+    native application teardown while hidden windows still exist.
     """
     def __init__(self, parent):
         super().__init__(parent)
@@ -140,10 +143,15 @@ class PopupShapes(QObject):
             # Reinstalling the same filter only changes its order in Qt; avoid
             # even that work when stylesheet/theme polish repeats.
             if not widget.property('_popup_shape_registered'):
-                widget.installEventFilter(self.surfaces)
+                events = _PopupSurfaceEvents(widget)
+                widget.installEventFilter(events)
+                # A private Qt popup can lose its temporary Python wrapper.
+                # A tuple QVariant retains the Python virtual-method owner on
+                # the native QObject, without retaining the watched widget.
+                widget.setProperty('_popup_shape_events', (events,))
                 widget.setProperty('_popup_shape_registered', True)
                 if isinstance(widget, QMenu):
-                    widget.aboutToShow.connect(self.surfaces.prepare_menu)
+                    widget.aboutToShow.connect(events.prepare_menu)
 
 
 def install_popup_shapes(app):
