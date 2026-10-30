@@ -1,3 +1,4 @@
+
 import copy
 import json
 import os
@@ -10,6 +11,7 @@ from composition.designer.media_dialog import MediaDialog
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.project_host import DesignerProjectHost
 from composition.media.model import default_media
+from styles.theme import set_application_stylesheet
 from tests.composition.test_media import template
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_workspace import wait_until
@@ -166,7 +168,7 @@ def test_media_tabs_with_application_theme_at_960x640(app,theme):
     font_id=QFontDatabase.addApplicationFont(str(asset_root()/"fonts"/"NotoSans-Regular.ttf"))
     app.setFont(QFont("Noto Sans",9))
     apply_theme(app,theme)
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     model=template()
     dialog=MediaDialog(model.media,{"kind":"template","project":model.to_dict(),"records":1000})
     try:
@@ -190,6 +192,6 @@ def test_media_tabs_with_application_theme_at_960x640(app,theme):
     finally:
         dialog.reject()
         app.setPalette(palette)
-        app.setStyleSheet(style)
+        set_application_stylesheet(app, style)
         app.setFont(font)
         QFontDatabase.removeApplicationFont(font_id)

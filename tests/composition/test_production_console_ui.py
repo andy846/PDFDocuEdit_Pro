@@ -11,7 +11,7 @@ from composition.engine.barcode_profiles import BarcodeProfile
 from composition.media.model import default_media
 from composition.template.model import Element, PageSpec, Template
 from styles.components import global_style
-from styles.theme import apply_theme
+from styles.theme import apply_theme, set_application_stylesheet
 from tests.composition.test_workspace import close_window
 
 
@@ -35,14 +35,14 @@ def window(qt_application, monkeypatch):
     yield value
     close_window(value)
     app.setPalette(palette)
-    app.setStyleSheet(style)
+    set_application_stylesheet(app, style)
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
 @pytest.mark.parametrize("width", [1280, 960, 760])
 def test_compact_cards_and_fixed_actions(window, qt_application, theme, width):
     apply_theme(qt_application, theme)
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     before = window.template.to_dict()
     window.resize(width, 640)
     window.show()
@@ -168,7 +168,7 @@ def test_long_worker_failure_keeps_fixed_actions_reachable(window, qt_applicatio
 def test_stock_rows_fit_after_theme_change(window, qt_application):
     window.resize(960, 640)
     apply_theme(qt_application, "dark")
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     window.show()
     qt_application.processEvents()
     qt_application.processEvents()

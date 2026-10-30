@@ -13,7 +13,7 @@ from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
 from composition.template.model import Element, Template
 from styles.components import global_style
-from styles.theme import apply_theme, get_colors
+from styles.theme import apply_theme, get_colors, set_application_stylesheet
 from tests.composition.test_designer_controls import cleanup, wait
 from tests.composition.test_pdf_overlay_models import sample_spec
 from tests.composition.test_pdf_overlay_ui import finish
@@ -434,7 +434,7 @@ def test_selecting_overlay_text_reopens_hidden_inspector_without_focus_change(ap
 def test_field_sidebar_footer_and_controls_are_reachable(app, overlay, font_size, theme):
     previous_style, previous_font = app.styleSheet(), app.font()
     apply_theme(app, theme)
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     app.setFont(QFont("Segoe UI", font_size))
     window = OverlayWindow() if overlay else CompositionWindow()
     try:
@@ -474,14 +474,14 @@ def test_field_sidebar_footer_and_controls_are_reachable(app, overlay, font_size
         finish(window) if overlay else cleanup(window)
         app.setFont(previous_font)
         apply_theme(app, "light")
-        app.setStyleSheet(previous_style)
+        set_application_stylesheet(app, previous_style)
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_shared_palette_updates_canvas_and_chrome_without_reset(app, theme):
     previous = app.styleSheet()
     apply_theme(app, "light")
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     window = CompositionWindow()
     try:
         window.add_element("text", "Stable")
@@ -489,7 +489,7 @@ def test_shared_palette_updates_canvas_and_chrome_without_reset(app, theme):
         window.canvas.set_preview(image())
         scene, preview = window.canvas.scene(), window.canvas.preview_item
         apply_theme(app, theme)
-        app.setStyleSheet(global_style())
+        set_application_stylesheet(app, global_style())
         window.resize(960, 640)
         window.show()
         app.processEvents()
@@ -502,4 +502,4 @@ def test_shared_palette_updates_canvas_and_chrome_without_reset(app, theme):
     finally:
         cleanup(window)
         apply_theme(app, "light")
-        app.setStyleSheet(previous)
+        set_application_stylesheet(app, previous)

@@ -146,3 +146,30 @@ CPython 3.12.10 processes. Native pytest: 48 passed across three DPI settings.
 10 exact repeats passed without reproducing it. That failed probe remains a known
 validation limitation with its raw log retained. Full frozen-candidate CI and
 packaged upgrade gates are recorded independently in the release validation.
+
+
+### Application stylesheet snapshot guard
+
+Further full release testing found UI faults while restoring global QSS. An
+independent synthetic control reproduced a native crash when reentrant Python GC
+collected closed widget cycles during Qt's raw-pointer widget traversal, even
+with all popup registration disabled. Retaining allWidgets wrappers for the
+synchronous application stylesheet operation prevents that demonstrated fault.
+It does not establish a unique cause for every earlier CI crash.
+
+styles.theme.set_application_stylesheet now provides that local lifetime guard.
+The two production application-QSS calls and UI test setup/restoration use the
+same path; widget-specific CSS and palette handling are unchanged. The temporary
+list is cleared in finally, including exceptions. No GC disabling, timer, delayed
+release or persistent widget reference is introduced. Tests cover nonempty QSS
+replacement, removal, forced GC inside polish, later collection and exceptions.
+The direct setter failed the new native subprocess regression before the guard;
+the final popup module has 19 passing cases. Independent review approved the
+implementation. Full source-bound release evidence belongs to the release record.
+
+Final guarded-QSS development validation: 317 cases across 22 modules, no
+failures/skips; 57 native Windows popup cases and 36 native surface/pixel cases
+passed with normal process exit. The three new GC/exception cases also passed
+on official CPython 3.12.10. Ruff, source verification, documentation links and
+whitespace checks passed. Full startup cost has not been benchmarked; the local
+widget snapshot is taken only for application stylesheet changes, not repaint.

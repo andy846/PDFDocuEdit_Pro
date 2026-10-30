@@ -1,5 +1,6 @@
 """The dashboard is a view of review state, never a confirmation control."""
 
+
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ from PyQt6.QtWidgets import QWidget
 
 from composition.review.presentation import ReviewDashboardModel
 from composition.review.ui import ProductionReviewPane, ReviewController
+from styles.theme import set_application_stylesheet
 from tests.composition.test_review_dashboard import checked, production
 
 
@@ -18,7 +20,7 @@ def test_dashboard_metrics_and_footer_are_accessible(qt_application, theme, size
 
     previous_style = qt_application.styleSheet()
     apply_theme(qt_application, theme)
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     pane = ProductionReviewPane()
     pane.resize(*size)
     pane.show()
@@ -42,7 +44,7 @@ def test_dashboard_metrics_and_footer_are_accessible(qt_application, theme, size
         pane.close()
         pane.deleteLater()
         apply_theme(qt_application, "system")
-        qt_application.setStyleSheet(previous_style)
+        set_application_stylesheet(qt_application, previous_style)
 
 
 def controller_for():

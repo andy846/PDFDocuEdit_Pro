@@ -137,3 +137,39 @@ repeats (five per local/CI Python runtime) passed; that isolated probe exit caus
 is not established and its failed log is retained. No extra shutdown workaround
 was added on that evidence. This limitation remains separate from the new
 complete source-bound candidate gate.
+
+## Superseded fifth candidate and guarded application-QSS traversal
+
+Source `8c4eed598d86896f1db020d02d8ba50717a60144`, native run
+[41016371744](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41016371744),
+completed 228 modules but failed PostScript UI and Profile Library UI. Main CI
+[41016371213](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/41016371213)
+passed Windows Core, source quality and both neutral-platform Core jobs, but
+failed Profile Library UI while restoring application QSS. The local publication
+continuation stopped before candidate download/signing. No public package exists
+from this attempt. The owner explicitly chose to retain and stabilize corners
+before publication.
+
+Independent review produced a deterministic native failure: create closed cyclic
+widgets, clear their setup references and run Python GC inside a style polish
+callback while Qt traverses its application widget snapshot. The native failure
+also occurs with all popup registration disabled, so filter/child-list mutation
+alone does not explain this mechanism. Holding the complete allWidgets wrapper
+list until the native QSS call returns prevents the demonstrated failure. The
+exact original Profile Library CI fault remains not uniquely diagnosed.
+
+The final narrow helper in styles/theme.py retains that snapshot locally, calls
+the existing Qt setter and releases references in finally. Both production QSS
+callers and test application-QSS setup/restoration use it. Existing assertions,
+CSS values and palette behavior remain unchanged. There is no global GC disabling,
+new timer, deferred release or persistent widget collection. An initial direct
+setter regression produced a native fault; guarded replacement/removal, collection
+after return and exception propagation pass. Independent review found no blocker.
+Fresh source-bound complete release gates are required for this new revision.
+
+Final guarded-QSS development validation: 317 cases across 22 modules, no
+failures/skips; 57 native Windows popup cases and 36 native surface/pixel cases
+passed with normal process exit. The three new GC/exception cases also passed
+on official CPython 3.12.10. Ruff, source verification, documentation links and
+whitespace checks passed. Full startup cost has not been benchmarked; the local
+widget snapshot is taken only for application stylesheet changes, not repaint.

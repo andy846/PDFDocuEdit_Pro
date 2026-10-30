@@ -159,7 +159,7 @@ from dialogs.security_dialogs import DecryptDialog, EncryptDialog
 from dialogs.shortcuts_dialog import ShortcutsDialog
 from dialogs.undo_history_dialog import UndoHistoryDialog
 from styles.components import global_style
-from styles.theme import ThemeMode, apply_theme
+from styles.theme import ThemeMode, apply_theme, set_application_stylesheet
 from ui.bottom_bar import BottomBar
 from ui.command_bar import CommandBar
 from ui.command_palette import CommandPalette
@@ -1828,7 +1828,7 @@ class PDFViewer(QMainWindow):
         # PDF window only needs its own controls refreshed; actual theme
         # changes still install the new shared application stylesheet.
         if app.styleSheet() != stylesheet:
-            app.setStyleSheet(stylesheet)
+            set_application_stylesheet(app, stylesheet)
         clear_icon_cache()
         self.command_bar.refresh_icons()
         self.side_panel.refresh_icons()

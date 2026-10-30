@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication, QLineEdit
 
 import core.viewer as viewer_module
 from core.settings import SettingsManager
+from styles.theme import set_application_stylesheet
 from ui.bottom_bar import BottomBar
 from ui.side_panel import SidePanel
 
@@ -944,7 +945,7 @@ def test_bottom_bar_step_buttons_are_large_and_vertically_centered():
     from styles.tokens import D
 
     app = _app()
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     bar = BottomBar()
     bar.resize(1200, D.STATUSBAR_H)
     bar.show()
@@ -1625,7 +1626,7 @@ def test_menus_are_solid_and_clip_the_actual_popup_window(tmp_path, monkeypatch)
     app = _app()
     previous = app.styleSheet()
     apply_theme(app, 'dark')
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     menu = QMenu()
     menu.addAction('Menu item')
     try:
@@ -1639,7 +1640,7 @@ def test_menus_are_solid_and_clip_the_actual_popup_window(tmp_path, monkeypatch)
     finally:
         menu.close()
         menu.deleteLater()
-        app.setStyleSheet(previous)
+        set_application_stylesheet(app, previous)
 
 
 def test_spinbox_stylesheet_supplies_visible_plus_minus_svg_assets():

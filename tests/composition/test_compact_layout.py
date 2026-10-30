@@ -10,7 +10,7 @@ from composition.designer.workspace import CompositionWindow
 from composition.engine.assets import asset_root
 from composition.template.model import SequenceSpec
 from styles.components import global_style
-from styles.theme import apply_theme
+from styles.theme import apply_theme, set_application_stylesheet
 from tests.composition.test_designer_controls import cleanup
 
 
@@ -21,9 +21,9 @@ def styled_app(qt_application):
     ids = [QFontDatabase.addApplicationFont(str(asset_root()/"fonts"/name))
            for name in ("NotoSans-Regular.ttf", "NotoSansCJKhk-Regular.otf")]
     app.setFont(QFont("Noto Sans", 9))
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     yield app
-    app.setStyleSheet(style)
+    set_application_stylesheet(app, style)
     app.setPalette(palette)
     app.setFont(font)
     for font_id in ids:
@@ -170,7 +170,7 @@ def test_design_owns_conditional_inserter_setup_and_production_is_summary(styled
     window = CompositionWindow()
     try:
         apply_theme(styled_app, theme)
-        styled_app.setStyleSheet(global_style())
+        set_application_stylesheet(styled_app, global_style())
         window.resize(960, 640)
         window.show()
         styled_app.processEvents()

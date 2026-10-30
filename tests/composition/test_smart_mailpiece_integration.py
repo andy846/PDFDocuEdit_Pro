@@ -27,6 +27,7 @@ from composition.pdf_source.smart_detection import (
 )
 from composition.pdf_source.source import inspect_source
 from composition.template.model import CompositionError
+from styles.theme import set_application_stylesheet
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_smart_mailpieces import fixture_pdf
 from tests.composition.test_workspace import wait_until
@@ -243,7 +244,7 @@ def test_teaching_and_review_narrow_layout_in_both_themes(overlay, app, theme, m
     dialog = MailpieceDialog(overlay)
     try:
         apply_theme(app, theme)
-        app.setStyleSheet(global_style())
+        set_application_stylesheet(app, global_style())
         dialog.show()
         dialog.begin_teaching()
         dialog.resize(960, 640)
@@ -257,7 +258,7 @@ def test_teaching_and_review_narrow_layout_in_both_themes(overlay, app, theme, m
     finally:
         dialog.reject()
         apply_theme(app, previous)
-        app.setStyleSheet(previous_style)
+        set_application_stylesheet(app, previous_style)
 
 
 def test_workflow_auto_detect_shared_dialog_handoff(app, tmp_path):

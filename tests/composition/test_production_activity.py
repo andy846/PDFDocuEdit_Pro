@@ -1,4 +1,5 @@
 """Production status stays visible even when status-bar tips obscure normal labels."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from composition.designer.overlay_workspace import OverlayWindow
 from composition.designer.workspace import CompositionWindow
 from styles.components import global_style
-from styles.theme import apply_theme
+from styles.theme import apply_theme, set_application_stylesheet
 from tests.composition.test_compact_layout import styled_app  # noqa: F401
 from tests.composition.test_pdf_overlay_ui import finish
 from tests.composition.test_workspace import close_window
@@ -26,7 +27,7 @@ def quiet_workers(monkeypatch):
 @pytest.mark.usefixtures("styled_app")
 def test_live_phase_is_visible_and_unknown_progress_is_indeterminate(qt_application, overlay, size, theme):
     apply_theme(qt_application, theme)
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     window = OverlayWindow() if overlay else CompositionWindow()
     try:
         assert hasattr(window, "production_activity"), "Production lacks a visible live activity panel"

@@ -1,4 +1,5 @@
 """Profile editing, paper test worker and production result discoverability."""
+
 import copy
 import json
 
@@ -10,7 +11,7 @@ from composition.designer.media_dialog import MediaDialog
 from composition.designer.workspace import CompositionWindow
 from composition.engine.assets import asset_root
 from styles.components import global_style
-from styles.theme import apply_theme
+from styles.theme import apply_theme, set_application_stylesheet
 from tests.composition.test_postscript import model, ps_media
 from tests.composition.test_workspace import close_window, wait_until
 
@@ -109,7 +110,7 @@ def test_ps_profile_controls_and_mapping_fit_narrow_dialog(app,theme):
     font_id=QFontDatabase.addApplicationFont(str(asset_root()/"fonts"/"NotoSans-Regular.ttf"))
     app.setFont(QFont("Noto Sans",9))
     apply_theme(app,theme)
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     dialog=MediaDialog(ps_media())
     try:
         dialog.resize(960,640)
@@ -132,7 +133,7 @@ def test_ps_profile_controls_and_mapping_fit_narrow_dialog(app,theme):
         assert dialog.mappings.isColumnHidden(3)
     finally:
         dialog.reject()
-        app.setStyleSheet(style)
+        set_application_stylesheet(app, style)
         app.setPalette(palette)
         app.setFont(font)
         QFontDatabase.removeApplicationFont(font_id)

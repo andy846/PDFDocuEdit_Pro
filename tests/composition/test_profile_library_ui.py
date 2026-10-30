@@ -1,4 +1,5 @@
 """Library navigation and draft safety through the real background transport."""
+
 import copy
 
 import pytest
@@ -9,7 +10,7 @@ from composition.designer.media_dialog import MediaDialog
 from composition.designer.profile_library_dialog import ProfileLibraryDialog
 from composition.media.profile_library import import_profiles
 from styles.components import global_style
-from styles.theme import apply_theme
+from styles.theme import apply_theme, set_application_stylesheet
 from tests.composition.test_profile_library import profile, write
 from tests.composition.test_workspace import wait_until
 
@@ -94,7 +95,7 @@ def test_loading_full_setup_and_printer_only_retains_correct_scope(qt_applicatio
 def test_library_narrow_layout_scrolls_details_and_keeps_actions_visible(qt_application, tmp_path, theme):
     palette, style = qt_application.palette(), qt_application.styleSheet()
     apply_theme(qt_application, theme)
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     source = write(tmp_path / "media.json", profile())
     library = tmp_path / "library"
     import_profiles(library, [source])
@@ -112,5 +113,5 @@ def test_library_narrow_layout_scrolls_details_and_keeps_actions_visible(qt_appl
         assert dialog.profiles.currentItem().data(Qt.ItemDataRole.UserRole)["profile"]["kind"] == "media"
     finally:
         dialog.reject()
-        qt_application.setStyleSheet(style)
+        set_application_stylesheet(qt_application, style)
         qt_application.setPalette(palette)

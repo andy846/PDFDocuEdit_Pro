@@ -1,4 +1,5 @@
 """Operator-visible workbench behavior, not just widget existence."""
+
 from copy import deepcopy
 
 import pytest
@@ -6,6 +7,7 @@ from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QSettings, Qt
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
+from styles.theme import set_application_stylesheet
 from tests.test_quick_extraction import fixture_pdf
 from tests.test_quick_extraction_ui import wait_until
 
@@ -16,9 +18,9 @@ GROUP = "dialogs/extract-region-workbench-v3"
 def product_styles(qt_application):
     from styles.components import global_style
     original = qt_application.styleSheet()
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     yield
-    qt_application.setStyleSheet(original)
+    set_application_stylesheet(qt_application, original)
 
 
 @pytest.fixture(autouse=True)

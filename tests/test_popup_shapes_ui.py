@@ -1,4 +1,5 @@
 """Actual popup shapes, interaction and reuse under the product stylesheet."""
+
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PyQt6.QtGui import QRegion
@@ -6,17 +7,17 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QComboBox, QLabel, QMenu, QToolTip, QWidget
 
 from styles.components import global_style
-from styles.theme import apply_theme
+from styles.theme import apply_theme, set_application_stylesheet
 
 
 @pytest.fixture(autouse=True)
 def theme(qt_application):
     original = qt_application.styleSheet()
     apply_theme(qt_application, 'dark')
-    qt_application.setStyleSheet(global_style())
+    set_application_stylesheet(qt_application, global_style())
     yield qt_application
     QToolTip.hideText()
-    qt_application.setStyleSheet(original)
+    set_application_stylesheet(qt_application, original)
 
 
 def assert_round(widget):
@@ -52,7 +53,7 @@ def test_hidden_popups_are_not_mutated_during_stylesheet_polish(theme):
     menu = QMenu()
     menu.addAction('Hidden')
     flags = menu.windowFlags()
-    theme.setStyleSheet(global_style())
+    set_application_stylesheet(theme, global_style())
     theme.processEvents()
     assert menu.mask().isEmpty()
     assert menu.windowFlags() == flags
@@ -106,7 +107,7 @@ def test_combo_outer_frame_is_rounded_and_selection_works(theme, editable):
         assert popup.grab().toImage().pixelColor(popup.width()//2, 0).name() == '#515157'
         for mode, border in (('light', '#c5c5ca'), ('dark', '#515157')):
             apply_theme(theme, mode)
-            theme.setStyleSheet(global_style())
+            set_application_stylesheet(theme, global_style())
             theme.processEvents()
             assert popup.grab().toImage().pixelColor(popup.width()//2, 0).name() == border
             assert_round(popup)
@@ -150,7 +151,7 @@ def test_theme_reuse_removes_hard_masks_without_replacing_proxy(theme):
         coordinator = theme._pdfdocuedit_popup_shapes
         for mode in ('light', 'dark') * 3:
             apply_theme(theme, mode)
-            theme.setStyleSheet(global_style())
+            set_application_stylesheet(theme, global_style())
             menu.setMask(QRegion(menu.rect()))
             menu.repaint()
             theme.processEvents()
@@ -319,3 +320,89 @@ def test_popup_filter_does_not_keep_a_discarded_menu_alive(theme):
     del events
     gc.collect()
     assert event_ref() is None
+
+
+
+@pytest.mark.parametrize('replacement', ['', 'QWidget { color: #dedede; }'])
+def test_stylesheet_change_retains_qt_snapshot_during_reentrant_gc(tmp_path, replacement):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = r"""
+import gc
+import sys
+import weakref
+from PyQt6.QtWidgets import QApplication, QComboBox, QVBoxLayout, QWidget
+from styles.components import global_style
+from styles.theme import _RoundMenuStyle, apply_theme, set_application_stylesheet
+app = QApplication([])
+apply_theme(app, 'dark')
+set_application_stylesheet(app, global_style())
+gc.collect()
+setup_widgets = []
+refs = []
+for index in range(50):
+    widget = QWidget()
+    widget.cycle = widget
+    setup_widgets.append(widget)
+    refs.append(weakref.ref(widget))
+    layout = QVBoxLayout(widget)
+    for number in range(2):
+        combo = QComboBox(widget)
+        combo.addItems(['A', 'B'])
+        layout.addWidget(combo)
+    widget.ensurePolished()
+    widget.show()
+    widget.close()
+del widget, combo, layout
+original = _RoundMenuStyle.polish
+collected = False
+def collect_in_polish(self, target):
+    global collected
+    if isinstance(target, QWidget) and not collected:
+        collected = True
+        setup_widgets.clear()
+        gc.collect()
+        assert all(ref() is not None for ref in refs)
+    return original(self, target)
+_RoundMenuStyle.polish = collect_in_polish
+set_application_stylesheet(app, sys.argv[1])
+assert app.styleSheet() == sys.argv[1]
+assert collected
+_RoundMenuStyle.polish = original
+gc.collect()
+assert all(ref() is None for ref in refs)
+print('SAFE_QT_STYLESHEET_SNAPSHOT')
+"""
+    result = subprocess.run(
+        [sys.executable, '-X', 'faulthandler', '-c', script, replacement],
+        cwd=Path(__file__).resolve().parent.parent,
+        env={**os.environ, 'PYTHONFAULTHANDLER': '1'},
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'SAFE_QT_STYLESHEET_SNAPSHOT' in result.stdout
+
+
+
+def test_failed_stylesheet_call_releases_snapshot_and_propagates_error(theme):
+    import gc
+    import weakref
+
+    refs = []
+    class RejectingApplication:
+        def allWidgets(self):
+            widget = QWidget()
+            refs.append(weakref.ref(widget))
+            return [widget]
+
+        def setStyleSheet(self, stylesheet):
+            assert stylesheet == 'rejected' and refs[0]() is not None
+            raise ValueError('stylesheet rejected')
+
+    with pytest.raises(ValueError, match='stylesheet rejected'):
+        set_application_stylesheet(RejectingApplication(), 'rejected')
+    gc.collect()
+    assert refs[0]() is None

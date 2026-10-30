@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QTabBar, QToolButton, QWidget
 from dialogs.barcode_dialogs import BARCODE_TYPES, BarcodeScanDialog
 from dialogs.batch_tools import PdfFileTable
 from dialogs.conversion_dialogs import BatchFileTable
+from styles.theme import set_application_stylesheet
 from ui.icons import brand_pixmap, clear_icon_cache
 from ui.workspace import DocumentWorkspace
 
@@ -39,14 +40,14 @@ def test_theme_changes_retain_qss_owned_proxy_style() -> None:
         proxy = app._pdfdocuedit_round_style
         widget.show()
         for mode in ("light", "dark") * 5:
-            app.setStyleSheet(global_style())
+            set_application_stylesheet(app, global_style())
             apply_theme(app, mode)
             app.processEvents()
             assert app._pdfdocuedit_round_style is proxy
             assert not sip.isdeleted(proxy)
     finally:
         widget.close()
-        app.setStyleSheet(previous_style)
+        set_application_stylesheet(app, previous_style)
         app.setPalette(previous_palette)
 
 

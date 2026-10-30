@@ -244,6 +244,20 @@ def toggle_theme() -> ThemeMode:
     return target
 
 
+def set_application_stylesheet(app: QApplication, stylesheet: str) -> None:
+    """Keep Qt's native widget snapshot alive through reentrant style callbacks.
+
+    Python cyclic GC can run inside polish and delete another Python-owned
+    widget while Qt is traversing raw pointers. Retain wrappers only for the
+    synchronous QSS operation; collection remains enabled and no widgets persist.
+    """
+    held_widgets = app.allWidgets()
+    try:
+        app.setStyleSheet(stylesheet)
+    finally:
+        held_widgets.clear()
+
+
 def apply_theme(app: QApplication, theme: ThemeMode | str | None = None) -> ThemeMode:
     global _effective_colors, _effective_dark, _system_palette
     from .popups import install_popup_shapes

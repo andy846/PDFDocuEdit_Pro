@@ -52,7 +52,7 @@ from core.resources import APP_NAME, APP_SLUG, APP_VERSION, resource_path
 from core.settings import SettingsManager
 from core.viewer import PDFViewer
 from styles.components import global_style
-from styles.theme import ThemeMode, apply_theme
+from styles.theme import ThemeMode, apply_theme, set_application_stylesheet
 from updates.runtime import RESTART_EXIT_CODE, ROOT_ENV, TOKEN_ENV, FileLock, managed_root
 
 
@@ -320,7 +320,7 @@ def create_application(argv: list[str] | None = None) -> PDFDocuEditApplication:
         import_settings()
     settings = SettingsManager()
     apply_theme(app, ThemeMode(settings.get_theme()))
-    app.setStyleSheet(global_style())
+    set_application_stylesheet(app, global_style())
     return app
 
 
