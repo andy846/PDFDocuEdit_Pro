@@ -281,6 +281,8 @@ python -m scripts.unified_release publish --folder <簽署目錄> --notes <RELEA
 
 ## CI 重複工作控制
 
+Windows 一般 Core job 的整體時限為 60 分鐘，涵蓋依賴準備及完整 Core 測試；原生發布 job 維持 180 分鐘。此調整只讓既有全部測試有時間完成，不刪除或跳過模組，亦不替代正式候選驗收。
+
 `codex/unified-release-v*` 分支由 `unified-release.yml` 執行 Windows 全部隔離回歸、Mac 原生計劃及兩邊打包。一般 `CI` 保留 Source quality，但不再重跑同分支的 focused tests；其他開發分支及 PR 的測試規則不變。這只消除重複執行，不略過正式原生 gate。
 
 

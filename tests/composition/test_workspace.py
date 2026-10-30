@@ -5,7 +5,8 @@ import time
 
 import fitz
 import pytest
-from PyQt6.QtCore import QTimer
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QEvent, QTimer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
@@ -37,7 +38,10 @@ def close_window(window):
         window.batch_editor.revert()
     window.undo.setClean()
     window.close()
-    wait_until(lambda: not window.workers)
+    wait_until(lambda: not window.workers and (sip.isdeleted(window) or not window.isVisible()))
+    if not sip.isdeleted(window):
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete)
 
 
 def test_designer_undo_preview_production_and_save(app, tmp_path, monkeypatch):

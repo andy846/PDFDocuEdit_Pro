@@ -105,7 +105,7 @@ jobs:
     needs: plan
     if: ${{ !startsWith(github.ref, 'refs/heads/codex/windows-update-v') && needs.plan.outputs.full == 'true' }}
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
     steps:

@@ -4,7 +4,8 @@ import json
 
 import fitz
 import pytest
-from PyQt6.QtCore import QTimer
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QEvent, QTimer
 from PyQt6.QtWidgets import QApplication
 
 from composition.designer.overlay_workspace import OverlayWindow
@@ -24,7 +25,10 @@ def finish(window):
     window.undo.setClean()
     window.draft_error = ""
     window.close()
-    wait_until(lambda: not window.workers)
+    wait_until(lambda: not window.workers and (sip.isdeleted(window) or not window.isVisible()))
+    if not sip.isdeleted(window):
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete)
 
 
 def test_apply_smaller_plan_and_undo_clamp_indices(app, tmp_path, monkeypatch):
@@ -216,3 +220,49 @@ def test_close_before_deferred_font_loading_starts_no_worker(app):
     QTest.qWait(100)
     assert window.close_pending and not window.workers
     assert not window.directory.exists()
+
+
+@pytest.mark.parametrize("closer", [finish, close_window], ids=["overlay", "designer"])
+@pytest.mark.parametrize("delete_on_close", [False, True])
+def test_finish_destroys_owned_window_after_workers_retire(app, closer, delete_on_close):
+    from PyQt6 import sip
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QUndoStack
+    from PyQt6.QtWidgets import QComboBox, QWidget
+
+    events = []
+    class OwnedWindow(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, delete_on_close)
+            self.undo = QUndoStack(self)
+            self.workers = [object()]
+            self.combo = QComboBox(self)
+            self.combo.addItem('Owned popup')
+            self.destroyed.connect(lambda: events.append('destroyed'))
+
+        def closeEvent(self, event):
+            if delete_on_close and self.workers:
+                events.append('close ignored')
+                QTimer.singleShot(10, self.retire_worker)
+                event.ignore()
+                return
+            events.append('close')
+            if self.workers:
+                QTimer.singleShot(10, self.retire_worker)
+            event.accept()
+
+        def retire_worker(self):
+            self.workers.clear()
+            events.append('workers retired')
+            if delete_on_close:
+                self.close()
+                QCoreApplication.sendPostedEvents(self, QEvent.Type.DeferredDelete)
+
+    window = OwnedWindow()
+    window.show()
+    app.processEvents()
+    closer(window)
+    expected = ['close ignored', 'workers retired', 'close', 'destroyed'] if delete_on_close else ['close', 'workers retired', 'destroyed']
+    assert events == expected
+    assert sip.isdeleted(window)

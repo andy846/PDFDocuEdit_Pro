@@ -15,7 +15,7 @@ macOS are out of scope. Existing user data and credentials are excluded.
 | Frozen login-ready / unauthenticated workers | Pending |
 | Original Launcher two upgrades | Pending |
 | Real-account login on new frozen candidate | Pending / Not Tested; owner will test after updating |
-| Source feature UAT | Owner-confirmed “LTGM”; separate from candidate login |
+| Source feature review | Owner-confirmed “LTGM”; not independently confirmed manual candidate UAT |
 | Signing / draft assets / public routes | Pending |
 | Installer / Portable / macOS | Out of scope |
 | Physical monitor transitions / printer / RIP / inserter | Not Tested on candidate |
@@ -45,3 +45,29 @@ new CI-registry regression failed before that classification fix and passed
 afterwards. Combined measurement/CI-plan checks: 29 passed; Ruff and source
 verification passed. Failed logs and original run identities are retained under
 build/probes/release-v3.1.3/. A new frozen SHA requires a fresh full candidate run.
+
+## Superseded second candidate
+
+Source `86f978606e10c85dda0b569830b1f9e228993c3c`, native run
+[40987361295](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/40987361295),
+completed all 228 modules but failed with native teardown access violations in
+`test_multi_profile_scale_ui.py` and `test_review_fixes.py`. Main CI
+[40987360866](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/40987360866)
+was cancelled at its 30-minute Core job budget after 99 passing modules.
+No candidate was signed or published from this attempt.
+
+The two native faults were not uniquely reproduced locally, including repeated
+runs with official CPython 3.12.10 and the existing Qt/pytest dependencies.
+Investigation found test-owned Designer/Overlay windows were closed but retained
+until QApplication teardown. Their shared test helpers now explicitly destroy
+closed windows after worker retirement and tolerate Qt delete-on-close. Four new
+regressions cover both helpers and deletion modes; they demonstrated missing
+retirement and a deleted-wrapper query before the final guard. All 25 helper
+consumer modules passed locally (328 cases, no skips). The combined four-module
+check passed 25 cases. These results do not establish a unique production crash
+cause and do not replace the fresh full native release gate.
+
+The general Core CI job budget is now 60 minutes; native release remains 180.
+No test modules, assertions or production checks were removed. Failed evidence,
+local reproduction runs and source/run associations remain in the local release
+probe directory. This harness/CI-only revision requires a fresh frozen candidate.
