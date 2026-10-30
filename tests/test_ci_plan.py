@@ -141,3 +141,9 @@ def test_qpdf_runtime_changes_require_platform_and_ui_gates():
         assert plan("pull_request", "refs/pull/14/merge", [path])["cross_platform"] == "true"
     assert "tests/test_pdf_runtime.py" in CROSS_PLATFORM_TESTS
     assert "tests/test_font_preflight.py" in CROSS_PLATFORM_TESTS
+
+
+def test_measurement_viewer_suite_uses_shared_gui_lifecycle() -> None:
+    # This suite creates overlays and full viewers, not only pure PDF metrics.
+    assert "tests/test_measurement.py" in UI_TESTS
+    assert "tests/test_measurement.py" not in CROSS_PLATFORM_TESTS

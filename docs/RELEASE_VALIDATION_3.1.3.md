@@ -28,3 +28,20 @@ release regression runs independently in native CI and is not inferred from them
 [Release notes](RELEASE_NOTES_3.1.3.md). [Release process](UNIFIED_RELEASE.md).
 Final candidate evidence and timings will be completed here after publication;
 the immutable tag retains its source-freeze record.
+
+## Superseded first candidate
+
+Main CI [40985033698](https://github.com/andy846/PDFDocuEdit_Pro/actions/runs/40985033698)
+at `a80667b3793966cbf5e6717aa783baba5d7084bc` reported a native process crash
+in `tests/test_measurement.py` after 15 passing cases. Its UI job had separately
+passed 83 modules / 1,348 cases. Neither result is relabelled as evidence for a
+later source. Native candidate run 40985034170 was cancelled as superseded.
+
+The same crash reproduced locally. This mixed pure-metric/GUI module created
+QApplication locally across tests instead of acquiring the existing session UI
+fixture before its first overlay. Adding it to the existing UI registry made all
+16 cases pass; no measurement assertions or product calculations changed. A
+new CI-registry regression failed before that classification fix and passed
+afterwards. Combined measurement/CI-plan checks: 29 passed; Ruff and source
+verification passed. Failed logs and original run identities are retained under
+build/probes/release-v3.1.3/. A new frozen SHA requires a fresh full candidate run.
