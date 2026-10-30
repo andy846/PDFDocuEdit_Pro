@@ -1612,26 +1612,34 @@ def test_canvas_renders_visible_pages_first(tmp_path, monkeypatch):
     window.close()
 
 
-# --- rounded translucent popup menus ---------------------------------------
+# --- solid rounded popup menus --------------------------------------------
 
 
-def test_menus_are_rounded_and_translucent(tmp_path, monkeypatch):
+def test_menus_are_solid_and_clip_the_actual_popup_window(tmp_path, monkeypatch):
+    from PyQt6.QtCore import QPoint
     from PyQt6.QtWidgets import QMenu
 
     from styles.components import global_style
-    from styles.theme import _RoundMenuStyle
+    from styles.theme import apply_theme
 
-    _app()
-    style = _RoundMenuStyle()
+    app = _app()
+    previous = app.styleSheet()
+    apply_theme(app, 'dark')
+    app.setStyleSheet(global_style())
     menu = QMenu()
-    style.polish(menu)
-    assert menu.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    assert menu.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-
-    css = global_style()
-    assert "QMenu" in css and "border-radius: 12px" in css
-    assert "QComboBox QAbstractItemView" in css and "border-radius: 10px" in css
-    menu.deleteLater()
+    menu.addAction('Menu item')
+    try:
+        menu.popup(QPoint(30, 30))
+        app.processEvents()
+        assert menu.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        assert menu.mask().isEmpty()
+        image = menu.grab().toImage()
+        assert image.pixelColor(0, 0).alpha() == 0
+        assert image.pixelColor(image.width()//2, image.height()//2).alpha() == 255
+    finally:
+        menu.close()
+        menu.deleteLater()
+        app.setStyleSheet(previous)
 
 
 def test_spinbox_stylesheet_supplies_visible_plus_minus_svg_assets():

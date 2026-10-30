@@ -8,14 +8,11 @@ from PyQt6 import sip
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QPalette, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
-    QComboBox,
-    QFrame,
-    QMenu,
     QProxyStyle,
     QStyle,
     QStyleFactory,
+    QWidget,
 )
 
 
@@ -32,28 +29,34 @@ _effective_colors: dict[str, str] | None = None
 
 
 class _RoundMenuStyle(QProxyStyle):
-    """Makes popup menus and combo dropdowns translucent so the stylesheet's
-    rounded corners are real, not square-patched.
+    """Retained application-owned proxy for visible spin-box indicators."""
 
-    Only widget attributes are touched inside polish(): mutating window flags
-    while Qt re-polishes the widget tree is unsafe.
-    """
+    def polish(self, target):
+        depth = getattr(self, '_popup_polish_depth', 0)
+        self._popup_polish_depth = depth + 1
+        try:
+            result = super().polish(target)
+            if isinstance(target, QWidget):
+                # Register only; native surface setup happens outside polish.
+                coordinator = getattr(QApplication.instance(), '_pdfdocuedit_popup_shapes', None)
+                if coordinator is not None:
+                    coordinator.register(target)
+            return result
+        finally:
+            self._popup_polish_depth = depth
 
-    def polish(self, widget):
-        result = super().polish(widget)
-        if isinstance(widget, QMenu):
-            widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            widget.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        elif (
-            isinstance(widget, QFrame)
-            and isinstance(widget.parent(), QComboBox)
-            and widget.findChild(QAbstractItemView) is not None
-        ):
-            # QComboBox private popup container: let the item view's rounded
-            # background show through instead of a square frame.
-            widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            widget.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        return result
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        # QTipLabel asks for opacity during construction, before first display.
+        # There is no public aboutToShow signal for the standard Qt tooltip.
+        if (hint == QStyle.StyleHint.SH_ToolTipLabel_Opacity
+                and not getattr(self, '_popup_polish_depth', 0)):
+            coordinator = getattr(QApplication.instance(), '_pdfdocuedit_popup_shapes', None)
+            if coordinator is not None:
+                coordinator.surfaces.prepare(widget)
+        if (hint in (QStyle.StyleHint.SH_ToolTip_Mask, QStyle.StyleHint.SH_Menu_Mask)
+                and widget is not None and widget.property('_popup_alpha')):
+            return 0
+        return super().styleHint(hint, option, widget, returnData)
 
     def drawPrimitive(self, element, option, painter, widget=None) -> None:
         """Draw visible +/- glyphs for all integer and decimal spin boxes."""
@@ -243,6 +246,8 @@ def toggle_theme() -> ThemeMode:
 
 def apply_theme(app: QApplication, theme: ThemeMode | str | None = None) -> ThemeMode:
     global _effective_colors, _effective_dark, _system_palette
+    from .popups import install_popup_shapes
+    install_popup_shapes(app)
     _install_round_menu_style(app)
     previous_theme = _current_theme
     if _system_palette is None:

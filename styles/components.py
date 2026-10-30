@@ -18,6 +18,16 @@ def _rgba(hex_color: str, alpha: int) -> str:
     return f"rgba({red}, {green}, {blue}, {alpha / 255:.2f})"
 
 
+def combo_popup_style() -> str:
+    """Qt ignores application QSS on this private frame without local QSS."""
+    c = get_colors()
+    return f'''QFrame[pdfdocueditPopupSurface="combo"] {{
+        background-color: {c['bg_surface']};
+        border: 1px solid {c['border_strong']};
+        border-radius: {R.LG}px;
+    }}'''
+
+
 def global_style() -> str:
     c = get_colors()
     spin_theme = "dark" if is_dark() else "light"
@@ -974,10 +984,9 @@ def global_style() -> str:
             height: 14px;
         }}
         QComboBox::down-arrow:on {{ top: 1px; }}
-        /* Modern rounded, slightly translucent popup menus. The windows are
-           made translucent by the proxy style so the corners are truly round. */
+        /* Solid bodies with per-pixel antialiased edges on the native window. */
         QMenu {{
-            background-color: {_rgba(c['bg_surface'], 246)};
+            background-color: {c['bg_surface']};
             color: {c['text_primary']};
             border: 1px solid {c['border_strong']};
             border-radius: {R.LG}px;
@@ -992,11 +1001,12 @@ def global_style() -> str:
         QMenu::item:selected {{ color: {c['primary']}; background: {c['primary_soft']}; }}
         QMenu::item:disabled {{ color: {c['text_disabled']}; }}
         QMenu::separator {{ height: 1px; background: {c['border']}; margin: {S.XS}px {S.SM}px; }}
+        {combo_popup_style()}
         QComboBox QAbstractItemView {{
-            background-color: {_rgba(c['bg_surface'], 246)};
+            background-color: transparent;
             color: {c['text_primary']};
-            border: 1px solid {c['border_strong']};
-            border-radius: {R.LG}px;
+            border: none;
+            border-radius: 0;
             padding: 4px;
             outline: none;
             selection-background-color: {c['primary_soft']};
@@ -1006,7 +1016,8 @@ def global_style() -> str:
             color: {c['text_primary']};
             background: {c['bg_elevated']};
             border: 1px solid {c['border_strong']};
-            padding: {S.XS}px {S.SM}px;
+            border-radius: {R.LG}px;
+            padding: {S.SM}px {S.MD}px;
         }}
         QScrollArea {{ border: none; background: transparent; }}
         QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
